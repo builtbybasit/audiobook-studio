@@ -1,8 +1,5 @@
-// Pronunciation dictionary and pacing: both change how a book sounds without changing a word of it.
-//
-// What the endpoint is sent is the server's to measure when a clip renders, and tested there; what
-// is here is the rule itself and what the stores do with a change to it, against the demo's
-// `cliche` read from a seeded demo library.
+// Pronunciation dictionary and pacing: the rule itself, and what the stores do with a change to
+// it, against the demo's `cliche`. What the endpoint is sent is measured and tested server-side.
 import { test, expect, beforeAll, beforeEach, describe } from "bun:test";
 
 import { useCastStore } from "@/stores/cast";
@@ -151,8 +148,7 @@ describe("pacing", () => {
   test("a line's own pause wins, including none at all, and unrendered lines take no time", () => {
     const segs = [seg(1, "A", 0), seg(2, "B", 2), seg(3, "B")];
     expect(silenceOf(segs, DEFAULT_PACING, undefined)).toBeCloseTo(2, 10);
-    // the middle line was never rendered, so its own 2s gap is not stitched and #1 runs straight
-    // into #3 — exactly what plays back
+    // the middle line was never rendered, so its 2s gap is not stitched and #1 runs into #3, as it plays
     segs[1].audio.duration = 0;
     expect(silenceOf(segs, DEFAULT_PACING, undefined)).toBe(0);
   });

@@ -1,19 +1,10 @@
-# Voice effects run on a clip: Pedalboard chains (docs/audio.md, "Voice effects"). `effects.ts`
-# starts it as `uv run -q --no-project --with pedalboard==… python -I effects.py <mode>`, so the
-# server needs no Python environment of its own, only uv.
-#
-#   render <ffmpeg>   stdin: one JSON line {"format", "chains"}, then the clip's bytes
-#                     stdout: a 16-bit WAV at the clip's own rate
-#   batch <ffmpeg>    stdin: one JSON line per item {"input", "output", "chains"}, both paths
-#                     stdout: one line per item as it ends, {"i": n, "ok": true} | {"i": n, "error"}
-#   parse             stdin: Pedalboard Python; stdout: the chain it builds, as JSON
-#
-# render and parse exit 1 with one line on stderr when they cannot; batch carries on past an item
-# it cannot do, so one bad clip never costs the rest of a book.
-#
-# Chains are user input — typed into the editor, or pasted as Python — so nothing in them is ever
-# run as code: `parse` reads the text with `ast` and never executes it, and only the plugins in
-# `plugins()`, with only the number arguments it lists, are ever built.
+# Pedalboard voice effects, run by `effects.ts` as `uv run … python -I effects.py <mode>`:
+#   render <ffmpeg>  stdin: JSON line {"format", "chains"}, then the clip; stdout: 16-bit WAV
+#   batch <ffmpeg>   stdin: JSON line {"input", "output", "chains"} per item;
+#                    stdout: {"i": n, "ok": true} | {"i": n, "error"} per item; a bad item is skipped
+#   parse            stdin: Pedalboard Python; stdout: the chain as JSON
+# render and parse exit 1 with one stderr line. Chains are user input: `parse` reads them with
+# `ast` and never runs them, and only `plugins()` with their number arguments are built.
 import ast
 import functools
 import io
@@ -35,13 +26,11 @@ NEVER = {
 }
 NUMBER = ("float", "int")
 
-# Pedalboard gives back as many samples as it is given, so a reverb or a delay ringing on past the
-# last word would be cut off: this much silence goes on the end first, and whatever of it is still
-# silent afterwards comes off again — never more, so a clip is never shorter than it came.
+# Pedalboard returns as many samples as it gets, so this pad lets a reverb ring on; what is still
+# silent afterwards comes off again (never more, so a clip never gets shorter).
 PAD_SECONDS = 0.4
 QUIET = 10 ** (-60 / 20)
-# A tail still ringing where the pad runs out (a big room, a long echo) would stop dead, with a
-# click: it fades out over this much of its end instead.
+# A tail still ringing where the pad runs out fades over this long instead of clicking.
 FADE_SECONDS = 0.03
 
 

@@ -72,7 +72,6 @@ describe("the next step on a card", () => {
   });
 
   test("the cast steps the overview used to own are in the one chain", () => {
-    // These three used to exist only in BookView's private copy, so a card could never say them.
     expect(nextStepOf(progress(), { ...quiet, unreviewed: 2 })).toMatchObject({
       label: "Review cast",
       to: "cast",
@@ -88,8 +87,7 @@ describe("the next step on a card", () => {
   });
 
   test("a stale chapter no longer hides a speaker waiting to be reviewed", () => {
-    // The bug this chain was merged for: the shelf said "Re-narrate 1 stale chapter" while the
-    // book's own overview said a new speaker needed review. One question, one answer.
+    // One question, one answer: the shelf names the same next step as the book's overview.
     const step = nextStepOf(progress({ narrated: 20, stale: 1 }), { ...quiet, unreviewed: 1 });
     expect(step.label).toBe("Review cast");
     expect(step.text).toBe("1 newly detected speaker needs review — probably aliases to merge.");

@@ -7,10 +7,7 @@ export const cartesia: SpeechProviderShape = {
   label: "Cartesia",
   matches: (baseUrl) => /(^|\/\/)([a-z0-9-]+\.)*cartesia\.ai(\/|:|$)/i.test(baseUrl),
   requestPath: () => "/tts/bytes",
-  /**
-   * `output_format`: WAV as 16-bit PCM at any of its rates, 44.1 kHz when none is set (the rate its
-   * own example uses); MP3 offered at 44.1 kHz and 64 to 192 kbps. It has no Opus.
-   */
+  /** `output_format`; 44.1 kHz default, as Cartesia's own example uses. No Opus. */
   formats: [
     {
       format: "wav",
@@ -29,10 +26,8 @@ export const cartesia: SpeechProviderShape = {
       defaultBitrate: 128,
     },
   ],
-  // its SSML guide's self-closing tags — a pause, and the emotion, speed and volume a stretch of the
-  // transcript is spoken with — and `[laughter]`, which that guide's title still names. A break's
-  // `time` is "seconds (`s`) or milliseconds (`ms`)", with no longest given
-  // (https://docs.cartesia.ai/build-with-cartesia/sonic-3/ssml-tags).
+  // SSML self-closing tags and `[laughter]`; a break has no documented maximum
+  // (https://docs.cartesia.ai/build-with-cartesia/sonic-3/ssml-tags)
   tags: () => ({
     brackets: ["angle", "square"],
     open: false,
@@ -41,18 +36,15 @@ export const cartesia: SpeechProviderShape = {
     hint: 'Sonic takes SSML-like tags: <break time="1s"/>, <emotion value="calm"/>, <speed ratio="0.8"/>, and [laughter].',
     pause: (s) => `<break time="${pauseSecs(s)}s"/>`,
   }),
-  // Its pricing page: "Credits are only used by successful requests; errors will not consume credits."
+  // "errors will not consume credits"
   billsFailures: false,
-  // https://docs.cartesia.ai/api-reference/voices/clone: one `clip` of at most 16 MB, in FLAC, MP3,
-  // Ogg, WAV or WebM — of which the sniffer knows all but WebM, and Opus as Ogg's. No M4A. The
-  // advice is https://docs.cartesia.ai/build-with-cartesia/capability-guides/clone-voices. The
-  // pricing page (https://cartesia.ai/pricing, read 2026-09-28) charges no credits for an instant
-  // clone but leaves it off the Free plan: it starts with Pro, $5 a month.
+  // https://docs.cartesia.ai/api-reference/voices/clone (WebM is not sniffed); advice from
+  // https://docs.cartesia.ai/build-with-cartesia/capability-guides/clone-voices; not on the Free
+  // plan (https://cartesia.ai/pricing)
   cloning: {
     maxSamples: 1,
     maxSampleBytes: 16 * 1024 * 1024,
     formats: ["wav", "mp3", "flac", "opus"],
-    // the clone reference (version 2026-08-14) takes a clip, a name and a language, no transcript
     transcript: "none",
     advice:
       "Cartesia makes a voice from one clip: 10 seconds is enough, and up to 60 keeps more of the " +

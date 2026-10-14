@@ -1,11 +1,6 @@
-// A real scripting model, opt-in: `LIVE=1 bun test tests/live`.
-//
-// The target is built from `SCRIPTING_PROVIDER_URL`, `SCRIPTING_PROVIDER_MODEL`,
-// `SCRIPTING_PROVIDER_KEY` and `SCRIPTING_PROVIDER_REASONING` in `.env` — for this test only; the
-// app itself reads a profile's address and key from the endpoints table. The base URL picks the
-// provider as the server's does: `codex:` or `claude-code:` runs that command-line tool, anything
-// else is a chat-completions model. One excerpt, one request, and the answer printed so a person
-// can judge the attribution as well as the assertions.
+// A real scripting model, opt-in: `LIVE=1 bun test tests/live`. The target comes from
+// `SCRIPTING_PROVIDER_URL`, `_MODEL`, `_KEY` and `_REASONING` in `.env` (this test only; the app
+// reads endpoints from its table). One excerpt, one request, the answer printed to judge by eye.
 import { describe, expect, test } from "bun:test";
 
 import type { ReasoningEffort } from "@/types";

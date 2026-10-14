@@ -1,11 +1,6 @@
-// A line run through effects, as a URL an audio element can play — made once per line and sound.
-//
-// The server renders each preview (`effectsStore.preview`), which takes a moment, and the sheet
-// asks for the same one over and over: ▶ on a row twice, back and forth between lines, a slider
-// returned to where it was. So renders are kept, keyed by the clip and by what the effects do to
-// it (`soundOf`, which leaves out names, ids and off steps), and the oldest go once there are
-// more than `KEEP`. Effects that do nothing play the clip itself, with no request at all. Every
-// object URL made is revoked when the scope that asked for them ends.
+// A line run through effects, as a playable URL, made once per line and sound.
+// Server renders are slow and re-asked often, so they're kept (LRU of `KEEP`), keyed by clip and
+// `soundOf` (ignores names, ids, off steps). Object URLs are revoked when the scope ends.
 import { onScopeDispose } from "vue";
 
 import { runnable, soundOf } from "@/lib/effects";

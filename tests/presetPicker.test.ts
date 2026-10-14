@@ -1,12 +1,6 @@
-// "Start from a preset…", as both pages that offer it use it: an endpoint's Connection tab, which
-// stages what a preset fills in and applies it on Save, and the scripting page's endpoint editor,
-// which writes it straight onto the profile it binds its fields to.
-//
-// What these guard is what the page says. The Connection tab promises that nothing is dispatched
-// until Save, so a preset's prices must not reach the endpoint — and the write-behind that sends it
-// to the server — before then, and Discard must put them back. Either way the fields handed over
-// are a copy: a preset's pricing object that became a profile's own would be edited by the Pricing
-// tab, and every profile made from that preset afterwards would start from the edited rates.
+// "Start from a preset…" on an endpoint's Connection tab (staged until Save, undone by Discard) and
+// in the scripting page's editor (written straight onto the profile). Either way what is handed over
+// is a copy, or a Pricing tab edit would change every later profile made from the preset.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { nextTick, ref } from "vue";
 

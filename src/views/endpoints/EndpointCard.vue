@@ -1,7 +1,6 @@
 <script setup lang="ts">
-// One row of the endpoint list. Four short lines: what it is, what it runs, how it is behaving,
-// what it costs. The switch is a sibling of the select button, not inside it, so the card stays
-// one tab stop for "select" and one for "pause".
+// One row of the endpoint list. The switch is a sibling of the select button, not inside it, so
+// the card has one tab stop for "select" and one for "pause".
 import { UiSwitch } from "@/ui";
 import { DOT, KIND_LABEL, TEXT, pricingLabel } from "@/lib/endpoints";
 import type { Health, UnifiedEndpoint } from "@/lib/endpoints";
@@ -17,7 +16,6 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ select: []; toggle: [boolean] }>();
 const pricing = () => pricingLabel(props.u);
-/** the kind in a tag small enough for the corner of the card */
 const TAG: Record<EndpointKind, string> = { scripting: "script", tts: "TTS", transcription: "STT" };
 </script>
 

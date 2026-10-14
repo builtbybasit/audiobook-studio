@@ -1,10 +1,6 @@
 <script setup lang="ts">
-// One line of the chapter as it is read along: prose for narration, lifted a little for dialogue and
-// thought with the speaker named beside it. A line with word marks is cut into its heard words, and
-// each is a place to start listening from; the rest of the line starts the line.
-//
-// A component of its own so that the word moving on re-renders this line only: the page hands the
-// lit word to the line under the playhead and -1 to every other, which does not change.
+// One line of the chapter, read along. A line with word marks is cut into its heard words, each a
+// place to start listening from. Its own component so a moving word re-renders this line only.
 import { computed } from "vue";
 import { piecesOf, type WordMark } from "@/lib/listen";
 import type { Segment } from "@/types";
@@ -12,7 +8,6 @@ import type { Segment } from "@/types";
 const props = defineProps<{
   segment: Segment;
   marks: WordMark[] | null;
-  /** the line is under the playhead */
   on: boolean;
   /** the mark being said, or -1 */
   word: number;

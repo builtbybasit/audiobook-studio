@@ -1,7 +1,5 @@
-// The Character voice as the cast store reports it: what a speaker with no voice of their own is
-// read in, what a linked persona is, and a broken Character voice slot among the voices the cast
-// routes to. Stores filled by
-// hand — no server — since both are getters over what is already held.
+// The Character voice as the cast store reports it: what an unvoiced speaker is read in, what a
+// linked persona is, and a broken Character voice slot. Stores filled by hand, no server.
 import { beforeEach, describe, expect, test } from "bun:test";
 import { createPinia, setActivePinia } from "pinia";
 import { narrator, newSpeaker, voiced } from "@/lib/cast";

@@ -1,5 +1,4 @@
-// Everything a shelf can say about one book, gathered once. Each layout decides what to show and
-// where; none of them recompute it. Read-only over the stores.
+// Everything a shelf can say about one book, gathered once for every layout.
 import { useCastStore } from "@/stores/cast";
 import { useExportsStore } from "@/stores/exports";
 import { useJobsStore } from "@/stores/jobs";
@@ -17,8 +16,7 @@ export interface BookFacts {
   next: NextStep;
   failedScripting: number;
   failedNarration: number;
-  /** new speakers awaiting review, and main cast with no voice of their own — the next step
-   *  chain reads both, so a card can say "Review cast" the way the overview does */
+  /** new speakers awaiting review, and main cast with no voice of their own */
   unreviewed: number;
   unvoiced: number;
   /** "Scripting 3 chapters · Narrating 2 chapters", or "" */
@@ -34,7 +32,7 @@ export interface BookFacts {
   building: boolean;
 }
 
-/** The facts as they stand now. Plain, so a list can gather them for every book in one pass. */
+/** The facts as they stand now; plain, so a list gathers every book's in one pass. */
 export function bookFacts(id: string): BookFacts {
   const castStore = useCastStore();
   const exportsStore = useExportsStore();

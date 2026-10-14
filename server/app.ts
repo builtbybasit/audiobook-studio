@@ -1,9 +1,5 @@
-// The API, as a value.
-//
-// Built around a database handle rather than importing one, so a test can hand it a private
-// `:memory:` database and drive the real routes end to end without a server listening anywhere.
-// Everything is under one base, `/api` by default: the demo library is the same app over its own
-// database, under `/demo/api` (`server/libraries.ts`).
+// The API as a value, built around a database handle so a test can drive the real routes over a
+// `:memory:` database. The demo is the same app under `/demo/api` (`server/libraries.ts`).
 import { Hono } from "hono";
 import { csrf } from "hono/csrf";
 import { HTTPException } from "hono/http-exception";
@@ -40,53 +36,28 @@ import { transferRoutes } from "~/routes/transfer";
 import { bookUsageRoutes, endpointUsageRoutes } from "~/routes/usage";
 import { voiceFiles as voiceFilesIn, type VoiceFiles } from "~/voices/files";
 
-/** What Hono's refusals say, for the ones that come without a message of their own. */
+/** Messages for Hono refusals that come without one. */
 const REFUSED: Partial<Record<number, string>> = {
   403: "That request came from another site, and was refused",
 };
 
 export interface AppOptions {
-  /**
-   * The path every route is under, and the one the urls of clips and covers are written with:
-   * `/api` for the real library, `/demo/api` for the demo.
-   */
+  /** route prefix, also used in clip and cover urls: `/api` or `/demo/api` */
   base?: string;
-  /** the logger requests are recorded against; a test hands over a silent one */
   log?: Logger;
-  /**
-   * The queue the routes enqueue into and cancel through. The default has no handlers, so a job
-   * enqueued into it fails at once saying so — right for a test that is not about jobs, and
-   * impossible to mistake for one that ran.
-   */
+  /** The default has no handlers, so an enqueued job fails at once, saying so. */
   runner?: Runner;
-  /** where rendered clips are read from and, when a book goes, removed; the configured directory by default */
   files?: AudioFiles;
-  /**
-   * What a build writes an audiobook with, and where it puts it. The default is the configured
-   * pair, so a download served by this app is the file the queue's handler wrote.
-   */
+  /** must match the runner's, so a download is the file the build wrote */
   exports?: ExportPorts;
-  /**
-   * The models a connection test asks — the same pair the runner's handlers send work to. The
-   * endpoints' own by default, as a running server has them: a simulated endpoint answers here,
-   * every other over the network.
-   */
+  /** what a connection test asks; the same pair the runner's handlers use */
   providers?: Providers;
-  /** where the recordings a cloned voice was made from are kept; the configured directory by default */
   voiceFiles?: VoiceFiles;
-  /**
-   * The speech gate the runner's narration handler sends through: told when the endpoints are
-   * saved, and read for what the Endpoints page shows live. A gate of its own by default, which
-   * nothing sends through — right for a test that is not about narration.
-   */
+  /** the runner's narration gate: told when endpoints are saved, read for live status */
   gate?: SpeechGate;
   /** what a preview of an effect is rendered with; none by default, so previews answer 503 */
   effects?: EffectRunner;
-  /**
-   * What `POST <base>/demo/reset` and `POST <base>/demo/situations/:id` do, and the pace
-   * `<base>/demo/speed` sets: given to the demo library alone, so the real one has no route that
-   * empties it or speeds it up.
-   */
+  /** `<base>/demo/*` controls; given to the demo library alone so the real one can't be emptied */
   demo?: DemoControls;
 }
 
@@ -105,54 +76,31 @@ export function createApp(
     demo,
   }: AppOptions = {},
 ): Hono<PinoEnv> {
-  // Typed with the logger the middleware puts on the context, so a route reaching for
-  // `c.var.logger` is checked rather than trusted.
   const app = new Hono<PinoEnv>();
 
-  // One line per request, with the logger for that request on the context. A route reaching for
-  // `c.var.logger` gets the method and path already attached, so what it adds is only ever the part
-  // it knows about.
   app.use(
     pinoLogger({
       pino: log,
       http: {
-        // Method and path, and nothing else. The default writes every request header on every
-        // line, which buries the one field anybody was reading and puts an `authorization` in the
-        // log for the redaction list to have to catch.
+        // Not the default's every header: noisy, and it would log `authorization`.
         onReqBindings: (c) => ({ req: { method: c.req.method, url: c.req.path } }),
         onResBindings: (c) => ({ res: { status: c.res.status } }),
-        /**
-         * A 404 is an answer, not a fault.
-         *
-         * hono-pino's default calls anything with an error on the context an `error`, which makes
-         * "no such book" and "the database is gone" the same severity — and a log where routine
-         * answers are red is one nobody can skim for the real thing.
-         */
+        /** A 4xx is an answer, not a fault; hono-pino's default logs it as `error`. */
         onResLevel: (c) => (c.res.status >= 500 ? "error" : c.res.status >= 400 ? "warn" : "info"),
       },
     }),
   );
 
-  // The API has no accounts, and a request that deletes a book is a request that deletes a book.
-  // Listening on loopback keeps other machines out (see `HOST`); this keeps other *sites* out. A
-  // page on any origin can make the browser send a form post or a bodyless one here without
-  // asking first — the kind that needs no preflight — and Hono's check refuses it unless the
-  // browser says it came from this origin. The rest need a preflight this API never answers.
-  //
-  // Only a browser is asked. Its requests carry `Origin` or `Sec-Fetch-Site`, and one with neither
-  // is a script, a test or `curl`, which is on this machine already and forges nothing.
+  // Loopback keeps other machines out (`HOST`); this keeps other sites out of no-preflight
+  // requests. Only browser requests (with `Origin` or `Sec-Fetch-Site`) are checked; a script or
+  // `curl` is on this machine already.
   const sameSite = csrf();
   app.use(`${base}/*`, (c, next) =>
     c.req.header("origin") || c.req.header("sec-fetch-site") ? sameSite(c, next) : next(),
   );
-  // The standard set: no sniffing a clip as something else, no framing, no borrowing a response
-  // from another origin.
   app.use(`${base}/*`, secureHeaders());
 
   app.get(`${base}/health`, (c) => c.json({ ok: true }));
-  // Everything a book owns is addressed under it. The library's own routes come first; the cast,
-  // the scripts and the audiobooks each have a file of their own so that a route reads as one call
-  // on the operations of the part of the app that owns the table.
   app.route(
     `${base}/books`,
     bookRoutes(db, runner, files, exports.files, providers.scripting, effects),
@@ -164,14 +112,10 @@ export function createApp(
   app.route(`${base}/books`, speakerSampleRoutes(db, files));
   app.route(`${base}/books`, bookUsageRoutes(db));
   app.route(`${base}/jobs`, jobRoutes(db, runner));
-  // The endpoints belong to the installation rather than to a book.
   app.route(`${base}/endpoints`, endpointRoutes(db, providers, voiceFiles, gate));
   app.route(`${base}/endpoints`, endpointUsageRoutes(db));
-  // So do the voice effects, which any book's speakers may wear, and the library's thought effect.
   app.route(`${base}/effects`, effectRoutes(db, files, effects));
   app.route(`${base}/settings`, settingRoutes(db));
-  // A clip's url is served from disk, and the files it names belong to the same book routes above
-  // remove — see `server/audio/files.ts` for why the path is a book and a token.
   app.route(`${base}/audio`, audioRoutes(files));
   if (demo) app.route(`${base}/demo`, demoRoutes(demo));
 
@@ -184,13 +128,10 @@ export function createApp(
     ),
   );
 
-  // A refusal a rule raised is an answer, and it is answered in the one error shape. Anything
-  // else is a bug, not a message for the user: the client gets one sentence it can show, and the
-  // stack goes to the log, where it is of use to somebody.
+  // AppError and Hono refusals answer in the API's error shape; anything else is a bug, logged
+  // with its stack, and the client gets one generic sentence.
   app.onError((err, c) => {
     if (err instanceof AppError) return c.json(err.body(), err.status);
-    // Hono's own refusals — a body that is not the JSON it claims, a post from another site — are
-    // answers too, and get the same shape rather than the plain text Hono writes by default.
     if (err instanceof HTTPException)
       return c.json(
         {

@@ -1,23 +1,7 @@
-// What a clip is, read off its bytes: how long it plays and at what rate, in whichever of the
-// three formats it was kept in.
-//
-// A clip is kept exactly as the endpoint sent it — a WAV, an MP3 or an Ogg Opus file — and its
-// file name's extension says which (`AUDIO_EXT`). Everything that needs to know about one asks
-// here rather than reading a RIFF header itself: the providers when an answer comes back, the
-// narration job when it records the rate, the join when a line came in parts, the export when it
-// decides whether a clip needs decoding first.
-//
-// A WAV is read by its header, which the server wrote and trusts. An MP3 or an Opus file is read
-// by `music-metadata`, which knows both containers, with `duration: true` so it reads the whole
-// file rather than guessing from the first few pages: an Ogg stream's length is the last page's
-// granule, which it does not reach otherwise. An MP3's length is counted from its frames
-// (`mp3.ts`), which is exact where `music-metadata`'s constant-bitrate estimate from the file size
-// is a frame out every few minutes.
-//
-// A line sent in parts comes back as one file per part and is kept as one: WAV samples end to end,
-// MP3 frames end to end, with a pause's silence between them where the line was cut for one. Opus is refused before the parts are sent (`narration.ts`): two Ogg
-// streams one after the other are a legal "chained" file, but browsers seek in one badly and
-// report its length as the first stream's.
+// A clip's rate, channels and length, read off its bytes (WAV, MP3 or Ogg Opus, as sent).
+// WAV by its header; MP3 and Opus by `music-metadata` with `duration: true` (an Ogg length is the
+// last page's granule); MP3 length counted from frames (`mp3.ts`). Opus parts are never joined:
+// browsers seek badly in chained Ogg and report the first stream's length.
 import { parseBuffer } from "music-metadata";
 
 import type { AudioFormat } from "@/types";
@@ -25,26 +9,22 @@ import { AUDIO_MIME, FORMAT_LABEL } from "@/lib/endpointShapes";
 import { joinMp3, mp3Frames } from "~/audio/mp3";
 import { byteRate, joinWav, readWavHeader } from "~/providers/wav";
 
-/** What a clip's bytes say about it. */
 export interface ClipInfo {
   format: AudioFormat;
   /** in Hz, as the file plays: an Opus file always decodes at 48 kHz */
   sampleRate: number;
   channels: number;
-  /** how long it plays, in seconds */
+  /** seconds */
   duration: number;
 }
 
-/** What `music-metadata` calls the container and codec each encoded format is in. */
+/** What `music-metadata` calls each format's container and codec. */
 const EXPECTED: Record<Exclude<AudioFormat, "wav">, { container: string; codec: RegExp }> = {
   mp3: { container: "MPEG", codec: /layer 3/i },
   opus: { container: "Ogg", codec: /^opus$/i },
 };
 
-/**
- * Read a clip: its rate, its channels and how long it plays. Throws, saying why in words a person
- * can act on, when the bytes are not the format they are said to be or hold no audio at all.
- */
+/** Throws, in words a person can act on, when the bytes are not that format or hold no audio. */
 export async function probeClip(bytes: Uint8Array, format: AudioFormat): Promise<ClipInfo> {
   if (format === "wav") {
     const body = readWavHeader(bytes);
@@ -96,10 +76,8 @@ export async function probeClip(bytes: Uint8Array, format: AudioFormat): Promise
 }
 
 /**
- * The parts of a line as one clip in their format: WAV samples or MP3 frames end to end, with
- * silence for each number of seconds among `parts` — a pause the voice had no tag for. Throws for
- * Opus, which is refused before its parts are sent, and for parts that disagree on what they are,
- * naming the one that does.
+ * A line's parts as one clip, with silence for each number of seconds among `parts` (a pause the
+ * voice had no tag for). Throws for Opus and for parts that disagree.
  */
 export function joinClips(format: AudioFormat, parts: (Uint8Array | number)[]): Uint8Array {
   if (format === "wav") return joinWav(parts);

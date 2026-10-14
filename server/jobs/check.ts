@@ -1,26 +1,7 @@
-// The check by ear: a chapter's clips heard back by a transcription endpoint, and each set against
-// its line, so a clip that says something other than the line is found without anyone listening.
-//
-// What is heard is every spoken line's clip in the book (`current`, `done`) that has not been
-// heard as the line now reads. A finding is kept by the clip's **file**, the one name a render keeps
-// for life (`heard` in the schema), with the line's text as it was checked: a line edited since, or
-// rendered again, has no finding that matches it and is heard at the next check; one that has is
-// left alone. Nothing a check does touches a clip.
-//
-// A line is set against what was heard both as written and as its clip was sent through the
-// pronunciation dictionary (`sentHits`), and the closer stands. A clip heard saying something else
-// (`alignHeard`) flags its line `heard`, with what was heard in
-// the note; one heard right takes a `heard` flag down. A flag a person set is theirs: a check never
-// replaces it and never takes it down. A flag is part of the script a client writes back whole, so
-// a write that changes one moves the chapter's revision, as a landed clip does in narration, and
-// finds the chapter by its uid because a removed volume renumbers the book mid-run.
-//
-// The run goes to the transcription endpoint it was queued with (`checkRun.endpoint`), up to its
-// concurrency at once, each request priced into the ledger by the minute of audio as it settles
-// and held to the endpoint's daily limit while it is out. A request that fails is counted and the
-// run goes on; the job fails at the end, as a narration with a failed line does, so a retry hears
-// only what was missed. A book that switches it on (`Book.checkByEar`) has each chapter checked
-// once a narration of it ends (`checkAfterNarration`).
+// The check by ear: a transcription endpoint hears each clip back and flags lines whose clip says
+// something else. Findings are keyed by clip file + line text (`heard`), so an edited or re-rendered
+// line is heard again. Never touches a clip, and never replaces or clears a flag a person set.
+// Failed requests are counted and the job fails at the end, so a retry hears only what was missed.
 import type {
   Book,
   ChapterHeard,
@@ -59,18 +40,15 @@ import type { TranscriptionProvider } from "~/providers/transcription";
 import { assertWithinBudget, budgetProblem } from "~/usage/budget";
 import { dispatch } from "~/usage/dispatch";
 
-/** How much of what was heard a flag's note quotes. */
 const NOTE_CHARS = 140;
 
 const NO_TRANSCRIBER = "No transcription endpoint is switched on. Add one on the Endpoints page.";
 
-/** A line whose clip is in the book, and the file that clip is. */
 interface Clip {
   s: Segment;
   file: string;
 }
 
-/** The chapter's spoken lines that play a clip, each with its clip's file. */
 const clipsOf = (segs: readonly Segment[], book: Pick<Book, "readNotes"> | undefined): Clip[] =>
   segs
     .filter(
@@ -78,7 +56,6 @@ const clipsOf = (segs: readonly Segment[], book: Pick<Book, "readNotes"> | undef
     )
     .map((s) => ({ s, file: fileName(s.audio.url!) }));
 
-/** Those of `clips` not yet heard as their line now reads. */
 function unheard(db: Db, bookId: string, clips: readonly Clip[]): Clip[] {
   const found = readHeard(
     db,
@@ -89,19 +66,16 @@ function unheard(db: Db, bookId: string, clips: readonly Clip[]): Clip[] {
 }
 
 /**
- * The dictionary's substitutions in the line as its clip was sent — the dictionary as it stands,
- * when it still makes what the clip records it was sent (`pronounced`), else none: a clip sent
- * before the dictionary last changed is compared with the line as written.
+ * Dictionary substitutions as the clip was sent; none if the dictionary changed since
+ * (`pronounced` no longer matches), so the line is compared as written.
  */
 function sentHits(s: Segment, lexicon: LexEntry[]): LexHit[] {
   const sent = speak(s.text, lexicon);
   return s.audio.pronounced == null || s.audio.pronounced === sent.text ? sent.hits : [];
 }
 
-/** What hearing these clips costs at `t`'s rate per minute of audio. */
 const costOf = (t: Transcriber, seconds: number): number => (seconds / 60) * t.perMinute;
 
-/** The flag a mismatch raises: what was heard, quoted, cut to a note's length. */
 const heardFlag = (heard: string, at: number): SegmentFlag => {
   const said = heard.length > NOTE_CHARS ? `${heard.slice(0, NOTE_CHARS).trimEnd()}…` : heard;
   return { kind: "heard", note: `Heard: “${said}”`, at };
@@ -139,23 +113,19 @@ export function checkHandler(provider: TranscriptionProvider, files: AudioFiles)
       }
       ctx.note("Check started", "info", { endpoint: t.name, lines: todo.length });
 
-      // the cast's name words a clip's line is written with, which Phonon reads as words to
-      // favour: a name said wrong may be heard right for it, a cost a check of names alone would
-      // not pay
+      // Phonon favours these words, so a mispronounced name may still be heard right
       const castWords = nameWords(readSpeakers(db, job.bookId));
       const lexicon = readLexicon(db, job.bookId);
       const label = "Check";
       let refused: string | null = null;
       let unhinted = false;
 
-      /** Keep what was heard, and raise or take down the line's `heard` flag to match it. */
       const record = (c: Clip, line: HeardLine): void =>
         db.transaction((tx) => {
           writeHeard(tx, job.bookId, c.file, line, t.id);
           const at = library.locateChapter(tx, uid);
           if (!at) return;
-          // the line as it is now: one edited or rendered again while it was heard is not flagged
-          // for a clip it no longer plays, and a person's flag is never touched
+          // skip if the line changed while heard, and never touch a person's flag
           const now = lineNow(tx, at.bookId, at.id, c.s.id);
           if (!now || now.url == null || fileName(now.url) !== c.file || now.text !== line.text)
             return;
@@ -166,7 +136,6 @@ export function checkHandler(provider: TranscriptionProvider, files: AudioFiles)
           bumpRevision(tx, at.bookId, at.id);
         });
 
-      /** Hear one clip; a failure is counted and said, and the run goes on. */
       const hear = async (c: Clip): Promise<void> => {
         const seconds = c.s.audio.duration;
         const cost = costOf(t, seconds);
@@ -185,8 +154,6 @@ export function checkHandler(provider: TranscriptionProvider, files: AudioFiles)
           });
           return;
         }
-        // its money (`~/usage/dispatch`): held to the endpoint's limit while it is out, priced
-        // into the ledger as it settles, and given back once it has
         const money = dispatch(db, {
           kind: "transcription",
           endpoint: t,
@@ -272,15 +239,9 @@ export function checkHandler(provider: TranscriptionProvider, files: AudioFiles)
 }
 
 /**
- * Queue a check by ear for each chapter, as one run, on the first transcription endpoint switched
- * on — refused whole, with a 400, when there is none.
- *
- * Chapters that are missing, skipped for the audiobook, being narrated or checked already, with no
- * clip to hear (`unnarrated`) or with every clip already heard as its line reads (`nothing`) are
- * left out and said so, as narration leaves chapters out — `again` hears every clip, those already
- * heard too, so a chapter heard before the comparison changed is heard by it. The run is priced by the minute of audio
- * it will send and checked against the book's budget whole, and the endpoint's daily limit against
- * its first line, before anything is queued.
+ * Queue a check per chapter on the first enabled transcription endpoint (400 if none). Chapters with
+ * nothing to hear are skipped; `again` re-hears clips already heard. The whole run is priced per
+ * minute of audio and checked against the budget before anything is queued.
  */
 export function enqueueCheck(
   db: Db,
@@ -360,10 +321,8 @@ export function enqueueCheck(
 }
 
 /**
- * Queue a check of the chapter a narration job was for, when its book checks by ear and a
- * transcription endpoint is switched on. Called once the narration has finished, so the chapter is
- * no longer busy with it; a check that cannot be queued — the budget, a check already queued — is
- * said in the narration's log and leaves the narration as it ended.
+ * After a narration ends, queue a check of its chapter if the book checks by ear. A check that
+ * can't be queued is logged on the narration and doesn't change its outcome.
  */
 export function checkAfterNarration(ctx: JobContext): void {
   const { db } = ctx;
@@ -373,7 +332,7 @@ export function checkAfterNarration(ctx: JobContext): void {
   try {
     const queued = enqueueCheck(
       db,
-      // straight into the queue: the worker that finished the narration takes it up next
+      // straight into the queue: this worker takes it up next
       { enqueue: (input) => enqueueJob(db, input) },
       job.bookId,
       [job.chapterId],
@@ -386,7 +345,6 @@ export function checkAfterNarration(ctx: JobContext): void {
   }
 }
 
-/** What was heard of a chapter's clips in the book, by line. */
 export function chapterHeard(db: Db, bookId: string, chapterId: number): ChapterHeard {
   if (scriptRevision(db, bookId, chapterId) == null) throw notFound("No such chapter");
   const clips = readScript(db, bookId, chapterId)

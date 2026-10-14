@@ -1,5 +1,4 @@
-// Formatting shared by the Export panels. One definition each, so the plan, the chapter list, the
-// library and the player bar never disagree about what "12h 04m" or "1.4 GB" means.
+// Formatting shared by the Export panels, so they never disagree about "12h 04m" or "1.4 GB".
 import { clockDuration, minuteDuration } from "@/lib/time";
 
 /** A long span: hours and minutes, or minutes and seconds under an hour. */
@@ -8,7 +7,6 @@ export const hms = (s: number): string =>
     ? `${Math.floor(s / 3600)}h ${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}m`
     : minuteDuration(s);
 
-/** A clip-length span, as a player writes it. */
 export const clock = clockDuration;
 
 /** Megabytes, promoted to GB once the number stops being readable. */

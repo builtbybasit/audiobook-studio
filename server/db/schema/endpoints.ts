@@ -1,21 +1,7 @@
-// Endpoints, scripting profiles and their rate cards.
-//
-// The app talks to three kinds of OpenAI-compatible server — a chat model that turns prose into an
-// attributed script, a speech model that renders a line, and a transcription model that hears one
-// back — and they are configured, paused, rate limited and billed the same way. They are two tables rather than one because their rate cards
-// price different components and their operational settings differ in the middle, but everything
-// that *is* shared (the ops columns, the schedule, the promotions) is shared by structure.
-//
-// **Rates live in columns and the schedule lives in rows.** A promotion has a start, an end and a
-// scope; a window has days and minutes past midnight. Both are read against an instant on every
-// single request — "what was the rate at 02:14 on Friday" — so they are queryable rows, not JSON.
-// And an expired promotion is kept rather than deleted: it stops applying when its end date passes,
-// and the requests it priced keep the rates they were priced at.
-//
-// **One secret is in here: `endpoints.api_key`**, the key a real provider is called with. It is
-// write-only over HTTP — a save may set or clear it, a read only says whether there is one — and it
-// is read at the moment of a request, never copied onto a job. `credentials` is still a registry of
-// names, which account a key belongs to; see `docs/backend.md`.
+// Endpoints (scripting, speech, transcription) and their rate cards. Rates are columns; windows and
+// promotions are rows, since every request reads them against an instant.
+// `endpoints.api_key` is the one secret: write-only over HTTP, read at request time, never copied
+// onto a job.
 import { index, integer, primaryKey, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 import type {
@@ -34,7 +20,7 @@ import type {
   TtsBillingUnit,
 } from "@/types";
 
-/** A named account several endpoints can point at, instead of each holding its own copy of a key. */
+/** A named account several endpoints can point at. */
 export const credentials = sqliteTable("credentials", {
   id: text("id").primaryKey(),
   label: text("label").notNull(),
@@ -43,14 +29,8 @@ export const credentials = sqliteTable("credentials", {
 });
 
 /**
- * One configured endpoint, of any kind.
- *
- * `kind` decides which half of the rate columns means anything: a `scripting` row prices tokens
- * (`in_price`, `out_price`, `cached_input`, `cache_write`), a `tts` row prices speech in whatever
- * unit it bills in (`billing_unit`, `billing_rate`, `billing_audio_rate`), and a `transcription`
- * row the minute of audio sent (`billing_unit` = `minute`, `billing_rate`). A rate is `null` when it
- * is **not known**, which is never the same as `0` — a local endpoint you host yourself is free; a
- * provider whose price list nobody has typed in yet cannot be priced at all.
+ * One endpoint of any kind; `kind` decides which rate columns apply. A null rate is unknown, never
+ * the same as 0 (free).
  */
 export const endpoints = sqliteTable(
   "endpoints",
@@ -63,47 +43,44 @@ export const endpoints = sqliteTable(
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
     concurrency: integer("concurrency").notNull().default(1),
     needsKey: integer("needs_key", { mode: "boolean" }).notNull().default(false),
-    /** the key a real provider is called with; never sent back over HTTP, see the file comment */
+    /** never sent back over HTTP */
     apiKey: text("api_key"),
     /** per-request character cap; 0 = no limit */
     maxChars: integer("max_chars").notNull().default(0),
     splitAt: text("split_at").$type<SplitMode>().notNull().default("sentence"),
-    /** speech only: the rate every line is asked for, in Hz; null = the model's own */
+    /** speech only: Hz; null = the model's own */
     sampleRate: integer("sample_rate").$type<SampleRate>(),
-    /** speech only: the format every line is asked for and kept as; null = WAV */
+    /** speech only: null = WAV */
     audioFormat: text("audio_format").$type<AudioFormat>(),
     /** speech only: MP3 kbps or Opus bps as the API spells it; null = the provider's default */
     audioBitrate: integer("audio_bitrate"),
-    /** speech only: send lines in batches when the server takes them; false = one a request */
+    /** speech only: batch lines when the server takes them; false = one a request */
     batch: integer("batch", { mode: "boolean" }).notNull().default(true),
     /** speech only: a compatible server that makes voices at POST …/audio/voices */
     makesVoices: integer("makes_voices", { mode: "boolean" }).notNull().default(false),
-    /** speech only: the server named for a base URL that cannot say; null = the base URL decides */
+    /** speech only: for a base URL that cannot say; null = the base URL decides */
     server: text("server").$type<SpeechServer>(),
     position: integer("position").notNull().default(0),
 
     // ---- scripting rates: USD per 1M tokens ----
     inPrice: real("in_price"),
     outPrice: real("out_price"),
-    /** null = no separate rate, charged as ordinary input. Not zero, which would mean free. */
+    /** null = charged as ordinary input (0 would mean free) */
     cachedInput: real("cached_input"),
     cacheWrite: real("cache_write"),
     maxOutputTokens: integer("max_output_tokens"),
     secPerChunk: real("sec_per_chunk"),
-    /** scripting only: how hard a reasoning model thinks; null leaves it to the model */
+    /** scripting only: null leaves it to the model */
     reasoningEffort: text("reasoning_effort").$type<ReasoningEffort>(),
-    /**
-     * scripting only: this endpoint's say over the library's prompt. Null is `default`; the two
-     * texts are kept whatever the mode, so switching back finds them again.
-     */
+    /** scripting only: null = `default`; the texts are kept whatever the mode */
     promptMode: text("prompt_mode").$type<ProfilePrompt["mode"]>(),
     promptSystem: text("prompt_system"),
     promptUser: text("prompt_user"),
-    /** scripting only: notes for this model, placed by `{{endpoint.notes}}`; null = none */
+    /** scripting only: placed by `{{endpoint.notes}}` */
     promptNotes: text("prompt_notes"),
     /** transcription only: `hotword_lambda` sent beside the hinted names; null sends none */
     hotwordLambda: real("hotword_lambda"),
-    /** transcription only: send each recording as 16 kHz mono WAV; false sends it as rendered */
+    /** transcription only: send 16 kHz mono WAV; false sends it as rendered */
     resample16k: integer("resample_16k", { mode: "boolean" }).notNull().default(true),
 
     // ---- speech rates ----
@@ -112,36 +89,22 @@ export const endpoints = sqliteTable(
     billingRate: real("billing_rate"),
     /** `audio-tokens` only: USD per 1M output audio tokens */
     billingAudioRate: real("billing_audio_rate"),
-    /**
-     * `audio-tokens` only: how many audio tokens one second of returned audio bills as. A
-     * per-model assumption rather than something derivable from the text, so it is configured here
-     * and every estimate that leans on it says so.
-     */
+    /** `audio-tokens` only: a per-model assumption, and estimates using it say so */
     audioTokensPerSecond: real("audio_tokens_per_second"),
-    /** whether voice instructions sent beside the line are billed as submitted content */
+    /** whether voice instructions are billed as submitted content */
     billsInstructions: integer("bills_instructions", { mode: "boolean" }),
-    /**
-     * Rates entered under a **different** billing model, kept rather than discarded.
-     *
-     * Switching model clears the rate fields instead of reinterpreting a per-character rate as a
-     * per-token one; parking them here means switching back restores what was configured rather
-     * than making the operator type it again.
-     */
+    /** Rates from other billing units, parked so switching back restores them. */
     parkedRates: text("parked_rates", { mode: "json" }).$type<
       Partial<Record<TtsBillingUnit, ParkedRates>>
     >(),
 
-    /** USD per 1M characters — the figure the run estimator has always used */
+    /** USD per 1M characters, used by the run estimator */
     price: real("price"),
 
     // ---- the schedule's timezone; the windows themselves are rows ----
     /**
-     * IANA zone the rate windows are read in — a schedule without one is unreadable, which is what
-     * makes this the field that says whether there is a rate card at all.
-     *
-     * Null means no advanced pricing has ever been configured on this endpoint, and it reads back
-     * with no `pricing` rather than with an empty one. The difference matters: the app fills the
-     * defaults in on first use, and an endpoint that already had an empty card would skip that.
+     * IANA zone the windows are read in. Null = no rate card, read back as no `pricing` rather than
+     * an empty one, so the app still fills in defaults on first use.
      */
     timezone: text("timezone"),
 
@@ -162,11 +125,10 @@ export const endpoints = sqliteTable(
     latency: real("latency"),
     failRate: real("fail_rate"),
 
-    /** what this model can do with expression tags, and for which exact model and base URL */
+    /** expression tag support, for this exact model and base URL */
     expressionStatus: text("expression_status").$type<"unknown" | "unsupported" | "supported">(),
     expressionModel: text("expression_model"),
     expressionBaseUrl: text("expression_base_url"),
-    /** the brackets its tags are written in; null from before they were asked for */
     expressionBrackets: text("expression_brackets", { mode: "json" }).$type<TagBracket[]>(),
     /** any words in those brackets, not only the listed tags */
     expressionOpen: integer("expression_open", { mode: "boolean" }),
@@ -189,7 +151,7 @@ export const voices = sqliteTable(
   (t) => [primaryKey({ columns: [t.endpointId, t.id] })],
 );
 
-/** One expression tag this endpoint's model understands. `id` matches the same expression across models. */
+/** `id` matches the same expression across models. */
 export const expressionTags = sqliteTable(
   "expression_tags",
   {
@@ -206,11 +168,8 @@ export const expressionTags = sqliteTable(
 );
 
 /**
- * A recurring time window with its own rates — an off-peak discount, a peak surcharge.
- *
- * `from` and `to` are minutes past local midnight in the endpoint's timezone. `to <= from` means
- * the window runs past midnight, and `days` then names the day it *starts* on, so a Friday
- * 22:00–02:00 window covers Friday night and the first two hours of Saturday.
+ * A recurring window with its own rates. `from`/`to` are minutes past local midnight; `to <= from`
+ * runs past midnight, and `days` names the day it starts on.
  */
 export const rateWindows = sqliteTable(
   "rate_windows",
@@ -226,20 +185,14 @@ export const rateWindows = sqliteTable(
     toMinute: integer("to_minute").notNull(),
     /** percentage off the base rates, 0–100 */
     percent: real("percent"),
-    /** explicit replacement rates; wins over `percent` for the components it names */
+    /** wins over `percent` for the components it names */
     rates: text("rates", { mode: "json" }).$type<Partial<RateSet>>(),
     position: integer("position").notNull().default(0),
   },
   (t) => [primaryKey({ columns: [t.endpointId, t.id] })],
 );
 
-/**
- * A temporary price change with a start and an end — "50% off this model until Friday".
- *
- * Never deleted when it expires. It stops applying the moment its end date passes, and every
- * request it priced keeps the rates it was priced at, so the row has to stay for the receipt to
- * remain explicable.
- */
+/** A temporary price change. Kept after it expires so the receipts it priced stay explicable. */
 export const promotions = sqliteTable(
   "promotions",
   {
@@ -256,9 +209,8 @@ export const promotions = sqliteTable(
     scope: text("scope", { mode: "json" }).$type<PromotionScope[]>().notNull(),
     /** percentage off whatever the schedule left, 0–100 */
     percent: real("percent"),
-    /** explicit replacement rates — these ignore the schedule for the components they name */
+    /** ignore the schedule for the components they name */
     rates: text("rates", { mode: "json" }).$type<Partial<RateSet>>(),
-    /** free text kept with the promotion so an expired one still explains itself */
     note: text("note"),
     position: integer("position").notNull().default(0),
   },

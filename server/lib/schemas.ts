@@ -1,10 +1,5 @@
-// The domain shapes as request bodies.
-//
-// A route validates what arrives against these before an operation sees it, so a body with a
-// speaker whose gender is "male" or a line with no text is a 400 naming the field rather than a
-// row the app cannot read back. They are deliberately no stricter than the types in `@/types`:
-// a field the domain leaves optional is optional here, and the audio a line carries is checked for
-// the fields every reader relies on and passed through otherwise.
+// The domain shapes as request-body schemas, so a bad body is a 400 naming the field. No stricter
+// than `@/types`: what the domain leaves optional is optional here.
 import * as v from "valibot";
 
 import type {
@@ -34,13 +29,10 @@ import { badRequest } from "~/lib/errors";
 const Gender = v.picklist(["m", "f", "n", "?"]);
 
 // ---- voice effects ----
-//
-// A chain is the user's to write, and it goes to Python as it stands (`server/audio/effects.ts`):
-// a step's plugin is looked up by name on the `pedalboard` module and its params are passed as
-// keyword arguments. So each is held to what can be nothing else — a name of letters and digits,
-// keywords that are identifiers, numbers that are finite — and a mix nests only so far.
+// A chain goes to Python as written (`server/audio/effects.ts`): plugin names are looked up on the
+// `pedalboard` module and params become keyword arguments, so both are held to safe identifiers.
 
-/** An effect's id; where a choice is asked for, "none" too. Whether it names one is the op's to say. */
+/** An effect's id, or "none" where a choice is asked for; the op checks it exists. */
 export const EffectIdSchema = v.pipe(v.string(), v.nonEmpty("must not be empty"), v.maxLength(64));
 
 const PluginStepSchema = v.strictObject({
@@ -60,7 +52,7 @@ const PluginStepSchema = v.strictObject({
   on: v.boolean(),
 });
 
-/** A plugin step or a mix, told apart by the key a mix has, so a refusal names the right fields. */
+/** Picks the schema by the `mix` key, so a refusal names the right fields. */
 const StepSchema: v.GenericSchema<Step> = v.lazy((input) =>
   typeof input === "object" && input !== null && "mix" in input ? MixStepSchema : PluginStepSchema,
 );
@@ -76,7 +68,6 @@ const MixStepSchema = v.strictObject({
   on: v.boolean(),
 });
 
-/** How deep a chain's mixes go, and how many steps it has in all. */
 function chainSize(steps: readonly Step[]): { depth: number; steps: number } {
   let depth = 0;
   let count = steps.length;
@@ -108,7 +99,7 @@ export const EffectBodySchema = v.object({
   ),
 });
 
-/** null where a choice may be left to the next level; read as absent, which is what the row keeps. */
+/** null = left to the next level; read as absent. */
 const unset = <T>(schema: v.GenericSchema<T>) =>
   v.optional(
     v.pipe(
@@ -151,7 +142,7 @@ export const LexEntrySchema = v.object({
 const SegmentType = v.picklist(["dialogue", "narration", "thought", "watermark", "note"]);
 const AudioStatus = v.picklist(["none", "queued", "generating", "done", "failed", "stale"]);
 
-/** A clip, checked for what every reader of one relies on and passed through otherwise. */
+/** A clip: the fields every reader relies on are checked, the rest passed through. */
 const Audio = v.looseObject({
   status: AudioStatus,
   endpoint: v.nullable(v.string()),
@@ -203,7 +194,7 @@ export const SegmentSchema = v.looseObject({
   effects: v.optional(v.pipe(v.array(EffectIdSchema), v.maxLength(16))),
 });
 
-/** The body a script arrives as; `satisfies` keeps it from drifting from the domain type. */
+/** Assigning to `Segment` keeps the schema from drifting from the domain type. */
 export type SegmentBody = v.InferOutput<typeof SegmentSchema>;
 const _segmentIsASegment: Segment = null as unknown as SegmentBody;
 void _segmentIsASegment;
@@ -240,10 +231,8 @@ export const VersionOriginSchema = v.variant("kind", [
 ]) satisfies v.GenericSchema<unknown, VersionOrigin>;
 
 // ---------- a script file ----------
-//
-// What `<book>.script.zip` holds, checked piece by piece so a hand-edited file that breaks is
-// refused with the path of what broke, and one broken chapter file refuses that chapter rather than
-// the import. Loose where the file is loose: an unknown field someone added is ignored, not an error.
+// `<book>.script.zip`, checked piece by piece: a broken chapter file refuses that chapter, not the
+// import. Unknown fields are ignored.
 
 const FileText = v.pipe(v.string(), v.nonEmpty("must not be empty"));
 const Hash = v.pipe(
@@ -316,20 +305,15 @@ export const LexiconFileSchema = v.array(
   }),
 ) satisfies v.GenericSchema<unknown, ScriptFileTerm[]>;
 
-/** Lines of one chapter, named by number: what a re-attribution or its undo points at. */
+/** Lines of one chapter, by number: what a re-attribution or its undo points at. */
 export const ChapterLinesSchema = v.object({
   chapterId: v.pipe(v.number(), v.integer(), v.minValue(1)),
   ids: v.pipe(v.array(v.pipe(v.number(), v.integer(), v.minValue(1))), v.minLength(1)),
 });
 
 /**
- * Everything a build runs with, checked here so a settings object that would make a nonsense of
- * the plan is a 400 naming the field rather than an audiobook called `undefined.m4b`.
- *
- * `useStale` is a consent and not a preference: it is the listener saying, in the blocker panel,
- * that they want clips the script has moved under in the file anyway. It arrives with the request
- * because the build refuses without it, and it is stored with the export so the page can say later
- * that this version was built that way.
+ * `useStale` is consent from the blocker panel to build with stale clips; the build refuses without
+ * it, and it is stored with the export.
  */
 export const ExportSettingsSchema = v.object({
   filename: v.string(),
@@ -353,11 +337,7 @@ export const ExportSettingsSchema = v.object({
 }) satisfies v.GenericSchema<unknown, ExportSettings>;
 
 // ---- endpoints ----
-//
-// The Endpoints page saves its whole configuration at once, so these are the domain's endpoint
-// shapes minus what an endpoint *observed* — its latency history, its failure counts, a backoff —
-// which is this session's telemetry and not configuration. `v.object` drops those fields rather
-// than refusing them, so the page can send the objects it holds as they are.
+// Configuration only: `v.object` drops telemetry fields, so the page can send what it holds.
 
 /** A price: `null` is "not known", which is never `0`. */
 const Rate = v.nullable(v.pipe(v.number(), v.minValue(0)));
@@ -419,7 +399,7 @@ const PricingSchema = v.object({
   promotions: v.array(PromotionSchema),
 });
 
-/** The operational block; optional field by field, as an endpoint saved before it existed has none. */
+/** Optional field by field: older endpoints have none. */
 const Ops = {
   timeoutSec: v.optional(Count),
   maxRetries: v.optional(Count),
@@ -439,7 +419,7 @@ const Common = {
   needsKey: v.boolean(),
   /** write-only: absent keeps the stored key, "" forgets it — see `replaceEndpoints` */
   apiKey: v.optional(v.string()),
-  /** what a read said; accepted so a page can send back what it was given, and ignored */
+  /** accepted so a page can send back what it read, and ignored */
   hasKey: v.optional(v.boolean()),
   maxChars: Count,
   splitAt: SplitMode,
@@ -482,8 +462,7 @@ export const EndpointSchema = v.object({
       ),
     }),
   ),
-  // speech only: a scripting profile has no rate, and one sent on a profile is dropped with the
-  // other fields a profile does not have
+  // speech only; dropped on a scripting profile
   sampleRate: v.optional(
     v.nullable(v.picklist(SAMPLE_RATES, `must be one of ${SAMPLE_RATES.join(", ")} Hz`)),
   ),
@@ -501,12 +480,8 @@ export const EndpointSchema = v.object({
 }) satisfies v.GenericSchema<unknown, StoredEndpoint>;
 
 // ---- the scripting prompt ----
-//
-// The shapes are checked here, with the rest of the body; what a prompt says — its tags, its
-// `{{excerpt}}`, its length — is checked by `@/lib/prompt`, the rules the editor shows as it is
-// typed in, and refused with `refusePrompt` by the operation that saves it. A refusal from the
-// validator would reach the page as "the json of this request was not valid"; this one reaches it
-// as the sentence that says what to change.
+// Only shapes here; a prompt's content is checked by `@/lib/prompt` and refused with
+// `refusePrompt`, so the page gets a sentence saying what to change.
 
 export const PromptTemplateSchema = v.object({
   system: v.string(),
@@ -525,10 +500,7 @@ export const BookPromptSchema = v.object({
   ...PromptTemplateSchema.entries,
 }) satisfies v.GenericSchema<unknown, BookPrompt>;
 
-/**
- * Which profile scripting runs go to; see `~/db/settings`. Anything else a page from before sends
- * beside it is dropped rather than refused.
- */
+/** Which profile scripting runs go to; see `~/db/settings`. Other fields are dropped. */
 export const ScriptSettingsSchema = v.object({
   profile: v.nullable(v.pipe(v.string(), v.nonEmpty())),
 }) satisfies v.GenericSchema<unknown, ScriptSettings>;

@@ -1,10 +1,5 @@
-// Every read and write a chapter's script makes.
-//
-// A script is written whole. A scripting run replaces every line of the chapter at once, so the
-// write is a delete and an insert in one transaction, and the chapter's `scriptRevision` moves with
-// it. That revision is what lets a job that started against one script refuse to overwrite the
-// next: it captures the number when it reads the chapter, and the write here only goes through when
-// the number has not moved. See `writeScript`.
+// Every read and write a chapter's script makes. A script is written whole, and each write moves
+// the chapter's `scriptRevision`, so a job that read an older revision cannot overwrite newer work.
 import { and, asc, count, eq, inArray, ne, sql } from "drizzle-orm";
 
 import type {
@@ -31,7 +26,7 @@ import {
 } from "~/db/rows";
 import { AppError } from "~/lib/errors";
 
-/** SQLite takes its parameters one variable at a time, and a chapter is hundreds of lines. */
+/** Keeps an `IN (...)` under SQLite's parameter limit; a chapter is hundreds of lines. */
 const CHUNK = 100;
 const chunked = <T>(xs: readonly T[]): T[][] => {
   const out: T[][] = [];
@@ -39,7 +34,6 @@ const chunked = <T>(xs: readonly T[]): T[][] => {
   return out;
 };
 
-/** How many lines a chapter's script has; 0 for one never scripted. */
 export function lineCount(db: Db | Tx, bookId: string, chapterId: number): number {
   return (
     db
@@ -69,11 +63,7 @@ export function readScript(db: Db | Tx, bookId: string, chapterId: number): Segm
   return segRows.map((s) => toSegment(s, bySegment.get(s.id) ?? []));
 }
 
-/**
- * The clip a book's row names by this address — whoever's line it is, how long the row says it
- * plays and at what rate — or undefined when no clip row holds it. The demo makes a clip's file
- * from this the first time it is read (`~/audio/demoClips`).
- */
+/** The clip row at this url, with its line's speaker; read by `~/audio/demoClips`. */
 export function clipByUrl(
   db: Db | Tx,
   bookId: string,
@@ -94,15 +84,14 @@ export function clipByUrl(
     .get();
 }
 
-/** One chapter, named by placeholders, for the statements a script write repeats per chapter. */
 type At = { bookId: string; chapterId: number };
 const atBook = sql.placeholder("bookId");
 const atChapter = sql.placeholder("chapterId");
-/** The keys `replaceScript`'s own statements are kept under (`prepared`). */
+/** `prepared` keys for `replaceScript`'s statements. */
 const dropScript = Symbol("drop a chapter's script");
 const moveRevision = Symbol("move a chapter's revision");
 
-/** How many times this chapter's script has been written, or null when there is no such chapter. */
+/** Null when there is no such chapter. */
 export function scriptRevision(db: Db | Tx, bookId: string, chapterId: number): number | null {
   const query = prepared(db, scriptRevision, (h) =>
     h
@@ -129,12 +118,8 @@ export class ScriptConflict extends Error {
 }
 
 /**
- * Replace a chapter's script inside a transaction the caller already holds, and move its revision.
- *
- * `ifRevision` is the revision the caller read before it started. When it is given and the chapter
- * has moved past it — an edit landed, or a later run wrote first — nothing is written and a
- * `ScriptConflict` says why. That is the rule that keeps a slow job from overwriting newer work,
- * and it holds because the check and the write share the caller's transaction.
+ * Replace a chapter's script inside the caller's transaction, and move its revision. When the
+ * chapter has moved past `ifRevision`, nothing is written and a `ScriptConflict` is thrown.
  */
 export function replaceScript(
   tx: Tx,
@@ -147,8 +132,7 @@ export function replaceScript(
   if (current == null) throw new ScriptConflict(ifRevision ?? 0, null);
   if (ifRevision != null && current !== ifRevision) throw new ScriptConflict(ifRevision, current);
 
-  // the demo's seed writes some three hundred chapters in one transaction: each of these is
-  // compiled once for it, rather than built and compiled again for every chapter
+  // prepared once: the demo seed writes ~300 chapters in one transaction
   const at: At = { bookId, chapterId };
   // clips cascade from their segment
   prepared(tx, dropScript, (h) =>
@@ -157,7 +141,6 @@ export function replaceScript(
       .where(and(eq(segments.bookId, atBook), eq(segments.chapterId, atChapter)))
       .prepare(),
   ).run(at);
-  // a script is hundreds of rows, and a demo seed thousands: one statement each, compiled once
   insertRows(
     tx,
     segments,
@@ -191,12 +174,9 @@ export function writeScript(
 }
 
 // ---------- clips, one line at a time ----------
-//
-// A narration run writes clips as they land, one line at a time, and never the script around them:
-// a line's words are the person's and the job's, and its clip is the run's. These write one clip
-// row of one line and leave the segment row and the line's other clips where they are.
+// Each writes one clip row and leaves the segment row and the line's other clips alone.
 
-/** The rows of one line's clip in one role: at most one, since the index only allows takes to repeat. */
+/** At most one row: the index only lets takes repeat. */
 function roleWhere(
   bookId: string,
   chapterId: number,
@@ -211,7 +191,7 @@ function roleWhere(
   );
 }
 
-/** A line that an edit removed while a clip was rendering for it. The chapter is still there. */
+/** A line an edit removed while a clip was rendering for it. */
 export class LineGone extends AppError {
   constructor(segmentId: number) {
     super(404, `Line ${segmentId} is no longer in the script`);
@@ -234,11 +214,8 @@ function requireSegment(tx: Tx, bookId: string, chapterId: number, segmentId: nu
 }
 
 /**
- * Put `clip` in one line's `current` or `candidate` slot, replacing whatever was there.
- *
- * The line's takes are untouched: a take is history, and a clip landing is not what changes it.
- * A line that has gone from the script is refused, so a result for a line an edit removed while
- * it rendered is never written against nothing.
+ * Put `clip` in one line's `current` or `candidate` slot, replacing whatever was there. The takes
+ * are untouched. A line gone from the script throws `LineGone`.
  */
 export function writeClip(
   tx: Tx,
@@ -259,7 +236,6 @@ export function writeClip(
     .run();
 }
 
-/** Add one superseded clip to a line's take list. */
 export function addTake(tx: Tx, bookId: string, chapterId: number, segmentId: number, take: Take) {
   requireSegment(tx, bookId, chapterId, segmentId);
   tx.insert(clips)
@@ -267,7 +243,7 @@ export function addTake(tx: Tx, bookId: string, chapterId: number, segmentId: nu
     .run();
 }
 
-/** Drop a line's retake, whatever state it is in. Says whether there was one. */
+/** Drop a line's retake in any state; true when there was one. */
 export function dropCandidate(
   tx: Tx,
   bookId: string,
@@ -283,22 +259,14 @@ export function dropCandidate(
   );
 }
 
-/**
- * Freeze a clip as a take. `snapshotTake` is the store's rule for what a take keeps; the files are
- * added back because the store never had them and a take that cannot be played is not a take.
- */
+/** Freeze a clip as a take: `snapshotTake`, plus the files, which the store never had. */
 export function takeOf(a: SegmentAudio): Take {
   return { ...snapshotTake(a), ...(a.url ? { url: a.url } : {}), ...(a.raw ? { raw: a.raw } : {}) };
 }
 
 /**
- * Turn a line's retake down, and say what became of it.
- *
- * A retake that rendered joins the take list marked rejected, so the comparison the listener made
- * is still playable afterwards and its number is never handed out again; one that never produced
- * a clip — failed, or dropped before it rendered — has nothing worth keeping and simply goes. The
- * clip in the book is not touched: it was never displaced, so there is nothing to put back. The
- * same rule applies to a retake in the way of a run (`queueRender` in `~/jobs/narration`).
+ * Turn a line's retake down. One that rendered joins the takes marked rejected, so it stays
+ * playable and its number is never reused; one with no audio just goes. Returns the take, if any.
  */
 export function rejectCandidate(
   tx: Tx,
@@ -320,10 +288,8 @@ export function rejectCandidate(
 }
 
 /**
- * A replacement that succeeded takes over: the retake becomes the clip in the book and the one it
- * displaces joins the take list, so the history is kept and nobody is asked for 300 verdicts, and
- * a retake the listener kept does the same: the candidate row becomes the current row with `auto`
- * stripped, and the takes are left as they are, one more if the old clip had audio.
+ * The retake becomes the line's current clip with `auto` stripped; the clip it displaces joins
+ * the takes when it had audio.
  */
 export function acceptCandidate(
   tx: Tx,
@@ -349,15 +315,11 @@ export function acceptCandidate(
   tx.update(clips).set({ role: "current", auto: null }).where(eq(clips.id, candidate.id)).run();
 }
 
-/**
- * Take the listener's complaint off a line. A kept retake answers it; a line whose new take was
- * chosen over the one that was flagged is no longer a line with a problem.
- */
 export function clearFlag(tx: Tx, bookId: string, chapterId: number, segmentId: number): void {
   setFlag(tx, bookId, chapterId, segmentId, null);
 }
 
-/** Write one line's flag, or take it down with `null`; false when the line is not in the script. */
+/** `null` takes the flag down; false when the line is not in the script. */
 export function setFlag(
   tx: Db | Tx,
   bookId: string,
@@ -379,10 +341,7 @@ export function setFlag(
     .get();
 }
 
-/**
- * One line as a check by ear writes against it: its words, its flag and the url of the clip the
- * book plays for it; undefined when the line is not in the script.
- */
+/** One line's words, flag and current clip url, for a check by ear; undefined when gone. */
 export function lineNow(
   db: Db | Tx,
   bookId: string,
@@ -412,14 +371,9 @@ export function lineNow(
 }
 
 /**
- * Move a chapter's script revision on by one, and say where it is now.
- *
- * The revision counts every write of a chapter's script rows, whoever made it — a scripting run,
- * an edit, a rename that moved lines, and a clip that landed. A clip is part of the script a client
- * reads and writes back whole, so a client editing from a copy read before a clip landed would
- * write the clip's old state over the new one; moving the revision here means that edit is refused
- * with the 409 it already handles, and the client reads the chapter again with the clip in it.
- * Every transaction that writes clips for a chapter calls this once, whatever it wrote.
+ * Move a chapter's script revision on by one and return it. Every transaction that writes clips
+ * calls this once: a client writes the script back whole, so an edit from a copy read before a
+ * clip landed must get a 409 rather than overwrite the clip.
  */
 export function bumpRevision(tx: Tx, bookId: string, chapterId: number): number {
   const revision = tx
@@ -435,13 +389,8 @@ export function bumpRevision(tx: Tx, bookId: string, chapterId: number): number 
 // ---------- the same words elsewhere in the book ----------
 
 /**
- * The lines of the book's other chapters that read as one of `folded` — lower-cased, with line
- * breaks and runs of spaces read as one space — and the chapter each is in.
- *
- * What the site-text detector counts: a sentence a site drops into every chapter is the same
- * sentence every time. One statement, the candidates sent as one JSON array rather than a variable
- * each, and only the lines that match come back, so a thousand-chapter book is not read to check
- * one chapter. The folding here is SQLite's `lower`, which folds ASCII only; English boilerplate is.
+ * Lines in the book's other chapters that fold (lower-cased, whitespace runs as one space) to one
+ * of `folded`, for the site-text detector. SQLite's `lower` folds ASCII only.
  */
 export function linesElsewhere(
   db: Db | Tx,
@@ -467,13 +416,8 @@ export function linesElsewhere(
 // ---------- lines by speaker ----------
 
 /**
- * Give every line of the book that `from` reads to `to`, and say which lines moved.
- *
- * A rename or a merge on the Cast page. The lines moved are returned by chapter so an Undo can put
- * exactly those back (`attributeLines`), rather than moving every line `to` now has. Each chapter
- * touched has its script revision moved on — a scripting job in flight against it must not land
- * on top of the change — and a clip rendered for a line that now names a different speaker no
- * longer matches its line, so it is marked stale, as the cast store does.
+ * Give every line `from` reads to `to` (a rename or merge). Returns the moved lines by chapter so
+ * an Undo can put exactly those back.
  */
 export function reattribute(tx: Tx, bookId: string, from: string, to: string): RevisedLines[] {
   const rows = tx
@@ -489,9 +433,8 @@ export function reattribute(tx: Tx, bookId: string, from: string, to: string): R
 }
 
 /**
- * Put `speaker` on exactly these lines: the primitive under a rename, a merge and their undo.
- * Lines that no longer exist are left out of the count rather than refused, because an undo of a
- * batch is a person's intent for the rest.
+ * Put `speaker` on exactly these lines; missing lines are skipped, not refused. Each touched
+ * chapter's revision moves, so an in-flight job cannot land over it, and its done clips go stale.
  */
 export function attributeLines(
   tx: Tx,
@@ -541,12 +484,7 @@ export function attributeLines(
   return moved;
 }
 
-/**
- * The clips each speech endpoint has rendered that the library plays, done and failed, by
- * endpoint id: what the Queue's endpoint pool counts, across every book rather than the chapters a
- * page happens to have read. A retake waiting for its verdict and a superseded take are not the
- * book's clips, so only the current one of each line counts.
- */
+/** Current clips done and failed per endpoint id, across every book, for the Queue's pool. */
 export function clipsByEndpoint(db: Db | Tx): Map<string, { done: number; failed: number }> {
   const rows = db
     .select({
@@ -564,11 +502,9 @@ export function clipsByEndpoint(db: Db | Tx): Map<string, { done: number; failed
 }
 
 // ---------- what a check by ear heard ----------
-//
-// Kept by the clip's file, which a render never changes, rather than by its row, which every save
-// of the script writes again (`heard` in the schema).
+// Keyed by clip file, not row: every script save rewrites the rows (`heard` in the schema).
 
-/** What was heard of these files of a book, by file; a file never heard is not in it. */
+/** By file; a file never heard is absent. */
 export function readHeard(
   db: Db | Tx,
   bookId: string,
@@ -585,7 +521,6 @@ export function readHeard(
   return out;
 }
 
-/** Keep what `endpoint` heard of one file, over whatever an earlier check heard of it. */
 export function writeHeard(
   db: Db | Tx,
   bookId: string,
@@ -603,14 +538,9 @@ export function writeHeard(
 // ---------- the whole book ----------
 
 /**
- * Take every script in the book away, and leave each chapter as an import left it: not scripted,
- * not narrated, no recap for the next run to carry forward. Returns the file names of every clip
- * the scripts held — the book's current clips, candidates and takes, raw files too — for the caller to remove
- * from disk once the rows are gone.
- *
- * The revisions move on, so a write that read a script before this cannot land on the empty
- * chapter. What a check by ear heard goes too: it is keyed by clip file, and every file goes.
- * Nothing else of the book is touched — its text, its cast, its history, its audiobooks.
+ * Drop every script in the book, leaving each chapter as an import left it, and return every clip
+ * file name for the caller to remove. Revisions move on, so a stale write cannot land; what was
+ * heard goes too. Text, cast, history and audiobooks are kept.
  */
 export function dropBookScripts(tx: Tx, bookId: string): string[] {
   const files = tx

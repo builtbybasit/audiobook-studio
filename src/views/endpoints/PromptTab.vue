@@ -1,17 +1,7 @@
 <script setup lang="ts">
-// A scripting endpoint's say over the prompt: notes for its model, and either the library's default
-// (or a book's own) or a prompt of its own.
-//
-// The notes are for a model's quirks — "keep paragraphs apart" — which hold whichever book it
-// reads, so they are kept whatever the mode and placed wherever the prompt that is sent says
-// `{{endpoint.notes}}`. A prompt without the tag does not send them, and the tab says so beside
-// them rather than leaving them to vanish. A replacement is not like the notes: a book's prompt is
-// about the text, and wins over it. The preview is the endpoint's prompt resolved against the
-// library's saved default, filled in for a made-up book with the notes as typed, which is what a
-// book without a prompt of its own would send.
-//
-// Staged like a connection edit, and for more reason: a prompt half-typed is often not one at all.
-// The notes are staged with it, under the same Save.
+// A scripting endpoint's prompt: model notes (kept in every mode, sent where the prompt says
+// `{{endpoint.notes}}`) and either the default or its own Replace; a book's own prompt wins over
+// the Replace. Staged with the notes under one Save (see state.ts).
 import { computed, useId } from "vue";
 import { Info as InfoIcon } from "@lucide/vue";
 import PromptEditor from "@/components/PromptEditor.vue";
@@ -59,7 +49,7 @@ const ABOUT: Record<ProfilePrompt["mode"], string> = {
   default: "Sends the library’s default prompt, or a book’s own where it has one.",
   replace: "Sends your prompt in place of the library’s default.",
 };
-/** Written here: a pair of braces in the template would end the interpolation it sits in. */
+/** Here, not in the template: the braces would end the interpolation. */
 const NOTES_TAG = "{{endpoint.notes}}";
 
 const draft = computed(() => profilePromptOf(props.u)!);
@@ -68,11 +58,11 @@ const problems = computed(() => profilePromptProblems(draft.value));
 const notesTrouble = computed(() => notesProblems(draft.value.notes));
 const simulated = computed(() => isSimulated(props.u.baseUrl));
 
-/** What this endpoint sends for a book without a prompt of its own: its Replace, else the default. */
+/** For a book without its own prompt: the Replace, else the default. */
 const resolved = computed(() =>
   resolvePrompt({ library: endpointsStore.prompt, profile: draft.value }),
 );
-/** The notes are typed, and the prompt this endpoint sends by default has nowhere to put them. */
+/** Notes typed, but the prompt sent has no `{{endpoint.notes}}` for them. */
 const notesDropped = computed(() =>
   unplacedNotes(resolved.value, { endpoint: draft.value.notes }).includes("endpoint"),
 );
@@ -88,7 +78,7 @@ const preview = computed(() => {
 
 function setMode(v: string | number | null) {
   const mode = v as ProfilePrompt["mode"];
-  // a replacement starts from the prompt it replaces, rather than from nothing, which is no prompt
+  // a Replace starts from the prompt it replaces, not from nothing
   if (mode === "replace" && !draft.value.system.trim() && !draft.value.user.trim()) {
     const from = libraryPrompt(endpointsStore.prompt);
     editProfilePrompt(props.u, { mode, system: from.system, user: from.user });
@@ -142,7 +132,7 @@ const count = (n: number) => n.toLocaleString("en");
       A simulated endpoint ignores the prompt; what is set here is kept for a real model.
     </p>
 
-    <!-- notes: kept whatever the mode, so above it -->
+    <!-- notes: kept in every mode, so above it -->
     <section class="card space-y-1.5 p-3 text-xs">
       <div class="flex flex-wrap items-baseline justify-between gap-2">
         <span class="label"
@@ -249,7 +239,7 @@ const count = (n: number) => n.toLocaleString("en");
       />
     </section>
 
-    <!-- the draft as typed, on a chapter of any book: what this endpoint makes of it before Save -->
+    <!-- preview of the unsaved draft -->
     <section class="card p-3">
       <PromptTrial
         :book-id="null"

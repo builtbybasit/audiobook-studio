@@ -1,14 +1,9 @@
 <script setup lang="ts">
 import { useLibraryStore } from "@/stores/library";
 
-// Choosing what goes in the audiobook. The shared ChapterPicker is built around "run this stage on
-// these chapters" and hides anything a stage cannot act on; a build is the opposite problem — a
-// chapter that *cannot* be exported is exactly the one you need to see, because leaving it out has
-// to be a decision rather than a silent omission. So this list lets any chapter be ticked and says
-// what is wrong with it, and the plan panel turns that into something to do.
-//
-// It also has to stay usable at 214 chapters: search, a status filter that doubles as navigation,
-// per-volume select and collapse, a jump box, and range selection with shift.
+// Choosing what goes in the audiobook. Not the shared ChapterPicker, which hides chapters a stage
+// cannot act on: here a chapter that cannot be exported must stay visible, so leaving it out is a
+// decision. Any chapter can be ticked; the plan panel says what is wrong.
 import { computed, nextTick, ref } from "vue";
 
 import { readinessOf, READINESS } from "@/lib/exports";
@@ -41,9 +36,8 @@ const readiness = computed(() => {
   for (const c of chapters.value) m.set(c.id, readinessOf(c));
   return m;
 });
-/** reading numbers: what each row shows and the search finds a number by (skipped rows have none) */
+/** reading numbers (skipped rows have none) */
 const numbers = computed(() => libraryStore.chapterNumbers[props.bookId]);
-/** A chapter that is skipped is out of every stage; it cannot be put in a file either. */
 const canPick = (c: Chapter) => !c.excluded;
 
 const q = useQueryParam("find", textParam());
@@ -110,12 +104,11 @@ type VolumeRow = Volume & { chapters: Chapter[] };
 const set = (ids: number[]) => emit("update:modelValue", ids);
 const pickable = (list: Chapter[]) => list.filter(canPick).map((c) => c.id);
 
-// a range over what is on screen, not over the whole book — the list you can see is the list
+// a range covers what is on screen, not the whole book
 const range = useRangeSelect(() => visible.value.flatMap((v) => pickable(v.chapters)));
 function toggle(id: number, e?: MouseEvent | KeyboardEvent) {
   set([...applySpan(props.modelValue, range.span(id, e), !selected.value.has(id))]);
 }
-/** Both things hide a ticked chapter, so both have to go — the promise is "show everything". */
 function showEverything() {
   emit("clear-focus");
   filter.value = "all";

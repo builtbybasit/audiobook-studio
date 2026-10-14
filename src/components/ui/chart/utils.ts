@@ -2,10 +2,8 @@ import type { ChartConfig } from ".";
 import { isClient } from "@vueuse/core";
 import { h, render } from "vue";
 
-// Simple cache using a Map to store serialized object keys
 const cache = new Map<string, string>();
 
-// Convert object to a consistent string key
 function serializeKey(key: Record<string, any>): string {
   return JSON.stringify(key, Object.keys(key).sort());
 }
@@ -19,9 +17,8 @@ interface Constructor<P = any> {
   };
 }
 
-/** One cache namespace per template. Upstream takes this id from reka-ui, which needs an active
- *  component instance; a plain counter lets a chart rebuild its template when the series it
- *  draws changes, instead of serving the previous series' tooltip out of the cache. */
+/** One cache namespace per template. A plain counter (upstream uses reka's instance id) lets a
+ *  chart rebuild its template when its series change, instead of serving a stale tooltip. */
 let nextTemplateId = 0;
 
 export function componentToString<P>(config: ChartConfig, component: Constructor<P>, props?: P) {

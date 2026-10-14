@@ -1,14 +1,9 @@
-// A parsed EPUB becomes a book (or one more volume of one).
-//
-// This mirrors `server/demo/seed/world/imports.ts` deliberately: the same numbering rules, the same
-// `importing` marks, the same "nothing is skipped here" stance. The review the person then works
-// through does not know or care which of the two produced what it is showing, and that is the
-// point — the demo and the backend put the same shapes on screen.
+// A parsed EPUB becomes a book (or one more volume of one). Mirrors
+// `server/demo/seed/world/imports.ts` on purpose, so the review sees the same shapes from either.
 import type { Book, Chapter, Volume } from "@/types";
 import type { ParsedChapter, ParsedEpub } from "~/epub/parse";
 import { detectNotices } from "~/epub/notices";
 
-/** The cover gradients a new book is given, in the order they are handed out. */
 const COVERS: [string, string][] = [
   ["#1e3a8a", "#312e81"],
   ["#7f1d1d", "#431407"],
@@ -24,17 +19,12 @@ export const coverFor = (seed: string): [string, string] => {
   return COVERS[h % COVERS.length];
 };
 
-/** The chapter text the import stores, alongside the chapter it belongs to. */
 export interface ChapterBody {
   chapterId: number;
   /**
-   * The prose, blocks separated by blank lines, with the file's `*italic*` and `**bold**` marked.
-   *
-   * Marked because import is the last moment it exists: the EPUB is not retained, so a cue the
-   * author put in the text is gone for good the second it is dropped. It rides in the string rather
-   * than in a column beside it because the string is going to move — lines are edited, split and
-   * joined all through scripting — and offsets would not survive the first edit. `plainText` in
-   * [text.ts](../epub/text.ts) is what anything that counts, bills or speaks the text reads.
+   * Blocks separated by blank lines, with `*italic*` and `**bold**` marked inline: the EPUB isn't
+   * kept, and offsets wouldn't survive edits. Counting, billing and speech read `plainText`
+   * ([text.ts](../epub/text.ts)).
    */
   body: string;
 }
@@ -45,13 +35,7 @@ export interface AssembledVolume {
   bodies: ChapterBody[];
 }
 
-/**
- * Turn parsed chapters into chapters of a volume, numbered from `startAt`.
- *
- * Numbering is continuous across a book's volumes rather than restarting, because everything
- * downstream — script keys, job records, export entries — is keyed by a chapter number that has to
- * stay unique within the book.
- */
+/** Numbered from `startAt`: chapter numbers stay unique across a book's volumes. */
 export function assembleVolume(
   parsed: readonly ParsedChapter[],
   volumeId: number,

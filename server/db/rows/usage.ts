@@ -1,7 +1,5 @@
 // The usage ledger, between rows and the shapes the Endpoints page reads.
-//
-// Writing is one way. There is no `update` here and there should never be one: a settled request is
-// a fact about the past, and the receipts on it were frozen when it completed.
+// Append-only: a settled request is never updated.
 import type { RequestRecord, RequestUsage } from "@/types";
 import type { requests } from "~/db/schema";
 
@@ -24,12 +22,8 @@ function toUsage(row: RequestRow): RequestUsage {
 }
 
 /**
- * Rebuild a request from its row.
- *
- * `chapterId` is not on the row and cannot be: the ledger records *which chapter*, by an id that
- * never moves, and the number a chapter goes by today is the chapters table's to say. The caller
- * joins it and passes it in — null both for a request that belonged to no chapter and for one whose
- * chapter has since been removed.
+ * Rebuild a request from its row. The row keeps the chapter's uid; the caller joins today's
+ * `chapterId`, null for no chapter or a removed one.
  */
 export function toRequestRecord(row: RequestRow, chapterId: number | null = null): RequestRecord {
   const r: RequestRecord = {
@@ -60,11 +54,7 @@ export function toRequestRecord(row: RequestRow, chapterId: number | null = null
   return r;
 }
 
-/**
- * Flatten a request for insertion. `chapterUid` is the chapter's own id, which the caller looks up
- * once for the chapter number the request was about — there is no way back from the number alone,
- * and that is the point of storing the other one.
- */
+/** Flatten a request for insertion; `chapterUid` is the chapter's stable id. */
 export function requestValues(
   r: RequestRecord,
   chapterUid: string | null = null,

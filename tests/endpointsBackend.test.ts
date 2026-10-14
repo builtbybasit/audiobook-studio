@@ -1,15 +1,7 @@
-// The endpoints store with a server answering.
-//
-// The configuration — speech endpoints, scripting profiles, transcribers, the credential registry —
-// is the server's, and the page edits it by binding fields straight onto the objects. So what these guard
-// is the write-behind: that the store reads the server's configuration and holds it, that a server
-// nobody has configured is left with none rather than given the seeded one, that an edit
-// becomes one whole-document write a moment later with the browser's telemetry left out, that the
-// server's answer being installed is not mistaken for an edit and sent back, and that a refused
-// write puts back what the server actually holds.
-//
-// The service here is a fake that keeps the document in memory, not the Hono app: the subject is
-// the store's side of the seam, and the route has its own tests in `tests/server/`.
+// The endpoints store's write-behind: it holds the server's configuration, sends an edit as one
+// whole-document write a moment later without the browser's telemetry, never echoes the server's
+// answer back, and a refused write puts back what the server holds. The service is an in-memory
+// fake; the route has its own tests in `tests/server/`.
 import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
 
 import { ApiError } from "@/services/http";
@@ -164,7 +156,7 @@ class FakeService implements EndpointSettingsService {
     if (this.transcript instanceof ApiError) throw this.transcript;
     return this.transcript;
   }
-  /** nothing sent, so nothing seen: the live telemetry is `jobsBackend.test.ts`'s, over the real gate */
+  /** nothing sent, so nothing seen: live telemetry is tested in `jobsBackend.test.ts` */
   async live(): Promise<Record<string, EndpointLive>> {
     return {};
   }
@@ -224,11 +216,9 @@ let svc: FakeService;
 let endpointsStore: ReturnType<typeof useEndpointsStore>;
 let toasts: { msg: string; kind?: string }[];
 
-// The write-behind waits on a timer, and the clock is faked so the suite does not sit out
-// WRITE_DELAY_MS a dozen times over. Everything else here is promises, so letting them run is one
-// turn of the real event loop: `setImmediate` is taken before the clock is faked.
+// The clock is faked so the suite does not sit out WRITE_DELAY_MS a dozen times; `setImmediate`
+// is taken first, so one real event-loop turn still lets promises run.
 const realImmediate = setImmediate;
-/** Let every promise that can settle, settle. */
 const drain = () => new Promise<void>((r) => realImmediate(() => r()));
 /** Move the fake clock on, with the watch's turn before it and the answer's turn after it. */
 const wait = async (ms: number) => {
@@ -270,8 +260,7 @@ describe("the endpoints store with a server answering", () => {
     expect(endpointsStore.credentials.map((c) => c.id)).toEqual(["srv-cred"]);
     // telemetry is the browser's, and a new endpoint starts with none
     expect(endpointsStore.endpoints[0].history).toEqual([]);
-    // saved before its operational settings and its pricing existed: the defaults are filled in
-    // as it comes in, and filling them in is not an edit to send back
+    // saved before operational settings and pricing existed: the defaults are filled in, not sent back
     expect(endpointsStore.endpoints[0].timeoutSec).toBeNumber();
     expect(endpointsStore.endpoints[0].pricing?.windows).toEqual([]);
     await settle();
@@ -298,8 +287,7 @@ describe("the endpoints store with a server answering", () => {
   });
 
   test("a server nobody has configured is given nothing, and the page shows none", async () => {
-    // the store never starts on the seeded configuration, so there is nothing to hand over — not
-    // even the demo's credential registry
+    // the store never starts on the seeded configuration, not even the demo's credential registry
     expect(endpointsStore.endpoints).toEqual([]);
     expect(endpointsStore.profiles).toEqual([]);
     expect(endpointsStore.credentials).toEqual([]);
@@ -321,8 +309,7 @@ describe("the endpoints store with a server answering", () => {
     ep.concurrency = 7;
     await wait(10);
     ep.concurrency = 8;
-    // nothing goes out while the configuration is still moving, and the delay runs from the last
-    // change rather than the first
+    // nothing goes out while the configuration is still moving; the delay runs from the last change
     await wait(WRITE_DELAY_MS - 1);
     expect(svc.puts).toHaveLength(0);
     await wait(1);

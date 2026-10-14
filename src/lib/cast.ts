@@ -1,15 +1,10 @@
-// What a speaker is before anyone has said anything about them.
-//
-// Shared by the seeded world, the cast store and the server's scripting job, because all three
-// bring speakers into a cast and a walk-on the model turned up has to look the same whichever of
-// them found it — and who a speaker the model named its own way is (`castNameFor`). And which of a
-// cast's names a line is written with (`namesIn`), what a clip is sent as hints when it is checked
-// by ear. Nothing here reaches a store or the demo world.
+// Cast rules shared by the seeded world, the cast store and the server's scripting job: new
+// speakers, the voice rule (`speakerVoice`), personas, and matching the model's names to the cast.
 import type { Character, CharacterVoice, Gender, VoiceRef } from "@/types";
 import { writtenWordsOf } from "@/lib/gaps";
 import type { PromptCastMember } from "@/lib/prompt";
 
-/** The colours a cast is assigned from, in the order speakers arrive. */
+/** Assigned in the order speakers arrive. */
 export const PALETTE: string[] = [
   "#a78bfa",
   "#f472b6",
@@ -23,7 +18,6 @@ export const PALETTE: string[] = [
   "#4ade80",
 ];
 
-/** A walk-on speaker the model turned up that the cast has no entry for yet. */
 export const newSpeaker = (name: string, castSize: number): Character => ({
   name,
   aliases: [],
@@ -36,10 +30,8 @@ export const newSpeaker = (name: string, castSize: number): Character => ({
   isNew: true,
 });
 
-/** How a speaker names their voice: the endpoint it is on, and its id there. */
 export const voiceRef = (epId: string, voiceId: string): VoiceRef => `${epId}/${voiceId}`;
 
-/** The delivery notes a direction is picked from, and the seeded scripts are written with. */
 export const DIRECTIONS: string[] = [
   "calm, measured",
   "urgent, breathless",
@@ -60,7 +52,6 @@ export const DIRECTIONS: string[] = [
 
 export const NARRATOR = "Narrator";
 
-/** The one speaker every book has: narration, thoughts, and every speaker with no other voice. */
 export const narrator = (voice: Character["voice"] = null): Character => ({
   name: NARRATOR,
   aliases: [],
@@ -72,33 +63,21 @@ export const narrator = (voice: Character["voice"] = null): Character => ({
   major: true,
 });
 
-/** Which of the Character voice's slots a speaker of this gender is read in. */
 export const characterSlot = (
   cv: CharacterVoice,
   gender: Gender,
 ): "one" | "male" | "female" | "other" =>
   cv.by === "one" ? "one" : gender === "m" ? "male" : gender === "f" ? "female" : "other";
 
-/** The book's Character voice for a speaker of this gender, or null where it names none. */
 export function characterVoiceFor(cv: CharacterVoice | undefined, gender: Gender): VoiceRef | null {
   return cv ? cv[characterSlot(cv, gender)] : null;
 }
 
-/**
- * Where a speaker's voice comes from: their own, the book's Character voice, the Narrator's, or —
- * for a linked persona — the character they are a persona of (`of`), whichever voice that is.
- */
 export type VoiceSource = "own" | "character" | "narrator" | "persona";
 
-/** A book's cast by name: how the voice rule finds the Narrator and the character behind a persona. */
 export type CastLookup = Pick<ReadonlyMap<string, Character>, "get">;
 
-/**
- * The character a speaker is a linked persona of: the one their `personaOf` names, when that is
- * someone else in the cast. Undefined for anyone else, and for a persona whose `personaOf` names
- * nobody in the cast (or themselves), who keeps their own voice — a masked stranger stays a
- * stranger until someone links them.
- */
+/** Undefined unless `personaOf` names someone else in the cast. */
 export function personaOwner<C>(
   c: Pick<Character, "name" | "personaOf"> | undefined,
   cast: Pick<ReadonlyMap<string, C>, "get">,
@@ -106,22 +85,13 @@ export function personaOwner<C>(
   return c?.personaOf && c.personaOf !== c.name ? cast.get(c.personaOf) : undefined;
 }
 
-/**
- * Whether a speaker is read in a voice someone picked: their own, or for a linked persona with
- * none, their character's (`speakerVoice`). What the "voiced" counts and "unassigned" filters
- * count.
- */
+/** Read in a picked voice: their own, or a voiceless linked persona's character's. */
 export const voiced = (
   c: Pick<Character, "name" | "voice" | "personaOf">,
   cast: Pick<ReadonlyMap<string, Pick<Character, "voice">>, "get">,
 ): boolean => !!(c.voice || personaOwner(c, cast)?.voice);
 
-/**
- * Why `name` cannot be made a persona of `personaOf` in this cast, or null when they can. A persona
- * is of someone else in the cast who is not the Narrator and not a persona themselves, and a
- * speaker others are personas of cannot become one: one level only, so the voice rule never chains.
- * The server refuses a speaker written with a refused link; an import drops the link instead.
- */
+/** Null when allowed. Personas are one level only, so the voice rule never chains. */
 export function personaRefusal(
   name: string,
   personaOf: string,
@@ -140,14 +110,9 @@ export function personaRefusal(
 }
 
 /**
- * The voice a speaker is read in — the one rule the narration job, its estimate and every page
- * that says "read in …" share. Anyone with a voice of their own is read in it, a linked persona
- * too: a masked stranger given a voice keeps it when the book says who they are, so linking them
- * changes nothing already heard. A linked persona with none (`personaOwner`) is read in whatever
- * voice their character is, one level only; anyone else, for anyone but the Narrator, in the book's
- * Character voice for their gender; else the Narrator's. A name not in the cast is a speaker of
- * unknown gender. So moving a line between a character and a voiceless persona of theirs never
- * changes its voice.
+ * The one voice rule: own voice (a linked persona too, so linking changes nothing heard); else a
+ * linked persona's character's; else the book's Character voice for their gender (not for the
+ * Narrator); else the Narrator's. A name not in the cast has unknown gender.
  */
 export function speakerVoice(
   name: string,
@@ -175,11 +140,8 @@ function voiceOf(
 }
 
 /**
- * Whether a line moved from speaker `from` to `to` is still read as its clip was: in the same voice
- * (`speakerVoice`) and with the same delivery style, the two things a clip is judged by that come
- * from its speaker (`compareReading`). Then the clip keeps its speech and only its effects may be
- * old, for Re-apply. So it is between a character and a linked persona with no style of their own,
- * and between any two speakers who share a voice and a style.
+ * Whether a line moved from `from` to `to` keeps its clip's speech: same voice and same style.
+ * Only its effects may then be old, for Re-apply.
  */
 export function sameReading(
   from: string,
@@ -194,12 +156,8 @@ export function sameReading(
 }
 
 /**
- * The cast member a scripting model meant by `speaker`, by name: a name in the cast is itself;
- * otherwise one written as one of a member's other names ("Hero" for Young Soldier) or in another
- * case is that member's. A bracket note after the name ("Young Soldier (male)") is dropped first —
- * a guard: no model has been seen copying the cast list's notes in. Any other name, and one that
- * could be two members', is left as written, so the job adds it as a walk-on rather than guessing
- * whose line it is.
+ * The cast member the model meant by `speaker`: exact name, else a case-insensitive name or alias,
+ * ignoring a trailing "(note)". Unknown or ambiguous names stay as written, to become walk-ons.
  */
 export function castNameFor(
   speaker: string,
@@ -215,10 +173,8 @@ export function castNameFor(
 }
 
 /**
- * The part of a cast a chapter's scripting prompt lists (`{{cast}}`), in the cast's order: who the
- * chapter names — a name or other name of theirs, whole, in any case; who spoke in it or just
- * before it (`recent`), whom the text may call only "he"; and every disguise with whoever wears it,
- * since a reveal can come long after. The rest of a long book's cast would only crowd the scene's.
+ * `{{cast}}` for a chapter, in cast order: who the text names, who spoke recently (`recent`), and
+ * every disguise with its wearer (a reveal can come much later).
  */
 export function chapterCast<
   T extends Pick<PromptCastMember, "name" | "aliases" | "personaOf" | "masked">,
@@ -252,11 +208,7 @@ export function chapterCast<
 /** Words a speaker's name can start with that name nobody: "The man" must not hint every "The". */
 const NOT_NAMES = new Set(["the", "a", "an", "mr", "mrs", "ms", "miss", "dr", "sir", "madam"]);
 
-/**
- * The words a cast is named by — those its names and aliases spell with a capital, the narrator's
- * aside — keyed by the word as compared, to the word as the cast spells it. An initial and a title
- * are left out.
- */
+/** Capitalised words of the cast's names and aliases (no initials or titles): lowercase → spelled. */
 export function nameWords(
   cast: readonly Pick<PromptCastMember, "name" | "aliases">[],
 ): Map<string, string> {
@@ -273,9 +225,8 @@ export function nameWords(
 }
 
 /**
- * The cast's name words a line is written with, as the cast spells them, in the line's order and
- * once each. A word counts when it is written with a capital — "NOEL!" and a stuttered "N-Noel" do,
- * "I will go" never names Will — and a possessive ("Noel's", "James'") is read as its name.
+ * Cast name words in a line, once each, in order. Only capitalised words count ("I will go" never
+ * names Will); a possessive reads as its name.
  */
 export function namesIn(text: string, words: ReadonlyMap<string, string>): string[] {
   const out = new Set<string>();

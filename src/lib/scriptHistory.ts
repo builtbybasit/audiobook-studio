@@ -1,10 +1,6 @@
-// Chapter script history: the part that can be decided from two scripts alone.
-//
-// Nothing here mutates and nothing here reaches a store. The history store captures and installs
-// versions; this file says what a version *is* (`scriptSignature` — the script, never the audio),
-// what two of them disagree on (`compareScripts`), and what restoring one would do to the clips
-// already rendered (`planRestore`). The panel renders these and the store applies exactly what the
-// plan counted, so what is promised and what happens are the same calculation.
+// Chapter script history, pure: what a version is (`scriptSignature`, never the audio), what two
+// disagree on (`compareScripts`), and what a restore does to rendered clips (`planRestore`). The
+// store applies exactly what the plan counted, so the panel's promise and the result agree.
 import { diffArrays, diffWords } from "diff";
 import type {
   ChangeGroup,
@@ -35,22 +31,15 @@ export const SESSION_IDLE_MS = 10_000;
 // ---------- what a version preserves ----------
 
 const norm = (t: string): string => t.replace(/\s+/g, " ").trim();
-/** Whitespace-free, for comparing a line against two halves of itself. */
+/** For comparing a line against two halves of itself. */
 const tight = (t: string): string => t.replace(/\s+/g, "");
 
-/**
- * The expression annotations of a line, as they would be rendered: tag or pause and its own
- * length, position, written by the scripting model, omitted, awaiting review.
- */
 const exprSignature = (s: Segment): string =>
   (s.expressions ?? []).map((a) => `${markName(a)}@${a.at}${markSuffix(a)}`).join(",");
 
 /**
- * Everything a version keeps about one line, exactly as it keeps it. The clip rendered from it is
- * deliberately absent — a render finishing in the background must not make the script look as if it
- * had changed — but nothing about the *words* is normalised away: two scripts that differ only in
- * their spacing are two scripts, and the one being replaced is worth keeping. (Alignment is the
- * other question, and `compareScripts` normalises for that itself.)
+ * Everything a version keeps about one line. The clip is left out so a background render does not
+ * look like a script change; spacing is not normalised, so a spacing-only edit is a new version.
  */
 export const lineSignature = (s: Segment): string =>
   JSON.stringify([
@@ -66,7 +55,7 @@ export const lineSignature = (s: Segment): string =>
 export const scriptSignature = (segments: Segment[]): string =>
   JSON.stringify(segments.map(lineSignature));
 
-/** The script content of a line, without the clip, the flag or anything else about the audio. */
+/** Without the clip, the flag or anything else about the audio. */
 export function scriptOnly(s: Segment): Segment {
   const out: Segment = {
     id: s.id,
@@ -88,10 +77,10 @@ export function scriptOnly(s: Segment): Segment {
   return out;
 }
 
-/** A version's own copy of a script: script content only, and nothing shared with the live one. */
+/** Shares nothing with the live script. */
 export const snapshotScript = (segments: Segment[]): Segment[] => segments.map(scriptOnly);
 
-/** The versions a demo situation says a chapter went through, as a history: ids in the order given. */
+/** A demo situation's versions as a history, ids in the order given. */
 export const seededHistory = (seeded: {
   versions: Omit<ScriptVersion, "id">[];
   head: HistoryHead;
@@ -107,7 +96,6 @@ export const seededHistory = (seeded: {
 
 // ---------- preserving a script before it is replaced ----------
 
-/** What preserving the working script comes to: the entry added, if any, and the head after it. */
 export interface Capture {
   added: ScriptVersion | null;
   head: HistoryHead;
@@ -115,14 +103,9 @@ export interface Capture {
 }
 
 /**
- * The one rule behind every entry in a chapter's history: the working script is preserved
- * **before** `origin` replaces it, labelled by whatever produced it, and never twice.
- *
- * Pure, so the history store and the server apply the same rule to the same inputs. No entry is
- * added for an empty script, for an operation that leaves the script exactly as it found it (`next`
- * is what is about to be written, when it is known), or for a script that is already the newest
- * entry. The head afterwards says how the script now came to be; an edit opens a session that later
- * edits join.
+ * The rule behind every history entry, shared by store and server: the working script is kept
+ * before `origin` replaces it, labelled by what produced it, and never twice. Nothing is added for
+ * an empty script, a no-op (`next` equals it), or a script already the newest entry.
  */
 export function planCapture(
   h: ChapterHistory,
@@ -146,18 +129,12 @@ export function planCapture(
   return { added, head: { at: now, origin, open: origin.kind === "edited" }, nextId };
 }
 
-/**
- * Whether an edit made now joins the editing session the head describes rather than opening one.
- *
- * The store closes a session with a timer; the server has no timer and asks the clock instead.
- * Both say the same thing: a session is open while its last edit is less than `SESSION_IDLE_MS` old.
- */
+/** Whether an edit now joins the head's session. The server's clock check for the store's timer. */
 export const sessionOpen = (head: HistoryHead, now: number): boolean =>
   !!head.open && head.origin.kind === "edited" && now - head.at < SESSION_IDLE_MS;
 
 // ---------- what an entry is called ----------
 
-/** The one line the history list reads: what made this script. */
 export function originLabel(origin: VersionOrigin): string {
   switch (origin.kind) {
     case "scripted":
@@ -177,7 +154,7 @@ export function originLabel(origin: VersionOrigin): string {
   }
 }
 
-/** The word under the entry saying what kind of thing it was, for the badge beside the label. */
+/** For the badge beside the label. */
 export function originKindLabel(origin: VersionOrigin): string {
   switch (origin.kind) {
     case "scripted":
@@ -196,10 +173,8 @@ export function originKindLabel(origin: VersionOrigin): string {
 }
 
 /**
- * Where a scripted version's prompt came from, with its fingerprint — "library prompt · 3f2a9c01" —
- * so two runs with the same model and different prompts read differently. An endpoint's own prompt
- * is named after the endpoint the version was scripted with ("Luna's prompt"). Empty for anything
- * else, and for a version scripted before the prompt was recorded.
+ * "library prompt · 3f2a9c01", so two runs with the same model and different prompts read
+ * differently. Empty when not scripted or no prompt was recorded.
  */
 export function originPrompt(origin: VersionOrigin): string {
   if (origin.kind !== "scripted" || !origin.prompt) return "";
@@ -235,7 +210,7 @@ export function originNote(origin: VersionOrigin): string {
 const WORD = /\S+\s*/g;
 const wordsOf = (text: string): string[] => text.match(WORD) ?? [];
 
-/** How much two lines have in common, 0–1, over their words. */
+/** Word overlap, 0–1. */
 function similarity(a: string, b: string): number {
   const wa = wordsOf(norm(a).toLowerCase());
   const wb = wordsOf(norm(b).toLowerCase());
@@ -255,16 +230,7 @@ function similarity(a: string, b: string): number {
 /** Below this two lines are different lines rather than one line rewritten. */
 const SAME_LINE = 0.35;
 
-/** Index pairs of a common subsequence of two key arrays.
- *
- * `diffArrays` reports the alignment as runs of added, removed and common tokens; what its callers
- * want is the *positions* those common runs sit at, because the key is never the thing being
- * aligned — it is the segment, or the untrimmed word, that the key was derived from. So the runs are
- * counted back into index pairs and their values discarded.
- *
- * Myers costs what the edit distance costs rather than what the two lengths multiply to, and it
- * allocates nothing of the order of the old dynamic-programming table, so the million-cell guard
- * that table needed — and the greedy alignment it fell back to — went with it. */
+/** Index pairs of a common subsequence of two key arrays: callers align what the keys came from. */
 export function alignPairs(a: string[], b: string[]): [number, number][] {
   const out: [number, number][] = [];
   let i = 0;
@@ -281,12 +247,7 @@ export function alignPairs(a: string[], b: string[]): [number, number][] {
   return out;
 }
 
-/** A word-level comparison of two lines, as runs to be rendered in order.
- *
- * `diffWords` ignores whitespace when it matches words but keeps it in what it returns, which is
- * what the runs want: a line rewrapped around the same words reads as unchanged, and the spacing
- * drawn is the newer line's. A change that is *only* spacing never reaches here — `lineChange`
- * leaves `runs` empty and `fieldChanges` names it instead — so matching that way loses nothing. */
+/** Word-level runs. `diffWords` ignores whitespace when matching, so rewrapping reads unchanged. */
 export function wordDiff(from: string, to: string): DiffRun[] {
   return diffWords(from, to).map((run): DiffRun => ({
     kind: run.added ? "add" : run.removed ? "remove" : "same",
@@ -305,12 +266,10 @@ const EXPR = (s: Segment): string =>
         .join(" · ")
     : "none";
 
-/** What two lines disagree on, field by field. */
 function fieldChanges(from: Segment, to: Segment): FieldChange[] {
   const out: FieldChange[] = [];
   if (norm(from.text) !== norm(to.text)) out.push({ field: "text", from: from.text, to: to.text });
-  // the same words with the paragraph break moved: a real difference, and one no word-level diff
-  // can show, so it is named rather than drawn
+  // spacing or paragraph break only: no word diff can show it, so it is named rather than drawn
   else if (from.text !== to.text || (from.sep ?? null) !== (to.sep ?? null))
     out.push({
       field: "text",
@@ -374,7 +333,7 @@ function lineChange(
   };
 }
 
-/** A run of `arr` from `start` that reads as exactly `one` once the whitespace is taken out. */
+/** Length of a run (2–8) of `arr` from `start` reading as exactly `one` sans whitespace; else 0. */
 function runMatch(one: Segment, arr: Segment[], start: number): number {
   const whole = tight(one.text);
   let text = "";
@@ -400,12 +359,9 @@ const emptyCounts = (): ComparisonCounts => ({
 });
 
 /**
- * What changed between two scripts of the same chapter, in reading order.
- *
- * Lines are matched on their words first, so a line that only changed speaker, direction, pacing or
- * expressions is recognised as the same line. What is left over is looked at for the two structural
- * edits the reader can make — a line cut in two, two lines joined — then paired off as rewrites
- * where the words still mostly agree, and only otherwise called new or gone.
+ * What changed between two scripts of a chapter, in reading order. Lines match on words first;
+ * the leftovers are checked for splits and joins, then paired as rewrites where the words mostly
+ * agree, and only otherwise called new or gone.
  */
 export function compareScripts(from: Segment[], to: Segment[]): ScriptComparison {
   const changes: LineChange[] = [];
@@ -494,7 +450,6 @@ export function compareScripts(from: Segment[], to: Segment[]): ScriptComparison
   };
 }
 
-/** The comparison's summary, as the phrases the panel lists before any detail. */
 export function comparisonSummary(c: ScriptComparison): string[] {
   const n = (count: number, one: string, many = one + "s") =>
     `${count} ${count === 1 ? one : many}`;
@@ -517,9 +472,8 @@ export function comparisonSummary(c: ScriptComparison): string[] {
 export interface RestoreOptions {
   /** what a clip records that a line no longer says; empty means it still matches */
   drift(segment: Segment, audio: SegmentAudio): string[];
-  /** the speakers the book's cast has now */
   cast: Set<string>;
-  /** whose `readNotes` decides which lines want a clip (`isSpoken`) */
+  /** `readNotes` decides which lines want a clip (`isSpoken`) */
   book: Pick<Book, "readNotes"> | undefined;
 }
 
@@ -528,15 +482,10 @@ const worthKeeping = (s: Segment): boolean =>
   s.audio.status !== "none" || !!s.audio.takes?.length || !!s.candidate || !!s.flag;
 
 /**
- * What restoring `version` over `current` would do — the script it would leave, and what becomes of
- * the audio already rendered.
- *
- * Clips are carried across line by line rather than thrown away: a clip belongs to a restored line
- * when that line reads as the clip's own text does — either because the script says so, or because
- * the clip itself was rendered from those exact words, which is how a line that has since been
- * joined into its neighbour finds its way back. A carried clip is then re-judged against the
- * restored line: still current, or stale because the speaker, direction, expressions or dictionary
- * have moved on. A clip whose line this version does not have goes with the line.
+ * What restoring `version` over `current` would do to the script and the rendered audio. A clip
+ * follows a restored line whose text matches the line's or the clip's own text (so a line since
+ * joined into its neighbour gets its clip back), then is re-judged: done or stale. Clips whose line
+ * the version lacks are dropped.
  */
 export function planRestore(
   current: Segment[],
@@ -600,9 +549,7 @@ export function planRestore(
   }
 
   const dropped = pool.filter((s) => !claimed.has(s) && s.audio.duration > 0).length;
-  // What the restored chapter's narration reads as is the run's question, not a second opinion:
-  // `chapterNarration` is what a finished run, a cancelled one and a cancelled queued job all write,
-  // so a restore that answered it differently would be overwritten by the next thing that happened.
+  // the same rule every run writes, so the next run does not overwrite a different answer
   const narration = chapterNarration(segments, opts.book);
 
   const missing = new Map<string, number>();
@@ -624,7 +571,7 @@ export function planRestore(
   };
 }
 
-/** The consequences of a restore, as the sentences the panel shows before it is pressed. */
+/** The sentences the panel shows before a restore is pressed. */
 export function restoreConsequences(plan: RestorePlan): string[] {
   const n = (count: number, one: string, many = one + "s") =>
     `${count} ${count === 1 ? one : many}`;

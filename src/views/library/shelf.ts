@@ -1,5 +1,4 @@
-// Narrowing and ordering the shelf. Pure over a book and the facts gathered about it, so the page
-// and the tests agree on which books a filter keeps and which comes first.
+// Narrowing and ordering the shelf.
 import type { Book } from "@/types";
 import type { BookFacts } from "@/views/library/bookFacts";
 
@@ -57,10 +56,7 @@ export function passesFilter(f: BookFacts, filter: ShelfFilter): boolean {
   }
 }
 
-/**
- * How much is left to do on a book, so "most to do" puts the one that needs a hand first: broken
- * work outranks unstarted work, and a book with nothing to do sinks to the bottom.
- */
+/** For "most to do": broken work outranks unstarted work; nothing to do sinks to the bottom. */
 export function todoScore(f: BookFacts): number {
   const p = f.progress;
   if (!p.total) return 0;

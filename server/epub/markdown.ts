@@ -1,19 +1,9 @@
-// Chapter text, as Markdown, and the two ways back out of it.
-//
-// The stored form of a chapter is Markdown: headings, emphasis, lists, links and tables, as the
-// EPUB had them. It is produced by Turndown rather than by hand, because "turn arbitrary publisher
-// HTML into readable text" has a long tail — nested lists, `<br>` inside a paragraph, entities,
-// whitespace that is significant in one element and not the next — and a converter with eight
-// million weekly downloads has met more of that tail than this project ever will.
-//
-// The way back matters just as much. **Nothing downstream may read the stored text as if it were
-// prose.** `## Chapter Twelve`, `[the note](http://x.y)` and `| Day | Chapter |` are all things a
-// speech provider would read out loud and bill for, so `plainText` runs a real Markdown parser
-// rather than a regex that strips the punctuation somebody remembered.
+// Chapter text is stored as Markdown (Turndown from the EPUB's HTML). Nothing downstream may read
+// it as prose: a provider would read `## Heading` and link URLs aloud and bill for them, so
+// `plainText` runs a real Markdown parser rather than a regex.
 import MarkdownIt, { type Token } from "markdown-it";
 import type TurndownService from "turndown";
 
-/** The two grades of stress a book can ask for, kept apart because the file kept them apart. */
 export type Mark = "em" | "strong";
 
 /** Where a run of stressed words sits, as character offsets into the prose it was read from. */
@@ -26,16 +16,12 @@ export interface Emphasis {
 let converter: Promise<TurndownService> | null = null;
 
 /**
- * The parser the way back out goes through: CommonMark, with the GFM tables and strikethrough that
- * Turndown's plugin writes. Raw HTML stays text, as it is in the stored form.
- *
- * markdown-it rather than `marked`, which the frontend still draws with: under Bun, `marked`'s
- * lexer slows down with the length of the document — 4,000 paragraphs took 30 seconds, where Node
- * takes 15 ms — and a single-file novel is one chapter of that. markdown-it reads the same in 11 ms.
+ * CommonMark plus the GFM tables Turndown writes; raw HTML stays text. Not `marked`: under Bun its
+ * lexer is superlinear (4,000 paragraphs took 30 s; markdown-it takes 11 ms).
  */
 const parser = new MarkdownIt({ html: false, linkify: false, typographer: false });
 
-/** The shape this reads off Turndown's nodes, rather than the DOM lib the server does not have. */
+/** The shape read off Turndown's nodes; the server has no DOM lib types. */
 interface StyledNode {
   nodeName?: string;
   parentNode?: StyledNode | null;
@@ -48,11 +34,10 @@ interface FigureNode {
   querySelector?: (selector: string) => unknown;
 }
 
-/** Stress written as styling rather than as an element, which is how a lot of real EPUBs write it. */
+/** Stress written as styling rather than as an element, as many real EPUBs do. */
 const ITALIC = /font-style\s*:\s*(?:italic|oblique)/i;
 const BOLD = /font-weight\s*:\s*(?:bold|bolder|[6-9]00)\b/i;
 
-/** What an element stresses, whether it says so in its tag name or in its own `style`. */
 function marksOf(node: StyledNode): Mark[] {
   const tag = (node.nodeName ?? "").toLowerCase();
   const style = node.getAttribute?.("style") ?? "";
@@ -69,13 +54,7 @@ function stressedAbove(node: StyledNode, mark: Mark): boolean {
   return false;
 }
 
-/**
- * Run `load` with no `window` visible, and put back whatever was there.
- *
- * Its own function, and exported, because it is the whole of the fix below and it runs exactly once
- * per process — cached behind `converter`, where no test could reach it a second time. A bracket
- * that is only ever exercised on a path nobody can re-enter is a bracket nobody can check.
- */
+/** Run `load` with no `window` visible, then put it back. Exported so a test can reach it. */
 export async function withoutWindow<T>(load: () => Promise<T>): Promise<T> {
   const globals = globalThis as { window?: unknown };
   const had = "window" in globals;
@@ -89,24 +68,9 @@ export async function withoutWindow<T>(load: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Load Turndown, with the DOM it will use pinned to its own.
- *
- * Turndown picks its HTML parser **once, when the module is first evaluated**:
- *
- * ```js
- * var root = typeof window !== 'undefined' ? window : {};
- * var HTMLParser = canParseHTMLNatively() ? root.DOMParser : createHTMLParser();
- * ```
- *
- * With no `window` it falls back to the `@mixmark-io/domino` it ships with, which is what it is
- * tested against. With a `window` carrying a `DOMParser` it takes that instead — and this project
- * has both halves of that trap: the frontend tests install a small `window` stub, and importing
- * `@likecoin/epub-ts/node` registers linkedom's `DOMParser`. Bound to linkedom, Turndown's table
- * plugin stops matching and a table collapses to `DayChapterMondayCh 1`, which is precisely the
- * `textContent` damage this file exists to avoid. Silently, and only in some import orders.
- *
- * So the import is bracketed: whatever `window` is around is hidden for the one moment that
- * decision is made, and Turndown binds the DOM it was tested against every time.
+ * Load Turndown with `window` hidden. It picks `window.DOMParser` at module evaluation when one
+ * exists (a test stub, or linkedom via epub-ts); bound to linkedom its table plugin stops matching
+ * and tables collapse to `DayChapterMondayCh 1`. Hidden, it uses its bundled domino.
  */
 function load(): Promise<TurndownService> {
   return withoutWindow(async () => {
@@ -115,8 +79,7 @@ function load(): Promise<TurndownService> {
       import("@joplin/turndown-plugin-gfm"),
     ]);
     const service = new Turndown({
-      // `#` over the `====` underline: a setext heading is two lines where one will do, and the
-      // underline is the kind of thing that survives a careless strip and gets read aloud.
+      // A setext `====` underline survives a careless strip and gets read aloud.
       headingStyle: "atx",
       hr: "---",
       bulletListMarker: "-",
@@ -125,23 +88,13 @@ function load(): Promise<TurndownService> {
       strongDelimiter: "**",
       linkStyle: "inlined",
     });
-    // Not prose a narrator reads: the document head, whose <title> repeats the chapter heading
-    // underneath it; scripts and styling; the table of contents; an image we do not keep; a sidebar
-    // nobody is narrating.
-    //
-    // Not `<figure>`: publishers put epigraphs, poems and letters in one as often as pictures, and
-    // removing the element removed the verse with it. Only the caption of a picture goes — see
-    // `pictureCaption` below.
+    // Not `<figure>`: it often holds epigraphs and verse. Only a picture's caption goes, below.
     service.remove(["head", "title", "meta", "link", "script", "style", "nav", "aside", "img"]);
-    // An inline drawing, which has no words to read. Matched by name: `<svg>` is not an HTML tag,
-    // so Turndown's types do not take it in the list above, where the DOM's are in scope.
+    // By name: Turndown's types don't take `svg` in the list above.
     service.remove((node) => node.nodeName.toLowerCase() === "svg");
-    // `remove` above does not reach `<img>`: Turndown's own image rule is asked first, and wrote
-    // `![](a.png)` into the stored text — a link into an archive that is not kept. Taken out here.
+    // `remove` doesn't reach `<img>`: Turndown's image rule runs first and writes `![](a.png)`.
     service.addRule("picture", { filter: ["img"], replacement: () => "" });
-    // The caption of a picture the audiobook cannot show. A figure with no picture in it is words
-    // set apart, and its caption is usually who wrote them — "— Emily Dickinson" under the verse —
-    // which is read with it.
+    // Only a picture's caption; a text figure's caption ("— Emily Dickinson") is read with it.
     service.addRule("pictureCaption", {
       filter: (node: unknown) => {
         const el = node as FigureNode;
@@ -154,10 +107,8 @@ function load(): Promise<TurndownService> {
       replacement: () => "",
     });
     service.use(gfm);
-    // Stress a publisher wrote as styling. Turndown's own rules match `<em>`, `<i>`, `<strong>` and
-    // `<b>`; a word stressed as `<span style="font-style: italic">` reaches them as a span they have
-    // no rule for and comes out as unmarked text. The archive is not kept, so a mark lost here is
-    // lost for good — and "what the file stressed stays stressed" is what the import promises.
+    // Turndown has no rule for `<span style="font-style: italic">`; the archive isn't kept, so
+    // stress lost here is lost for good.
     service.addRule("styledStress", {
       filter: (node: unknown) => {
         const el = node as StyledNode;
@@ -165,8 +116,7 @@ function load(): Promise<TurndownService> {
       },
       replacement: (content: string, node: unknown) => {
         const el = node as StyledNode;
-        // Turndown moves the whitespace either side of an inline element out of `content` for us,
-        // which matters: `* never *` is not emphasis to any Markdown parser.
+        // Turndown moves edge whitespace out of `content`; `* never *` would not be emphasis.
         const marks = marksOf(el).filter((mark) => !stressedAbove(el, mark));
         if (!content.trim() || !marks.length) return content;
         const delimiter =
@@ -185,11 +135,8 @@ export async function toMarkdown(html: string): Promise<string> {
 }
 
 /**
- * Walk state: the prose built so far, and where its stress fell.
- *
- * `tail` is the last two characters of `text`, kept beside it rather than read off it. Asking the
- * string itself — `text.endsWith("\n\n")` — once per block is quadratic under Bun, whose engine
- * flattens a string built by `+=` before it will look at its end: 16,000 paragraphs took a second.
+ * Walk state. `tail` is the last two characters of `text`, tracked separately: `text.endsWith`
+ * per block is quadratic under Bun, which flattens a `+=` rope first.
  */
 interface Walk {
   text: string;
@@ -208,13 +155,7 @@ function endBlock(w: Walk): void {
   if (w.text && w.tail !== "\n\n") push(w, w.tail.endsWith("\n") ? "\n" : "\n\n");
 }
 
-/**
- * A document's block tokens, walked in order.
- *
- * markdown-it hands back a flat stream — `paragraph_open`, the `inline` run inside it,
- * `paragraph_close` — rather than a tree, so a block is ended where its token closes, and a table's
- * cells are separated as they are met.
- */
+/** markdown-it's flat token stream: a block ends where its token closes. */
 function walk(w: Walk, tokens: readonly Token[]): void {
   let cell = 0;
   for (let i = 0; i < tokens.length; i++) {
@@ -234,16 +175,14 @@ function walk(w: Walk, tokens: readonly Token[]): void {
         endBlock(w);
         break;
       case "thead_open": {
-        // A table with no `<th>` — which is how a good deal of older prose is laid out — converts
-        // with an empty header row above it. Read out, that is a row of nothing: the chapter would
-        // open on a comma. The row stays in the stored Markdown, where it is the table's shape.
+        // A table with no `<th>` converts with an empty header row; skip it so speech doesn't
+        // open on a comma.
         const close = tokens.findIndex((t, at) => at > i && t.type === "thead_close");
         const head = tokens.slice(i, close);
         if (!head.some((t) => t.type === "inline" && t.content.trim())) i = close;
         break;
       }
-      // A table read aloud is a row at a time, cells separated by a pause's worth of punctuation.
-      // The pipes and the `---` rule are layout and are not said.
+      // A table reads a row at a time, cells separated by commas.
       case "tr_open":
         cell = 0;
         break;
@@ -292,21 +231,14 @@ function inline(w: Walk, tokens: readonly Token[]): void {
         if (at != null && w.text.length > at) w.emphasis.push({ at, to: w.text.length, mark });
         break;
       }
-      // An image is not narrated, and its alt text arrives as its children, which are skipped
-      // with it. A link is its words, never the address: a URL spoken out is a minute of
-      // narrated punctuation. Its words are the text tokens either side of these.
+      // Images (and their alt-text children) are skipped; a link is its words, never its URL.
     }
   }
 }
 
 /**
- * The runs of the walked prose that survive tidying it, as `[from, to)` into the untidied text.
- *
- * The walk ends every block with a blank line whether or not another one follows, so what it leaves
- * has runs of newlines inside it and whitespace around it. Cutting those out moves every character
- * after them — and the offsets beside the text were measured before the cut. Tidying by hand rather
- * than with `replace` and `trim` is what makes the second half possible: the ranges move with the
- * text instead of being left pointing a word or two to the left of where their words ended up.
+ * The runs of the walked prose that survive trimming and collapsing extra newlines, as `[from, to)`
+ * into the untidied text, so emphasis offsets can be moved with the text (see `moved`).
  */
 function keptRuns(raw: string): [number, number][] {
   const first = raw.length - raw.trimStart().length;
@@ -324,7 +256,7 @@ function keptRuns(raw: string): [number, number][] {
   return runs;
 }
 
-/** Where an offset into the untidied prose ended up once the runs above were joined together. */
+/** Where an offset into the untidied prose ends up once the kept runs are joined. */
 function moved(runs: readonly [number, number][], at: number): number {
   let out = 0;
   for (const [from, to] of runs) {
@@ -336,12 +268,8 @@ function moved(runs: readonly [number, number][], at: number): number {
 }
 
 /**
- * The prose and where its stress falls — what the stored Markdown actually says.
- *
- * Ranges are offsets into `text` and may overlap, because `***never***` is a word that is both.
- * They are right for a renderer or for a provider's emphasis markup, which read a string they are
- * about to use and do not change it; they are wrong for storage, which is why the stored form is
- * the Markdown and this is computed from it rather than the other way round.
+ * The prose and where its stress falls. Ranges are offsets into `text` and may overlap
+ * (`***never***`). Fine for rendering; storage keeps the Markdown, not these offsets.
  */
 export function parseEmphasis(markdown: string): { text: string; emphasis: Emphasis[] } {
   const w: Walk = { text: "", tail: "", emphasis: [] };
@@ -350,20 +278,14 @@ export function parseEmphasis(markdown: string): { text: string; emphasis: Empha
   const text = kept.map(([from, to]) => w.text.slice(from, to)).join("");
   const emphasis = w.emphasis
     .map((e) => ({ at: moved(kept, e.at), to: moved(kept, e.to), mark: e.mark }))
-    // A run that was nothing but the whitespace the tidy-up took out marks no words at all.
+    // A run that was only trimmed whitespace marks nothing.
     .filter((e) => e.at < e.to);
-  // Outermost first where they differ, and by name where they do not, so a caller applying them
-  // does not have to guess which order it gets.
+  // Outermost first, then by name, so the order is stable.
   emphasis.sort(
     (a, b) => a.at - b.at || b.to - a.to || (a.mark < b.mark ? -1 : a.mark > b.mark ? 1 : 0),
   );
   return { text, emphasis };
 }
 
-/**
- * The prose with no Markdown in it at all.
- *
- * **Anything that counts, bills or speaks a chapter reads this**, never the stored column. A
- * provider sent the stored form would narrate the heading marks and read a link's address out.
- */
+/** The prose with no Markdown. Anything that counts, bills or speaks a chapter reads this. */
 export const plainText = (markdown: string): string => parseEmphasis(markdown).text;

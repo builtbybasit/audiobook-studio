@@ -3,22 +3,9 @@ import { useJobsStore } from "@/stores/jobs";
 import { plural } from "@/lib/contents";
 import { useLibraryStore } from "@/stores/library";
 
-// Money, and the four different things people mean by "cost":
-//
-//   estimated — what a run would cost, worked out from these rates before anything is sent. It
-//               assumes no cache savings, because cache use cannot be known in advance.
-//   reserved  — what is held against the budget while requests are in flight, worked out from the
-//               worst case (full output ceiling, no discounts) so a run can't overshoot the cap
-//   recorded  — what it actually cost, priced per request from the usage that came back, at the
-//               rates in force when that request completed
-//   unknown   — when the rate isn't known, the answer is "unknown", never a confident $0
-//
-// Ordinary pricing is the top card and nothing else. The schedule and the promotions are behind
-// disclosures that stay shut on an endpoint that has neither, which is most of them.
-//
-// The page says what a number is in its label and at most one short line beside it; the why — what
-// the server does with it, what it never does — is a sentence behind a "?" mark, and the full rules
-// are docs/pricing.md.
+// Four kinds of "cost": estimated (before sending, no cache savings), reserved (worst case, held
+// while in flight so a run can't overshoot the cap), recorded (priced per request at the rates in
+// force when it completed), and unknown (never a confident $0).
 import { computed } from "vue";
 import { useNow } from "@vueuse/core";
 
@@ -45,9 +32,9 @@ const props = defineProps<{
   u: UnifiedEndpoint;
   totals: MetricTotals | null;
   rangeLabel: string;
-  /** recorded spend on this endpoint since midnight, and how many rows couldn't be priced */
+  /** recorded spend since midnight, and how many rows couldn't be priced */
   today: { cost: number; unknown: number };
-  /** this endpoint's settled requests in the server's ledger, newest first */
+  /** newest first */
   settled: RequestRecord[];
 }>();
 
@@ -57,31 +44,26 @@ const ep = computed(() => props.u.entry);
 const ops = computed(() => opsOf(props.u));
 const billing = computed(() => (props.u.endpoint ? billingOf(props.u.endpoint) : null));
 
-// The effective rates move on their own — an off-peak window opens, a promotion expires — so this
-// panel keeps its own clock rather than reading a stale snapshot until somebody clicks something.
+// Effective rates change on their own (off-peak windows, promotions), so keep a clock.
 const clock = useNow({ interval: 1000 });
 const now = computed(() => clock.value.getTime());
 
-// ---------- the rate card, whichever kind this endpoint is ----------
-// Every kind goes through the same schedule and the same promotions; what differs is which rates
-// they have and what unit those rates are written in, which `rateCardOf` answers — only the
-// components a card actually prices: one rate for a per-character or per-minute card, two for a
-// token-billed one, and never a row for something it does not charge for.
+// ---------- the rate card ----------
+// Every kind shares the schedule and promotions; `rateCardOf` gives its rates and unit.
 const card = computed(() => rateCardOf(props.u));
 const config = computed(() => card.value.config);
 const base = computed(() => card.value.base);
-// the unit travels with the rates: without it every reason string falls back to the per-character
-// suffix, and a per-audio-minute or per-request endpoint reads "Night rate: $0.30 / 1M chars"
+// without the unit, reason strings fall back to "/ 1M chars" for every kind
 const snapshot = computed(() =>
   effectiveRates(base.value, config.value, now.value, card.value.unit),
 );
 const warnings = computed(() => pricingWarnings(base.value, config.value, now.value));
-/** Whether the advanced sections start open: an endpoint that already uses them. */
+/** The advanced sections start open only on an endpoint that uses them. */
 const hasSchedule = computed(() => !!config.value?.windows.length);
 const hasPromotions = computed(() => !!config.value?.promotions.length);
 const observed = computed(() => (props.u.profile ? recentCacheRate(props.settled) : null));
 
-/** Turning cached pricing on needs a starting number; turning it off means "charged as input". */
+/** Off means "charged as input". */
 function setCached(on: boolean) {
   const input = base.value.input ?? 0;
   config.value.cachedInput = on ? Number((input * 0.25).toFixed(4)) : null;
@@ -92,14 +74,8 @@ function setCacheWrite(on: boolean) {
 }
 
 // ---------- the speech rate ----------
-/**
- * Write a new billing model.
- *
- * `price` is the legacy per-1M-characters figure some older readers still use. It is kept in step
- * where the model can honestly produce one and zeroed where it cannot — a per-request fee and a
- * byte rate have no character equivalent, and inventing one is the conflation the whole billing
- * model exists to prevent.
- */
+/** `price` is the legacy per-1M-chars figure: kept in step where one exists, else zeroed (a
+ *  per-request fee or byte rate has no character equivalent). */
 function setBilling(next: TtsBilling): void {
   const e = props.u.endpoint;
   if (!e) return;
@@ -107,9 +83,9 @@ function setBilling(next: TtsBilling): void {
   e.price = perMillionChars(next) ?? 0;
 }
 
-/** only a speech endpoint can have an unknown rate; scripting always has two numbers */
+/** only a speech endpoint can have an unknown rate */
 const unknownRate = computed(() => !!billing.value && !speechRateKnown(billing.value));
-/** A card whose every rate is zero, which is treated as free: said, since it may be a mistake. */
+/** All-zero rates mean free; said, since it may be a mistake. */
 const FREE: Record<EndpointKind, (u: UnifiedEndpoint) => string | null> = {
   scripting: (u) =>
     !u.profile!.inPrice && !u.profile!.outPrice
@@ -122,7 +98,6 @@ const FREE: Record<EndpointKind, (u: UnifiedEndpoint) => string | null> = {
 };
 const free = computed(() => FREE[props.u.kind](props.u));
 
-// What each kind's estimate and reservation are; none of a transcriber's is estimated or reserved.
 const ESTIMATED: Record<EndpointKind, string> = {
   scripting:
     "Worked out from these rates before a run starts; it assumes no cache savings, so the real figure comes in at or under it, and it is never charged to anything.",
@@ -160,9 +135,9 @@ const books = computed(() =>
     }))
     .filter((r) => r.cap != null || r.scriptCap != null || (r.reserved ?? 0) > 0),
 );
-// a book's spending not read yet is said as unknown, never as nothing spent
+// unread spending is unknown, never zero
 const moneyOrUnknown = (n: number | undefined) => (n == null ? "—" : money(n));
-// the reservations across the library, or unknown while any book's is still unread
+// unknown while any book's reservation is still unread
 const reservedAll = computed(() => {
   let n = 0;
   for (const b of libraryStore.books) {
@@ -182,7 +157,6 @@ const limitUsed = computed(() =>
 
 <template>
   <div class="space-y-3">
-    <!-- ordinary pricing: the card rates, and nothing else -->
     <section class="card p-3">
       <h3 class="label mb-2">
         Rates
@@ -192,7 +166,6 @@ const limitUsed = computed(() =>
         />
       </h3>
 
-      <!-- scripting: two prices, per million tokens -->
       <div v-if="u.profile" class="space-y-3">
         <div class="grid gap-3 sm:grid-cols-2">
           <!-- divs, not labels: the hint is a button, and each field names itself (`label`) -->
@@ -224,7 +197,7 @@ const limitUsed = computed(() =>
           </div>
         </div>
 
-        <!-- cached input: off by default, because most providers this app talks to don't have it -->
+        <!-- off by default: most providers this app talks to don't have it -->
         <div class="rounded-md border border-zinc-200 p-2.5 dark:border-zinc-800">
           <UiSwitch :model-value="config.cachedInput != null" @update:model-value="setCached"
             >This provider charges a different rate for cached input
@@ -272,7 +245,6 @@ const limitUsed = computed(() =>
         </div>
       </div>
 
-      <!-- tts: the billing model is part of the price -->
       <BillingModel
         v-else-if="u.endpoint"
         :endpoint="u.endpoint"
@@ -281,7 +253,6 @@ const limitUsed = computed(() =>
         @update="setBilling"
       />
 
-      <!-- transcription: one rate, per minute of the recording sent -->
       <div v-else-if="u.transcriber" class="space-y-1 text-xs font-medium">
         <span>Audio sent</span>
         <UiNumber
@@ -301,7 +272,6 @@ const limitUsed = computed(() =>
       >
         {{ free }} — right for a model you host yourself, wrong if the provider bills you.
       </p>
-      <!-- the one thing the billing panel cannot say, because it does not know what is below it -->
       <p
         v-if="unknownRate && (config.windows.length || config.promotions.length)"
         class="mt-2 rounded bg-amber-400/10 px-2 py-1.5 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300"
@@ -318,7 +288,6 @@ const limitUsed = computed(() =>
       </p>
     </section>
 
-    <!-- what is actually charged right now, and when that changes -->
     <section class="card p-3">
       <h3 class="label mb-2">
         Effective price now
@@ -335,7 +304,6 @@ const limitUsed = computed(() =>
       />
     </section>
 
-    <!-- advanced: shut unless this endpoint already uses them -->
     <details class="card p-3" :open="hasSchedule">
       <summary class="label cursor-pointer select-none">
         Peak / off-peak schedule
@@ -381,7 +349,6 @@ const limitUsed = computed(() =>
       </div>
     </details>
 
-    <!-- estimated / reserved / recorded -->
     <section class="card p-3">
       <h3 class="label mb-2">Estimated, reserved, recorded</h3>
       <dl class="grid gap-3 sm:grid-cols-3">
@@ -397,9 +364,7 @@ const limitUsed = computed(() =>
             Reserved
             <UiHint label="reservations" :text="RESERVED[u.kind]" />
           </dt>
-          <!-- A reservation is held against a *book's* cap and records no endpoint, so there is no
-               honest per-endpoint figure to show here. The number says what it is instead of
-               implying it belongs to the endpoint whose tab it is on. -->
+          <!-- reservations are per book and record no endpoint, so this is library-wide -->
           <dd class="mt-1 font-mono text-sm">
             {{ u.kind === "scripting" ? moneyOrUnknown(reservedAll) : "—" }}
             <span class="font-sans text-[11px] text-zinc-500">{{ RESERVED_SAYS[u.kind] }}</span>
@@ -434,7 +399,6 @@ const limitUsed = computed(() =>
         </div>
       </dl>
 
-      <!-- what the cache actually did, over the selected range -->
       <div
         v-if="u.kind === 'scripting' && totals"
         class="mt-3 rounded-md border border-zinc-200 p-2.5 text-[11px] leading-relaxed dark:border-zinc-800"
@@ -447,9 +411,7 @@ const limitUsed = computed(() =>
           />
         </div>
         <template v-if="totals.cacheReported">
-          <!-- both halves of the fraction come from the same requests: dividing reported cached
-               tokens by every request's input would count traffic that said nothing about its
-               cache as a run of misses, which is the one reading this page never makes -->
+          <!-- both halves come from requests that reported cache; unreported isn't a miss -->
           <p>
             <b class="font-mono">{{ totals.cachedInputTokens.toLocaleString() }}</b> of
             <b class="font-mono">{{ totals.cacheReportedInputTokens.toLocaleString() }}</b> input
@@ -483,7 +445,6 @@ const limitUsed = computed(() =>
       </div>
     </section>
 
-    <!-- limits -->
     <section class="card p-3">
       <h3 class="label mb-2">
         Spending limits
@@ -493,7 +454,6 @@ const limitUsed = computed(() =>
         />
       </h3>
       <div class="grid gap-3 lg:grid-cols-2">
-        <!-- endpoint scope -->
         <div class="rounded-md border border-zinc-200 p-2.5 dark:border-zinc-800">
           <div class="mb-1.5 flex items-center justify-between gap-2">
             <span class="text-xs font-medium">This endpoint</span>
@@ -531,7 +491,6 @@ const limitUsed = computed(() =>
           </div>
         </div>
 
-        <!-- book scope -->
         <div class="rounded-md border border-zinc-200 p-2.5 dark:border-zinc-800">
           <div class="mb-1.5 flex items-center justify-between gap-2">
             <span class="text-xs font-medium"

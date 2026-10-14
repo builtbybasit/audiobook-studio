@@ -1,10 +1,5 @@
-// A line's reading, as the browser takes it and as the server does (`@/lib/reading`).
-//
-// The page estimates a run, previews a line and says why a clip is out of date from the reading the
-// narration store takes; the server prices, sends and records a line, and judges a clip that lands,
-// from the reading it takes as the line goes out. These hold the two against each other over one
-// book on a server of the test's own: the same line, read by both, is sent as the same words in
-// the same parts with the same instructions, and a clip the book has moved past reads as out of
+// A line's reading, the browser's against the server's (`@/lib/reading`): the same line is sent as
+// the same words, parts and instructions by both, and a clip the book has moved past is out of
 // date for the same reasons on both sides.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
@@ -93,8 +88,8 @@ beforeEach(async () => {
     method: "PUT",
   });
   replaceLexicon(api.db, id, [{ id: 1, term: "twice", say: "twyce", enabled: true }]);
-  // a tag placed by hand at the start of every line, and one the scripting model wrote inside the
-  // dictionary's word where there is one, which goes before it
+  // a tag placed by hand at each line's start, and one the model wrote inside the dictionary's word
+  // where there is one, which goes before it
   const segs = readScript(api.db, id, 1).map((s) => {
     const inside = s.text.indexOf("twice");
     return {
@@ -157,8 +152,7 @@ describe("the browser and the server read a line the same way", () => {
       expect(compareReading(s.audio, s, serverReading(s))).toEqual([]);
     }
 
-    // the dictionary respells the word another way, and the endpoint asks for another rate and
-    // reads no brackets as tags any more — behind the browser's back, which then reads them again
+    // the dictionary and endpoint change behind the browser's back, which then reads them again
     replaceLexicon(api.db, id, [{ id: 1, term: "twice", say: "twaiss", enabled: true }]);
     const moved = studio({ sampleRate: 48000 });
     moved.expressions = { ...moved.expressions!, brackets: [], tags: [] };

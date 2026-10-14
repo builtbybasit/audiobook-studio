@@ -1,22 +1,18 @@
-// The seam the library's voice effects are read and written through.
-//
-// The same arrangement as `@/services/library`: one HTTP implementation, asking the library this
-// tab is on (`API_BASE`) — yours, or the demo's — unless a test set another. The effects store
-// asks `effectsService()`; no view knows which answered.
+// The seam the library's voice effects go through, as `@/services/library` is for books.
 import type { Effect, EffectUses, Job, StaleSound, Step, ThoughtChoice } from "@/types";
 import { HttpClient, seg, type FetchLike } from "@/services/http";
 import { API_BASE } from "@/services/mode";
 
 export interface EffectsService {
-  /** Every effect, in the order the library lists them. */
+  /** In library order. */
   list(): Promise<Effect[]>;
-  /** A new effect, right after `after` or at the end of the list; the server gives it its id. */
+  /** Right after `after`, or at the end; the server gives it its id. */
   create(effect: Omit<Effect, "id">, after?: string): Promise<Effect>;
   /** Every book and speaker that chooses it, and whether the library's thought effect is it. */
   uses(id: string): Promise<EffectUses>;
-  /** Its name, chain and `useWhen` replaced by these — one left out is cleared; the id stays. */
+  /** A field left out is cleared; the id stays. */
   update(effect: Effect): Promise<Effect>;
-  /** Gone, and every choice of it with it: the server clears each book's and speaker's. */
+  /** The server clears every book's and speaker's choice of it too. */
   remove(id: string): Promise<void>;
   /** The library's thought effect: an effect's id, or "none". */
   libraryThoughts(): Promise<ThoughtChoice>;
@@ -27,7 +23,7 @@ export interface EffectsService {
   parse(code: string): Promise<Step[]>;
   /** How many of a book's clips have an old sound, and how many of those cannot be redone. */
   stale(bookId: string): Promise<StaleSound>;
-  /** Queue the book's Re-apply; refused (409) while one is queued or running. */
+  /** Refused (409) while one is queued or running. */
   reapply(bookId: string): Promise<Job>;
 }
 
@@ -91,7 +87,7 @@ export function effectsService(): EffectsService {
   return (service ??= new HttpEffectsService());
 }
 
-/** Point the app at a different implementation; `null` goes back to the HTTP one. For tests. */
+/** For tests; `null` goes back to the HTTP one. */
 export function setEffectsService(next: EffectsService | null): void {
   service = next;
 }

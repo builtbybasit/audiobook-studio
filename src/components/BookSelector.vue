@@ -1,11 +1,6 @@
 <script setup lang="ts">
-// The open book in the header: cover + title + ▾. Click lists the other books, each with its one
-// next thing to do, and picking one lands on the page you are already on — Narration stays
-// Narration — so switching books never costs your place. From six books up a search box comes
-// first (title or author, the shelf's own matching); under that a box above three rows is clutter.
-//
-// `dim` is for the app pages (Library, Queue, Endpoints): the book is still one click away, but
-// the header does not pretend you are on it.
+// The open book in the header. Picking another keeps the current page (Narration stays Narration);
+// a search box shows from six books up. `dim` is for app pages, where the book is not the context.
 import { useLibraryStore } from "@/stores/library";
 
 import { computed, nextTick, ref, watch } from "vue";

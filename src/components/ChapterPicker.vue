@@ -2,12 +2,8 @@
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 
-// Shared chapter selector: checkboxes + per-stage status. Chapters are grouped by volume when a
-// novel spans several EPUBs; each volume header can collapse and select/deselect its chapters.
-// Each row has a peek (raw text preview) and can be skipped (excluded from every stage).
-// Keyboard: ↑↓ move, space ticks, ↵ opens, / focuses search.
-// A book can have near a thousand rows, so a row keeps to cheap elements — a native tick box, and
-// a peek button that opens the one popover the list shares — and what it shows is worked out once.
+// Shared chapter selector, grouped by volume. A book can have ~1000 rows, so a row keeps to cheap
+// elements (a native tick box, a peek button opening the one shared popover) and is computed once.
 import { computed, ref } from "vue";
 import { isNarrated } from "@/lib/scriptReview";
 import { findsChapter, numberCell } from "@/lib/chapterNumber";
@@ -69,7 +65,7 @@ const collapsed = useQueryParam("closed", idSetParam());
 const q = useQueryParam("find", textParam());
 const search = ref<HTMLInputElement | null>(null);
 const canPick = (c: Chapter) => props.selectable(c) && !c.excluded;
-/** reading numbers: what each row shows and the search finds a number by (skipped rows have none) */
+/** reading numbers; skipped rows have none */
 const numbers = computed(() => libraryStore.chapterNumbers[props.bookId]);
 const matches = (c: Chapter) =>
   !q.value || findsChapter(c.title, numbers.value?.get(c.id), q.value);
@@ -81,8 +77,7 @@ function statusOf(c: Chapter): string {
 }
 const finished = (status: string) => ["done", "fallback", "stale"].includes(status);
 const isDone = (c: Chapter) => finished(statusOf(c));
-/** What a row says after its title, in one word or number: skipped, how far a run has got, how
- *  the last one went, or — once a chapter is done — its script's lines or its audio's length. */
+/** What a row says after its title: skipped, progress, last outcome, or line count / length. */
 type Tag = { text: string; class: string; title?: string };
 function tagOf(c: Chapter, status: string): Tag | null {
   if (c.excluded) return { text: "skipped", class: "text-zinc-400" };
@@ -100,8 +95,7 @@ function tagOf(c: Chapter, status: string): Tag | null {
       title: "a chunk didn't verify and was kept as narration",
     };
   if (props.stage === "scripting" && c.scripting === "done") {
-    // every line the script holds — the ones not read aloud are still lines of the script, and
-    // the title says how many of them there are. Blank until the count is read.
+    // every script line, read aloud or not; blank until the count is read
     const lines = scriptsStore.lineCountsOf(props.bookId, c.id);
     const skipped = lines?.skipped ?? 0;
     return {
@@ -114,7 +108,7 @@ function tagOf(c: Chapter, status: string): Tag | null {
     return { text: clockDuration(c.duration), class: "font-mono text-zinc-400" };
   return null;
 }
-/** A chapter as its row shows it, worked out once for the row rather than once per binding. */
+/** worked out once per row rather than once per binding */
 type Row = {
   c: Chapter;
   n: number | undefined;
@@ -122,8 +116,7 @@ type Row = {
   pickable: boolean;
   tag: Tag | null;
 };
-/** A volume as the list shows it: the rows the search leaves in it, the ids a tick on its header
- *  covers, and how many of those rows this stage has finished. */
+/** `pickIds`: what a tick on the header covers */
 type VolumeRow = Volume & { rows: Row[]; pickIds: number[]; done: number };
 const visible = computed(() =>
   grouped.value.flatMap((v): VolumeRow[] => {
@@ -144,7 +137,7 @@ const visible = computed(() =>
 );
 const visiblePickable = computed(() => visible.value.flatMap((v) => v.pickIds));
 const eligible = computed(() => chapters.value.filter(canPick));
-/** the selection as a set: a row asks it once per render, and a book can tick every chapter */
+/** a row asks it once per render, and a book can tick every chapter */
 const picked = computed(() => new Set(props.modelValue));
 const range = useRangeSelect(visiblePickable);
 function jump(id: string | number | null) {
@@ -172,18 +165,13 @@ function allEligible() {
 function none() {
   emit("update:modelValue", []);
 }
-/** What the current selection contains: “8 chapters selected: 3 new, 5 already scripted.” */
 const summary = computed(() =>
   selectionSummary(
     chapters.value.filter((c) => picked.value.has(c.id)),
     props.stage === "export" ? "narration" : props.stage,
   ),
 );
-/**
- * Selection shortcuts. They read the whole book, never the search — a filtered list is the one
- * thing the header says out loud — and only appear when they would select something, so the row
- * stays short on a book that has nothing failed or stale.
- */
+/** Selection shortcuts: they read the whole book, never the search, and show only when useful. */
 const shortcuts = computed(() => {
   const stage = props.stage === "export" ? "narration" : props.stage;
   const of = (test: (c: Chapter) => boolean) =>
@@ -222,7 +210,6 @@ const shortcuts = computed(() => {
 function select(ids: number[]) {
   emit("update:modelValue", ids);
 }
-/** a volume header's tick: every row of it, some, or none */
 function volTick(v: VolumeRow): boolean | "indeterminate" {
   const n = v.pickIds.filter((id) => picked.value.has(id)).length;
   return n > 0 && n === v.pickIds.length ? true : n > 0 ? "indeterminate" : false;
@@ -259,7 +246,6 @@ const counts = computed(() => {
   out.done += out.fallback + out.stale;
   return out;
 });
-// keyboard on the list: rows are focusable; arrows move, space ticks, enter opens
 function onRowKey(e: KeyboardEvent, c: Chapter) {
   const el = e.currentTarget as HTMLElement;
   const rows = [...(el.closest("[data-list]")?.querySelectorAll<HTMLElement>("[data-row]") ?? [])];
@@ -294,7 +280,7 @@ function skip(c: Chapter, v: boolean) {
       props.modelValue.filter((x) => x !== c.id),
     );
 }
-/** The one peek the list shares, and the row whose peek button opened it. */
+/** The one peek the list shares, and the row whose button opened it. */
 const peekOpen = ref(false);
 const peekId = ref<number | null>(null);
 const peekEl = ref<HTMLElement>();
@@ -360,7 +346,6 @@ function openPeek(c: Chapter, e: MouseEvent) {
       </div>
     </div>
 
-    <!-- selection shortcuts, and what the selection actually contains -->
     <div class="border-b border-zinc-200 px-3 py-1.5 dark:border-zinc-800">
       <div class="flex flex-wrap items-center gap-1">
         <span class="mr-0.5 text-[10px] uppercase tracking-wider text-zinc-400">Select</span>
@@ -406,8 +391,7 @@ function openPeek(c: Chapter, e: MouseEvent) {
       />
     </div>
 
-    <!-- the list is the part that flexes, and the part that must never be squeezed to nothing:
-         every line above and below it is bounded, so a long note cannot eat the chapters -->
+    <!-- the list flexes; everything above and below it is bounded so it is never squeezed out -->
     <div class="min-h-24 flex-1 overflow-auto py-1" data-list>
       <div v-if="!visible.length" class="px-3 py-4 text-center text-xs text-zinc-500">
         No chapter matches “{{ q }}”.
@@ -469,7 +453,6 @@ function openPeek(c: Chapter, e: MouseEvent) {
               <span class="mr-1.5 font-mono text-[11px] text-zinc-400">{{ numberCell(n) }}</span
               >{{ c.title }}
             </button>
-            <!-- peek -->
             <button
               data-peek
               class="rounded px-1 text-[11px] text-zinc-400 opacity-0 hover:text-violet-500 focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
@@ -516,7 +499,6 @@ function openPeek(c: Chapter, e: MouseEvent) {
     />
 
     <div class="border-t border-zinc-200 p-2 dark:border-zinc-800">
-      <!-- one line each: the long form of both is said in full in the run panel beside this -->
       <p v-if="runNote" class="mb-1 truncate text-[11px] text-zinc-500" :title="runNote">
         {{ runNote }}
       </p>

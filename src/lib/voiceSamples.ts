@@ -1,21 +1,15 @@
-// What a voice sample may be, said once for the page and the server alike.
-//
-// A sample is any audio file of one person speaking, uploaded as it is, that a voice is cloned
-// from and then kept with. Each provider says what it takes in its `cloning` (`lib/providers/`);
-// this is the app's own ceiling above all of them, and the words both sides use for a limit, so the
-// page's note before a pick is sent and the server's refusal after it say the same thing.
+// The app's own ceiling on voice samples above every provider's `cloning`, and the wording both
+// page and server use for a refused pick.
 import type { CloneSupport, SampleFormat } from "@/lib/providers/types";
 
-/** The most samples one voice is made from or kept with, whatever its provider: Fish's twenty. */
+/** Fish's twenty. */
 export const MAX_VOICE_SAMPLES = 20;
-/** The most one sample may be, in bytes, whatever its provider. */
 export const MAX_SAMPLE_BYTES = 20 * 1024 * 1024;
-/** The most one voice's samples may come to together, in bytes. */
+/** All of one voice's samples together. */
 export const MAX_SAMPLES_BYTES = 100 * 1024 * 1024;
-/** The most a sample's transcript may run to: a minute of speech is under two hundred words. */
+/** A minute of speech is under two hundred words. */
 export const MAX_TRANSCRIPT_CHARS = 1000;
 
-/** What each format is called in a sentence. */
 export const SAMPLE_FORMAT_NAME: Record<SampleFormat, string> = {
   wav: "WAV",
   mp3: "MP3",
@@ -30,17 +24,15 @@ export function formatsSaid(formats: readonly SampleFormat[]): string {
   return names.length > 1 ? `${names.slice(0, -1).join(", ")} or ${names.at(-1)}` : names[0];
 }
 
-/** "20 MB", "512 KB", in the binary units every limit here is set in. */
+/** Binary units, as every limit here is set in. */
 export const sizeSaid = (bytes: number): string =>
   bytes >= 1024 * 1024
     ? `${+(bytes / 1024 / 1024).toFixed(1)} MB`
     : `${Math.round(bytes / 1024)} KB`;
 
-/** The most samples one voice is made from on this provider, never past the app's own. */
 export const maxSamplesOf = (cloning: CloneSupport): number =>
   Math.min(cloning.maxSamples, MAX_VOICE_SAMPLES);
 
-/** The most one sample may be on this provider, never past the app's own. */
 export const maxSampleBytesOf = (cloning: CloneSupport): number =>
   Math.min(cloning.maxSampleBytes, MAX_SAMPLE_BYTES);
 
@@ -57,7 +49,6 @@ export const tooLargeSaid = (name: string, cloning: CloneSupport, who = "this pr
 export const tooMuchSaid = (): string =>
   `The samples come to more than ${sizeSaid(MAX_SAMPLES_BYTES)}`;
 
-/** A provider that needs a transcript of each sample was sent one without. */
 export const noTranscriptSaid = (name: string, who = "this provider"): string =>
   `Say what is said in ${name}: ${who} needs a transcript of each sample`;
 
@@ -71,6 +62,6 @@ export const wrongFormatSaid = (
 ): string =>
   `${name} is ${SAMPLE_FORMAT_NAME[format]} audio, which ${who} does not make a voice from`;
 
-/** The hint under a format refusal: "Use WAV, MP3 or M4A audio." */
+/** "Use WAV, MP3 or M4A audio." */
 export const formatsHint = (cloning: CloneSupport): string =>
   `Use ${formatsSaid(cloning.formats)} audio.`;

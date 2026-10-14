@@ -1,15 +1,6 @@
-// A piece of page state kept in the URL, so leaving and coming back — or a reload, or a pasted link
-// — finds the same view.
-//
-// The ref and the query are kept in step both ways: setting the ref rewrites the address with
-// `router.replace` (no history entry per keystroke), and a navigation that changes the key sets the
-// ref. Each direction compares the value as the URL would spell it before it writes, so the echo of
-// its own write never comes back as a second change — which matters where an absent key means
-// something (`default`), and an emptied value would otherwise read back as that default.
-//
-// A codec says how one value is spelled: `parse` reads the key's text, `serialize` writes it and
-// answers `undefined` to leave the key out, and `default` is what an absent key means. The common
-// ones are below; a page with an odd one passes its own.
+// A piece of page state kept in the URL, so a reload or pasted link finds the same view. Synced
+// both ways (`router.replace`, no history entry per keystroke); each side compares the value as the
+// URL spells it before writing, so its own echo is not a second change. A codec spells one value.
 import { ref, watch, type Ref } from "vue";
 import { useRoute, useRouter, type LocationQueryRaw, type Router } from "vue-router";
 import { queryIdSet, queryText } from "@/lib/query";
@@ -32,7 +23,7 @@ export function textParam({ trim = false } = {}): QueryParam<string> {
   };
 }
 
-/** One of a fixed set of words. The fallback is absent from the URL, and anything unknown reads as it. */
+/** One of a fixed set of words. The fallback is absent from the URL; unknown words read as it. */
 export function enumParam<T extends string, F extends T | null>(
   values: readonly T[],
   fallback: F,
@@ -56,10 +47,7 @@ export function idParam(): QueryParam<number | null> {
   };
 }
 
-/**
- * A set of positive ids, written in ascending order so the same set is always the same address.
- * `fallback` is what an absent key means, when that is not "none".
- */
+/** Positive ids in ascending order, so one set is one address. `fallback` is what absent means. */
 export function idSetParam(fallback: () => Set<number> = () => new Set()): QueryParam<Set<number>> {
   return {
     parse: (text) => queryIdSet(text),
@@ -72,10 +60,8 @@ export function idSetParam(fallback: () => Set<number> = () => new Set()): Query
 const pending = new WeakMap<Router, LocationQueryRaw>();
 
 /**
- * Set one key of the query, together with any other set in the same tick. Each `replace` spreads
- * the query as it stands, and the route only moves once the navigation lands — so two written one
- * after the other would each put back what the other took out ("show everything" clearing the
- * search and the filter kept one of them).
+ * Set one query key together with any others set in the same tick: each `replace` spreads the
+ * query as it stands until the navigation lands, so two separate writes would undo each other.
  */
 function writeQuery(router: Router, name: string, text: string | undefined): void {
   let patch = pending.get(router);
@@ -94,8 +80,7 @@ function writeQuery(router: Router, name: string, text: string | undefined): voi
 export function useQueryParam<T>(name: string, param: QueryParam<T>): Ref<T> {
   const route = useRoute();
   const router = useRouter();
-  // The page this state belongs to. Leaving it changes the query before the view goes away, and
-  // what the next page has in its address is not this page's to read or to rewrite.
+  // Leaving the page changes the query before the view goes; the next page's query is not ours.
   const path = route.path;
   const absent = (): T =>
     typeof param.default === "function" ? (param.default as () => T)() : param.default;

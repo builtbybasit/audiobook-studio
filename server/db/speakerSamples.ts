@@ -1,8 +1,6 @@
-// Every read and write of the recordings kept with a book's speakers from a script file.
-//
-// A row is one speaker's set of recordings; its files are rows of their own, in order. A discard is soft — `discarded_at` is stamped and the row stays until the
-// purge — so an Undo has something to bring back. What the rules are, and when the purge runs, is
-// `server/speakerSamples/store.ts`'s; this file only reads and writes.
+// Recordings a script file brought for a book's speakers: one row per speaker, files in order.
+// Discards are soft (`discarded_at`) so Undo works; rules and purge timing live in
+// server/speakerSamples/store.ts.
 import { and, asc, eq, inArray, isNotNull, isNull, lt } from "drizzle-orm";
 
 import type { KeptSample, ScriptFileVoice, SpeakerSamples } from "@/types";
@@ -11,14 +9,12 @@ import { speakerSampleFiles as filesTable, speakerSamples } from "~/db/schema";
 
 export type SampleRow = typeof speakerSamples.$inferSelect;
 
-/** A speaker's recordings as a script file brought them, to be kept under one new row. */
 export interface KeepSpeakerSamples {
   speaker: string;
   voice: ScriptFileVoice;
   clips: KeptSample[];
 }
 
-/** The files a row names, in the order they were kept. */
 export function filesOf(db: Db | Tx, id: number): KeptSample[] {
   return db
     .select({
@@ -33,7 +29,6 @@ export function filesOf(db: Db | Tx, id: number): KeptSample[] {
     .all();
 }
 
-/** A row as the page reads it, with its files. */
 export const toSpeakerSamples = (db: Db | Tx, r: SampleRow): SpeakerSamples => ({
   id: r.id,
   speaker: r.speaker,
@@ -42,7 +37,7 @@ export const toSpeakerSamples = (db: Db | Tx, r: SampleRow): SpeakerSamples => (
   samples: filesOf(db, r.id),
 });
 
-/** One row of this book's, discarded or not; undefined when there is none. */
+/** Discarded or not. */
 export function sampleRow(db: Db | Tx, bookId: string, id: number): SampleRow | undefined {
   return db
     .select()
@@ -51,7 +46,7 @@ export function sampleRow(db: Db | Tx, bookId: string, id: number): SampleRow | 
     .get();
 }
 
-/** Every file a row of this book still names — which a removal must leave on disk. */
+/** Files a removal must leave on disk. */
 export function namedFiles(db: Db | Tx, bookId: string): Set<string> {
   return new Set(
     db
@@ -64,7 +59,7 @@ export function namedFiles(db: Db | Tx, bookId: string): Set<string> {
   );
 }
 
-/** The samples waiting in this book, oldest first; a discarded row is not among them. */
+/** Oldest first, discarded rows excluded. */
 export function waitingSamples(db: Db | Tx, bookId: string): SpeakerSamples[] {
   return db
     .select()
@@ -75,10 +70,7 @@ export function waitingSamples(db: Db | Tx, bookId: string): SpeakerSamples[] {
     .map((r) => toSpeakerSamples(db, r));
 }
 
-/**
- * Remove the rows of this book discarded before `before`, in one transaction, and answer with the
- * files they named that no row names any more, for the caller to remove from disk.
- */
+/** Returns files no row names any more, for the caller to delete from disk. */
 export function purgeDiscardedRows(db: Db, bookId: string, before: number): string[] {
   return db.transaction((tx) => {
     const expired = tx
@@ -101,11 +93,7 @@ export function purgeDiscardedRows(db: Db, bookId: string, before: number): stri
   });
 }
 
-/**
- * Keep each speaker's recordings under a new row, in one transaction. A speaker who already has
- * recordings waiting has them discarded the soft way, and `replaced` names those rows so an Undo
- * can bring them back. The same file named twice in one voice is one file, kept once.
- */
+/** A speaker's waiting recordings are soft-discarded and listed in `replaced` for Undo. */
 export function keepSpeakerSamples(
   db: Db,
   bookId: string,
@@ -160,16 +148,12 @@ export function keepSpeakerSamples(
   });
 }
 
-/** Stamp a row discarded at `at`, or — `null` — take the discard back. */
+/** `null` takes the discard back. */
 export function setDiscarded(db: Db | Tx, id: number, at: number | null): void {
   db.update(speakerSamples).set({ discardedAt: at }).where(eq(speakerSamples.id, id)).run();
 }
 
-/**
- * A merge folds one speaker into another: the lines go to them, and so do the recordings waiting
- * for either — it is one person, cloned or not, and a cascade from the removed row would drop the
- * rows and leave their files on disk with nothing naming them.
- */
+/** For a merge; a cascade from the removed speaker would orphan the files on disk. */
 export function moveSpeakerSamples(tx: Db | Tx, bookId: string, from: string, into: string): void {
   tx.update(speakerSamples)
     .set({ speaker: into })
@@ -178,10 +162,8 @@ export function moveSpeakerSamples(tx: Db | Tx, bookId: string, from: string, in
 }
 
 /**
- * Taking a speaker off the cast leaves their recordings nobody to wait for. They are discarded the
- * soft way — held by the Narrator's row only so the foreign key has somewhere to point, hidden at
- * once, and purged with their files a day later — rather than cascaded away with their files left
- * behind.
+ * For a removed speaker: soft-discarded and re-pointed at the Narrator (only to satisfy the foreign
+ * key), then purged with their files, instead of cascading and orphaning the files.
  */
 export function discardSpeakerSamples(
   tx: Db | Tx,

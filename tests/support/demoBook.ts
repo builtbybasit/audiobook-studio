@@ -1,9 +1,5 @@
-// One book of the demo library, read into the stores the way its pages read it.
-//
-// `demoServer()` answers the page's services; this is the reading a page does on top of it — the
-// shelf, the book and its chapters, the endpoints, the cast, and every chapter's script and plain
-// prose — so a test of what a store works out from them (a plan, an estimate, a retry's scope) has
-// the seeded book in hand without opening each page's queries.
+// Reads one demo book into the stores and query cache as its pages would, so a store test has the
+// seeded book in hand without opening each page's queries.
 import { useQueryCache } from "@pinia/colada";
 
 import { keys } from "@/queries/keys";
@@ -15,10 +11,8 @@ import { useScriptsStore } from "@/stores/scripts";
 import type { TestPinia } from "./pinia";
 
 /**
- * Read `bookId` and everything a stage page shows of it into `pinia`'s stores and query cache.
- *
- * Every store is taken before the first await: a query a previous test's app left settling can
- * make its own Pinia the active one again while this is waiting on a read.
+ * Every store is taken before the first await: a query a previous test left settling can make its
+ * own Pinia active again while this waits.
  */
 export async function openDemoBook(pinia: TestPinia, bookId: string): Promise<void> {
   const libraryStore = useLibraryStore();

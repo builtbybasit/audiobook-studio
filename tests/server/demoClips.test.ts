@@ -1,12 +1,7 @@
 // The demo's clips are made the first time something reads them; the real library's never are.
-//
-// The demo is seeded with thousands of narrated lines whose files were never written, each clip row
-// holding a url in the demo's usual form. These tests write such rows themselves — a book imported
-// into each library, and a script written straight into its database with clips whose files do not
-// exist — so what is proved is the seam, whatever the seed happens to hold: the route serves a tone
-// as long as the row says, made once however many ask at once; a build stitches clips nobody has
-// played; and a name no clip holds, or a clip of the real library's that is not on disk, is the 404
-// it always was.
+// Tests write clip rows with no file behind them, so the seam is tested whatever the seed holds:
+// the route serves a tone as long as the row says, made once however many ask; a build stitches
+// unplayed clips; an unknown name, or a real-library clip not on disk, is a 404.
 import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";

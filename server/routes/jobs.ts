@@ -1,7 +1,4 @@
-// The queue over HTTP: what is running, what is waiting, what happened, and stop.
-//
-// Jobs are enqueued from the thing they are about — `POST /api/books/:id/chapters/script` — and
-// this file is only ever about a job that already exists.
+// The queue over HTTP. Jobs are enqueued by the routes for what they are about.
 import { Hono } from "hono";
 import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
@@ -32,7 +29,7 @@ export function jobRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
     return c.json({ job });
   });
 
-  /** Stop a job. A queued one never starts; a running one is told to stop and settles shortly. */
+  /** A queued job never starts; a running one is told to stop and settles shortly. */
   app.post("/:id/cancel", validate("param", JobId), (c) => {
     const { id } = c.req.valid("param");
     const was = runner.cancel(id);
@@ -41,7 +38,7 @@ export function jobRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
     return c.json({ job: queue.getJob(db, id), was });
   });
 
-  /** Stop several jobs in one request, in the order given — a whole run is hundreds. Says which stopped. */
+  /** In the order given (a run is hundreds); says which stopped. */
   app.post("/cancel", validate("json", JobIds), (c) => {
     const { ids } = c.req.valid("json");
     const cancelled = ids.filter((id) => {
@@ -52,14 +49,13 @@ export function jobRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
     return c.json({ cancelled });
   });
 
-  /** Move queued jobs ahead of the rest, in their own order. Says which moved. */
+  /** Queued jobs go ahead of the rest, in their own order; says which moved. */
   app.post("/run-next", validate("json", JobIds), (c) => {
     const moved = queue.runNext(db, c.req.valid("json").ids);
     c.var.logger.info({ jobs: moved }, "moved to run next");
     return c.json({ moved });
   });
 
-  /** Take a finished job out of the history. */
   app.delete("/:id", validate("param", JobId), (c) => {
     const { id } = c.req.valid("param");
     const job = queue.getJob(db, id);
@@ -69,7 +65,7 @@ export function jobRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
     return c.json({ removed: id });
   });
 
-  /** Clear the history; live jobs stay. */
+  /** Live jobs stay. */
   app.post("/clear", (c) => c.json({ removed: queue.clearFinished(db) }));
 
   return app;

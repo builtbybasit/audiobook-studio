@@ -1,8 +1,5 @@
 // A book's cast over HTTP: a speaker renamed moves every line that names them, a merge folds one
 // speaker into another, and an undo puts exactly the lines that moved back.
-//
-// Every test drives the real routes over a private database, with a script the fake model wrote
-// from prose that names two speakers.
 import { describe, expect, test } from "bun:test";
 
 import type { Cast, Character, ImportedBook, LexEntry, MovedLines, Segment } from "@/types";

@@ -1,9 +1,6 @@
-// The scripting prompt on the server: the three places it is kept — the library's default, an
-// endpoint's notes and replacement, a book's notes and replacement — saved, refused and read back;
-// a run snapshotting the layers resolved when it is queued and filling in each request's tags; the
-// chapter's history naming where its prompt came from; the Test button asking with the prompt the
-// profile's runs would be sent; and what a reasoning model spent thinking, kept in the ledger at the
-// level it was asked for and read back into the next run's estimate.
+// The scripting prompt on the server: its three layers (library default, endpoint, book) saved,
+// refused and read back; runs snapshotting them at queue time; history naming the prompt's source;
+// the Test button; and reasoning spend kept in the ledger and fed into the next estimate.
 import { describe, expect, test } from "bun:test";
 
 import { eq } from "drizzle-orm";
@@ -44,8 +41,8 @@ const LIBRARY = {
 };
 
 /**
- * The one credential the OpenAI profile names. Spelled out rather than read from the page's
- * registry, which a store test earlier in the same process may have refilled from a server of its own.
+ * The OpenAI profile's one credential, spelled out: a store test earlier in the process may have
+ * refilled the page's registry.
  */
 const CREDENTIALS = [{ id: "openai-personal", label: "OpenAI · personal", note: "" }];
 

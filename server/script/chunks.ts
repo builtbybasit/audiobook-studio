@@ -1,27 +1,19 @@
-// A chapter cut into the requests its scripting profile allows. A run cuts it this way when it is
-// priced and again when it is sent (`server/jobs/scripting.ts`), and a prompt trial cuts it the same
-// way so that its part 3 is a run's part 3 (`trial.ts`).
+// A chapter cut into its scripting profile's requests; runs and prompt trials must cut alike.
 import type { Profile } from "@/types";
 import { scriptParts } from "@/lib/scripting";
 
-/**
- * The chapter cut into the requests its profile allows, exactly as the Endpoints page previews
- * them: `scriptParts` is the demo's own call, with the source's whitespace kept so the pieces
- * rejoin to the chapter. No profile, or a limit of 0, is the chapter whole.
- */
+/** As the Endpoints page previews it (`scriptParts`). No profile or limit 0: the whole chapter. */
 export function chunksOf(text: string, profile: Profile | undefined): string[] {
   const parts = profile ? scriptParts(text, profile) : [];
   return parts.length ? parts : [text];
 }
 
-/** About how much of the text before a request is sent with it as context. */
+/** Characters of preceding text sent as context. */
 const BEFORE_MAX = 800;
 
 /**
- * The end of the chunk before chunk `i`, for `{{excerpt.before}}`: its last paragraphs, as many as
- * fit in `BEFORE_MAX` characters, and at least the tail of the last one. "" for the first chunk,
- * whose context is the previous chapter's recap. A chunk's requests run side by side, so this is
- * the prose, not the script that chunk will come back as.
+ * The end of chunk `i - 1` for `{{excerpt.before}}`: its last paragraphs within `BEFORE_MAX`.
+ * Prose, not script, since chunks run side by side. "" for the first chunk (it gets the recap).
  */
 export function beforeOf(chunks: readonly string[], i: number): string {
   if (i <= 0 || i > chunks.length) return "";

@@ -1,16 +1,7 @@
-// The Demo drawer's store: the situations the demo library offers, the one this tab last put it
-// into, and how fast its simulated work runs.
-//
-// All of it is the server's (`server/routes/demo.ts`). A demo tab is the page talking to the demo
-// library, so putting the demo into a situation or back to its seed is a request, and the server
-// reseeds its whole library to answer it. The page then loads again, on the path the situation
-// wants to be looked at: every store, query and piece of page state reads the new world from
-// scratch, so nothing from the old one is left to reconcile with it.
-//
-// The server does not remember which situation it was put into — a situation is a seed like any
-// other — so the store keeps the one it applied in the tab's `sessionStorage`, for the chip and the
-// drawer's "Now" to say after the reload. A reset clears it. The speed is the demo library's, and
-// is read from it.
+// The Demo drawer's store: situations, the one this tab applied, and simulated speed. All of it is
+// the server's (`server/routes/demo.ts`): applying or resetting reseeds the library and the page
+// reloads, so nothing old needs reconciling. The server does not remember which situation it is in,
+// so the applied one is kept in `sessionStorage` for after the reload.
 import type { AppliedSituation, DemoSituation, DemoSituations } from "@/types";
 import { defineStore } from "pinia";
 import { ApiError } from "@/services/http";
@@ -20,13 +11,12 @@ import { useUiStore } from "@/stores/ui";
 /** The situation this tab last put the demo into, as the drawer's "Now" shows it. */
 export type AppliedRow = AppliedSituation["scenario"] & Pick<AppliedSituation, "note">;
 
-/** The `sessionStorage` keys: what was applied, and that the drawer was open when the page went. */
+/** `sessionStorage` keys: what was applied, and that the drawer was open when the page went. */
 export const APPLIED_KEY = "audiobook-studio:demo-situation";
 export const REOPEN_KEY = "audiobook-studio:demo-drawer";
 
-// Read off `globalThis` at each call and guarded, as `services/mode.ts` reads the mode: a browser
-// that blocks storage for the site throws on the property itself, and the drawer then only forgets
-// what was applied — it must not stop the page.
+// Read off `globalThis` per call and guarded (as `services/mode.ts`): a browser blocking storage
+// throws on the property, and that must only forget the situation, not break the page.
 const session = () => (globalThis as { sessionStorage?: Storage }).sessionStorage;
 
 function recall<T>(key: string): T | null {
@@ -76,7 +66,7 @@ export const useDemoStore = defineStore("demo", {
     busy: false,
   }),
   getters: {
-    /** Each heading with the situations under it, in the server's order; an empty one left out. */
+    /** Each heading with its situations, in the server's order; empty ones left out. */
     grouped(s): (DemoSituations["groups"][number] & { rows: DemoSituation[] })[] {
       return s.groups
         .map((g) => ({ ...g, rows: s.situations.filter((r) => r.group === g.id) }))
@@ -84,7 +74,6 @@ export const useDemoStore = defineStore("demo", {
     },
   },
   actions: {
-    /** Read the situations and the speed from the demo library, once. */
     async load(): Promise<void> {
       if (this.loaded) return;
       const read = await this._ask("read the demo's situations", () =>
@@ -95,9 +84,8 @@ export const useDemoStore = defineStore("demo", {
       Object.assign(this, { groups, situations, speed, loaded: true });
     },
     /**
-     * Put the demo into a situation and load the page on it, keeping the drawer open across the
-     * reload when `reopen` says so. The demo is seeded again first, so the same row gives the same
-     * situation however many ran before it.
+     * Apply a situation and reload on it (`reopen` keeps the drawer open). The demo is reseeded
+     * first, so a row always gives the same situation.
      */
     async applyScenario(id: string, { reopen = false } = {}): Promise<void> {
       const answer = await this._ask("put the demo into that situation", () =>
@@ -121,7 +109,7 @@ export const useDemoStore = defineStore("demo", {
       keep(REOPEN_KEY, reopen);
       loadPage(path);
     },
-    /** Set how fast the demo's simulated work runs; a run already going picks it up as it goes. */
+    /** A run already going picks the new speed up as it goes. */
     async setSpeed(speed: number): Promise<void> {
       const answered = await this._ask("change the demo's speed", () =>
         demoService().setSpeed(speed),

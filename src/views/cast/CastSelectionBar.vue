@@ -1,7 +1,5 @@
 <script setup lang="ts">
-// What can be done to the ticked speakers at once: merge them into another, or remove them. It
-// sticks to the bottom of the window, so rows ticked far down a long cast still have it in reach.
-// Neither asks first — the toast's Undo puts back exactly what moved, as the row's own × does.
+// Merge or remove the ticked speakers. Neither asks first: the toast's Undo puts back what moved.
 import { computed } from "vue";
 
 import { useCast } from "@/queries";
@@ -14,8 +12,7 @@ const emit = defineEmits<{ clear: [] }>();
 const castStore = useCastStore();
 const { characters: cast } = useCast(props.bookId);
 
-// every speaker to merge into, built once per change of the cast rather than per selection; a
-// persona says whose, as their row does. The server carries or clears persona links on a merge.
+// built once per cast change, not per selection
 const castOpts = computed(() =>
   cast.value.map((c) => ({
     value: c.name,

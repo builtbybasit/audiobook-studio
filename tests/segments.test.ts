@@ -1,9 +1,6 @@
-// Segment boundary corrections: splitting a line in two, joining two, deleting one. Each is an
-// edit of the chapter's script the store makes at once and writes behind, so these read the demo
-// library's narrated first chapter of The Cliché Cultivation World and check what the edit left
-// here; what the server keeps of an edit is `tests/server/scriptEdit.test.ts`'s. The write is
-// answered without being written, so the seeded demo is opened once and every test reads it as
-// seeded.
+// Segment boundary corrections (split, join, delete), made at once and written behind, read on the
+// demo's narrated The Cliché Cultivation World ch. 1. Writes are answered without being written,
+// so every test reads the demo as seeded; the server side is `tests/server/scriptEdit.test.ts`.
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 
 import { newSpeaker } from "@/lib/cast";

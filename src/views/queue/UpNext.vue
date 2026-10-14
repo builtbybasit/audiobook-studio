@@ -33,14 +33,12 @@ const icon: Record<JobKind, Component> = {
   check: CheckIcon,
   effects: EffectsIcon,
 };
-// Where a job's chapter sits, named by book and volume, and by its reading number only: the titles
-// of chapters still to come would give the plot away.
+// by book, volume and reading number only: titles of chapters still to come would spoil the plot
 const bookTitle = (j: Job) => libraryStore.bookById(j.bookId)?.title;
 const volumeOf = (j: Job) =>
   j.chapterId == null ? undefined : libraryStore.volumeOf(j.bookId, j.chapterId)?.name;
 const where = (j: Job) => [bookTitle(j), volumeOf(j)].filter(Boolean).join(" · ");
-// A run's head line: its book, its volume once when the chapters share one, and the reading
-// numbers it spans, "ch 14–16".
+// "ch 14–16", with the volume once when the chapters share one
 const span = (jobs: Job[]) => {
   const vols = new Set(jobs.map(volumeOf));
   const ids = jobs.flatMap((j) => (j.chapterId == null ? [] : [j.chapterId]));
@@ -53,13 +51,12 @@ const span = (jobs: Job[]) => {
     .join(" · ");
 };
 
-// The runs opened, by bulk id: a run split by "Run next" opens and closes as one.
+// by bulk id: a run split by "Run next" opens and closes as one
 const expanded = ref(new Set<number>());
 function toggle(run: number) {
   if (!expanded.value.delete(run)) expanded.value.add(run);
 }
 
-// One line per row on screen: a lone job, a run's head (`run` set), or a job of an opened run.
 interface Row {
   key: string;
   position: number;

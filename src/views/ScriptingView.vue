@@ -40,26 +40,22 @@ const { opened, open: openChapter } = useOpenedChapter(
   (chapters) =>
     chapters.find((c) => c.scripting === "fallback")?.id ?? chapters.find(isScripted)?.id,
 );
-// The opened chapter's script, read when the chapter is opened and again when the queue says a
-// run landed on it. The reader itself reads the scripts store, which is where the read lands.
 const { loaded, status: scriptStatus, refetch: readScript } = useChapterScript(bookId, opened);
-// The plain text of every chapter a run here could start on — the ticked ones and the one open —
-// which the plan cuts into requests and the estimate prices. Until it is read the estimate says
-// so and no run starts.
+// Text of every chapter a run could start on; until it is read, the estimate says so and no run
+// starts.
 const { unread } = useChapterTexts(
   bookId,
   () => [...new Set([...selected.value, opened.value])],
   "plain",
 );
-// One function for the picker's whole life: an inline one is a new prop on every render here, and
-// each chapter text that lands re-renders this page, so the picker re-ran every row each time.
+// Stable for the picker's life: an inline function is a new prop each render, and each landing
+// chapter text re-renders this page, re-running every picker row.
 const notBusy = (c: Chapter) => !["running", "queued"].includes(c.scripting);
-// One plan behind the button's label, the line under it and the work the run queues.
 const plan = computed(() => scriptingStore.scriptPlan(bookId, selected.value));
 const estimate = computed(() => scriptingStore.scriptEstimateOf(bookId, plan.value));
 const runNote = computed(() => {
   if (!plan.value.chapters.length) return "";
-  // the request count comes last, and is not a count until every chapter's text is in
+  // the request count is not a count until every chapter's text is in
   const summary = runSummary(plan.value);
   if (estimate.value.reading) summary.splice(-1, 1, "counting requests…");
   return (
@@ -70,7 +66,7 @@ const runNote = computed(() => {
 const chapter = computed(() => libraryStore.chapter(bookId, opened.value));
 const openedName = computed(() => chapterName(libraryStore.numberOf(bookId, opened.value)));
 const hasScript = computed(() => chapter.value && isScripted(chapter.value));
-/** the chapters' scripts and texts still on their way, which the reader and the buttons wait for */
+/** scripts and texts still on their way, which the reader and the buttons wait for */
 const waiting = computed(() => (hasScript.value && !loaded.value) || unread.value > 0);
 const anyScripted = computed(() => libraryStore.chaptersOf(bookId).some(isScripted));
 function scriptFirst() {

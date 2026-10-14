@@ -1,6 +1,5 @@
-// The app shell's view of the open book: what the header's book selector, the tab row under it
-// and the sidebar rail show. Read-only over the stores. The counts come from `bookFacts`, so
-// the shelf card, the overview and the shell say the same thing about a book.
+// The app shell's view of the open book: header selector, tab row and rail. Read-only over the
+// stores; counts come from `bookFacts`, so the shelf, overview and shell agree.
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useJobsStore } from "@/stores/jobs";
@@ -28,9 +27,8 @@ export type BookPage = (typeof BOOK_PAGES)[number];
 
 const isBookPage = (k: string): k is BookPage => (BOOK_PAGES as readonly string[]).includes(k);
 
-// One shell for the header, the tabs and the rail, so what each shows is worked out once. The shared
-// scope is set up in the first caller's setup, App's, which is mounted for as long as the app is —
-// so `useRoute` is called where it can be, and the route it holds is the app's one.
+// Shared, so it is worked out once. Its scope is set up in App's setup, which lives as long as the
+// app, so `useRoute` works and holds the app's one route.
 export const useShell = createSharedComposable(() => {
   const castStore = useCastStore();
   const endpointsStore = useEndpointsStore();
@@ -40,7 +38,7 @@ export const useShell = createSharedComposable(() => {
 
   const book = computed(() => libraryStore.book);
   const facts = computed(() => (book.value ? bookFacts(book.value.id) : null));
-  /** decisions waiting on the open book — verdicts, not work */
+  /** decisions waiting on the open book: verdicts, not work */
   const waiting = computed(() => (book.value ? reviewCount(book.value.id) : 0));
   const castCount = computed(() => (book.value ? castStore.charactersOf(book.value.id).length : 0));
   /** "overview" on /book/:id, else the last path segment: a book page or an app page */
@@ -53,8 +51,8 @@ export const useShell = createSharedComposable(() => {
   const etaMinutes = computed(() =>
     jobsStore.eta ? Math.max(1, Math.round(jobsStore.eta.seconds / 60)) : 0,
   );
-  /** enabled endpoints that can't currently run: no key, or settings that don't validate. Paused
-   *  is a choice and a cooldown passes on its own, so neither needs attention. */
+  /** enabled endpoints that can't run: no key, or invalid settings. Paused is a choice and a
+   *  cooldown passes, so neither counts. */
   const endpointsNeedingAttention = computed(
     () =>
       unifiedOf(endpointsStore).filter((u) => {
@@ -62,7 +60,7 @@ export const useShell = createSharedComposable(() => {
         return state !== "paused" && (state === "nokey" || endpointErrors(u).length > 0);
       }).length,
   );
-  /** A link to another book that lands on the page you are already on, so switching keeps your place. */
+  /** A link to another book on the same page, so switching keeps your place. */
   const switchTo = (id: string): string =>
     isBookPage(activeKey.value) ? `/book/${id}/${activeKey.value}` : `/book/${id}`;
   /** where a switch lands, in a word */

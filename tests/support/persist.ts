@@ -1,10 +1,6 @@
-// Writing a whole world into the schema, and reading it back out.
-//
-// This exists for one question — does the schema actually hold the domain — and the seeded world is
-// the reference answer, because it is the same data every screen in the app is built against. The
-// world's own parts are written by the demo library's seed (`server/demo/world.ts`), which writes
-// the same world into the demo's database, so the round trip proves the writer the demo uses; what
-// the world does not hold — a ledger row — is written here.
+// Writes the seeded world into the schema and reads it back, to prove the schema holds the domain.
+// The world is written by the demo seed (`server/demo/world.ts`), so the round trip also proves the
+// demo's writer; only ledger rows are written here.
 import { and, asc, eq } from "drizzle-orm";
 
 import type {
@@ -23,8 +19,7 @@ import * as rows from "~/db/rows";
 export { writeBook, writeCast, writeExport, writeHistory, writeJob } from "~/demo/world";
 // the dictionary, by the module the lexicon route writes through
 export { replaceLexicon as writeLexicon } from "~/db/cast";
-// A chapter's script is read and written by the server's own module; the round-trip test drives
-// the same code the scripting job does rather than a copy of it.
+// A chapter's script goes through the server's own module, the same code the scripting job runs.
 export { readScript, writeScript } from "~/db/script";
 // and the endpoints by the module the endpoints route writes through
 export {
@@ -50,13 +45,7 @@ import {
 
 // ---------- writing ----------
 
-/**
- * Append one request to the ledger.
- *
- * The chapter is stored by its own id rather than by its number, so the lookup here is the same one
- * a repository would do: the caller knows which chapter number the work was for, and the row keeps
- * the identity that survives a renumbering.
- */
+/** Stores the chapter's id, not its number, so the row survives a renumbering. */
 export function writeRequest(db: Db, r: RequestRecord): void {
   const uid =
     r.bookId && r.chapterId != null

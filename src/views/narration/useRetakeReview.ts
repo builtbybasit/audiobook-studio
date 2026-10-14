@@ -1,9 +1,5 @@
-// The book's retakes waiting for a verdict, as one queue the ledger walks through.
-//
-// A verdict removes its comparison and moves on to the next retake in the *book*, which can be in
-// another chapter — so the queue is read across every chapter's script, and moving on goes through
-// the URL (`?ch=`, `?filter=review`, `?seg=`), which is what NarrationView and the ledger already
-// follow.
+// The book's retakes waiting for a verdict, as one queue the ledger walks through. The next one
+// can be in another chapter, so moving on goes through the URL (`?ch=`, `?filter=review`, `?seg=`).
 import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptsStore } from "@/stores/scripts";

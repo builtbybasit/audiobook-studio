@@ -1,8 +1,5 @@
-// How a price is written: money, what each component and billing model is called, a receipt as
-// lines a table can render, and the one-liners a card leads with.
-//
-// Nothing here works out a figure. Every function takes one that `rates.ts`, `receipt.ts` or
-// `estimate.ts` already worked out, so the words and the arithmetic can change apart.
+// How a price is written. Nothing here works out a figure: `rates.ts`, `receipt.ts` and
+// `estimate.ts` do the arithmetic, so wording and arithmetic change apart.
 import { whenPhrase } from "@/lib/wallClock";
 import type {
   ChargeLine,
@@ -21,7 +18,7 @@ import { billsAudioTokens, speechComponents } from "./units";
 
 // ---------- money ----------
 
-/** Money to a sensible number of places: cents for real sums, more for fractions of a cent. */
+/** Cents for real sums, more places for fractions of a cent. */
 export function money(n: number): string {
   const abs = Math.abs(n);
   const digits = abs === 0 ? 2 : abs < 0.01 ? 5 : abs < 1 ? 4 : 2;
@@ -118,7 +115,6 @@ export const BILLING_UNITS: {
 export const billingUnitLabel = (unit: TtsBillingUnit): string =>
   BILLING_UNITS.find((b) => b.value === unit)?.label ?? unit;
 
-/** The short suffix a rate field wears, e.g. `$12.00 / 1M chars`. */
 const BILLING_SUFFIX: Record<TtsBillingUnit, string> = {
   chars: "/ 1M chars",
   bytes: "/ 1M UTF-8 bytes",
@@ -128,13 +124,7 @@ const BILLING_SUFFIX: Record<TtsBillingUnit, string> = {
   request: "/ request",
 };
 
-/**
- * What the single-rate `speech` component is *called* under each model.
- *
- * "Speech" is the component's name, not a description of what was charged, and a receipt that says
- * "Speech · 59 UTF-8 bytes" when the whole question is which quantity was billed is one word short
- * of answering it. The two token components name themselves already.
- */
+/** What the `speech` component is called on a receipt, so it says which quantity was billed. */
 const BILLING_NOUN: Record<TtsBillingUnit, string> = {
   chars: "Characters",
   bytes: "UTF-8 bytes",
@@ -144,7 +134,6 @@ const BILLING_NOUN: Record<TtsBillingUnit, string> = {
   request: "Requests",
 };
 
-/** The same, lower-case and in a sentence: "so only the UTF-8 bytes are charged". */
 const BILLING_PHRASE: Record<TtsBillingUnit, string> = {
   chars: "only the characters are charged",
   bytes: "only the UTF-8 bytes are charged — not the characters, and not the tokens",
@@ -155,28 +144,19 @@ const BILLING_PHRASE: Record<TtsBillingUnit, string> = {
   request: "the call is charged as a flat fee, whatever it carried",
 };
 
-/** How one charged line is labelled: the component's name, or what this model bills on. */
 export const chargeLabel = (c: RateComponent, unit: TtsBillingUnit): string =>
   c === "speech" ? BILLING_NOUN[unit] : COMPONENT_LABEL[c];
 
-/** What each component of a speech card is measured in, spelled out for a quantity column. */
 const COMPONENT_UNIT: Partial<Record<RateComponent, string>> = {
   textTokens: "/ 1M text tokens",
   audioTokens: "/ 1M audio tokens",
 };
 
-/**
- * How one component's rate is written.
- *
- * Token components on a scripting card are always per 1M tokens. On a speech card the two token
- * components say **which** tokens, because "$20.00 / 1M" on a Gemini-style endpoint is the answer
- * to a question nobody asked. The single-rate `speech` component is written in whatever unit its
- * endpoint bills in, which is why that unit has to be passed in.
- */
+/** Speech token components say which tokens; `speech` uses the endpoint's own `unit`. */
 export const rateSuffix = (c: RateComponent, unit?: TtsBillingUnit): string =>
   c === "speech" ? BILLING_SUFFIX[unit ?? "chars"] : (COMPONENT_UNIT[c] ?? "/ 1M tokens");
 
-/** A rate with its unit: `$12.00 / 1M chars`. */
+/** `$12.00 / 1M chars` */
 export const rateWithUnit = (n: number | null, c: RateComponent, unit?: TtsBillingUnit): string =>
   n == null ? "unknown" : `${money(n)} ${rateSuffix(c, unit)}`;
 
@@ -199,11 +179,8 @@ export const COST_BASIS_DETAIL: Record<CostBasis, string> = {
 };
 
 /**
- * The one line under a request's cost: what its basis means, except where the cost is unknown for
- * a reason the basis cannot say — a request cancelled once it was out, which the provider may have
- * charged for, and one whose provider reported nothing to price it by. Neither is a missing rate,
- * and both are counted by the budgets at what they held. Told apart by status, and by whether the
- * row has a receipt, since a scripting request that reported no usage has none.
+ * The line under a request's cost. An unknown cost is told apart: cancelled after sending, no rate
+ * (the row has a receipt), or no usage reported (no receipt).
  */
 export function costDetail(
   r: Pick<RequestRecord, "costBasis" | "status" | "priced" | "speech">,
@@ -220,10 +197,8 @@ export function costDetail(
 const count = (n: number, unit: string): string =>
   `${Math.round(n).toLocaleString()} ${unit}${Math.round(n) === 1 ? "" : "s"}`;
 
-/** What a token line charged for, in the unit that line is measured in. */
 const tokenQuantity = (l: CostLine): string => count(l.tokens, "token");
 
-/** What one speech line was charged on, in that component's own unit. */
 function speechQuantity(charge: SpeechCharge, line: SpeechChargeLine): string {
   if (line.component === "textTokens") return count(line.quantity, "text token");
   if (line.component === "audioTokens") return count(line.quantity, "audio token");
@@ -241,7 +216,6 @@ function speechQuantity(charge: SpeechCharge, line: SpeechChargeLine): string {
   }
 }
 
-/** A priced LLM request as lines a table can render. */
 export const tokenChargeLines = (priced: PricedRequest): ChargeLine[] =>
   priced.lines
     .filter((l) => l.tokens > 0 || l.component === "input" || l.component === "output")
@@ -254,7 +228,6 @@ export const tokenChargeLines = (priced: PricedRequest): ChargeLine[] =>
       ...(l.note ? { note: l.note } : {}),
     }));
 
-/** A charged clip as the same lines — one for a per-character endpoint, two for a token-billed one. */
 export const speechChargeLines = (charge: SpeechCharge): ChargeLine[] =>
   charge.lines.map((l) => ({
     label: chargeLabel(l.component, charge.unit),
@@ -278,11 +251,8 @@ export const speechChargeLines = (charge: SpeechCharge): ChargeLine[] =>
   }));
 
 /**
- * How the measured quantities divide, as a sentence that cannot be read as double counting.
- *
- * Every quantity is named, including the ones this endpoint does not bill on, and the last clause
- * says which single one was charged — so a reader can see that 1,240 characters and 1,860 bytes are
- * two readings of the same text rather than two things being paid for.
+ * Names every measured quantity, then which one was charged, so characters and bytes read as two
+ * measures of one text rather than double counting.
  */
 export function speechSentence(charge: SpeechCharge): string {
   const u = charge.units;
@@ -304,10 +274,7 @@ export function speechSentence(charge: SpeechCharge): string {
 
 // ---------- saying it in one line ----------
 
-/**
- * The compact line the Pricing tab leads with, per component:
- * "Input: $0.50 / 1M tokens · 50% promotion applied · ends tomorrow".
- */
+/** "Input: $0.50 / 1M tokens · 50% promotion applied · ends tomorrow" */
 export function componentLine(
   snapshot: PricingSnapshot,
   c: RateComponent,
@@ -334,7 +301,6 @@ export function componentLine(
   return parts.join(" · ");
 }
 
-/** The one-line pricing a card shows, with whatever is moving it right now. */
 export function pricingOneLiner(snapshot: PricingSnapshot, unit?: TtsBillingUnit): string {
   const i = snapshot.components.input;
   const o = snapshot.components.output;
@@ -350,17 +316,11 @@ export function pricingOneLiner(snapshot: PricingSnapshot, unit?: TtsBillingUnit
   return notes.length ? `${head} · ${notes.join(", ")}` : head;
 }
 
-/**
- * The rate half of a speech endpoint's one-liner, in whichever model it bills under.
- *
- * A two-rate endpoint says both, because quoting only one of them is how "$1 per 1M" ends up on a
- * card whose bill is dominated by the audio side. Zero is "no charge"; not-known says so.
- */
+/** A two-rate endpoint quotes both: the audio side often dominates the bill. */
 function speechOneLiner(snapshot: PricingSnapshot, unit: TtsBillingUnit): string {
   const components = speechComponents(unit);
   if (components.every((c) => snapshot.components[c].rate === 0)) return "no charge";
   if (components.some((c) => snapshot.components[c].rate == null))
-    // one half of a two-rate card is not half an answer: the endpoint cannot be priced at all
     return components.length > 1 && components.some((c) => snapshot.components[c].rate != null)
       ? `${COMPONENT_LABEL[components.find((c) => snapshot.components[c].rate == null)!].toLowerCase()} rate not known`
       : "rate not known";

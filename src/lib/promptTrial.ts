@@ -1,10 +1,5 @@
-// Trying a scripting prompt on one chunk before it is saved or run: which layers the trial sends,
-// what the request says, and how its answer reads. The component that asks is
-// `@/components/PromptTrial.vue`; the server's side is `POST /api/books/:id/script-trial`.
-//
-// A trial takes drafts layer by layer, as the request does: a layer the page has a draft of is sent
-// as that draft, and the others are the saved ones. So the prompt estimated and previewed here is
-// the one the server will resolve, from the same `resolvePrompt`.
+// Trying a scripting prompt on one chunk (`POST /api/books/:id/script-trial`). A layer with a draft
+// is sent as that draft, the others are the saved ones; both sides use `resolvePrompt`.
 import type {
   BookPrompt,
   ProfilePrompt,
@@ -13,7 +8,7 @@ import type {
   PromptTrialResult,
 } from "@/types";
 
-/** Drafts in place of what is saved, as the trial's props carry them: absent is the saved one. */
+/** Absent is the saved one. */
 export interface TrialDrafts {
   /** `null` is the built-in prompt */
   library?: PromptTemplate | null;
@@ -23,7 +18,6 @@ export interface TrialDrafts {
   book?: BookPrompt | null;
 }
 
-/** The layers a trial resolves: each draft where there is one, the saved layer where there is not. */
 export function trialLayers(
   drafts: TrialDrafts,
   saved: {
@@ -41,7 +35,7 @@ export function trialLayers(
   };
 }
 
-/** The request for one chunk: only the layers there are drafts of, each copied as it stands now. */
+/** Only the layers there are drafts of. */
 export function trialRequest(
   profile: string,
   chapterId: number,
@@ -56,7 +50,6 @@ export function trialRequest(
 
 const copy = <T>(v: T): T => (v == null ? v : { ...v });
 
-/** The word check as one sentence: whether every word came back, or what was not. */
 export function fidelitySummary(f: PromptTrialResult["fidelity"]): { ok: boolean; text: string } {
   if (f.ok && !f.missing && !f.added) return { ok: true, text: "Every word came back" };
   const parts = [
@@ -73,7 +66,7 @@ export function fidelitySummary(f: PromptTrialResult["fidelity"]): { ok: boolean
 
 const words = (n: number): string => `${n.toLocaleString("en")} word${n === 1 ? "" : "s"}`;
 
-/** A trial's tokens, as "1,204 in · 388 out, 120 of them thinking"; empty when none were reported. */
+/** "1,204 in · 388 out, 120 of them thinking"; empty when none were reported. */
 export function trialTokens(usage: PromptTrialResult["usage"]): string {
   if (!usage) return "";
   const n = (v: number) => v.toLocaleString("en");
@@ -81,7 +74,7 @@ export function trialTokens(usage: PromptTrialResult["usage"]): string {
   return `${n(usage.inputTokens)} in · ${n(usage.outputTokens)} out${thinking}`;
 }
 
-/** How long a trial took, as "3.2 s" or "1 min 4 s". */
+/** "3.2 s" or "1 min 4 s" */
 export function trialTime(ms: number): string {
   const s = ms / 1000;
   if (s < 60) return `${s < 10 ? s.toFixed(1) : Math.round(s)} s`;

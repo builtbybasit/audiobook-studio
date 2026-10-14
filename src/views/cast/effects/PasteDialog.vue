@@ -1,8 +1,6 @@
 <script setup lang="ts">
-// Paste Python: Pedalboard code read into a chain by the server, never run. Opened from the list it
-// makes a new effect, named after the board the code builds; opened from the editor it can instead
-// replace the chain of the effect being edited (`into`). Why the code builds nothing is said under
-// it, so the paste can be fixed where it is.
+// Paste Python: Pedalboard code read into a chain by the server, never run. Makes a new effect, or
+// replaces the edited one's chain (`into`).
 import { ref, watch } from "vue";
 import { DialogTitle } from "reka-ui";
 import { Loader2 as SpinIcon } from "@lucide/vue";

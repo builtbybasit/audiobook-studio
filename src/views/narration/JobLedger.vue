@@ -4,25 +4,9 @@ import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 
-// Job ledger: one compact row per segment, filterable. The row carries the line itself; speaker, voice
-// and endpoint share one column, and render latency lives in the details panel — click a row (or press
-// `i`) for its audit trail. The row actions are one icon size in fixed slots: play stays visible, the
-// rest appear on hover or keyboard focus (and always on touch, which has no hover), so a raised flag is
-// the only standing mark on a row.
-// The table and the filters are this file's subject; what a row can *open* is its own component,
-// because none of it is about the list: `FlagPopover` says what is wrong with a clip,
-// `RenderDetails` is one clip's audit trail (i), `TakeCompare` is two takes of one line waiting for a
-// verdict, and `ChapterTransport` is the stitched chapter at the bottom. The current row is
-// highlighted and kept in view whichever of them is driving the player. Stale rows (edited after
-// narration) can be re-rendered on their own.
-// A clip can come back fine and still sound wrong, so any rendered row can be flagged (wrong
-// pronunciation / bad delivery / awkward pause) and retaken: the old clip is kept, the new one is
-// rendered beside it, and nothing is decided until the listener plays both and keeps one. The
-// verdict is taken here rather than in the comparison panel, because it moves to the next retake in
-// the book — which can be in another chapter (`useRetakeReview`).
-// A line the book does not read — site text, and notes unless the book reads them — is listed where
-// it falls, dimmed and marked "not read", so the chapter is all there; it has no clip to want, so it
-// is under no status filter but "all", no count calls it missing, and it offers nothing to render.
+// Job ledger: one row per segment, filterable. Retake verdicts are taken here, not in TakeCompare,
+// because the next retake can be in another chapter (`useRetakeReview`). Lines the book does not
+// read stay listed, dimmed, under the "all" filter only.
 // Keyboard: j/k move, ↵/p play, r retry, t retake, a keep new, x keep previous, i details, e edit the line.
 import { computed, nextTick, ref, watch } from "vue";
 import { useRouter } from "vue-router";
@@ -97,25 +81,19 @@ function filtersOf(s: Segment): Set<string> {
   return on;
 }
 const rows = computed(() => segments.value.filter((s) => filtersOf(s).has(filter.value)));
-/** How many lines each filter button would show — one pass over the chapter, not one per button. */
+/** Line count per filter button, in one pass over the chapter. */
 const counts = computed(() => {
   const n: Record<string, number> = Object.fromEntries(FILTERS.map((f) => [f, 0]));
   for (const s of segments.value) for (const f of filtersOf(s)) if (f in n) n[f]++;
   return n;
 });
-// "Re-narrate changed (N)" queues `renarrateStale`, which renders `changedSegments` — so N is that
-// list and not a second count of it. The difference is real: a never-rendered line only counts once
-// the chapter has been narrated at all, and counting them in a chapter nobody has started offered a
-// button that queued nothing.
+// N in "Re-narrate changed (N)" is the list `renarrateStale` renders, not a second count of it.
 const changedLines = computed(() => narrationStore.changedSegments(props.bookId, props.chapterId));
 const changed = computed(() => changedLines.value.length);
 const unrendered = computed(
   () => changedLines.value.filter((s) => s.audio.status === "none").length,
 );
-/**
- * Why "Check by ear" cannot be pressed, or "" when it can: it hears the clips the chapter has, so it
- * needs one, and a check or a narration already on the chapter would hear clips about to change.
- */
+/** Why "Check by ear" cannot be pressed, or "" when it can. */
 const cannotCheck = computed(() => {
   if (!segments.value.some((s) => spoken(s) && s.audio.duration)) return "no clip to hear yet";
   const busy = jobsStore.activeJobs.find(
@@ -128,14 +106,11 @@ const cannotCheck = computed(() => {
     ? `${busy.kind === "check" ? "a check" : "narration"} is already on this chapter`
     : "";
 });
-/** lines of this chapter that are not read aloud, which the header counts so none of them vanish */
 const unread = computed(() => segments.value.filter((s) => !spoken(s)).length);
 
 const pacing = computed(() => castStore.pacingOf(props.bookId));
-// The chapter's own length, kept by `cast._retime` on every write path and rendered by the picker
-// beside this. Two figures for one chapter is how the picker and the ledger start disagreeing.
+// Kept by `cast._retime`; the picker shows the same figure, so never recompute it here.
 const total = computed(() => chapter.value.duration);
-// rounded: the header says how much of the chapter is silence, not to the millisecond
 const silence = computed(
   () => Math.round(silenceOf(segments.value, pacing.value, book.value) * 10) / 10,
 );
@@ -153,7 +128,7 @@ watch(currentId, (id) => {
   if (id && p.playing)
     document.getElementById("row-" + id)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
 });
-/** play the stitched chapter from this line — the transport owns the one queue this chapter has */
+/** The transport owns the chapter's one play queue. */
 function playFrom(s: Segment) {
   const at = segmentStart(props.bookId, props.chapterId, s.id);
   if (at != null) transport.value?.playChapter(at);
@@ -176,7 +151,6 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
     e.preventDefault();
     list[i - 1]?.focus();
   } else if (!spoken(s)) {
-    // not read: nothing to play, render, retake or flag — only its line to open
     if (e.key === "e") void router.push(lineLink(props, s));
   } else if ((e.key === "Enter" || e.key === "p") && s.audio.duration) {
     e.preventDefault();
@@ -401,7 +375,6 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                     class="rounded bg-amber-400/20 px-1 font-semibold text-amber-700 dark:text-amber-300"
                     :title="FLAG_LABEL[s.flag.kind]"
                     ><FlagIcon class="icon-sm" />
-                    <!-- a heard flag's note is what was heard, which says more than its kind -->
                     <template v-if="s.flag.kind === 'heard' && s.flag.note">{{
                       s.flag.note
                     }}</template
@@ -452,7 +425,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                 {{ spoken(s) && s.audio.duration ? s.audio.duration.toFixed(1) + "s" : "" }}
               </td>
               <td class="pr-1 sm:pr-2">
-                <!-- fixed slots, so the primary action never moves between rows -->
+                <!-- fixed slots, so the play button never moves between rows -->
                 <div v-if="spoken(s)" class="flex items-center justify-end gap-0.5" @click.stop>
                   <span class="grid w-5 place-items-center">
                     <button

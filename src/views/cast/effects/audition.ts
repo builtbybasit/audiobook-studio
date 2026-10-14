@@ -1,8 +1,6 @@
-// The editor's player: one line, heard through the effect being edited, or as the voice made it
-// while "Hold to compare" is held. One audio element switches between the two files in place, so
-// comparing is a flick that keeps the place in the line rather than a restart. The effect's file is
-// made again a moment after the chain last changed, so a slider dragged asks for one render, not
-// one per step of the drag.
+// The editor's player: one line through the effect, or dry while "Hold to compare" is held.
+// One audio element swaps files in place to keep the position. Renders are debounced, so a slider
+// drag asks for one render.
 import { onScopeDispose, ref, watch } from "vue";
 
 import { soundOf } from "@/lib/effects";

@@ -1,14 +1,6 @@
-// The jobs, scripting, narration, scripts, cast, history and exports stores against the real API.
-//
-// `libraryBackend.test.ts` next door proves the library store's backend half. This is the rest:
-// the stores the Queue, Scripting and Cast pages read, driven through the real `HttpJobsService`
-// and `HttpLibraryService` against the real Hono app, the real runner and a fake scripting model,
-// over a private in-memory database. The pages read through the query composables in
-// `src/queries/`, so the tests do too: the queue is read the way the shell reads it, and a
-// chapter's script, history and cast the way the Scripting and Cast pages open them.
-//
-// What these guard is that what the screens show is what the server holds, not what the store
-// assumed when it sent the request.
+// The jobs, scripting, narration, scripts, cast, history and exports stores against the real API,
+// runner and a fake scripting model, over an in-memory database. Reads go through `src/queries/`
+// as the pages' do: what the screens show must be what the server holds.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import type { BookSpend, Endpoint, RequestRecord, Segment } from "@/types";
@@ -92,8 +84,7 @@ const volume = (titles: string[]) =>
       paragraphs: [
         "“We are short again,” said Mara.",
         "“Then we count it twice,” said Tobin.",
-        // a few lines past the dialogue, and no more: the dialogue already keeps the chapter from
-        // reading as a notice, and every line here is one more clip each narration test renders
+        // a few lines past the dialogue: each line is one more clip every narration test renders
         ...story(4),
       ],
     })),
@@ -131,8 +122,7 @@ function wireStores({ endpoints = false }: ServiceWiring = {}) {
     if (hold) await hold(input, init);
     return response;
   };
-  // The services go in before the stores are created: a store reads its service while building
-  // its state.
+  // Services go in first: a store reads its service while building its state.
   pointServicesAt(fetch, { endpoints });
   pinia?.stop();
   pinia = testPinia();
@@ -159,7 +149,7 @@ async function shelved(titles = ["One", "Two", "Three"]): Promise<string> {
   return id;
 }
 
-/** Chapter 1 scripted by the server, with its script, history and cast open the way the pages open them. */
+/** Chapter 1 scripted, with its script, history and cast open as the pages open them. */
 async function scriptedAndOpen() {
   const id = await shelved();
   const script = pinia.run(() => useChapterScript(id, 1));
@@ -182,10 +172,7 @@ async function narrated() {
   return { ...opened, narrationStore };
 }
 
-/**
- * Every speaker of the book cast with a voice on `studio`, and the stores reading both — what a
- * run button asks before it lets a run start (`narration.startRun`).
- */
+/** Every speaker cast with a voice on `studio`: what `narration.startRun` checks first. */
 async function voiced(id: string) {
   await api.request("/api/endpoints", {
     ...jsonBody({ endpoints: [studio], profiles: [], credentials: [] }),
@@ -250,7 +237,6 @@ describe("the queue with a server answering", () => {
     const id = await shelved();
     await scriptingStore.runScripting(id, [1, 2]);
     await settle();
-    // the toast, and the two jobs the server made, read back through the queue
     expect(toasts.at(-1)?.msg).toBe("Script · 2 chapters");
     expect(jobsStore.jobs.map((j) => [j.kind, j.chapterId])).toEqual([
       ["scripting", 1],
@@ -287,7 +273,7 @@ describe("the queue with a server answering", () => {
       expect.arrayContaining(["Narrator", "Mara", "Tobin"]),
     );
     expect(castStore.charactersOf(id).find((c) => c.name === "Mara")?.isNew).toBe(true);
-    // the first script has nothing to preserve, so the history says how it came to be and holds no version
+    // the first script has nothing to preserve: the history says how it came, with no version
     expect(history.head.value.origin.kind).toBe("scripted");
     expect(history.versions.value).toEqual([]);
     // edited by hand, then scripted again: the run preserves the edited script before replacing it
@@ -473,8 +459,7 @@ describe("editing a script with a server answering", () => {
     const id = await shelved();
     await scriptingStore.runScripting(id, [1], { quiet: true });
     await api.runner.idle();
-    // the script was read once, by a page since closed: the store keeps the copy, the query
-    // cache has nothing left to refetch
+    // read once by a page since closed: the store keeps the copy, the query cache has nothing to refetch
     scriptsStore._install(id, 1, await libraryService().chapterScript(id, 1));
     writeScript(api.db, id, 1, writtenElsewhere());
     scriptsStore.updateSegment(id, 1, 1, { text: "Written here." });
@@ -559,8 +544,8 @@ describe("editing a script with a server answering", () => {
     hold = (p, init) => (init?.method === "PUT" && p === path ? held : Promise.resolve());
     scriptsStore.updateSegment(id, 1, a.id, { text: "Saved first." });
     await flush();
-    // a narration job moved meanwhile, and the poll reads the chapter again: the server does not
-    // have the edit yet, so its script must not replace the one on screen
+    // a narration job moved and the poll reads the chapter again: the server lacks the edit yet, so its
+    // script must not replace the one on screen
     await invalidate({ key: keys.chapterScript(id, 1) }, "all");
     expect(scriptsStore.segmentsOf(id, 1)[0].text).toBe("Saved first.");
     // and an edit made now is still the one written after the first lands
@@ -1363,8 +1348,7 @@ describe("the audiobooks with a server answering", () => {
 
     await api.runner.idle();
     await poll();
-    // the poll noticed the job move and read the audiobooks again, so the tab is current without
-    // the page having asked for anything
+    // the poll saw the job move and read the audiobooks again, without the page asking
     const [done] = exports.exports.value;
     expect(done.status).toBe("done");
     expect(done.size).toBeGreaterThan(0);
@@ -1410,8 +1394,7 @@ describe("spending with a server answering", () => {
   test("a run's cost reaches every budget figure from the server's ledger as its job moves", async () => {
     await priced();
     const id = await shelved(["One"]);
-    // open before the run, as the shell holds the open book's spending: the job moving is what
-    // has it read again
+    // open before the run, as the shell holds the open book's spending; the job moving re-reads it
     pinia.run(() => useBookSpend(id));
     await settle();
     expect(jobsStore.spent(id)).toBe(0);
@@ -1470,10 +1453,7 @@ describe("spending with a server answering", () => {
 });
 
 describe("the speech endpoints' live telemetry with a server answering", () => {
-  /**
-   * A server holding one speech endpoint whose narration the test holds open, the stores reading
-   * the configuration from it, and a page showing the endpoints' live telemetry.
-   */
+  /** One speech endpoint whose narration the test holds open, and a page showing its telemetry. */
   async function narrating() {
     const speech = gatedSpeechProvider();
     wire({ speech: speech.provider }, { endpoints: true });

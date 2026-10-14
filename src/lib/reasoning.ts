@@ -1,55 +1,39 @@
-// How a scripting endpoint's reasoning level is spelled on the wire, host by host.
-//
-// Every host the scripting presets reach speaks OpenAI's `/chat/completions`, but each one asks for
-// thinking its own way: OpenAI, Gemini, xAI and the local servers take `reasoning_effort`,
-// OpenRouter a `reasoning` object, DeepSeek `reasoning_effort` with a `thinking` switch for off, and
-// Anthropic's compatibility layer ignores `reasoning_effort` and takes only `thinking`. Nor do they
-// offer the same levels: some cannot turn reasoning off, DeepSeek has no medium. So the level the
-// person picks is turned here into the fields that host documents, sending the nearest thing it
-// takes when it cannot do what was asked, with one sentence saying so for the Endpoints page to
-// show under the select. Shared by that page and the server, so what the page says is what is sent.
-//
-// Absent or null sends no field, and keeps today's `temperature` except on the two hosts that refuse
-// it whatever the level (OpenAI's reasoning models, Anthropic's Claude 5). The
-// docs each rule follows are named beside it; they were read on 29 September 2026.
+// How a reasoning level is spelled on the wire, host by host, with the nearest level a host takes
+// and a note for the Endpoints page when it differs. Shared by page and server, so what the page
+// says is what is sent. Each rule names the docs it follows.
 import type { ReasoningEffort } from "@/types";
 import { gemini } from "@/lib/providers/gemini";
 import { openai } from "@/lib/providers/openai";
 import { cliOf } from "@/lib/providers/cli";
 import { isSimulated } from "@/lib/providers/simulated";
 
-/** What one request carries for a reasoning level, and what the page should say about it. */
 export interface ReasoningRequest {
   /** spread into the request body */
   fields: Record<string, unknown>;
-  /** one plain sentence for the page when the host cannot do exactly what was asked, else null */
+  /** for the page when the host cannot do exactly what was asked */
   note: string | null;
   /** the host rejects or ignores `temperature` at this level, so it is left out */
   omitTemperature: boolean;
 }
 
-/** Today's request: no field added, temperature kept. */
 const nothing = (): ReasoningRequest => ({ fields: {}, note: null, omitTemperature: false });
 
-/** A host's reading of a level other than none. */
 interface Host {
   matches(baseUrl: string): boolean;
   request(effort: ReasoningEffort): ReasoningRequest;
 }
 
-/** A base URL whose host is `name`, with or without a port or path. */
 const hostIs =
   (name: string) =>
   (baseUrl: string): boolean =>
     new RegExp(`(^|//)${name.replace(/\./g, "\\.")}(/|:|$)`, "i").test(baseUrl.trim());
 
-/** A base URL on `port`, whatever the host: the local servers are known by their default port. */
+/** The local servers are known by their default port. */
 const portIs =
   (port: number) =>
   (baseUrl: string): boolean =>
     new RegExp(`^[a-z]+://[^/]*:${port}(/|$)`, "i").test(baseUrl.trim());
 
-/** OpenAI's spelling, which the local servers and an unknown gateway are sent too. */
 const effortField = (value: string): Record<string, unknown> => ({ reasoning_effort: value });
 
 const HOSTS: readonly Host[] = [
@@ -173,7 +157,6 @@ const REFUSE_TEMPERATURE: readonly ((baseUrl: string) => boolean)[] = [
   hostIs("api.anthropic.com"),
 ];
 
-/** The request-body fields that ask this host for this effort, and anything the user should know. */
 export function reasoningRequest(
   baseUrl: string,
   effort: ReasoningEffort | null | undefined,
@@ -182,8 +165,7 @@ export function reasoningRequest(
   // a command-line tool takes the level as a flag of its own (`@/lib/providers/cli`), not a field
   const cli = cliOf(baseUrl);
   if (cli) return { ...nothing(), note: effort ? cli.effort(effort).note : null };
-  // No level still has to leave `temperature` out where it is refused whatever the level: GPT-6
-  // models reason by default, and Claude 5 models refuse a non-default one on every request.
+  // GPT-6 reasons by default and Claude 5 refuses a non-default temperature, level or not
   if (!effort) return { ...nothing(), omitTemperature: REFUSE_TEMPERATURE.some((m) => m(baseUrl)) };
   const host = HOSTS.find((h) => h.matches(baseUrl));
   if (host) return host.request(effort);

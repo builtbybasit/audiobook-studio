@@ -9,7 +9,6 @@ export function expressionDraft(ep: Endpoint): ExpressionConfig {
     ep.expressions ? JSON.parse(JSON.stringify(ep.expressions)) : expressionDefaults(ep),
   ));
 }
-/** Whether the endpoint has edits on its Expressions tab not yet saved. */
 export const expressionDirty = (ep: Endpoint): boolean =>
   !!drafts[ep.id] &&
   JSON.stringify(drafts[ep.id]) !== JSON.stringify(ep.expressions ?? expressionDefaults(ep));

@@ -1,14 +1,7 @@
-// Every read and write the endpoints make: speech endpoints, scripting profiles, transcription
-// endpoints and the credential registry they point at.
-//
-// They are configured together on one page and saved together, so they are written together:
-// `replaceEndpoints` clears what is there and lays the whole configuration down again in the
-// caller's transaction. Nothing else in the schema points at an endpoint by key — a character holds
-// `<endpointId>/<voiceId>` as text, and the requests ledger keeps the id it was made under — so
-// replacing the rows moves nothing and orphans nothing. What an endpoint owns (voices, the rate
-// schedule, promotions, expression tags) cascades with it. The library's default scripting prompt
-// is edited on the same page and saved in the same write, though it lives in `settings`, and so are
-// the scripting settings (`script`: which profile runs go to), which the Scripting page picks.
+// Speech endpoints, scripting profiles, transcription endpoints and credentials, saved together:
+// `replaceEndpoints` lays the whole configuration down again. Nothing references an endpoint by
+// foreign key (characters and the ledger hold ids as text), so replacing rows orphans nothing.
+// The default scripting prompt and scripting settings live in `settings` but save in this write.
 import { asc, eq, sql } from "drizzle-orm";
 
 import type {
@@ -42,36 +35,22 @@ import {
 export interface EndpointConfig {
   endpoints: StoredEndpoint[];
   profiles: Profile[];
-  /**
-   * Always there in a read; in a write, left out keeps the ones stored, so a page from before
-   * there were any cannot remove them by saving.
-   */
+  /** Always in a read; left out of a write keeps the stored ones. */
   transcribers?: Transcriber[];
   credentials: Credential[];
-  /**
-   * The library's default scripting prompt; null is the built-in one. Always there in a read; in a
-   * write, left out keeps the one stored, so a save that never showed it cannot reset it.
-   */
+  /** The default scripting prompt; null is the built-in one. Left out of a write keeps it. */
   prompt?: PromptTemplate | null;
-  /**
-   * The scripting settings: the profile runs go to, and the switches beside it. Always there in a
-   * read, naming only a profile that is saved; in a write, left out keeps the ones stored.
-   */
+  /** A read names only a saved profile; left out of a write keeps the stored ones. */
   script?: ScriptSettings;
 }
 
-/**
- * The credential registry.
- *
- * Endpoints point at it by id, so it has to exist before any of them do. Names only — the secret
- * itself is not in this schema.
- */
+/** Write before the endpoints that point at it. Names only; secrets are not in this schema. */
 export function writeCredentials(db: Db | Tx, registry: readonly Credential[]): void {
   for (const c of registry)
     db.insert(credentials).values({ id: c.id, label: c.label, note: c.note }).run();
 }
 
-/** An endpoint and everything hanging off it: voices, the schedule, promotions, expression tags. */
+/** An endpoint with its voices, schedule, promotions and expression tags. */
 export function writeEndpoint(
   db: Db | Tx,
   e: StoredEndpoint,
@@ -120,7 +99,7 @@ export function writeTranscriber(
   writeCard(db, rows.transcriberKey(t.id), t.pricing?.windows ?? [], t.pricing?.promotions ?? []);
 }
 
-/** The rate card's rows. Shared, because a speech rate goes on discount exactly as a token rate does. */
+/** Shared: a speech rate goes on discount exactly as a token rate does. */
 function writeCard(
   db: Db | Tx,
   endpointId: string,
@@ -160,7 +139,7 @@ export function readEndpoints(db: Db | Tx): Endpoint[] {
     .map((row) => rows.toEndpoint(row, partsOf(db, row.id)));
 }
 
-/** One speech endpoint, or undefined when there is none by that id — or it is a scripting profile. */
+/** Speech endpoints only; a scripting profile's id reads as undefined. */
 export function readEndpoint(db: Db | Tx, id: string): Endpoint | undefined {
   const row = db.select().from(endpoints).where(eq(endpoints.id, id)).get();
   return row?.kind === "tts" ? rows.toEndpoint(row, partsOf(db, row.id)) : undefined;
@@ -186,13 +165,13 @@ export function readTranscribers(db: Db | Tx): Transcriber[] {
     .map((row) => rows.toTranscriber(row, partsOf(db, row.id)));
 }
 
-/** The transcription endpoint by that id, or else the first one switched on; undefined for none. */
+/** By id, else the first one switched on. */
 export function readTranscriber(db: Db | Tx, id?: string): Transcriber | undefined {
   const all = readTranscribers(db);
   return id ? all.find((t) => t.id === id) : all.find((t) => t.enabled);
 }
 
-/** In the order they were saved in: a save inserts them in the page's order, and rowid keeps it. */
+/** In saved order, which rowid keeps. */
 export function readCredentials(db: Db | Tx): Credential[] {
   return db
     .select()
@@ -219,9 +198,8 @@ export function readEndpointConfig(db: Db | Tx): EndpointConfig {
 }
 
 /**
- * The key a real provider is called with, read at the moment of the request — never copied onto a
- * job, so a key changed or forgotten on the Endpoints page is the one the next request uses.
- * `kind` keeps endpoints of different kinds that share an id apart.
+ * Read at request time, never copied onto a job, so the next request uses the current key.
+ * `kind` separates endpoints of different kinds that share an id.
  */
 export function readEndpointKey(db: Db | Tx, kind: EndpointKind, id: string): string | null {
   const row = db
@@ -244,18 +222,15 @@ function rowId(kind: EndpointKind, id: string): string {
   }
 }
 
-/**
- * What a save leaves an endpoint's key as. The key is write-only, so a page that never saw it
- * sends nothing for it, and that has to mean "keep it" rather than "forget it"; `""` forgets it.
- */
+/** The key is write-only: undefined keeps it, `""` forgets it. */
 function keyAfterSave(sent: string | undefined, kept: string | null | undefined): string | null {
   if (sent === undefined) return kept ?? null;
   return sent.trim() || null;
 }
 
-/** Lay the whole configuration down in place of what was there. Call inside a transaction. */
+/** Call inside a transaction. */
 export function replaceEndpoints(tx: Tx, config: EndpointConfig): void {
-  // keys by row id, read before the rows go, so a save that did not mention a key keeps it
+  // read before the rows go, so a save that did not mention a key keeps it
   const kept = new Map(
     tx
       .select({ id: endpoints.id, apiKey: endpoints.apiKey })
@@ -263,9 +238,8 @@ export function replaceEndpoints(tx: Tx, config: EndpointConfig): void {
       .all()
       .map((r) => [r.id, r.apiKey]),
   );
-  // a save from a page that never had transcription endpoints keeps the ones stored
   const transcribers = config.transcribers ?? readTranscribers(tx);
-  // the children cascade with their endpoint, and an endpoint's credential is set null as it goes
+  // children cascade
   tx.delete(endpoints).run();
   tx.delete(credentials).run();
   writeCredentials(tx, config.credentials);

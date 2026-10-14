@@ -1,9 +1,5 @@
-// The library's voice effects over HTTP, and its thought effect. Both belong to the installation
-// rather than to a book; every CRUD route is one call on `server/effects/ops.ts`.
-//
-// Two routes run the effect runner rather than the database: a preview, which plays a clip already
-// on disk through chains the editor has not saved yet, and a parse, which reads pasted Pedalboard
-// code into a chain. Both answer 503 where the runner cannot run, so the page can say why.
+// The library's voice effects and thought effect over HTTP; the rules are in
+// `server/effects/ops.ts`. Preview and parse use the effect runner and answer 503 without it.
 import { Hono } from "hono";
 import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
@@ -20,7 +16,7 @@ import { validate } from "~/lib/validate";
 const EffectParam = v.object({ id: EffectIdSchema });
 const Thoughts = v.object({ effect: EffectIdSchema });
 const NewEffect = v.object({ ...EffectBodySchema.entries, after: v.optional(EffectIdSchema) });
-// a speaker's own effect and a thought effect are two; a few more leaves room, and no more
+// a speaker's effect and a thought effect are two; a few more leaves room
 const Preview = v.object({
   url: v.pipe(v.string(), v.maxLength(512)),
   chains: v.pipe(v.array(ChainSchema), v.maxLength(8)),
@@ -28,7 +24,6 @@ const Preview = v.object({
 // Pedalboard code worth pasting is a screenful; this is many of them
 const Parse = v.object({ code: v.pipe(v.string(), v.maxLength(64 * 1024)) });
 
-/** `<base>/effects` */
 export function effectRoutes(db: Db, files: AudioFiles, effects?: EffectRunner): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
 
@@ -41,11 +36,7 @@ export function effectRoutes(db: Db, files: AudioFiles, effects?: EffectRunner):
     );
   };
 
-  /**
-   * A clip of this library's played through `chains`, as a WAV; nothing is kept. The url is one a
-   * clip was given (`AudioFiles.write`), found by `AudioFiles.find`, so nothing outside the
-   * library's clips can be read through here.
-   */
+  /** A clip through unsaved `chains`, as WAV; nothing is kept. `AudioFiles.find` limits the url. */
   app.post("/preview", validate("json", Preview), async (c) => {
     const { url, chains } = c.req.valid("json");
     const run = await runner();
@@ -62,7 +53,7 @@ export function effectRoutes(db: Db, files: AudioFiles, effects?: EffectRunner):
     return c.body(wav as Uint8Array<ArrayBuffer>, 200, { "content-type": "audio/wav" });
   });
 
-  /** Pasted Pedalboard code as a chain, read and never run (`effects.py`). */
+  /** Pasted Pedalboard code as a chain, read and never run. */
   app.post("/parse", validate("json", Parse), async (c) => {
     const { code } = c.req.valid("json");
     const run = await runner();
@@ -76,7 +67,7 @@ export function effectRoutes(db: Db, files: AudioFiles, effects?: EffectRunner):
 
   app.get("/", (c) => c.json({ effects: ops.listEffects(db) satisfies Effect[] }));
 
-  /** At the end of the list, or right after the effect `after` names; one there is not is a 400. */
+  /** At the end, or right after `after`; an unknown `after` is a 400. */
   app.post("/", validate("json", NewEffect), (c) => {
     const { after, ...body } = c.req.valid("json");
     return c.json({ effect: ops.createEffect(db, body, after) satisfies Effect }, 201);
@@ -87,14 +78,14 @@ export function effectRoutes(db: Db, files: AudioFiles, effects?: EffectRunner):
     c.json(ops.effectUses(db, c.req.valid("param").id) satisfies EffectUses),
   );
 
-  /** Its name, chain and `useWhen`, replaced — the body is the whole effect; the id stays. */
+  /** The body is the whole effect; the id stays. */
   app.put("/:id", validate("param", EffectParam), validate("json", EffectBodySchema), (c) =>
     c.json({
       effect: ops.updateEffect(db, c.req.valid("param").id, c.req.valid("json")) satisfies Effect,
     }),
   );
 
-  /** Gone, and every choice of it with it (`deleteEffect`). */
+  /** Every choice of it goes too. */
   app.delete("/:id", validate("param", EffectParam), (c) => {
     const { id } = c.req.valid("param");
     ops.deleteEffect(db, id);
@@ -104,7 +95,7 @@ export function effectRoutes(db: Db, files: AudioFiles, effects?: EffectRunner):
   return app;
 }
 
-/** `<base>/settings`: the library's settings that have a route of their own. */
+/** `<base>/settings` */
 export function settingRoutes(db: Db): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
 

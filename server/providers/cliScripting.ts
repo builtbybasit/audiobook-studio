@@ -1,27 +1,7 @@
-// A scripting provider that runs an AI command-line tool on this computer — Codex (`codex exec`) or
-// Claude Code (`claude -p`) — instead of calling an API, signed in with the tool's own login.
-//
-// The request is the one a chat-completions model is sent (`renderPrompt`), and the answer is read
-// and checked word for word the same way (`checkedScript`): only the way there differs. Claude Code
-// and Codex are both given the system prompt as their own — Claude Code's `--system-prompt-file`,
-// Codex's `model_instructions_file`, which replaces its agent instructions (about 10k tokens of
-// how to work in a repository, which also made it drop words) — and the user message on stdin.
-//
-// **Locked down.** Each run is in a fresh empty folder, removed after: Codex runs in it read-only
-// with its shell and every other tool it can switch off switched off, ignoring the user's own
-// config and rules; Claude Code runs with no tools at all, nobody to ask for a permission, and
-// none of the user's CLAUDE.md, skills, hooks, plugins or MCP servers (`--safe-mode`, which keeps
-// the login; `--bare` would not). Neither saves the session. No `--dangerously-*` flag is passed.
-//
-// **Usage.** A subscription has no price per token, so a request is priced on the endpoint's card
-// like any other — which the presets leave at no charge — with the tokens the tool reported:
-// Codex's `turn.completed` event, Claude Code's `usage`. Claude Code's `total_cost_usd` is what the
-// tokens would have cost on the API, not what the subscription charged, so it is not carried.
-//
-// The endpoint's timeout is each run's wall clock and its retries apply as they do to an HTTP call:
-// a run that timed out or failed for no reason it names is tried again, one that names a reason
-// another run will not change (not signed in, a model it refuses, a flag it does not know) is not.
-// A cancel kills the tool and everything it started, at once.
+// Scripting through a local CLI, Codex (`codex exec`) or Claude Code (`claude -p`), on its own
+// login. Same prompt and word check as chat (`checkedScript`); the system prompt replaces the
+// tool's own instructions (Codex's ~10k tokens of them made it drop words). Each run is locked down
+// in a fresh empty folder with no tools, user config or saved session. A cancel kills its group.
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -41,15 +21,12 @@ import type { SentScript } from "~/providers/sent";
 export interface CliScriptingOptions {
   /** the wait before a retry, when a rate limit names none; tests make it 0 */
   backoffMs?: CallOptions["backoffMs"];
-  /** the environment the tool runs in; the server's own otherwise */
   env?: NodeJS.ProcessEnv;
 }
 
 /**
- * Codex features that reach outside the conversation, or only put tools in front of the model,
- * switched off for every run. `codex features list` names them; one Codex no longer knows fails
- * the run with "Unknown feature flag". The last three are only tokens: goals' tools (about 600 of
- * them), the image viewer and the sleep tool.
+ * Codex features switched off for every run (`codex features list`). One Codex no longer knows
+ * fails the run with "Unknown feature flag". The last three only cost tokens.
  */
 const CODEX_OFF = [
   "shell_tool",
@@ -68,10 +45,8 @@ const CODEX_OFF = [
 ];
 
 /**
- * The answer's shape, held to by Codex's `--output-schema`: without it gpt-6-luna now and then
- * writes JSON that does not parse, or stops halfway (68/80 bench runs right without it, 75/80
- * with, and no broken answer). Strict, so every field is required and an optional one may be
- * null; the parser reads null as absent. Word for word and the rest is still `checkedScript`'s.
+ * Codex's `--output-schema`: without it gpt-6-luna sometimes writes broken JSON. Strict, so every
+ * field is required and an optional one is nullable; the parser reads null as absent.
  */
 const ANSWER_SCHEMA = {
   type: "object",
@@ -112,14 +87,14 @@ const ANSWER_SCHEMA = {
   },
 };
 
-/** What one run is: the command line, what goes on stdin, and a file it needs written first. */
 interface Invocation {
   argv: string[];
   stdin: string;
+  /** written into the run's folder first */
   files: Record<string, string>;
 }
 
-/** The command line for `target`'s tool, run in `dir`. Exported for the tests. */
+/** Exported for the tests. */
 export function invocation(
   cli: CliShape & { path: string },
   target: ScriptTarget,
@@ -140,9 +115,7 @@ export function invocation(
         `model_instructions_file=${JSON.stringify(join(dir, SYSTEM_FILE))}`,
         "--config",
         'web_search="disabled"',
-        // Codex still puts its own text around ours: a team-of-agents section (about 1.6k tokens)
-        // and the catalogue of every skill installed, its own and the user's (about 2.5k). The
-        // smallest budget the catalogue takes leaves it out.
+        // Drops Codex's agents section (~1.6k tokens) and skill catalogue (~2.5k).
         "--config",
         "agents.enabled=false",
         "--config",
@@ -197,7 +170,6 @@ const ANSWER_FILE = "answer.txt";
 const SYSTEM_FILE = "system.txt";
 const SCHEMA_FILE = "schema.json";
 
-/** The most of what a tool printed worth putting in a message. */
 const SAID_CHARS = 300;
 const trimmed = (text: string): string => {
   const one = text.replace(/\s+/g, " ").trim();
@@ -214,13 +186,12 @@ interface Ran {
   stderr: string;
 }
 
-/** How long a killed tool is given to stop before it and its children are killed outright. */
+/** SIGTERM to SIGKILL. */
 const GRACE_MS = 2000;
 
 /**
- * Run `argv` in `dir` with `stdin`, until it exits, `timeoutMs` passes, or `signal` aborts —
- * either of which kills it and every process it started (it leads a process group of its own).
- * Rejects with the spawn's own error when the program could not be started at all.
+ * A timeout or abort kills the tool's whole process group. Rejects with the spawn's error when it
+ * could not be started.
  */
 function run(
   argv: string[],
@@ -242,7 +213,7 @@ function run(
     let timedOut = false;
     child.stdout.setEncoding("utf8").on("data", (d: string) => (stdout += d));
     child.stderr.setEncoding("utf8").on("data", (d: string) => {
-      // the end of it is what says what went wrong; a chatty tool's log is not kept whole
+      // only the tail says what went wrong
       stderr = (stderr + d).slice(-20_000);
     });
     // a tool that exits before reading all of its input closes the pipe under the write
@@ -276,7 +247,7 @@ function run(
     });
     child.on("close", (code) => {
       done();
-      // whatever it started may outlive it; a run leaves nothing behind
+      // what it started may outlive it
       if (hard) group("SIGKILL");
       clearTimeout(hard);
       resolve({ code, stdout, stderr, timedOut });
@@ -287,10 +258,9 @@ function run(
 // ---------------------------------------------------------------------------------------------
 // Reading what came back
 
-/** What a run said: the final message, or why there is none, and the tokens it reported. */
 interface Outcome {
   content: string | null;
-  /** why there is no message: the tool's own words, and the status it gave them where it did */
+  /** the tool's own words, and its status where it gave one */
   failure: { said: string; status: number } | null;
   usage: TokenUsage | null;
   reasoningTokens: number | null;
@@ -311,10 +281,7 @@ const CodexEvent = v.looseObject({
   ),
 });
 
-/**
- * A refusal as Codex passes it on: the API's own JSON as a string, `{"status":400,"error":
- * {"message":…}}`, or plain words.
- */
+/** Codex passes a refusal on as `{"status":400,"error":{"message":…}}` in a string, or words. */
 function codexSaid(message: string): { said: string; status: number } {
   try {
     const body = JSON.parse(message) as { status?: unknown; error?: { message?: unknown } };
@@ -330,7 +297,6 @@ function codexSaid(message: string): { said: string; status: number } {
   return { said: message, status };
 }
 
-/** Codex's `--json` events and the last message it wrote to the answer file. */
 function codexOutcome(ran: Ran, answer: string | null): Outcome {
   let usage: TokenUsage | null = null;
   let reasoningTokens: number | null = null;
@@ -382,7 +348,6 @@ const ClaudeResult = v.looseObject({
   usage: v.optional(v.record(v.string(), v.unknown())),
 });
 
-/** Claude Code's one JSON result. */
 function claudeOutcome(ran: Ran): Outcome {
   let read: v.SafeParseResult<typeof ClaudeResult> | null = null;
   try {
@@ -398,7 +363,7 @@ function claudeOutcome(ran: Ran): Outcome {
       reasoningTokens: null,
     };
   const r = read.output;
-  // `total_cost_usd` is left behind: it is the API's price for the tokens, not the subscription's
+  // `total_cost_usd` is the API's price, not the subscription's, so it is not carried
   const usage = r.usage ? normalizeUsage(r.usage, "anthropic") : null;
   const details = r.usage?.output_tokens_details as { thinking_tokens?: unknown } | undefined;
   const reasoningTokens =
@@ -414,7 +379,7 @@ function claudeOutcome(ran: Ran): Outcome {
   return { content: r.result ?? "", failure: null, usage, reasoningTokens };
 }
 
-/** A failure the tool named, as an error a person can act on, and whether to try again. */
+/** An actionable error; retryable only when another run could change the outcome. */
 function refusal(
   cli: CliShape,
   target: ScriptTarget,
@@ -469,10 +434,7 @@ function refusal(
 const defaultBackoff: NonNullable<CallOptions["backoffMs"]> = (attempt, t) =>
   Math.min(t.cooldownSec * 1000, 500 * 2 ** (attempt - 1));
 
-/**
- * The provider for a profile whose base URL names a command-line tool (`cliOf`). Refuses a run
- * with no profile, and one whose base URL names no tool, before anything is run.
- */
+/** For a profile whose base URL names a CLI (`cliOf`). Retries and timeout work as for HTTP. */
 export function cliScriptingProvider(options: CliScriptingOptions = {}): ScriptingProvider {
   const backoff = options.backoffMs ?? defaultBackoff;
 
@@ -531,7 +493,7 @@ export function cliScriptingProvider(options: CliScriptingOptions = {}): Scripti
             signal,
           );
         } catch (e) {
-          // never started, so nothing ran and nothing is reported
+          // never started, so nothing is reported
           const code = (e as NodeJS.ErrnoException).code;
           throw new ProviderError(
             code === "ENOENT"
@@ -564,7 +526,7 @@ export function cliScriptingProvider(options: CliScriptingOptions = {}): Scripti
               report(usage, "done");
               return { answer: script, reasoningTokens: outcome.reasoningTokens };
             } catch (e) {
-              // refused for what it said, so keep what it said for the Activity tab
+              // keep what a refused answer said, for the Activity tab
               if (e instanceof ProviderError) report(usage, "failed", e, outcome.content);
               throw e;
             }

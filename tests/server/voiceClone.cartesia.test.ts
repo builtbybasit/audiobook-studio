@@ -1,9 +1,7 @@
-// Making a voice on Cartesia: `POST /voices/clone`, as its docs give it
-// (https://docs.cartesia.ai/api-reference/voices/clone), against a `fetch` that answers from
-// memory. The request, the answer read into a voice, that it goes out once whatever fails, how
-// Cartesia's refusals reach the page, that the voice made is fetched back even from behind a long
-// catalogue, and what the route refuses before anything is sent: a second sample, since Cartesia
-// makes a voice from one, and M4A, which it does not take.
+// Making a voice on Cartesia: `POST /voices/clone`
+// (https://docs.cartesia.ai/api-reference/voices/clone), against a fake `fetch`. The voice made is
+// fetched back even behind a long catalogue; the route refuses a second sample (Cartesia clones
+// from one) and M4A.
 import { describe, expect, test } from "bun:test";
 
 import type { CloneRequest } from "~/providers/clone";

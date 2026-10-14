@@ -1,7 +1,6 @@
-// Making a voice on an OpenAI-compatible server: `POST /audio/voices` as the batch speech API gives
-// it (`docs/speech-batch-api.md#voices`), against a `fetch` that answers from memory — the form
-// sent, the voice read back, what a server that makes no voices is said to be, and that the route
-// offers none of it to an endpoint that does not say its server makes voices.
+// Making a voice on an OpenAI-compatible server: `POST /audio/voices`
+// (`docs/speech-batch-api.md#voices`), against a fake `fetch`. The route offers it only to an
+// endpoint that says its server makes voices.
 import { describe, expect, test } from "bun:test";
 
 import type { CloneRequest } from "~/providers/clone";

@@ -1,6 +1,5 @@
-// Rendered clips. Seeding narration means writing the same audit trail a real run would leave —
-// the voice, the model, the text as sent and what the dictionary did to it — because staleness,
-// drift and loudness are all decided from that trail rather than from a timestamp.
+// Seeded clips carry the audit trail a real run leaves (voice, model, text as sent, dictionary
+// changes): staleness, drift and loudness are decided from it.
 import { splitText } from "@/lib/split";
 import { speak, chapterSeconds, speechInstructions, DEFAULT_PACING } from "@/lib/speech";
 import { billingOf } from "@/lib/endpoints";
@@ -9,9 +8,7 @@ import { generateSegments } from "~/demo/seed/world/script";
 import type { WorldDraft } from "~/demo/seed/world/draft";
 import type { Book, Endpoint, Segment, SegmentAudio, VoiceRef } from "@/types";
 
-/** What seeding a clip has to agree with: who reads the line, how the book says it, and where it
- *  is rendered. A world under construction satisfies this, and so does the live store — which is
- *  how a demo scenario seeds clips the same way the world did. */
+/** What seeding a clip must agree with; a world draft and a scenario's context both satisfy it. */
 export type ClipWorld = Pick<WorldDraft, "characters" | "lexicon" | "endpoints">;
 
 /** rendered length of a chapter: the clips it plays plus the silence stitched between them */
@@ -43,10 +40,7 @@ export const seedAudit = (
   const said = speak(s.text, w.lexicon[bookId] ?? []);
   const instructions = speechInstructions({ style: c?.style, direction: s.direction });
   const at = now - (3600 + i * 7) * 1000;
-  // Priced through the one engine every other request goes through, in this endpoint's own billing
-  // model. The seeded world used to multiply the character count by a per-1M-characters number,
-  // which silently priced a byte-billed or token-billed endpoint as though it billed characters —
-  // so the opening balance disagreed with every figure the app worked out afterwards.
+  // priced by the shared engine in the endpoint's own billing model, so seeded costs agree
   const billing = billingOf(ep);
   const charge = priceSpeechRequest(
     billing,
@@ -78,9 +72,7 @@ export const seedAudit = (
   };
 };
 
-/** One finished clip, exactly as the seeded world writes it — audit trail, cut preview and all.
- *  A demo scenario that narrates a chapter after the fact goes through here, so a seeded clip and a
- *  world-seeded one are the same thing. */
+/** One finished clip with audit trail and cut preview; scenarios use it too. */
 export const seedClip = (
   w: ClipWorld,
   bookId: string,
@@ -104,20 +96,15 @@ export const refOf = (w: ClipWorld, bookId: string, speaker: string): VoiceRef =
     cast.find((c) => c.name === "Narrator")!.voice)!;
 };
 
-/** The endpoint that owns that voice — the one a clip for this speaker would be rendered by. */
+/** The endpoint that owns that voice. */
 export const routeOf = (w: ClipWorld, bookId: string, speaker: string): Endpoint => {
   const ref = refOf(w, bookId, speaker);
   return w.endpoints.find((e) => e.id === ref.split("/")[0])!;
 };
 
 /**
- * Seed pipeline state so every screen has something to show: chapters 1..`scripted` have a script,
- * chapters 1..`narrated` have clips.
- *
- * `light` skips the per-clip split preview and audit trail: a 214-chapter serial is 6,000-odd clips,
- * and computing cut points for every one of them at start-up buys nothing the Export page reads.
- * The clips still carry the voice they were rendered with, which is what loudness and staleness are
- * decided from.
+ * Chapters 1..`scripted` get a script, 1..`narrated` clips. `light` skips the split preview and
+ * audit trail (6,000-odd clips in a 214-chapter serial) but keeps each clip's voice.
  */
 export function seedPipeline(
   w: WorldDraft,

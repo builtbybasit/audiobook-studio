@@ -35,20 +35,17 @@ export default defineConfig({
               paths: [
                 {
                   name: "drizzle-orm",
-                  message:
-                    'Queries live in server/db/*.ts (docs/backend.md, "The shape of it"): add a function there and call it.',
+                  message: "Queries live in server/db/*.ts: add a function there and call it.",
                 },
                 {
                   name: "~/db/schema",
-                  message:
-                    'Queries live in server/db/*.ts (docs/backend.md, "The shape of it"): add a function there and call it.',
+                  message: "Queries live in server/db/*.ts: add a function there and call it.",
                 },
               ],
               patterns: [
                 {
                   group: ["drizzle-orm/*", "~/db/schema/*"],
-                  message:
-                    'Queries live in server/db/*.ts (docs/backend.md, "The shape of it"): add a function there and call it.',
+                  message: "Queries live in server/db/*.ts: add a function there and call it.",
                 },
               ],
             },
@@ -78,10 +75,8 @@ export default defineConfig({
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
   },
   server: {
-    // The page talks to `/api` on the same origin — and to `/demo/api`, the demo library the same
-    // server holds — so there is no CORS to configure and no base URL to set: `pnpm dev` (the API
-    // and this, side by side) is the whole arrangement. The address rather than `localhost`, which
-    // can resolve to `::1` first while the API listens on IPv4 loopback only (see `HOST` in
+    // `/api` and `/demo/api` share this origin, so no CORS and no base URL. The IP rather than
+    // `localhost`, which can resolve to `::1` while the API listens on IPv4 only (`HOST` in
     // server/env.ts).
     proxy: { "/api": API, "/demo/api": API },
   },

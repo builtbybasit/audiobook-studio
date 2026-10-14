@@ -1,26 +1,6 @@
-// A line spoken by Cartesia, through `POST /tts/bytes`.
-//
-// Cartesia is its own shape (https://docs.cartesia.ai/api-reference/tts/bytes): a bearer key, a
-// `Cartesia-Version` header naming the API version the request is written against, and a JSON
-// body of `model_id`, `transcript`, `voice: {id}` and an `output_format` that names the container,
-// the sample encoding and the rate — and, for an MP3, the bitrate in bits a second. The answer is
-// the audio itself, read as every other body of audio is (`audioAnswer`). Cartesia reports no
-// usage, so the ledger counts the characters that were sent, which is what it bills on — and only
-// for a request that succeeded: its pricing page says errors consume no credits.
-//
-// Only the words are sent. Sonic takes delivery as tags in the transcript — `<break time="1s"/>`,
-// `<emotion value="calm"/>` — which is what the endpoint's Expressions tab is for.
-//
-// Voices are Cartesia's own and the account's, `GET /voices` a hundred a page, each page after
-// the last voice of the one before. Cartesia's own run to several hundred, so a list cut off at the
-// cap is followed by the account's alone (`is_owner=true`): a voice cloned here is never lost behind
-// the catalogue.
-//
-// A voice is cloned with `POST /voices/clone` (https://docs.cartesia.ai/api-reference/voices/clone),
-// as multipart under the same key and version: one `clip`, a `name`, the `language` it was recorded
-// in — English, the only language this app's books are in — and `access=private`, the default, set
-// so it cannot drift. The answer is the new voice, whose `id` is what a line is spoken with; it
-// says nothing of gender.
+// Cartesia's `POST /tts/bytes` (https://docs.cartesia.ai/api-reference/tts/bytes), with a
+// `Cartesia-Version` header. It reports no usage, so the ledger counts the characters sent, billed
+// only on success (errors consume no credits). No instructions field: Sonic takes inline tags.
 import type { Voice } from "@/types";
 import { cartesia } from "@/lib/providers/cartesia";
 import { formatDefaults } from "@/lib/providers/types";
@@ -30,28 +10,26 @@ import type { SpeechInput } from "~/providers/speech";
 import type { ProviderTarget } from "~/providers/target";
 import type { SpeechWire } from "~/providers/speech/wire";
 
-/** The API version every request is written against, the one Cartesia's reference names. */
+/** The API version Cartesia's reference names. */
 export const CARTESIA_VERSION = "2026-08-14";
 
-/** A voice list is read a hundred a page, up to this many pages. */
 const VOICE_PAGE = 100;
 const VOICE_PAGES = 10;
 
-/** Cartesia serves its API at the host root, whatever path the base URL was saved with. */
+/** The host root, whatever path the base URL was saved with. */
 export const cartesiaRoot = (baseUrl: string): string => new URL(baseUrl).origin;
 
 export function cartesiaHeaders(target: ProviderTarget): Record<string, string> {
   return { ...jsonHeaders(target), "cartesia-version": CARTESIA_VERSION };
 }
 
-/** The request body for one line. Exported for the tests, which check it against the docs. */
+/** Exported for the tests. An MP3's bitrate is in bits per second. */
 export function cartesiaBody(
   input: Pick<SpeechInput, "text" | "sampleRate" | "encoding">,
   model: string,
   voice: string,
 ): Record<string, unknown> {
   const { format, bitrate } = input.encoding;
-  // what the endpoint names none of is the shape's: 44.1 kHz, the rate Cartesia's example uses
   const defaults = formatDefaults(cartesia, format);
   const sample_rate = input.sampleRate ?? defaults.rate;
   return {
@@ -65,7 +43,6 @@ export function cartesiaBody(
   };
 }
 
-/** One page of voices from `GET /voices`: Cartesia's own and the account's. */
 async function voicePage(
   target: ProviderTarget,
   signal: AbortSignal,
@@ -100,7 +77,6 @@ async function voicePage(
   return { voices, hasMore: body?.has_more === true };
 }
 
-/** Its gender is `masculine`, `feminine` or `gender_neutral`. */
 const genderOf = (gender: string): Voice["gender"] =>
   gender === "masculine"
     ? "m"
@@ -110,7 +86,7 @@ const genderOf = (gender: string): Voice["gender"] =>
         ? "n"
         : "?";
 
-/** Every voice `GET /voices` answers, page after page up to the cap; `more` when it was reached. */
+/** Cursor-paged by the last id; `more` when the cap was reached. */
 async function voicesListed(
   target: ProviderTarget,
   signal: AbortSignal,
@@ -129,12 +105,13 @@ async function voicesListed(
 }
 
 export const cartesiaWire: SpeechWire = {
+  // https://docs.cartesia.ai/api-reference/voices/clone
   async clone(target, request, signal, options) {
     const form = new FormData();
     form.set("name", request.title);
     form.set("language", "en");
     form.set("access", "private");
-    // one clip: the route holds a clone to `cloning.maxSamples` before it gets here
+    // the route enforces `cloning.maxSamples` (1)
     const [sample] = request.samples;
     form.set("clip", sample.blob, sample.name);
     const res = await call(
@@ -170,12 +147,12 @@ export const cartesiaWire: SpeechWire = {
       },
       format: input.encoding.format,
       text: input.text,
-      // no instructions field (see the header), so none are billed
+      // no instructions field, so none are billed
       instructions: "",
     };
   },
 
-  /** One voice from its list, which needs the key and costs no credit. */
+  /** Lists one voice: needs the key, costs no credit. */
   async probe(target, signal, options) {
     const started = Date.now();
     await voicePage(target, signal, options, 1);
@@ -186,7 +163,7 @@ export const cartesiaWire: SpeechWire = {
   async voices(target, signal, options) {
     const all = await voicesListed(target, signal, options, false);
     if (!all.more) return { voices: all.voices, total: all.voices.length, page: 1, hasMore: false };
-    // cut off at the cap: the account's own, which is where a clone of this app's is, come too
+    // Cartesia's own run to hundreds; past the cap, add the account's so a clone is never lost
     const listed = new Set(all.voices.map((v) => v.id));
     const own = await voicesListed(target, signal, options, true);
     const voices = [...all.voices, ...own.voices.filter((v) => !listed.has(v.id))];

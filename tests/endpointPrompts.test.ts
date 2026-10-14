@@ -1,10 +1,6 @@
 // The scripting prompt and reasoning level on the endpoints side: what an endpoint may be set to,
-// what its estimate counts the prompt at, and how the library's default travels with the rest of
-// the configuration — kept as null while it is the built-in prompt, saved only when it is a whole
-// prompt, and carried by a settings file.
-//
-// The service is a fake that keeps the document in memory, as in `endpointsBackend.test.ts`; how
-// the server stores and checks the prompt is `tests/server/`'s.
+// what its estimate counts the prompt at, and the library's default (null while built-in, saved
+// only whole, carried by a settings file). The service is an in-memory fake.
 import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
 
 import { BUILT_IN_PROMPT, NOTES_MAX_CHARS, promptOverhead } from "@/lib/prompt";
@@ -102,8 +98,8 @@ describe("a scripting endpoint's prompt and reasoning level", () => {
     const long: PromptTemplate = { system: OWN.system + "y".repeat(8000), user: OWN.user };
     const withPrompt = tokenEstimate(text, p, at, { prompt: long });
     expect(withPrompt.inputTokens).toBe(1600 + Math.ceil(promptOverhead(long) / 4));
-    // eight thousand characters more than the built-in prompt's system message is about 2,000
-    // tokens more, less what the flat 500 undercounted the built-in one by
+    // 8,000 characters over the built-in system message is ~2,000 tokens, less what the flat 500
+    // undercounted the built-in one by
     expect(withPrompt.inputTokens).toBeGreaterThan(bare.inputTokens + 1500);
     // the output side does not depend on the prompt
     expect(withPrompt.outputTokens).toBe(bare.outputTokens);

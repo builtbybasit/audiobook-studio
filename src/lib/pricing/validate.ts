@@ -1,12 +1,10 @@
-// What a person can type into a rate card that cannot be right (problems, which block a save) or
-// probably is not (warnings, which say so and let it be), in the words the form shows.
+// Rate-card checks in the form's words: problems block a save, warnings only say so.
 import { timezoneValid } from "@/lib/wallClock";
 import type { PricingConfig, RateSet, TtsBilling } from "@/types";
 import { COMPONENT_LABEL } from "./format";
 import { inScope, promotionRate, promotionRunning } from "./rates";
 import { RATE_COMPONENTS, billsAudioTokens } from "./units";
 
-/** Contradictions a person can type into a rate card, in the words the form shows. These block. */
 export function pricingProblems(config: PricingConfig): string[] {
   const out: string[] = [];
   if (!timezoneValid(config.timezone))
@@ -40,13 +38,7 @@ export function pricingProblems(config: PricingConfig): string[] {
   return [...new Set(out)];
 }
 
-/**
- * Contradictions in a speech endpoint's billing model, in the words the form shows. These block.
- *
- * The rate itself being unknown is deliberately *not* one of them: an endpoint whose price list you
- * have not typed in yet is a legitimate state that the page reports honestly, rather than an error
- * that stops you saving.
- */
+/** An unknown rate is not a problem: it is a legitimate state the page reports. */
 export function billingProblems(billing: TtsBilling): string[] {
   const out: string[] = [];
   const bad = (n: number | null | undefined) => n != null && (!Number.isFinite(n) || n < 0);
@@ -60,7 +52,6 @@ export function billingProblems(billing: TtsBilling): string[] {
   return out;
 }
 
-/** Things that are probably a mistake but are not contradictions, so they say so and let it be. */
 export function pricingWarnings(base: RateSet, config: PricingConfig, at: number): string[] {
   const out: string[] = [];
   const input = base.input;
@@ -73,8 +64,7 @@ export function pricingWarnings(base: RateSet, config: PricingConfig, at: number
       "The cache-write rate is more than three times the input rate. Check the decimal point.",
     );
   const running = config.promotions.filter((p) => promotionRunning(p, at));
-  // Only the components this card actually prices. A promotion scoped to speech on an LLM endpoint
-  // is not an overlap with anything — it is a scope that does nothing, which is its own warning.
+  // only components this card prices
   for (const c of RATE_COMPONENTS) {
     if (base[c] == null) continue;
     const overlapping = running.filter(
@@ -85,11 +75,7 @@ export function pricingWarnings(base: RateSet, config: PricingConfig, at: number
         `${overlapping.length} promotions cover ${COMPONENT_LABEL[c].toLowerCase()}. They do not stack — only the cheapest applies.`,
       );
   }
-  // A promotion "applies to nothing" only where the card actually prices something for it to miss.
-  // On a card whose rates are all unknown every component is null, and saying "check its scope"
-  // there blames the scope for a missing rate — which the unknown-rate warning already explains.
-  // The test is `inScope`, not list membership, so a promotion scoped to the speech rate is not
-  // reported as useless on an endpoint that moved to token billing.
+  // only on a card that prices something, else the scope is blamed for a missing rate
   const priced = RATE_COMPONENTS.filter((c) => base[c] != null);
   if (priced.length)
     for (const p of running)

@@ -1,7 +1,5 @@
-// What a provider reported a request used, read into the one shape the rest of pricing works in.
-//
-// Nothing downstream reads a provider's payload directly, so a count a provider left out stays
-// `null` — "not reported" — rather than becoming a zero on its way to a receipt.
+// A provider's usage payload read into one shape. A count it left out stays `null` ("not
+// reported"), never a zero on its way to a receipt.
 import type {
   SpeechUsage,
   SpeechUsageFormat,
@@ -14,7 +12,7 @@ import type {
 
 const num = (x: unknown): number | null => (typeof x === "number" && Number.isFinite(x) ? x : null);
 
-/** What each usage problem means, in the words a receipt shows beside the figure it undermines. */
+/** As a receipt shows it beside the figure it undermines. */
 export const USAGE_PROBLEM: Record<string, string> = {
   "cache-not-reported":
     "This provider did not report cached input, so how much of the input was cached is unknown.",
@@ -32,12 +30,8 @@ export const USAGE_PROBLEM: Record<string, string> = {
 };
 
 /**
- * Read a provider's usage payload into the one internal shape.
- *
- * The two shapes that matter disagree about the most important thing: OpenAI's `prompt_tokens`
- * *includes* the cached tokens, Anthropic's `input_tokens` *excludes* them. Getting that backwards
- * either charges cached tokens twice or loses them, so it is the first thing this does — and
- * `inputTokens` on the way out always means the total.
+ * OpenAI's `prompt_tokens` includes cached tokens; Anthropic's `input_tokens` excludes them. The
+ * returned `inputTokens` is always the total.
  */
 export function normalizeUsage(raw: Record<string, unknown>, format: UsageFormat): TokenUsage {
   const problems: UsageProblem[] = [];
@@ -48,9 +42,7 @@ export function normalizeUsage(raw: Record<string, unknown>, format: UsageFormat
   let cachedInput: number | null = null;
   let cacheWrite: number | null = null;
   let output: number | null = null;
-  // Of the output, what was spent thinking: `completion_tokens_details.reasoning_tokens`, where
-  // OpenAI, OpenRouter and DeepSeek report it. Already inside the output tokens, so it is never
-  // priced on its own; it is kept for what a reasoning model's thinking adds to the next estimate.
+  // already inside the output tokens, so never priced on its own; kept for the next estimate
   let reasoning: number | null = null;
   const completionDetails = raw.completion_tokens_details;
   if (format === "openai" || format === "plain")
@@ -141,15 +133,7 @@ const nothingReported = (format: SpeechUsageFormat): SpeechUsage => ({
   problems: [{ code: "usage-not-reported", message: USAGE_PROBLEM["usage-not-reported"] }],
 });
 
-/**
- * Read a speech provider's usage payload into the one internal shape.
- *
- * The same rule as the token side and for the same reason: nothing downstream reads a provider
- * payload directly, so "the provider did not say" can never be quietly rounded to zero on its way
- * through. Each shape reports a *different* quantity — Gemini counts tokens both ways, Fish counts
- * the bytes it bills on, OpenAI's speech endpoint counts nothing at all — and the fields it did not
- * fill in stay `null`.
- */
+/** Each provider reports a different quantity (Gemini tokens, Fish bytes, OpenAI nothing). */
 export function normalizeSpeechUsage(
   raw: Record<string, unknown> | null | undefined,
   format: SpeechUsageFormat,
@@ -165,8 +149,7 @@ export function normalizeSpeechUsage(
   if (format === "gemini") {
     const meta = (raw.usageMetadata ?? raw) as Record<string, unknown>;
     textTokens = num(meta.promptTokenCount);
-    // The audio tokens are the AUDIO-modality slice of the response, not the whole of it: a
-    // response that also carries text would otherwise have its text charged at the audio rate.
+    // the AUDIO slice only, or any text in the response is charged at the audio rate
     const details = Array.isArray(meta.candidatesTokensDetails)
       ? (meta.candidatesTokensDetails as Record<string, unknown>[])
       : [];
@@ -218,7 +201,7 @@ export function normalizeSpeechUsage(
   };
 }
 
-/** Input tokens charged at the ordinary rate: the total less the parts that have their own line. */
+/** The total less the cached and cache-write parts. */
 export const uncachedInput = (u: TokenUsage): number =>
   Math.max(0, u.inputTokens - (u.cachedInput ?? 0) - (u.cacheWrite ?? 0));
 

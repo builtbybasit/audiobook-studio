@@ -1,11 +1,8 @@
 <script setup lang="ts">
 import { useCastStore } from "@/stores/cast";
 
-// The stitched chapter, played and scrubbed. A chapter is not a file: it is the clips *and* the
-// silence stitched between them, so the bar shows both — one block per clip, coloured by speaker and
-// dimmed when the script has moved past it, with the gaps drawn between. The queue itself comes from
-// `useChapterQueue`, the same one the reader builds, so a line started on one page keeps playing on
-// the other.
+// The stitched chapter, played and scrubbed: one block per clip with the gaps drawn between. The
+// queue comes from `useChapterQueue`, as in the reader, so playback carries across the two pages.
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useJob, fmt } from "@/views/narration/shared";
@@ -28,15 +25,9 @@ const router = useRouter();
 const { chapter, book, segments, colorOf } = useJob(props);
 const { p, playQueue, cue, seekTo, skip, next, prev, cycleRate } = usePlayer();
 const pacing = computed(() => castStore.pacingOf(props.bookId));
-// the stitched chapter is the clips *and* the silence between them, so the scrubber shows both —
-// laid out by the same `chapterTimeline` the player's queue is built from
 const timeline = computed(() => chapterTimeline(segments.value, pacing.value, book.value));
-// The length of the bar below, summed from the very clips it draws rather than read off
-// `chapter.duration`. The two are the same arithmetic (`cast._retime` is Σdurations + `silenceOf`)
-// and agree whenever nothing is in flight — but a clip being rendered again drops out of `timeline`
-// at once, while `_retime` does not run until the job settles. Driving the block widths, the
-// playhead and the scrub mapping off a total the blocks no longer add up to is how the bar stops
-// reaching its own end and a click lands past the last clip.
+// Summed from the drawn clips, not `chapter.duration`: a clip being re-rendered leaves `timeline`
+// at once but `_retime` waits for the job, and the bar must add up to its own blocks.
 const total = computed(() => {
   const last = timeline.value.at(-1);
   return last ? last.end + last.gap : 0;
@@ -48,8 +39,7 @@ const currentId = computed(() => (p.clipId?.startsWith("seg") ? Number(p.clipId.
 const buildQueue = (chId: number): Queue | null =>
   chapterQueue(props.bookId, chId, {
     href: (id) => `/book/${props.bookId}/narration?ch=${id}`,
-    // the ledger follows the player: ?ch= is what NarrationView already watches, and going through
-    // the router means this survives the remount that switching chapters causes
+    // through the router, so it survives the remount that switching chapters causes
     onChapter: (id) => void router.replace({ query: { ...route.query, ch: String(id) } }),
   });
 function playChapter(at?: number) {
@@ -57,15 +47,13 @@ function playChapter(at?: number) {
   if (q) playQueue(q, at);
 }
 function scrub(e: MouseEvent) {
-  // measured from the bar's own edge: `offsetX` is relative to the element under the pointer, one
-  // of the clip blocks here, so it would say the pointer was a pixel or two into whichever was hit
+  // from the bar's edge: `offsetX` would be relative to the clip block under the pointer
   const bar = (e.currentTarget as HTMLElement).getBoundingClientRect();
   const at = ((e.clientX - bar.left) / bar.width) * total.value;
   if (isChapter.value) return seekTo(at);
   const q = buildQueue(props.chapterId);
   if (q) cue(q, at); // park the playhead without starting — scrubbing is not pressing play
 }
-// the row's "play the chapter from here" presses this rather than building a second queue
 defineExpose({ playChapter });
 </script>
 

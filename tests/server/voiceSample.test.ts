@@ -1,13 +1,7 @@
-// A voice sample: what the demo buttons and the Endpoints page play for one saved voice.
-//
-// It is the one speech request no book asks for, and the one that goes to the endpoint itself
-// whatever a test narrates through — so what these guard is that it is asked for the way a line of
-// narration would be (the endpoint's voice, format and rate, with its saved key), that the audio
-// comes back as the file it is with its length beside it, that the request lands in the ledger
-// against the endpoint with no book, and that a sample that cannot be asked for says why. And that
-// it is paid for once: kept on the server, played from disk after, made again only when the
-// endpoint would sound different — and for a Fish voice, Fish's own recording, free, before any
-// sentence is rendered.
+// A voice sample: what the demo buttons and the Endpoints page play for one saved voice. Asked for
+// like a line of narration (the endpoint's voice, format, rate and key), ledgered against the
+// endpoint with no book, kept on the server and made again only when the endpoint would sound
+// different. A Fish voice plays Fish's own recording, free.
 import { describe, expect, test } from "bun:test";
 
 import type { Endpoint, RequestRecord } from "@/types";

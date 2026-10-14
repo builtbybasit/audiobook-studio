@@ -1,16 +1,6 @@
-// The library's voice effects and its thought effect, read into the effects store; and how many
-// of a book's clips have an old sound.
-//
-// The effects store is the working copy: an editor's slider moves it at once and the write goes
-// behind (`effectsStore.update`). This query is how it is filled, and what a refused write reads
-// back through. The entry is never collected, as the shelf's is not: the store keeps what it read
-// regardless, and a collected entry is one an invalidation would not reach.
-//
-// The old-sound count is the server's — it compares each clip's `sound` with what its line's
-// effects now make — so it stays in the query cache. Anything that changes a line's effects
-// invalidates it (`staleMoved`): an effect edited or removed, the library's or a book's thought
-// effect, a speaker's effect or thought effect, and a narration or Re-apply that ended
-// (`@/queries/jobs`).
+// The library's effects and thought effect, read into the effects store; and each book's old-sound
+// count, which the server computes and `staleMoved` invalidates whenever a line's effects change.
+// The effects entry is never collected: a collected entry is one an invalidation would not reach.
 import { computed, toValue, type MaybeRefOrGetter } from "vue";
 import { toCacheKey, useQuery } from "@pinia/colada";
 
@@ -70,10 +60,7 @@ export function useStaleSound(bookId: MaybeRefOrGetter<string | null | undefined
   return { ...query, stale: computed(() => query.data.value ?? null) };
 }
 
-/**
- * What a book's lines' effects make has changed — or every book's, when none is named: whoever
- * shows the old-sound count reads it again, and an entry nobody shows is read afresh when it next is.
- */
+/** A book's (or with none, every book's) effects changed: reread the old-sound counts. */
 export function staleMoved(bookId?: string): Promise<void> {
   return bookId
     ? invalidate({ key: keys.staleSound(bookId) })

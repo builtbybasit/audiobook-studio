@@ -1,13 +1,9 @@
-// What the Demo tools offer. One row per situation worth testing, named for the situation rather
-// than for the data behind it, with a line saying what will be on screen.
-//
-// This file is the menu; `situations.ts` is what each row does to the world. They are kept apart so
-// the wording can be read in one place, and so a row can be added without reading the mutations.
+// The Demo tools menu: one row per situation, with what will be on screen. What each row does to
+// the world is in `situations.ts`.
 import { exportScenarios } from "~/demo/seed/scenarios/export";
 import { IMPORT_SAMPLES } from "~/demo/seed/fixtures/imports";
 import type { DemoGroup, DemoScenario } from "@/types";
 
-/** The order the panel lists them in, and what each heading is called. */
 export const DEMO_GROUPS: { id: DemoGroup; label: string }[] = [
   { id: "import", label: "Importing an EPUB" },
   { id: "shelf", label: "The shelf" },
@@ -20,10 +16,7 @@ export const DEMO_GROUPS: { id: DemoGroup; label: string }[] = [
   { id: "export", label: "Export" },
 ];
 
-/**
- * What to try once a row is applied, in the order it is worth doing. The drawer lists these
- * beside the page, so the walkthrough is in the app rather than only in the README.
- */
+/** What to try once a row is applied, in order; the drawer lists these beside the page. */
 const STEPS: Record<string, string[]> = {
   import: [
     "Read the note beside each title: a verdict, a kind and one line of reason.",
@@ -189,11 +182,9 @@ const STEPS: Record<string, string[]> = {
 const withSteps = (rows: DemoScenario[]): DemoScenario[] =>
   rows.map((s) => ({ ...s, steps: STEPS[s.id] ?? (s.group === "import" ? STEPS.import : []) }));
 
-/** Fresh rows every call — the panel renders these, it never holds on to them. */
 export function demoScenarios(): DemoScenario[] {
   return withSteps([
-    // the import rows open the contents review on a book the scenario itself creates; the id is
-    // fixed so the row knows where it opens before the book exists
+    // fixed ids, so the row knows where it opens before the scenario creates the book
     ...IMPORT_SAMPLES.map((s): DemoScenario => ({
       id: `import-${s.id}`,
       group: "import",
@@ -394,7 +385,7 @@ export function demoScenarios(): DemoScenario[] {
       path: "/queue",
       runs: [{ kind: "scripting", chapterIds: [13, 14, 15, 16] }],
     },
-    // the Export rows keep their own wording, so the page's own Demo chip and this panel agree
+    // own wording, so the Export page's Demo chip and this panel agree
     ...exportScenarios().map((s): DemoScenario => ({
       id: s.id,
       group: "export",

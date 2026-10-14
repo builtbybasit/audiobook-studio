@@ -1,29 +1,7 @@
-// An encoder that writes a real audiobook: AAC in an M4B, or MP3, with chapter marks a player
-// reads, using an ffmpeg already installed on the machine.
-//
-// It is the only encoder, and ffmpeg is required: the server checks for it at boot and refuses to
-// start without it (`server/index.ts`), rather than every build failing later with a spawn error.
-//
-// *Chapter marks.* An M4B's marks are a chapter list in the container, and the way to write one
-// is an FFMETADATA file: `[CHAPTER]` blocks with a timebase and a start and end in it. The spans
-// are counted off the clips as they are laid down, so a mark falls exactly where the chapter
-// starts in the file and not at an estimate of where it should.
-//
-// *Loudness.* `loudnorm` is EBU R128, and it is run in two passes — measure, then correct with
-// the measurements — because the single-pass form is a dynamic normaliser that changes how the
-// reading sounds. The Export page's Loudness panel invents its numbers from a voice's identity;
-// these are measured off the audio.
-//
-// *A container people's players open.* The clips go in as one concat stream, the silence with
-// them, and what comes out is an `.m4b` an app will read as an audiobook.
-//
-// **Clips in MP3 or Opus are decoded first.** The concat demuxer reads every file in its list as the
-// first one's format, and the spans and the silence are counted in samples, so every clip is made a
-// WAV in the file's format before the list is drawn: one `ffmpeg` per encoded clip, a few at once,
-// into the build's own work directory. After that the list, the rate check, the spans and the
-// silence are exactly what they are for a book narrated in WAV, and a book narrated in a mix of
-// the three builds the same way. The file's format is the first clip's — its header for a WAV,
-// what `probeClip` reads for the others, at 16 bits.
+// The audiobook encoder: AAC in an M4B, or MP3, with chapter marks, via the installed ffmpeg
+// (required at boot, `server/index.ts`). Marks come from spans counted off the clips as laid down.
+// `loudnorm` runs in two passes because its one-pass form is a dynamic normaliser. MP3/Opus clips
+// are decoded to WAV first: the concat demuxer reads every file as the first one's format.
 import { rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -52,20 +30,19 @@ import {
 export type FfmpegFormat = "m4b" | "mp3";
 
 export interface FfmpegOptions {
-  /** what to write; `m4b` is AAC in an MP4 container, which is the one that carries marks */
+  /** `m4b` (AAC in MP4) is the one that carries marks */
   format?: FfmpegFormat;
   /** kbps */
   bitrate?: number;
-  /** integrated loudness to correct to, in LUFS; absent means leave the levels alone */
+  /** integrated loudness target in LUFS; absent leaves the levels alone */
   loudness?: number;
-  /** the binary, for a machine that keeps it somewhere of its own */
   bin?: string;
 }
 
 const CODEC: Record<FfmpegFormat, string> = { m4b: "aac", mp3: "libmp3lame" };
 const MIME: Record<FfmpegFormat, string> = { m4b: "audio/mp4", mp3: "audio/mpeg" };
 
-/** Is there an ffmpeg to run? Asked once at boot so a misconfiguration is not a failed build. */
+/** The ffmpeg version line, or null when there is none to run. */
 export async function ffmpegAvailable(bin = "ffmpeg"): Promise<string | null> {
   try {
     const proc = Bun.spawn([bin, "-version"], { stdout: "pipe", stderr: "ignore" });
@@ -77,7 +54,7 @@ export async function ffmpegAvailable(bin = "ffmpeg"): Promise<string | null> {
   }
 }
 
-/** Run it, and turn a non-zero exit into an error carrying the part of the log that explains it. */
+/** Throws on a non-zero exit with the log's last lines. */
 async function run(
   bin: string,
   args: string[],
@@ -96,8 +73,7 @@ async function run(
     const code = await proc.exited;
     if (signal.aborted) throw signal.reason;
     if (code !== 0) {
-      // ffmpeg says what went wrong in its last few lines; the rest is the build it was compiled
-      // with, which is of no use to anybody reading a failed job.
+      // the cause is in the last few lines; the rest is build info
       const why = stderr.trim().split("\n").slice(-3).join(" ").trim();
       throw new Error(`${failed}${why ? `: ${why}` : ""}`);
     }
@@ -118,27 +94,19 @@ function measured(stderr: string): Record<string, string> | null {
   }
 }
 
-/**
- * One line of a concat list. ffmpeg reads a relative path in the list against the list's own
- * folder — a temporary one — not the server's, and then blames the list: "Error opening input file
- * …/concat.txt". So every path is made absolute first; a clip under the default
- * `AUDIO_DIR=./data/audio` is named relative to the server's folder.
- */
+/** One concat-list line, absolute: ffmpeg reads a relative path against the list's own folder. */
 const listed = (path: string): string => `file '${resolve(path).replaceAll("'", "'\\''")}'`;
 
 /**
- * The parts of one file as a concat list, with the silence written out as real files.
- *
- * ffmpeg's concat demuxer takes a list of paths, so a pause has to be something on disk. They are
- * short and there are few distinct lengths in a book — a line gap, a turn gap, a chapter gap — so
- * each length is written once and named as often as it is needed.
+ * The parts of one file as a concat list. A pause must be a file on disk; each distinct length is
+ * written once and listed as often as needed.
  */
 async function concatList(
   chapters: EncodeChapter[],
   gap: number,
   dir: string,
   format: WavFormat,
-  /** the WAV each encoded clip was decoded to, by the clip's own path */
+  /** clip path → the WAV it was decoded to */
   decoded: Map<string, string>,
 ): Promise<{ list: string; spans: EncodedChapter[]; seconds: number }> {
   const lines: string[] = [];
@@ -174,8 +142,7 @@ async function concatList(
       const path = decoded.get(part.path) ?? part.path;
       lines.push(listed(path));
       const head = readWavHeader(new Uint8Array(await Bun.file(path).arrayBuffer()));
-      // The concat demuxer reads every file as the first one's format, so a clip at another rate
-      // would play at the wrong speed rather than fail, so it is refused.
+      // A mismatched clip would play at the wrong speed rather than fail, so refuse it.
       if (
         head.channels !== format.channels ||
         head.sampleRate !== format.sampleRate ||
@@ -188,8 +155,7 @@ async function concatList(
     }
     spans.push({
       id: chapter.id,
-      // A position in *time*, because a byte offset into an AAC stream means nothing: it is where
-      // the chapter's mark goes.
+      // ms, not bytes: a byte offset into AAC means nothing
       start: Math.round(start * 1000),
       length: Math.round((seconds - start) * 1000),
       seconds: seconds - start,
@@ -198,7 +164,7 @@ async function concatList(
   return { list: lines.join("\n"), spans, seconds };
 }
 
-/** The PCM codec that writes samples of this many bits, as a WAV holds them. */
+/** PCM codec by bits per sample. */
 const PCM: Record<number, string> = {
   8: "pcm_u8",
   16: "pcm_s16le",
@@ -206,13 +172,9 @@ const PCM: Record<number, string> = {
   32: "pcm_s32le",
 };
 
-/** How many clips are decoded at once: enough to hide a process's start-up, few enough to share. */
 const DECODERS = 4;
 
-/**
- * Every MP3 or Opus clip in these chapters as a WAV in `format`, written into `dir`: the map from
- * each clip's path to its WAV's. A WAV clip is not in it and is read where it is kept.
- */
+/** Decodes every MP3/Opus clip to a WAV in `format` under `dir`; WAV clips are left out. */
 async function decodeClips(
   bin: string,
   chapters: EncodeChapter[],
@@ -270,7 +232,7 @@ async function decodeClips(
   return decoded;
 }
 
-/** The format of the file being built: the first clip's, read from its header or its stream. */
+/** The first clip's format; an encoded clip decodes to 16 bits. */
 async function sourceFormat(path: string): Promise<WavFormat> {
   const bytes = new Uint8Array(await Bun.file(path).arrayBuffer());
   const kept = formatOfFile(path) ?? "wav";
@@ -286,7 +248,6 @@ async function sourceFormat(path: string): Promise<WavFormat> {
   }
 }
 
-/** The 44 bytes a generated silence file needs in front of it. */
 function wavHeaderFor(f: WavFormat, samples: number): Uint8Array {
   const bytes = new Uint8Array(44);
   const view = new DataView(bytes.buffer);
@@ -309,7 +270,7 @@ function wavHeaderFor(f: WavFormat, samples: number): Uint8Array {
   return bytes;
 }
 
-/** An FFMETADATA file: the marks a player shows, one block per chapter. */
+/** An FFMETADATA file, one `[CHAPTER]` block per chapter. */
 function chapterMetadata(chapters: EncodeChapter[], spans: EncodedChapter[]): string {
   const title = new Map(chapters.map((c) => [c.id, c.title]));
   const lines = [";FFMETADATA1"];
@@ -327,11 +288,8 @@ function chapterMetadata(chapters: EncodeChapter[], spans: EncodedChapter[]): st
 }
 
 /**
- * The book's words as `-metadata` options. ffmpeg's generic keys are what it spells as ID3 frames
- * in an MP3 and as iTunes atoms in an MP4 — `album` is TALB and ©alb, `composer` TCOM and ©wrt —
- * so one list serves both. The narrator goes in as the composer, which is where Apple's and
- * Audiobookshelf's readers look for one; the series as the grouping. An M4B is also marked as an
- * audiobook (`stik` 2) rather than as music, so a phone files it with its books.
+ * ffmpeg's generic keys map to both ID3 frames and iTunes atoms. The narrator goes in as composer,
+ * where Apple and Audiobookshelf look; `media_type` 2 (`stik`) files an M4B as an audiobook.
  */
 function metadataArgs(tags: EncodeTags, format: FfmpegFormat): string[] {
   const pairs: [string, string][] = [
@@ -349,8 +307,7 @@ function metadataArgs(tags: EncodeTags, format: FfmpegFormat): string[] {
     ["disc", tags.disc ? `${tags.disc.n}/${tags.disc.of}` : ""],
   ];
   if (format === "m4b") pairs.push(["media_type", "2"]);
-  // Handed over as arguments rather than through a shell or a metadata file, so nothing in them
-  // needs escaping.
+  // passed as arguments, not through a shell, so nothing needs escaping
   return pairs
     .map(([key, value]) => [key, value.trim()] as const)
     .filter(([, value]) => value)
@@ -361,8 +318,7 @@ export function ffmpegEncoder(options: FfmpegOptions = {}): AudiobookEncoder {
   const format = options.format ?? "m4b";
   const bin = options.bin ?? "ffmpeg";
   const bitrate = options.bitrate ?? 64;
-  // An MP4 carries a chapter list; an MP3 has no marks every player reads, which is exactly what
-  // the Export page's format hint already says.
+  // an MP3 has no marks every player reads
   const markers = format === "m4b";
 
   return {
@@ -397,7 +353,7 @@ export function ffmpegEncoder(options: FfmpegOptions = {}): AudiobookEncoder {
         let filter: string[] = [];
         let measuredLufs: number | undefined;
         if (options.loudness != null) {
-          // Pass one measures; nothing is written, so the output goes nowhere.
+          // pass one only measures
           const stats = measured(
             await run(
               bin,
@@ -412,8 +368,7 @@ export function ffmpegEncoder(options: FfmpegOptions = {}): AudiobookEncoder {
               signal,
             ),
           );
-          // Silence measures as -inf, which the second pass refuses outright ("Result too large");
-          // there is nothing in it to level, so it is written as it is.
+          // Silence measures -inf, which pass two refuses ("Result too large"); write it as is.
           const silent = stats != null && !Number.isFinite(Number(stats.input_i));
           if (stats && !silent) measuredLufs = Number(stats.input_i);
           filter = silent
@@ -431,12 +386,8 @@ export function ffmpegEncoder(options: FfmpegOptions = {}): AudiobookEncoder {
           await writeFile(join(work, "chapters.txt"), chapterMetadata(chapters, spans));
           args.push("-i", join(work, "chapters.txt"));
         }
-        // The cover is one more input, copied in untouched and marked as the file's picture rather
-        // than a video track — which is what a player reads as cover art. An MP3 gets the frame
-        // spelled the way ID3v2.3 readers expect: a front cover, described as one.
-        //
-        // ID3v2.3 is asked for whether or not there is a picture: ffmpeg's default is 2.4, which
-        // Windows and older car stereos do not read, and a title nobody can see is not a title.
+        // The cover is an `attached_pic`, not a video track. ID3v2.3 is always asked for: ffmpeg's
+        // default 2.4 is unreadable to Windows and older car stereos.
         const picture: string[] = [];
         if (cover) {
           args.push("-i", cover.path);
@@ -452,9 +403,7 @@ export function ffmpegEncoder(options: FfmpegOptions = {}): AudiobookEncoder {
               : []),
           );
         }
-        // Every input is named before any option of the output: ffmpeg reads an option as belonging
-        // to the next file on the line, and the chapter list's mapping in front of the cover's `-i`
-        // is read as an option of the cover.
+        // All inputs before any output option: ffmpeg binds an option to the next file on the line.
         args.push(
           ...(markers ? ["-map_metadata", "1", "-map_chapters", "1"] : []),
           "-map",
@@ -463,9 +412,7 @@ export function ffmpegEncoder(options: FfmpegOptions = {}): AudiobookEncoder {
           ...(tags ? metadataArgs(tags, format) : []),
           ...(format === "mp3" ? ["-id3v2_version", "3"] : []),
           ...filter,
-          // At the clips' own rate. `loudnorm` resamples to 192 kHz inside, and left to itself the
-          // encoder then picks the nearest rate it has — 96 kHz AAC out of 44.1 kHz speech, a file
-          // twice the size for nothing anyone can hear.
+          // `loudnorm` resamples to 192 kHz; without this the AAC comes out at 96 kHz.
           "-ar",
           String(source.sampleRate),
           "-c:a",
@@ -487,14 +434,7 @@ export function ffmpegEncoder(options: FfmpegOptions = {}): AudiobookEncoder {
   };
 }
 
-/**
- * ffmpeg, following the settings.
- *
- * The format, the bitrate and the loudness target are the listener's, so they are read off each
- * build rather than fixed at boot: the same server writes an M4B for one audiobook and an MP3 for
- * the next. `normalize` off means no `loudnorm` at all, which is the difference between "the
- * levels were left alone" and "they were measured and found already right".
- */
+/** ffmpeg configured per build from the export settings; `normalize` off skips `loudnorm`. */
 export const ffmpegEncoders = (bin = "ffmpeg"): EncoderChoice => ({
   name: `ffmpeg (${bin})`,
   for: (settings: ExportSettings) =>

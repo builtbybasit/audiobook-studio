@@ -19,11 +19,7 @@ import {
   pricingProblems,
 } from "@/lib/pricing";
 
-/**
- * The reasoning levels a scripting endpoint can be set to, for its select. The model's own default
- * is the select's empty choice (null), which sends nothing; how each level is spelled for a host is
- * `reasoningRequest`'s.
- */
+/** The model's own default is the select's empty choice (null), which sends nothing. */
 export const REASONING_LEVELS: { value: ReasoningEffort; label: string; hint: string }[] = [
   { value: "off", label: "Off", hint: "answers straight away" },
   { value: "low", label: "Low", hint: "a little thought" },
@@ -31,17 +27,12 @@ export const REASONING_LEVELS: { value: ReasoningEffort; label: string; hint: st
   { value: "high", label: "High", hint: "slowest, most output tokens" },
 ];
 
-/**
- * The settings a run starts from, until somebody picks otherwise. No profile is chosen: a run then
- * goes to the first one that can take it (`scripting.runProfile`), and the server keeps whatever is
- * picked under the `script` settings key.
- */
+/** No profile chosen: a run goes to the first one that can take it (`scripting.runProfile`). */
 export const makeScriptSettings = (): ScriptSettings => ({ profile: null });
 
 /**
- * How much of a chapter one scripting request carries by default: about 3,300 words, so most
- * chapters of a web novel go in one request, with the answer's own tokens (about as many again)
- * inside the default output cap and the timeout below.
+ * About 3,300 words, so most web-novel chapters go in one request, with the answer (about as many
+ * tokens again) inside the default output cap and timeout.
  */
 export const DEFAULT_MAX_CHARS = 20000;
 
@@ -98,18 +89,16 @@ export function newProfile(p: Partial<Profile> = {}): Profile {
       ),
     ),
   };
-  // a profile handed a partial `pricing` (an imported settings file, a fixture) gets the rest
+  // a partial `pricing` (an imported settings file, a fixture) gets the rest
   ensurePricing(profile);
-  // …and one handed a prompt written before notes gets it as it is kept now
   if (profile.prompt != null)
     profile.prompt = upgradeProfilePrompt(profile.prompt) as Profile["prompt"];
   return profile;
 }
 
 /**
- * An endpoint's prompt as it is kept now, from one written before `{{endpoint.notes}}`: an
- * `append` — the old way a model's quirks got in — becomes Default with its texts as the notes,
- * and one without notes has none. Anything else is handed back for `profileErrors` to judge.
+ * Upgrades a saved prompt: an `append` becomes Default with its texts as the notes, and missing
+ * notes become "". Anything else is handed back for `profileErrors` to judge.
  */
 export function upgradeProfilePrompt(prompt: unknown): unknown {
   if (!prompt || typeof prompt !== "object") return prompt;
@@ -126,8 +115,7 @@ export function upgradeProfilePrompt(prompt: unknown): unknown {
 }
 export function profileErrors(p: Profile): string[] {
   const errors: string[] = [];
-  // a simulated profile names no host — this server answers it — and nor does one that runs a
-  // command-line tool, so neither has a URL to check
+  // simulated and command-line profiles name no host
   if (!isSimulated(String(p.baseUrl)) && !cliOf(String(p.baseUrl)))
     try {
       const url = new URL(p.baseUrl);
@@ -169,8 +157,6 @@ export function profileErrors(p: Profile): string[] {
   if (p.pricing) errors.push(...pricingProblems(p.pricing));
   if (p.reasoning != null && !REASONING_EFFORTS.includes(p.reasoning))
     errors.push("Choose a valid reasoning level.");
-  // held to the rules of what it is used as: a Default endpoint's kept text only to its length,
-  // its notes always
   const prompt = p.prompt;
   if (
     prompt != null &&
@@ -193,39 +179,14 @@ export function scriptParts(text: string, p: Profile): string[] {
     .filter(Boolean);
 }
 
-/** The tokens an answer spends besides its lines: a few speakers' notes and a recap. */
+/** Answer tokens besides the lines: cast notes and a recap. */
 const ANSWER_EXTRAS = 150;
 
 /**
- * How many tokens one chunk is expected to use, and what that costs at an explicit instant.
- *
- * The input is the chunk and the prompt around it. Given the template a run would send
- * (`opts.prompt`), the prompt's share is what `promptOverhead` measures it at, a character count
- * taken as tokens four to one; without one it is the flat 500 tokens the estimate used before the
- * prompt could be edited.
- *
- * The output is the script, the cast notes and recap beside it (`ANSWER_EXTRAS`), and for a model
- * that reasons, the thinking it bills as output too:
- * `opts.reasoningPerInputToken` is what the endpoint's recent requests at its current reasoning
- * level thought per input token (`ScriptEndpointTelemetry.reasoning`), and adds that share of this
- * chunk's input. Without it nothing is added — a level nobody has measured yet is not guessed at.
- *
- * Two figures matter and they are deliberately different. `cost` is what this chunk would cost at
- * the rates in force *now*, including any off-peak window or promotion. `reserve` is what is held
- * against the budget while it is in flight, and it is worked out at the **dearest** rates the card
- * can reach (`ceilingRates`) with the whole output ceiling, so the reasoning share moves the
- * estimate but never the reservation: a budget must survive a promotion expiring or an off-peak
- * window closing mid-run, so a reservation is never allowed to lean on a discount that may be gone
- * by the time the request is actually sent.
- * The base card is not that ceiling — DeepSeek's card is its off-peak price, and its peak windows
- * double it. No cache saving is assumed either way — cache use is not knowable before the answer
- * comes back.
- *
- * The input side of the reservation is taken at the **dearest** rate any input token could be
- * charged at, not at the ordinary input rate. Cached and cache-write tokens are slices of the
- * input, and a cache write commonly costs more than ordinary input — this app defaults a new one to
- * 125% of it — so reserving the whole input at the ordinary rate lets the very first request cost
- * more than it reserved and step past the cap.
+ * Tokens one chunk is expected to use, and their cost at `at`. Thinking is added only from measured
+ * `opts.reasoningPerInputToken`, never guessed. `cost` uses the rates in force now; `reserve` uses
+ * the dearest the card can reach (`ceilingRates`, `dearestInput`) with the whole output ceiling, so
+ * a budget survives a promotion ending mid-run. No cache saving is assumed.
  */
 export function tokenEstimate(
   text: string,
@@ -236,20 +197,14 @@ export function tokenEstimate(
   return tokenEstimator(p, at, opts)(text);
 }
 
-/**
- * `tokenEstimate` for many chunks sent to one endpoint at one instant. The prompt's overhead and
- * the rates are the same for every chunk, and working them out — rendering the prompt, resolving
- * the pricing windows — costs far more than the chunk's own arithmetic, so they are worked out
- * once and the returned function only counts each chunk.
- */
+/** `tokenEstimate` for many chunks: the prompt overhead and rates are worked out once. */
 export function tokenEstimator(
   p: Profile,
   at: number = Date.now(),
   opts: { prompt?: PromptTemplate; reasoningPerInputToken?: number } = {},
 ) {
   const overhead = opts.prompt ? Math.ceil(promptOverhead(opts.prompt) / 4) : 500;
-  // a scripting profile always has both token rates; the shared card is nullable because a speech
-  // card leaves them empty, so they are read back through the profile's own numbers
+  // the shared card is nullable (speech leaves token rates empty); a profile always has both
   const base = baseRates(p);
   const now = effectiveRates(base, ensurePricing(p), at).components;
   const inRate = now.input.rate ?? p.inPrice;
@@ -259,7 +214,7 @@ export function tokenEstimator(
   const reserveOut = ceiling.output ?? p.outPrice;
   return (text: string) => {
     const inputTokens = Math.ceil((text.length / 4) * 1.6) + overhead;
-    /** of `outputTokens`, the thinking a reasoning model is expected to bill as output */
+    /** of `outputTokens`, the expected thinking */
     const reasoningTokens = Math.ceil(inputTokens * (opts.reasoningPerInputToken ?? 0));
     const outputTokens = Math.ceil((text.length / 4) * 1.15) + ANSWER_EXTRAS + reasoningTokens;
     return {
@@ -274,12 +229,7 @@ export function tokenEstimator(
   };
 }
 
-/**
- * What an endpoint's own estimate says of thinking, under its token figures: how many thinking
- * tokens a chunk is counted at (`tokenEstimate`'s `reasoningTokens`) and what that was learnt from,
- * or, with a level set that nothing has measured yet, that none is counted. Null when there is
- * nothing to say — no level asked for and nothing seen, or thinking switched off.
- */
+/** The note under an estimate about counted thinking tokens; null when there is nothing to say. */
 export function reasoningEstimateNote(
   level: ReasoningEffort | null | undefined,
   seen: ScriptEndpointTelemetry["reasoning"],
@@ -296,7 +246,6 @@ export function reasoningEstimateNote(
   return null;
 }
 
-/** What a profile nothing has been sent to yet has been through: nothing. */
 export const unusedTelemetry = (): ScriptEndpointTelemetry => ({
   completed: 0,
   failures: 0,

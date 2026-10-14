@@ -1,5 +1,5 @@
-// Which effects a line gets — a persona's character's own, the speaker's own, the line's own in the
-// library's order, then the thought effect chosen speaker → book → library — and the fingerprint that tells a clip with the old sound from one with the current.
+// Which effects a line gets (persona's character's, speaker's, line's own, then the thought effect
+// chosen speaker → book → library), and the fingerprint that tells an old-sound clip from a current.
 import { describe, expect, test } from "bun:test";
 
 import { chainsFor, soundOf, type EffectContext } from "@/lib/effects";

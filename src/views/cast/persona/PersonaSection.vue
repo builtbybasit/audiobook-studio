@@ -1,14 +1,6 @@
 <script setup lang="ts">
-// The persona part of a speaker's full record. Any speaker but the Narrator can be linked as a
-// persona — a disguise — of another character, and is then read in that character's voice unless
-// given one of their own; a character who is no persona lists theirs, and adds one by name. Every
-// change goes through the cast store's write, so a link the server refuses is said in the usual
-// toast and read back.
-//
-// The scripting model can find a disguise too (`masked`): one whose wearer the book has not named
-// yet is said so, and one it linked keeps who wears it behind a spoiler button, here and on the
-// wearer's own record. A linked persona's chapters scripted before the link can be scripted again,
-// after a popover that says which names were searched, how many chapters each found, and the cost.
+// The persona part of a speaker's record. A persona (a disguise) is read in its wearer's voice
+// unless given its own. Who wears a mask the model linked stays behind a spoiler button.
 import { computed, nextTick, ref } from "vue";
 
 import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
@@ -56,9 +48,7 @@ function link(of: string | number | null) {
   });
 }
 
-// The scripted chapters of this book whose text names the persona, by name or alias: scripted
-// before the link, their lines may sit under whoever the model took the speaker for. Each name is
-// counted on its own, so an alias that is also a common word shows for what it is and can be
+// Scripted chapters naming the persona, per name, so an alias that is a common word can be
 // unticked before anything is paid for.
 const names = computed(() => (owner.value ? [...new Set([props.c.name, ...props.c.aliases])] : []));
 const { byName: mentions, isLoading: finding } = useMentions(() => props.bookId, names);

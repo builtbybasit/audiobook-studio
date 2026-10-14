@@ -1,10 +1,7 @@
 <script setup lang="ts">
-// The book's two defaults, in a card above the Cast table: the Character voice, what a speaker with
-// no voice of their own is read in before the Narrator's, and the thought effect every thought line
-// gets unless its speaker has their own. Both are the book's, not a speaker's, so neither is a row
-// of the table — a row there had to be kept first whatever the sort and stepped over by j/k.
-// Beside them, the line effects the scripting model may put on a line: the library's, so the
-// column says "All books", and set in their own sheet (`LineEffectsSheet`).
+// The book's defaults above the Cast table: the Character voice (for a speaker with no voice,
+// before the Narrator's) and the thought effect; beside them the library's line effects. Kept out
+// of the table so a sort or j/k never has to step around them.
 import { computed, ref } from "vue";
 import { AudioLines as LineIcon, Cloud as ThoughtIcon, Mic as VoiceIcon } from "@lucide/vue";
 
@@ -25,10 +22,7 @@ const props = defineProps<{
   /** whether every scripted chapter is in, so the counts are counts */
   counted: boolean;
 }>();
-/**
- * the sheet for the book's thought effect: on the list, or (`tune`) in the editor on that effect;
- * `tuneLine`, the editor on a line effect, from the Line effects sheet
- */
+/** the book's thought-effect sheet; `tune` opens its editor, `tuneLine` a line effect's */
 const emit = defineEmits<{ thoughts: []; tune: [id: string]; tuneLine: [id: string] }>();
 const libraryStore = useLibraryStore();
 const castStore = useCastStore();

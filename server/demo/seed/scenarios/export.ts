@@ -1,9 +1,6 @@
-// Seeded situations for trying a build end to end. Like the Search demo, seeding mutates the open
-// book in memory and the caller keeps the snapshot that puts it back — so running one scenario and
-// then another starts each from the book as it really is, never from the last scenario's leftovers.
+// Seeded situations for trying a build end to end.
 import type { Chapter, ExportScenario, Segment } from "@/types";
 
-/** Fresh rows every call. */
 export function exportScenarios(): ExportScenario[] {
   return [
     {
@@ -41,13 +38,12 @@ export function exportScenarios(): ExportScenario[] {
 
 /** What each scenario needs doing to the book, beyond what the seeded world already has. */
 export interface ExportDemoPrep {
-  /** bring every chapter up to date and start with no exports at all */
+  /** every chapter up to date, and no exports */
   freshen: boolean;
-  /** drop this book's finished exports, so the list starts empty */
   clearExports: boolean;
-  /** seed a running build, a failed one and a finished one */
+  /** a running build, a failed one and a finished one */
   buildHistory: boolean;
-  /** the line the toast reports */
+  /** for the toast */
   note: string;
 }
 
@@ -93,7 +89,7 @@ export function exportDemoPrep(id: string): ExportDemoPrep {
   }
 }
 
-/** Bring every chapter of the book up to date: stale clips become current, retakes are dropped. */
+/** Stale clips become current, retakes are dropped. */
 export function freshenChapters(
   chapters: Chapter[],
   segmentsOf: (chId: number) => Segment[],

@@ -1,15 +1,6 @@
-// What a chapter's script does when a person edits it, as operations.
-//
-// A scripting job writes a script too, through the same `replaceScript` and the same history rule
-// (`server/jobs/scripting.ts`); this file is the other writer, the one a person drives from the
-// reader. Two rules hold across both:
-//
-//   * **An edit names the revision it read.** `ifRevision` is the revision the client last saw,
-//     and an edit against a script that has moved since — a job landed, another tab wrote — is
-//     refused with a 409 rather than written over it, exactly as a stale job result is.
-//   * **History is written in the transaction that writes the script.** The working script is
-//     preserved before the new one replaces it, labelled by what produced it, so a version and the
-//     script it preceded cannot disagree about which came first.
+// A person's edits to a chapter's script (the other writer is `server/jobs/scripting.ts`). An edit
+// names the revision it read (`ifRevision`) and is refused with a 409 if the script moved; history
+// is written in the same transaction as the script.
 import type {
   Book,
   ChapterHistory,
@@ -90,14 +81,8 @@ export interface EditInput {
 }
 
 /**
- * What an edit writes of the lines it was sent, given the lines they replace.
- *
- * A line whose type the edit changed has had its type decided by a person, so the detector's
- * suggestion it carried (`siteCheck`) goes, even when a copy of the line sent it back; one the
- * edit puts back where the line had none is an Undo writing back the line as it was, and stays.
- * A suggestion the edit left out of a line has been dismissed, and goes by being absent. The rest
- * is written as sent — the speaker too, so a line marked as site text and back keeps whoever
- * said it, and its clip, so marking it back as story costs no render.
+ * The lines an edit writes. A line whose type a person changed loses the `siteCheck` suggestion it
+ * still carried; one added where there was none is an Undo and stays. All else is written as sent.
  */
 function asEdited(segments: readonly Segment[], current: readonly Segment[]): Segment[] {
   const was = new Map(current.map((s) => [s.id, s]));
@@ -129,23 +114,9 @@ function spokenMoved(
 }
 
 /**
- * Replace a chapter's script with what a person made of it.
- *
- * An edit joins the open editing session or opens one; a bulk correction and a restore each
- * preserve the script under their own name. Whatever the origin, a chapter that now has a script
- * reads as scripted — its status is asked of its script, never remembered — and an edit that would
- * leave it with no lines is refused, because a chapter with nothing in it cannot be narrated and
- * would have nothing left to undo from.
- *
- * A write that changes nothing a version keeps — a line flagged, a clip that finished, anything
- * about the audio, a suggestion dismissed — is still written, and moves the revision on, but leaves
- * the history alone: `scriptSignature` is what a version is, and a script with the same signature
- * is the same script, so there is no edit to count and no session to open.
- *
- * An edit that changes which lines are read aloud — a line marked as site text, or back as story —
- * settles the chapter's narration as a run would, since a line that is not read wants no clip and
- * one that is read again may be missing its own; unless a run holds the chapter, which settles it
- * when it ends.
+ * Replace a chapter's script with a person's edit; an empty script is refused. A write with the
+ * same `scriptSignature` moves the revision but leaves history alone. Changing which lines are
+ * spoken settles narration, unless a run holds the chapter (it settles at the end).
  */
 export function editScript(
   db: Db,
@@ -202,14 +173,8 @@ export function editScript(
 }
 
 /**
- * Raise, replace or take down one line's flag, and write nothing else.
- *
- * A flag changes nothing a version keeps and nothing a run renders, so unlike an edit it names no
- * revision: a run landing clips in this chapter moves the revision on with every clip, and a flag
- * raised while it did was refused as an edit of a script that had moved. The revision still moves
- * on, as it does for every write of the script's rows, so a copy read before the flag is refused
- * rather than written back over it. The history is left alone, as `editScript` leaves it for a
- * write that changes no signature.
+ * Raise, replace or take down one line's flag. Names no revision (a run moves it with every clip)
+ * but still bumps it, so a copy read before the flag can't be written back over it.
  */
 export function flagLine(
   db: Db,
@@ -247,7 +212,7 @@ export function saveCheckpoint(
   });
 }
 
-/** Forget one version of a chapter's history. What an Undo of a checkpoint sends. */
+/** Forget one version of a chapter's history (an Undo of a checkpoint). */
 export function dropVersion(
   db: Db,
   bookId: string,
@@ -264,23 +229,13 @@ export function dropVersion(
 
 // ---------- starting the whole book over ----------
 
-/**
- * What the history says replaced a script that was started over. A chapter with no script shows
- * no history, so this is never read as a label; the next run scripts the chapter afresh after it.
- */
+/** History origin for a started-over script; never shown (an unscripted chapter has no history). */
 const STARTED_OVER: VersionOrigin = { kind: "bulk", label: "Started over", lines: 0 };
 
 /**
- * Take every script in the book away so it can be scripted afresh: each chapter reads as the
- * import left it, its clips are removed from disk, and with `cast` every speaker but the Narrator
- * leaves the cast. The text, the volumes, the contents decisions, the dictionary, the prompts, the
- * settings and the audiobooks already built all stay.
- *
- * Each script is kept in its chapter's history first, so a chapter scripted again that came out
- * worse can be restored — as text: the audio is not kept with a version, and its files are gone.
- *
- * Refused while any job of the book is queued or running: a run would write into a chapter this is
- * emptying, and a build reads the clips this removes.
+ * Drop every script and clip in the book (and with `cast`, every speaker but the Narrator); text,
+ * settings and built audiobooks stay. Scripts are kept in history first (text only). Refused while
+ * any job of the book is queued or running.
  */
 export function startOver(
   db: Db,
@@ -308,7 +263,7 @@ export function startOver(
     const gone = dropBookScripts(tx, bookId);
     let speakers = 0;
     if (clearCast) {
-      // the Narrator holds what the others leave behind, so they are there to hold it
+      // the Narrator inherits the removed speakers' lines
       cast.ensureSpeakers(tx, bookId, [NARRATOR]);
       for (const c of cast.readCast(tx, bookId)) {
         if (c.name === NARRATOR) continue;

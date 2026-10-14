@@ -1,20 +1,6 @@
-// What a demo situation leaves running, and what it leaves the endpoints remembering.
-//
-// A situation is applied to the seeded world in memory and the result written in one transaction
-// (`situations.ts`, `world.ts`). Some of what it describes is not a row: work in flight as you
-// arrive — three chapters scripting, a build part way — and what an endpoint has been through — its
-// recent failures, a 429 and the cooldown after it. The server keeps the first as real jobs on the
-// demo's simulated endpoints, and the second as what it keeps for any endpoint: rows in the request
-// ledger and the speech gate's cooldown. This is the hand-over between the two halves: the world's
-// side says what it wants (`DemoLive`), and `startLive` makes it so once the rows are written and
-// the queue is running again.
-//
-// The browser keeps an endpoint's telemetry as counters and a short history on the endpoint; the
-// server derives the same from the ledger, so each point of the history becomes a settled request
-// at its moment and with its latency, the last error goes on the failure it was met on, and each
-// rate limit is a refused request. What the browser counts beyond the history it keeps — `failures`
-// and `completed` run on after the history is trimmed — has no row to be, and the ledger counts what
-// the history holds. None of it was billed: every row costs nothing and says it was simulated.
+// The part of a demo situation that is not a row: runs in flight become real jobs, and endpoint
+// telemetry becomes request-ledger rows (free, marked simulated) plus speech-gate cooldowns.
+// `startLive` applies it once the world is written and the queue runs again.
 import type {
   DemoScenario,
   Endpoint,
@@ -40,22 +26,19 @@ import type { ExportPorts } from "~/providers/encoder";
 import type { SpeechGate } from "~/providers/gate";
 import { append, chapterUidOf } from "~/usage/ledger";
 
-/** What an endpoint in the world has been through, as the browser's demo keeps it on the endpoint. */
 export type SpeechTelemetry = Pick<Endpoint, EndpointTelemetry>;
 
 /** A run to have in flight: on the situation's book, unless it names another. */
 export type LiveRun = NonNullable<DemoScenario["runs"]>[number] & { bookId?: string };
 
 export interface DemoLive {
-  /** the book the situation is about; the runs and builds are on it */
   bookId: string;
-  /** the runs the situation wants in flight once it is seeded (`DemoScenario.runs`) */
   runs: LiveRun[];
-  /** books whose build history the situation asked for: one running, one failed, one finished */
+  /** books to give a build history: one running, one failed, one finished */
   builds: string[];
-  /** every speech endpoint's telemetry in the world as the situation left it, by endpoint id */
+  /** by endpoint id */
   speech: Record<string, SpeechTelemetry>;
-  /** every scripting profile's telemetry the situation touched, by profile id */
+  /** by profile id */
   scripting: Record<string, ScriptEndpointTelemetry>;
 }
 
@@ -68,11 +51,6 @@ export interface LiveParts {
   exports: ExportPorts;
 }
 
-/**
- * Make what the situation describes real: the ledger rows and cooldowns for its endpoints' telemetry,
- * the builds it asked for, and the runs it wants in flight. Called after the world is written and the
- * queue is started again.
- */
 export async function startLive(parts: LiveParts, live: DemoLive): Promise<void> {
   recordTelemetry(parts, live, Date.now());
   for (const bookId of live.builds) seedBuilds(parts, bookId);
@@ -81,28 +59,23 @@ export async function startLive(parts: LiveParts, live: DemoLive): Promise<void>
 
 // ---------- what the endpoints have been through ----------
 
-/** What the Activity list names a request the history recorded and nothing else describes. */
 const EARLIER = "Earlier request";
 
-/** How near the last error a failure in the history has to be to be the request that met it. */
+/** How near the last error a failed history point must be to count as the same request. */
 const SAME_REQUEST_MS = 1000;
 
-/** A rate limit the telemetry counts and never described. */
 const RATE_LIMITED: Omit<ReqError, "at"> = { code: 429, message: "Rate limited", body: "" };
 
-/** One request the telemetry says was made, on its way to being a ledger row. */
 interface Made {
   at: number;
   ms: number;
   ok: boolean;
   rateLimited?: boolean;
   error?: ReqError;
-  /** the chapter it was for, when the telemetry says */
   bookId?: string;
   chapterId?: number;
 }
 
-/** Either kind of telemetry, in the words the ledger needs. */
 interface Account {
   points: { at: number; ms: number; ok: boolean }[];
   rateLimits: number;
@@ -130,9 +103,8 @@ const scriptingAccount = (t: ScriptEndpointTelemetry): Account => ({
 });
 
 /**
- * The requests an account describes: one for each point of its history; the last error on the
- * failure it was met on, or on a request of its own once the history no longer holds that one; and
- * a refused request for each rate limit the last error is not, a minute apart before it.
+ * One request per history point; the last error lands on its matching failure (or a new request);
+ * each remaining rate limit becomes a refused request, a minute apart before it.
  */
 function requestsOf({ points, rateLimits, lastError }: Account, now: number): Made[] {
   const made: Made[] = points.map((p) => ({ ...p }));
@@ -156,9 +128,8 @@ function requestsOf({ points, rateLimits, lastError }: Account, now: number): Ma
   return made;
 }
 
-/** One request, appended as settled: nothing waited for it on this side, and nothing was billed. */
 function settle(tx: Tx, kind: EndpointKind, endpointId: string, m: Made): void {
-  // a chapter of a book the world has, or none: the row outlives either, and names the work itself
+  // only link a book the world still has
   const bookId = m.bookId && library.getBook(tx, m.bookId) ? m.bookId : null;
   const chapterId = bookId ? m.chapterId : undefined;
   append(
@@ -187,12 +158,9 @@ function settle(tx: Tx, kind: EndpointKind, endpointId: string, m: Made): void {
 }
 
 /**
- * Each endpoint's telemetry into the ledger, and a speech endpoint still cooling down into the gate.
- *
- * The gate forgets the world before this one first, so a reset leaves no cooldown behind it. A
- * scripting profile has no cooldown on the server to set — a rate limit there is waited out inside
- * the request that met it (`providers/http.ts`), not held against the profile — so its telemetry is
- * rows alone.
+ * Telemetry into the ledger, and speech cooldowns into the gate (forgotten first, so a reset leaves
+ * none). Scripting has no server-side cooldown: a rate limit is waited out in the request
+ * (`providers/http.ts`).
  */
 function recordTelemetry({ db, gate }: LiveParts, live: DemoLive, now: number): void {
   gate.forget();
@@ -209,10 +177,8 @@ function recordTelemetry({ db, gate }: LiveParts, live: DemoLive, now: number): 
 // ---------- builds ----------
 
 /**
- * The browser's `_seedBuildHistory`: of the book's narrated chapters, all but the last two in a
- * build that failed and waits for a retry, and all of them in one running now. The finished one is
- * the world's own. One book builds one audiobook at a time here, so the failed build is settled
- * before the running one is asked for.
+ * A failed build of all but the last two narrated chapters, then a running build of all of them
+ * (the finished one is the world's own). The failed one settles first: one build per book at once.
  */
 function seedBuilds(parts: LiveParts, bookId: string): void {
   const book = library.getBook(parts.db, bookId);
@@ -240,10 +206,8 @@ function seedBuilds(parts: LiveParts, bookId: string): void {
 }
 
 /**
- * A build that failed as the browser's fails one (`failBuild`): put up through the same queueing
- * as any build, and settled with the encoder's failure before the worker could claim it. It is
- * queued without waking the worker and settled in the same turn, so no worker ever sees it waiting;
- * its job keeps the settings it was asked with, which is what Retry builds from.
+ * Queued like any build but without waking the worker, then failed in the same turn so no worker
+ * sees it. Its job keeps its settings for Retry.
  */
 function failedBuild(
   { db, exports: ports, files }: LiveParts,
@@ -269,10 +233,7 @@ function failedBuild(
 
 // ---------- runs ----------
 
-/**
- * The runs the situation wants in flight, queued as the page's buttons queue them: scripting to the
- * profile the seed chose for runs, narration of every line.
- */
+/** Queued as the page's buttons queue them. */
 function startRuns({ db, runner }: LiveParts, live: DemoLive): void {
   const profile = readScriptSettings(db).profile ?? undefined;
   for (const run of live.runs) {

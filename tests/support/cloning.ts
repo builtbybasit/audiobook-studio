@@ -1,6 +1,5 @@
-// What every cloning test builds: a saved speech endpoint and the target a cloner is handed, sample
-// files by their first bytes, the clone form, the route it is posted to, cloners that answer from
-// memory or over a `fetch` that does, and the failures a clone must not be sent again after.
+// Cloning test helpers: endpoints and targets, sample files by their first bytes, the clone form
+// and route, fake cloners, and the failures a clone must never be retried after.
 import { expect } from "bun:test";
 
 import type { ClonedVoice, Endpoint, MadeVoice } from "@/types";
@@ -36,11 +35,7 @@ export const cloneEndpoint = (over: Partial<Endpoint> = {}): Endpoint => ({
   ...over,
 });
 
-/**
- * What a cloner is handed for an endpoint; Fish Audio's unless `over` says otherwise. The retries
- * and cooldown are what a narration endpoint is saved with, which a clone must not take: it goes
- * out once whatever fails.
- */
+/** Fish Audio's unless `over` says otherwise. A clone ignores its narration retries/cooldown. */
 export const cloneTarget = (over: Partial<ProviderTarget> = {}): ProviderTarget => ({
   id: "fish",
   name: "Fish Audio",
@@ -103,8 +98,7 @@ export async function saved(api: TestApi, ...endpoints: Endpoint[]): Promise<voi
 }
 
 /**
- * The clone form: its fields, the files under `samples`, and what is said in each under
- * `transcripts` when the test gives them — one per file, as the page sends them.
+ * The clone form: fields, files under `samples`, and one `transcripts` entry per file when given.
  */
 export function cloneForm(
   fields: Record<string, string>,
@@ -162,9 +156,8 @@ export function answering(
 }
 
 /**
- * The failures another attempt could fix — a 5xx, a rate limit, no answer at all — each with what
- * provider `name`'s cloner should say of it. A line of speech would be retried after each; a clone
- * never is.
+ * Failures a retry could fix (5xx, rate limit, no answer) and what `name`'s cloner should say. A
+ * clone is never retried after them.
  */
 export const unlucky = (name: string): [() => Response | Promise<Response>, string][] => [
   [() => new Response("busy", { status: 503 }), `${name} answered 503: busy`],

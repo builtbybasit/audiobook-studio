@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import { useUiStore } from "@/stores/ui";
 
-// ⌘K / Ctrl+K command palette: reka Dialog + Listbox with a filter. The rows themselves — what
-// you can jump to and what you can run — are worked out in `commands.ts`, which knows the stores
-// and no DOM; this file knows the dialog and no domain.
+// ⌘K / Ctrl+K command palette: reka Dialog + Listbox. The rows come from `commands.ts`.
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import {

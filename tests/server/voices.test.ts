@@ -1,8 +1,5 @@
-// Listing a saved endpoint's voices: `POST /api/endpoints/voices`.
-//
-// The real lister runs here, against a `fetch` that answers from memory, so what is checked is what
-// goes on the wire — the query Fish is sent, the key, the pages — and what comes back of it: only
-// voices that can narrate, labelled to pick from, and a refusal said in words.
+// Listing a saved endpoint's voices: `POST /api/endpoints/voices`, through the real lister against
+// a fake `fetch`: the query, key and pages sent, and only voices that can narrate kept.
 import { describe, expect, test } from "bun:test";
 
 import type { VoiceListPage } from "@/types";

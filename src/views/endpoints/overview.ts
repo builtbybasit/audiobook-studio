@@ -1,15 +1,6 @@
-// What the Endpoints page knows about every endpoint at once: the unified list, each one's history,
-// health and live load, and the strip across the top — spend today, what is running, what needs
-// attention. The page lays it out and handles what is pressed; this is what it reads.
-//
-// Where the numbers come from:
-//   · what is running now  — the queue in the store (`live.ts`)
-//   · everything historical — the server's ledger, each row a request a job really sent (a
-//     simulated endpoint's marked simulated): the charts, totals and "spent today" summed there
-//     over every row (`useEndpointSummaries`), and a scripting profile's latest rows for the figures
-//     read off its latest requests (`useScriptActivity`). The Activity list pages through the rest
-//     itself (`useEndpointRequests`).
-//   · a book's spending — the jobs store, which holds the server's figures
+// What the Endpoints page reads about every endpoint: the unified list, history, health, live load
+// and the top strip. Live load comes from `live.ts`; history is summed server-side
+// (`useEndpointSummaries`, `useScriptActivity`); book spending from the jobs store.
 import { computed, watch } from "vue";
 import { useNow } from "@vueuse/core";
 import { keyInPlace } from "@/services/endpointSettings";
@@ -31,10 +22,9 @@ export function useEndpointOverview() {
   // health, "today" and the activity window all move with the clock
   const clock = useNow({ interval: 1000 });
   const now = computed(() => clock.value.getTime());
-  // the busy slots, waiting lines and cooldowns are the server's gate's, read while narration runs
+  // the server gate's busy slots, waiting lines and cooldowns
   useEndpointLive();
 
-  // ---------- the unified list ----------
   const all = computed<UnifiedEndpoint[]>(() => unifiedOf(endpointsStore));
   const list = computed(() => {
     const q = ui.search.trim().toLowerCase();
@@ -45,7 +35,6 @@ export function useEndpointOverview() {
     });
   });
 
-  // ---------- history ----------
   const describe = (u: UnifiedEndpoint): EndpointDescriptor => {
     const { base, config } = rateCardOf(u);
     return {
@@ -53,7 +42,6 @@ export function useEndpointOverview() {
       id: u.id,
       kind: u.kind,
       pricing: { base, config },
-      // only a speech probe is priced on its billing model; the others have their own
       billing: u.endpoint ? billingOf(u.endpoint) : undefined,
       perMinute: u.transcriber?.perMinute,
     };
@@ -72,24 +60,19 @@ export function useEndpointOverview() {
   const summaries = history.summaries;
   const loading = computed(() => history.status.value === "pending");
   const scriptActivity = useScriptActivity();
-  // the budget table and the wait reasons set each book's spending against its cap
+  // for the budget table and wait reasons
   useLibrarySpend();
 
   const rangeLabel = computed(() => RANGES.find((r) => r.value === ui.range)!.label);
 
-  /**
-   * A scripting profile's latest settled requests, newest first: what its observed cache rate and
-   * its reasoning share are read off. Nothing for the other kinds, which read no such figure.
-   */
+  /** A scripting profile's latest settled requests, newest first; empty for other kinds. */
   const settledFor = (u: UnifiedEndpoint): RequestRecord[] =>
     u.profile ? scriptActivity.rowsOf(u.profile.id) : [];
 
-  /** One endpoint's buckets and totals over the selected range, as the server summed them. */
   const seriesFor = (u: UnifiedEndpoint) => summaries.value[u.key]?.series ?? null;
 
   const liveFor = (u: UnifiedEndpoint) => liveActivity(u);
 
-  /** What a scripting endpoint's recent requests at its reasoning level spent thinking, once one said. */
   const reasoningFor = (u: UnifiedEndpoint) =>
     u.profile ? scriptTelemetry(settledFor(u), u.profile).reasoning : undefined;
 
@@ -104,14 +87,9 @@ export function useEndpointOverview() {
     });
   }
 
-  /**
-   * What pressing Test would cost, priced the same way the test itself prices it: through the shared
-   * engine, at the rates in force now. Working it out from the base rates here and from the engine
-   * there would disagree with itself the moment an off-peak window opened or a promotion started.
-   */
+  /** Priced through the shared engine at current rates, as the test itself is. */
   const probeCostOf = (u: UnifiedEndpoint): number | null => probeCost(describe(u), now.value);
 
-  // ---------- the selected endpoint ----------
   const selected = computed<UnifiedEndpoint | null>(
     () => all.value.find((u) => u.key === ui.selected) ?? list.value[0] ?? all.value[0] ?? null,
   );
@@ -135,13 +113,12 @@ export function useEndpointOverview() {
   );
   const busyJobs = computed(() => (selected.value ? jobsUsing(selected.value) : []));
 
-  /** What is in flight now; the Activity list reads what has settled a page at a time. */
+  /** In flight now; the Activity list pages settled rows itself. */
   const activityRows = computed(() =>
     selected.value ? liveRequests(selected.value, now.value) : [],
   );
 
-  // ---------- the strip ----------
-  /** What one endpoint has been charged since midnight, and how many requests at a cost unknown. */
+  /** Charged since midnight, and how many requests have an unknown cost. */
   const spendTodayFor = (u: UnifiedEndpoint) =>
     summaries.value[u.key]?.today ?? { cost: 0, unknown: 0 };
   const spendToday = computed(() =>

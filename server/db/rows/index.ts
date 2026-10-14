@@ -1,9 +1,4 @@
-// Rows in, domain shapes out.
-//
-// Everything above this directory works in the shapes `@/types` defines; everything below works in
-// columns. Keeping the translation here is what lets the schema gain a column without the routes,
-// the import or the tests noticing — and what makes "does the schema actually hold the domain" a
-// question the test suite can answer, by writing a real world through these and reading it back.
+// Rows in, domain shapes out: the only place that translates columns to `@/types` shapes.
 export * from "~/db/rows/library";
 export * from "~/db/rows/cast";
 export * from "~/db/rows/script";

@@ -16,32 +16,27 @@ import { splitText, type SplitPart } from "@/lib/split";
 
 export const expressionId = (label: string) =>
   label.trim().toLocaleLowerCase().replace(/\s+/g, " ");
-/**
- * Whether `token` is one whole tag in one of `brackets`, the ones the Expressions tab is set to.
- * Nothing is a tag for a model set to none: a bracketed word sent to it would be read out as words.
- */
+/** Whether `token` is one whole tag in one of `brackets`; with none, nothing is a tag. */
 export const validToken = (token: string, brackets: readonly TagBracket[]) =>
   brackets.some((b) => BRACKETS[b].form.test(token));
-/** A tag from what was typed for it: put in the first of `brackets` unless typed in brackets. */
+/** Wrapped in the first of `brackets` unless typed in brackets. */
 export function tagToken(typed: string, brackets: readonly TagBracket[]): string {
   const t = typed.trim();
   if (!t || !brackets.length || /^[([<]/.test(t)) return t;
   const { open, close } = BRACKETS[brackets[0]];
   return `${open}${t}${close}`;
 }
-/** What a tag says, its name: `[laughing nervously]` → `laughing nervously`. */
+/** `[laughing nervously]` → `laughing nervously`. */
 export const tagWords = (token: string) => token.trim().slice(1, -1).trim();
-/** A tag made from words typed for it, named by them. */
 export function typedTag(typed: string, brackets: readonly TagBracket[]): ExpressionTag {
   const token = tagToken(typed, brackets);
   const label = tagWords(token);
   return { id: expressionId(label), label, token, kind: "sound" };
 }
-/** The words a pause is written with, by the scripting model (`[[long pause]]`) or in a file. */
+/** As the scripting model (`[[long pause]]`) or a file writes a pause. */
 export const PAUSE_WORDS: readonly PauseWord[] = ["pause", "long pause"];
 const pauseWord = (words: string): PauseWord | undefined =>
   PAUSE_WORDS.find((w) => w === expressionId(words));
-/** A pause at `at`: as long as the book makes `word`, or `seconds` of its own. */
 export const pauseAnnotation = (
   word: PauseWord,
   at: number,
@@ -56,13 +51,9 @@ export const pauseAnnotation = (
   at,
   ...(seconds != null ? { seconds } : {}),
 });
-/** How long a pause is: its own length, or its word's in the book's `pacing`. */
 export const pauseSeconds = (a: Pick<ExpressionAnnotation, "id" | "seconds">, pacing: Pacing) =>
   a.seconds ?? (a.id === "long pause" ? pacing.inlineLong : pacing.inlineShort);
-/**
- * A tag the scripting model wrote, as a line keeps it: its words, sent in whichever bracket the
- * voice takes — or, written as `pause` or `long pause`, a pause of the book's length for it.
- */
+/** A scripted tag as a line keeps it; `pause` and `long pause` become pauses. */
 export function scriptedAnnotation(t: ScriptedTag, annotationId: number): ExpressionAnnotation {
   const word = pauseWord(t.label);
   if (word) return { ...pauseAnnotation(word, t.at, annotationId), scripted: true };
@@ -77,9 +68,8 @@ export function scriptedAnnotation(t: ScriptedTag, annotationId: number): Expres
   };
 }
 /**
- * What `a` is sent as to a model configured with `c`: the listed tag of its name, or on a model
- * taking any words what was typed — a scripted tag's words in the model's first bracket. A scripted
- * tag is matched by name alone, and takes the listed tag's kind. Empty when neither.
+ * The listed tag of `a`'s name (a scripted tag matches by name alone), else on an open model what
+ * was typed. Empty when neither.
  */
 export function tokenFor(
   a: ExpressionAnnotation,
@@ -90,10 +80,7 @@ export function tokenFor(
   const typed = a.scripted ? tagToken(a.label, c?.brackets ?? []) : a.token;
   return { token: c?.open ? typed : "", kind: a.kind };
 }
-/**
- * A line's text cut at its tags' places, for drawing each tag as a chip among the words. Tags at one
- * place keep the order they are given in.
- */
+/** A line's text cut at its tags' places, for drawing chips. Ties keep their given order. */
 export function piecesOf<T extends { at: number }>(
   text: string,
   tags: readonly T[],
@@ -109,14 +96,9 @@ export function piecesOf<T extends { at: number }>(
   out.push({ text: text.slice(at) });
   return out;
 }
-/** What a chip among the words says: a tag's name, or a pause's length in the book's `pacing`. */
 export const chipText = (a: ExpressionAnnotation, pacing: Pacing): string =>
   a.kind === "pause" ? secs(pauseSeconds(a, pacing)) : a.label;
-/**
- * How a placed tag or pause is drawn among the words: its chip's class beside `expression-chip`,
- * and what hovering it says — omitted, asking for review (`issue`), left out for this voice
- * (`skipped`, a scripted tag's), or sent.
- */
+/** A chip's class beside `expression-chip`, and its hover title. */
 export function chipLook(
   a: ExpressionAnnotation,
   issue?: string,
@@ -130,10 +112,7 @@ export function chipLook(
   if (skipped) return { class: "expression-chip-skipped", title: `${name} — left out: ${skipped}` };
   return { class: "", title: a.token ? `${name} · ${a.token}` : name };
 }
-/**
- * The tag names the speech endpoints list on their confirmed Expressions tabs, each once: what
- * `{{expressions}}` tells a scripting model, so the words it writes are ones a voice has.
- */
+/** `{{expressions}}`: tag names on confirmed Expressions tabs, each once. */
 export const expressionNames = (endpoints: readonly Endpoint[]): string[] => [
   ...new Map(
     endpoints
@@ -142,7 +121,7 @@ export const expressionNames = (endpoints: readonly Endpoint[]): string[] => [
       .map((t) => [t.id, t.label]),
   ).values(),
 ];
-/** Where a model's tab starts: the brackets its provider's docs show, and whether any words go in. */
+/** Where a model's Expressions tab starts, from its provider's docs. */
 export function expressionDefaults(e: Pick<Endpoint, "baseUrl" | "model">): ExpressionConfig {
   const syntax = tagSyntaxOf(e);
   return {
@@ -154,17 +133,14 @@ export function expressionDefaults(e: Pick<Endpoint, "baseUrl" | "model">): Expr
     tags: [],
   };
 }
-/**
- * The brackets `ep`'s model reads as its own tags: those confirmed on its Expressions tab, or until
- * then those its provider's docs show — the model reads them either way.
- */
+/** Confirmed on the Expressions tab, else the provider's docs': the model reads them either way. */
 export const tagBracketsOf = (ep: Endpoint | null | undefined): readonly TagBracket[] =>
   !ep
     ? []
     : expressionSupport(ep) === "unknown"
       ? expressionDefaults(ep).brackets
       : ep.expressions!.brackets;
-/** A config saved before brackets were asked for takes the ones its provider's docs show. */
+/** Missing brackets and `open` come from the provider's docs. */
 export function withBrackets(
   c: Omit<ExpressionConfig, "brackets" | "open"> & Partial<ExpressionConfig>,
 ): ExpressionConfig {
@@ -175,7 +151,7 @@ const KIND_WORDS: Record<ExpressionTag["kind"], string> = {
   sound: "vocal sounds",
   delivery: "delivery instructions",
 };
-/** Why a tag of `kind` cannot be sent to a model with `syntax`; empty when it can. */
+/** Empty when a tag of `kind` can be sent. */
 const kindProblem = (kind: ExpressionTag["kind"], syntax: TagSyntax | null): string =>
   !syntax || syntax.kinds.includes(kind)
     ? ""
@@ -239,23 +215,17 @@ export interface ExpressionPlan {
   tags: string[];
   signature: string;
   issues: ExpressionIssue[];
-  /** scripted tags this voice cannot take, left out without holding the line, and why */
+  /** scripted tags this voice cannot take: left out without holding the line */
   skipped: ExpressionIssue[];
   ranges: { from: number; to: number }[];
-  /**
-   * The pauses the voice has no tag for, by where in `text` they fall: the line is spoken in parts
-   * cut there, with this much silence between them (`expressionParts`).
-   */
+  /** pauses with no tag: the line is cut there with this much silence (`expressionParts`) */
   pauses: { at: number; seconds: number }[];
 }
 
 /**
- * Annotated ranges alone become controls; existing bracketed prose is never interpreted, and only
- * what a voice can say of it is sent (`sayable`), so no voice can take it for a tag either.
- *
- * A pause is the voice's own pause tag where its provider's docs give one (`TagSyntax.pause`) and
- * the model has not been set to take no tags; otherwise it is silence, which `expressionParts`
- * cuts the line at. Either way it is sent: it needs no tag set up, so it never waits for one.
+ * Only annotations become tags; bracketed prose is never interpreted, and `sayable` strips what a
+ * voice could take for one. A pause uses the provider's pause tag (`TagSyntax.pause`) if any, else
+ * silence; it never waits for a tag to be set up.
  */
 export function expressionPlan(
   s: Pick<Segment, "text" | "expressions">,
@@ -264,8 +234,7 @@ export function expressionPlan(
   pacing: Pacing = DEFAULT_PACING,
 ): ExpressionPlan {
   const spoken = speak(s.text, lexicon);
-  // the prose the voice is given: what the dictionary made of it, kept to what can be said — before
-  // the tags go in, whose brackets the whitelist would take out
+  // before the tags go in, whose brackets `sayable` would take out
   const voiced = sayable(spoken.text, tagBracketsOf(ep));
   const annotations = [...(s.expressions ?? [])].sort(
     (a, b) => a.at - b.at || a.annotationId - b.annotationId,
@@ -284,8 +253,6 @@ export function expressionPlan(
     if (a.omitted) continue;
     const config = ep?.expressions;
     const pause = a.kind === "pause";
-    // a listed tag is sent as the list now spells it; on an open model, words typed on the line
-    // are sent as they were typed
     const { token: tagToken, kind } = pause ? { token: "", kind: a.kind } : tokenFor(a, config);
     let reason = a.needsReview
       ? "Text changed here; choose the position again."
@@ -321,8 +288,7 @@ export function expressionPlan(
           .reduce((n, h) => n + h.say.length - (h.to - h.from), 0),
     );
     const seconds = pause ? pauseSeconds(a, pacing) : 0;
-    // a pause is the provider's tag for it, where there is one that fits here and the model was
-    // not set to take no tags; otherwise silence, written into no text
+    // the provider's pause tag where one fits here, else silence
     const edge = !voiced.text.slice(0, at).trim() || !voiced.text.slice(at).trim();
     const token = !pause
       ? tagToken
@@ -372,10 +338,8 @@ export function expressionPlan(
 }
 
 /**
- * Where a line's reading is cut for `ep`: at each pause the voice has no tag for, where the parts
- * are joined with that silence between them, and within each stretch at `maxChars` (`splitText`,
- * no tag cut). A pause with no words on one side of it is silence before the first part or after
- * the last, and pauses with no words between them are one silence.
+ * Cut at each untagged pause (joined with that silence), then at `maxChars` (no tag cut). Leading
+ * or trailing pauses become silence before or after; adjacent pauses merge.
  */
 export function expressionParts(
   plan: ExpressionPlan,

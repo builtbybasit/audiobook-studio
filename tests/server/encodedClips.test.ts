@@ -1,8 +1,5 @@
-// Clips kept as MP3 and Opus: what the providers ask for and accept, how a line in parts is put
-// back together, how a clip is served, and what a build does with a book narrated that way.
-//
-// The files are built in the test (`support/encoded.ts`) rather than kept as fixtures: MP3 frames
-// of silence and Ogg pages of empty Opus packets, both real files of an exact length.
+// Clips kept as MP3 and Opus: what providers ask for and accept, joining a line's parts, serving a
+// clip, and building a book narrated that way. The files are built in the test (`support/encoded.ts`).
 import { describe, expect, test } from "bun:test";
 
 import type { Endpoint, ExportItem, Segment } from "@/types";
@@ -206,11 +203,9 @@ describe("an MP3 clip", () => {
 // ---- the narration job, the files and the route ----
 
 /**
- * A second per line of a quiet tone with a sharp peak in it, as a real 44.1 kHz MP3 — for what
- * silence cannot show. The peak is the point: speech has them, and they are what makes `loudnorm`
- * give up on linear gain for its dynamic mode, which is the one that resamples. A chapter of these
- * still takes an unnamed output rate to 96 kHz, and one clip made once is every line's: the build
- * is what is under test, not the tone.
+ * A second per line of a quiet tone with a sharp peak, as a real 44.1 kHz MP3. The peak pushes
+ * `loudnorm` off linear gain into its dynamic mode, which resamples (an unnamed output rate becomes
+ * 96 kHz). One clip serves every line.
  */
 function toneMp3(): SpeechProvider {
   let made: Promise<Uint8Array> | null = null;
@@ -253,8 +248,8 @@ function toneMp3(): SpeechProvider {
 }
 
 /**
- * The fake, answering in the format it is asked for: MP3 frames or Opus packets of silence as long
- * as the fake's reading of the line, rounded to a whole frame. What a real endpoint does, without one.
+ * The fake, answering in the format asked for: MP3 frames or Opus packets of silence as long as its
+ * reading of the line, rounded to a whole frame.
  */
 function encodingFake(): SpeechProvider & { sent: SpeechInput[] } {
   const inner = fakeSpeechProvider();

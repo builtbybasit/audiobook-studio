@@ -1,9 +1,6 @@
-// The library's voice effects over HTTP: listed, made, changed and removed, the library's thought
-// effect beside them, and the choices a book and a speaker make of one — refused when they name an
-// effect there is not, and reset when the effect they name is removed.
-//
-// Every test drives the real routes over a private database the migrations laid down, so it starts
-// with the Inner voice as the library's thought effect.
+// The library's voice effects over HTTP: listed, made, changed and removed, the thought effect
+// beside them, and a book's and a speaker's choice of one, refused when unknown and reset when the
+// effect goes. The migrations seed the Inner voice as the library's thought effect.
 import { describe, expect, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
 

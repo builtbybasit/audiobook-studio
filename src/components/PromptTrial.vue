@@ -1,16 +1,8 @@
 <script setup lang="ts">
-// Try a scripting prompt on one chunk of a real chapter before it is saved or run: the drafts the
-// page is editing, sent to one endpoint, and what came back — the lines, the word-for-word check a
-// run would hold them to, what it took and cost, and the two messages exactly as sent.
-//
-// Mounted beside every place a prompt is edited: an endpoint's Prompt tab (a book and a chapter
-// picked here) and a book's scripting settings (the book and the chapter given). The request is
-// real and billed to the book like any other; nothing is written to its script. See
-// `@/lib/promptTrial` for which layers are sent and `POST /api/books/:id/script-trial` for the rest.
-//
-// The last answer stays until the next one. When anything it was made from changes — a draft, the
-// part, the endpoint — it is marked as made from an earlier prompt rather than cleared, so an
-// edit can be read against what the previous wording did.
+// Try draft scripting prompts on one chunk of a real chapter: one real, billed request; nothing is
+// written to the script. Layers: `@/lib/promptTrial`; server: `POST /api/books/:id/script-trial`.
+// The last answer stays until the next and is marked stale when its inputs change, so an edit can
+// be read against what the previous wording did.
 import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from "vue";
 import { LoaderCircle as BusyIcon, Check as OkIcon, X as BadIcon } from "@lucide/vue";
 import { useChapterText } from "@/queries";
@@ -42,16 +34,15 @@ import type { PromptTrialResult } from "@/types";
 
 const props = withDefaults(
   defineProps<{
-    /** the book to try it on; null lets the person pick one */
+    /** null lets the person pick one */
     bookId: string | null;
-    /** the chapter; null lets the person pick one (the book's first until they do) */
+    /** null lets the person pick one (the book's first until they do) */
     chapterId: number | null;
-    /** the scripting endpoint to send it to */
+    /** the scripting endpoint */
     profileId: string;
-    /** drafts in place of what is saved, layer by layer; a layer left out is sent as saved */
+    /** a layer left out is sent as saved */
     drafts: TrialDrafts;
     disabled?: boolean;
-    /** why it is disabled, e.g. the draft has problems */
     disabledReason?: string;
   }>(),
   { disabled: false, disabledReason: "" },
@@ -61,7 +52,7 @@ const id = useId();
 const castStore = useCastStore();
 const endpointsStore = useEndpointsStore();
 const libraryStore = useLibraryStore();
-// the endpoint's recent requests, for how much it thinks per input token
+// for how much it reasons per input token
 const activity = useScriptActivity();
 
 // ---- which chunk ----
@@ -88,8 +79,7 @@ const chapter = computed(() =>
 const bookOptions = computed(() =>
   libraryStore.shelved.map((b) => ({ value: b.id, label: b.title, hint: b.author })),
 );
-// labelled by reading number, which typing a number into the box then finds; a skipped chapter has
-// a dash and is found by its title
+// labelled by reading number, so typing a number finds it; a skipped chapter is found by title
 const chapterOptions = computed(() => {
   const numbers = bookId.value ? libraryStore.chapterNumbers[bookId.value] : undefined;
   return chapters.value.map((c) => ({
@@ -111,7 +101,7 @@ watch(
   },
   { immediate: true },
 );
-// the shelf lists books; only opening one brings its chapters
+// only opening a book loads its chapters
 watch(
   bookId,
   (id) => {
@@ -126,7 +116,7 @@ const { text, isLoading: textLoading } = useChapterText(
   () => (bookId.value ? chapterId.value : null),
   "plain",
 );
-/** The chapter as the endpoint cuts it; a chapter it does not cut is one request, as the server has it. */
+/** The chapter as the endpoint cuts it; uncut, it is one request. */
 const parts = computed(() => {
   const p = profile.value;
   if (!p || profileErrors(p).length || !text.value.trim()) return [];
@@ -174,7 +164,6 @@ const estimate = computed(() => {
   });
 });
 
-/** Why Try cannot be pressed; empty when it can. */
 const blocked = computed(() => {
   const p = profile.value;
   if (props.disabled) return props.disabledReason || "Fix the prompt's problems first.";
@@ -210,7 +199,7 @@ const inputs = computed(() =>
 const running = ref(false);
 let controller: AbortController | null = null;
 const result = ref<{ of: string; bookId: string; answer: PromptTrialResult } | null>(null);
-/** what stopped the last trial short of an answer: a refusal, a failure, or Cancel */
+/** a refusal, a failure, or Cancel */
 const failure = ref<{ text: string; cancelled: boolean } | null>(null);
 const status = ref("");
 const stale = computed(() => !!result.value && result.value.of !== inputs.value);
@@ -295,7 +284,6 @@ const colorOf = (name: string): string =>
           (v) => ((pickedBook = v == null ? null : String(v)), (pickedChapter = null))
         "
       />
-      <!-- a book's every chapter: searched by typing, not scrolled -->
       <label v-if="props.chapterId === null && bookId" class="flex min-w-0 flex-1">
         <span class="sr-only">Chapter to try it on</span>
         <UiCombobox
@@ -406,7 +394,7 @@ const colorOf = (name: string): string =>
           :key="i"
           class="flex items-baseline gap-2 text-[11px] leading-snug"
         >
-          <!-- text the model marked as not the story is named for what it is, as the reader shows it -->
+          <!-- text the model marked as not the story is labelled, as in the reader -->
           <span
             v-if="isSiteText(line.type)"
             class="max-w-[9rem] shrink-0 truncate rounded-full bg-zinc-100 px-1.5 py-px font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"

@@ -1,8 +1,6 @@
-// The effects store against a server that answers when told to: an edit shows at once and goes out
-// behind it, coalesced; a refusal is said and read back over; a duplicate is named and placed; a
-// removal clears every choice of the effect here as the server does; and what changes a line's
-// sound has the book's old-sound count read again. A line effect's sheet hears a line through it
-// in its place in the chain, and chooses nothing.
+// The effects store against a server that answers when told to: edits show at once and go out
+// coalesced, a refusal is read back over, a removal clears every choice of the effect, and a
+// change to a line's sound re-reads the book's old-sound count.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { narrator, newSpeaker } from "@/lib/cast";
 import { clone } from "@/lib/utils";

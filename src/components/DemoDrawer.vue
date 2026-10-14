@@ -1,17 +1,7 @@
 <script setup lang="ts">
-// The Demo drawer: the way into the demo and out of it, and in the demo the one place the seeded
-// situations are driven from.
-//
-// On your own library it says what the demo is and offers to open it; nothing else here means
-// anything outside the demo, so nothing else shows. Entering and leaving load the page again on the
-// other library (services/mode.ts) rather than swapping worlds under the open page.
-//
-// In the demo it is a workbench rather than a menu, so it is a non-modal panel down the right of
-// the page. The demo is a library of its own on the server (`server/routes/demo.ts`): picking a row
-// seeds it again with that situation, and the page loads on where the situation is to be looked
-// at, with the drawer open again beside it. Top to bottom: the situation the demo is in now, with
-// what applying it did and what to try; every situation, grouped; and the speed, Reset — which
-// says what it will drop before it is pressed — and the way out.
+// The Demo drawer: the way into and out of the demo (`server/routes/demo.ts`), and in it a
+// non-modal workbench of seeded situations. Entering, leaving and picking a situation reload the
+// page (services/mode.ts) rather than swapping worlds under it.
 import { useDemoStore } from "@/stores/demo";
 import { useJobsStore } from "@/stores/jobs";
 
@@ -44,10 +34,9 @@ const active = computed(() => demoStore.applied);
 const speedHint = computed(
   () => SPEEDS.find((s) => s.value === demoStore.speed)?.hint ?? `${demoStore.speed}×`,
 );
-/** a row that opens on the page that is open now */
+/** a situation on the page open now */
 const here = (s: Pick<DemoSituation, "path">) => s.path.split("?")[0] === route.path;
 
-// ---- what a reset reaches, said before it is pressed
 const running = computed(() => jobsStore.activeJobs.length);
 const resetLine = computed(() =>
   running.value
@@ -55,10 +44,10 @@ const resetLine = computed(() =>
     : "Nothing is running now.",
 );
 
-/** On a phone the drawer is the whole screen, so it stays shut once the page has loaded again. */
+/** On a phone the drawer is the whole screen, so it stays shut after the reload. */
 const narrow = () => window.matchMedia("(max-width: 639px)").matches;
 
-// Both load the page again, so what was playing is stopped first: its clip is from the old world.
+// Both reload the page, so playback stops first: its clip is from the old world.
 function pick(s: DemoSituation) {
   player.stop();
   void demoStore.applyScenario(s.id, { reopen: !narrow() });
@@ -70,8 +59,7 @@ function reset() {
 function openPage() {
   if (active.value) void router.push(active.value.path);
 }
-// ---- in and out. Both reload the page; a false is a storage that would not keep the choice, and
-// the page would come straight back as it is, so say so instead.
+// false: storage would not keep the choice and the page would come back unchanged, so say so
 const stuck = ref(false);
 function enter() {
   stuck.value = !enterDemo();
@@ -81,9 +69,7 @@ function leave() {
   stuck.value = !leaveDemo();
 }
 
-// focus goes in when it opens, and the demo's situations are read the first time; Esc closes from
-// anywhere inside it. The root class lets the toast stack step aside from the drawer (toasts.css)
-// rather than land on top of it.
+// The root class lets the toast stack step aside from the drawer (toasts.css).
 watch(
   () => props.open,
   async (v) => {
@@ -112,8 +98,7 @@ function onKey(e: KeyboardEvent) {
       leave-active-class="transition-transform duration-150 ease-in"
       leave-to-class="translate-x-full"
     >
-      <!-- role=dialog keeps the reader's and the shelf's single-key shortcuts out of it; it is not
-           modal, because the point is to watch the page change while it stays open -->
+      <!-- role=dialog keeps the page's single-key shortcuts out; not modal, so the page shows -->
       <aside
         v-if="open"
         id="demo-drawer"
@@ -149,7 +134,6 @@ function onKey(e: KeyboardEvent) {
           </button>
         </header>
 
-        <!-- on the server's library: what the demo is, and the way in -->
         <section v-if="!isDemo" class="min-h-0 flex-1 overflow-y-auto px-4 py-3">
           <div class="text-sm font-medium">Try the app on seeded books</div>
           <p class="mt-1 leading-relaxed text-zinc-600 dark:text-zinc-300">
@@ -172,7 +156,6 @@ function onKey(e: KeyboardEvent) {
         </section>
 
         <div v-else data-scroll class="min-h-0 flex-1 overflow-y-auto">
-          <!-- where the world is now -->
           <section
             class="border-b border-zinc-200 px-4 py-3 dark:border-zinc-800"
             :class="active && 'bg-violet-50/60 dark:bg-violet-500/5'"
@@ -210,7 +193,6 @@ function onKey(e: KeyboardEvent) {
             </template>
           </section>
 
-          <!-- every situation -->
           <section class="px-4 py-3">
             <div class="label mb-2">Situations</div>
             <p v-if="!demoStore.loaded" class="text-zinc-500">
@@ -257,7 +239,6 @@ function onKey(e: KeyboardEvent) {
                     >opens here</span
                   >
                 </span>
-                <!-- one line each, the whole blurb on the row under the pointer or the keyboard -->
                 <span
                   class="leading-relaxed text-zinc-500 group-hover:line-clamp-none group-focus-visible:line-clamp-none"
                   :class="active?.id === s.id ? 'line-clamp-none' : 'line-clamp-1'"

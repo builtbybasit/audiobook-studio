@@ -1,18 +1,6 @@
-// One vocabulary for every kind of endpoint.
-//
-// The app keeps three separate lists: `profiles` (chat models that turn prose into a script),
-// `endpoints` (speech models that render a line) and `transcribers` (speech-to-text models that
-// hear a recording back as words). They are configured, paused, rate limited and billed the same
-// way, so the Endpoints page reads them through the one shape below. Ids are only unique *within*
-// a kind — there is an "openai" in more than one list — so everything here is keyed by
-// `<kind>:<id>`.
-//
-// What differs by kind is branched on `kind` with an exhaustive switch or a `Record<EndpointKind,
-// …>`, never on which of the three objects happens to be set: a fourth kind then fails to compile
-// everywhere it has to be thought about, rather than being quietly treated as speech.
-//
-// Nothing in this file mutates the lists; it adapts them. The only exception is `ensureOps`, which
-// fills in operational defaults for an endpoint saved before those fields existed.
+// One shape for the three endpoint lists (`profiles`, `endpoints`, `transcribers`). Ids are only
+// unique within a kind, so everything is keyed `<kind>:<id>`. Branch on `kind` exhaustively, never
+// on which object is set, so a new kind fails to compile.
 import type {
   Endpoint,
   EndpointKind,
@@ -52,7 +40,7 @@ export {
   voicesFromFishModels,
 } from "@/lib/endpointShapes";
 
-/** Fill in operational defaults in place. Idempotent — only absent fields are written. */
+/** Fill in operational defaults in place; only absent fields are written. */
 export function ensureOps<T extends Profile | Endpoint | Transcriber>(
   ep: T,
   kind: EndpointKind,
@@ -64,7 +52,7 @@ export function ensureOps<T extends Profile | Endpoint | Transcriber>(
 }
 
 export interface UnifiedEndpoint {
-  /** `<kind>:<id>` — unique across every list */
+  /** `<kind>:<id>` */
   key: string;
   id: string;
   kind: EndpointKind;
@@ -75,15 +63,13 @@ export interface UnifiedEndpoint {
   needsKey: boolean;
   concurrency: number;
   backoffUntil: number;
-  /** the entry itself, whichever kind it is: what the fields every kind has are bound to */
   entry: Profile | Endpoint | Transcriber;
-  /** exactly one of these is set — the one `kind` names — and the tabs edit it directly */
+  /** exactly one of these is set, the one `kind` names; the tabs edit it directly */
   profile: Profile | null;
   endpoint: Endpoint | null;
   transcriber: Transcriber | null;
 }
 
-/** The fields every kind shares, with none of the three kind-specific objects set yet. */
 const unified = (
   kind: EndpointKind,
   e: Profile | Endpoint | Transcriber,
@@ -115,13 +101,12 @@ export const unifyEndpoint = (e: Endpoint): UnifiedEndpoint => ({
   endpoint: e,
 });
 
-/** A transcriber has no cooldown the page is told of: nothing reports its rate limits back. */
+/** No cooldown: nothing reports a transcriber's rate limits back. */
 export const unifyTranscriber = (t: Transcriber): UnifiedEndpoint => ({
   ...unified("transcription", t, 0),
   transcriber: t,
 });
 
-/** Every endpoint of every kind, in the order the Endpoints page lists the kinds. */
 export const unifiedOf = (lists: {
   profiles: Profile[];
   endpoints: Endpoint[];
@@ -132,7 +117,6 @@ export const unifiedOf = (lists: {
   ...lists.transcribers.map(unifyTranscriber),
 ];
 
-/** How a speaker names a voice: the speech endpoint it is on, then the voice's id there. */
 export const voiceRef = (epId: string, voiceId: string): VoiceRef => `${epId}/${voiceId}`;
 
 export const opsOf = (u: UnifiedEndpoint): EndpointOps =>
@@ -145,8 +129,6 @@ export const KIND_LABEL: Record<EndpointKind, string> = {
 };
 
 // ---------- presets ----------
-// The catalogue lives in `lib/presets/`, a file per kind; it is re-exported here, where the pages
-// and the store have always imported it from.
 export {
   SCRIPTING_PRESETS,
   TRANSCRIPTION_PRESETS,
@@ -162,35 +144,22 @@ export {
 } from "@/lib/presets";
 
 // ---------- billing ----------
-// The units, the conversion and the arithmetic live in `lib/pricing/`, beside the schedules and
-// promotions that move a speech rate too. Import them from there; this file adapts an `Endpoint`
-// onto them and does no pricing arithmetic of its own.
+// Pricing arithmetic lives in `lib/pricing/`; this only adapts an `Endpoint` onto it.
 
-/** This endpoint's billing model. An endpoint saved before billing models existed carried one
- *  per-1M-characters number, which is exactly what `chars` means, so that is what it becomes. */
+/** An endpoint without `billing` has a per-1M-characters `price`. */
 export const billingOf = (e: Endpoint): TtsBilling => e.billing ?? { unit: "chars", rate: e.price };
 
-/** The whole speech rate card — the rate, its unit, and the schedule and promotions on it. */
 export const speechPricing = (e: Endpoint) => speechPricingOf({ ...e, billing: billingOf(e) });
 
-/** A transcriber's rate as a speech billing model: so much per minute of audio *sent*. */
+/** Per minute of audio *sent*. */
 export const transcriberBilling = (t: Transcriber): TtsBilling => ({
   unit: "minute",
   rate: t.perMinute,
 });
 
-/**
- * A transcriber's whole rate card. It goes through the speech pricing — one rate per audio minute,
- * under the same schedule and promotions — with the transcriber's own `pricing` object, so an edit
- * to the schedule on the Pricing tab lands on the transcriber.
- */
 export const transcriberPricing = (t: Transcriber) =>
   speechPricingOf({ billing: transcriberBilling(t), pricing: t.pricing });
 
-/**
- * Any endpoint's rate card: the base rates, the schedule and promotions on them, the components
- * they price and — for the speech-priced kinds — the unit a rate is written in.
- */
 export function rateCardOf(u: UnifiedEndpoint): {
   base: RateSet;
   config: PricingConfig;
@@ -213,7 +182,7 @@ export function rateCardOf(u: UnifiedEndpoint): {
 
 // ---------- money ----------
 
-/** The one-line pricing shown on a card — at the rates in force now, not the base card. */
+/** At the rates in force now, not the base card. */
 export function pricingLabel(u: UnifiedEndpoint, now: number = Date.now()): string {
   const { base, config, unit } = rateCardOf(u);
   const line = pricingOneLiner(effectiveRates(base, config, now), unit);
@@ -223,8 +192,7 @@ export function pricingLabel(u: UnifiedEndpoint, now: number = Date.now()): stri
     : line;
 }
 
-/** True when we cannot price this endpoint's requests at all — including a two-rate endpoint with
- *  only one of its two rates filled in, which prices nothing rather than half of each request. */
+/** A two-rate endpoint with one rate missing prices nothing, not half of each request. */
 export function unpriced(u: UnifiedEndpoint): boolean {
   switch (u.kind) {
     case "tts":
@@ -239,15 +207,9 @@ export function unpriced(u: UnifiedEndpoint): boolean {
 // ---------- readiness ----------
 
 /**
- * Whether an endpoint can send a request right now, and if not, the first thing in the way — as
- * the configuration says, before anything has been sent. Paused holds the work, a missing key
- * fails it, a speech endpoint with no voices has nothing to render in, and a cooldown is the
- * gate holding off after a 429 until `backoffUntil`, which passes on its own.
- *
- * One definition for every place that asks "can this render": the Narration page's routing and
- * blockers, the cast's routing issues, the Endpoints page's wait reasons and the shell's count of
- * endpoints needing attention. A scripting profile and a transcriber are asked the same questions;
- * neither has voices, nor a cooldown of its own.
+ * Whether an endpoint can send a request now, else the first thing in the way, from config alone.
+ * Paused holds work; a missing key fails it; cooldown is the post-429 hold until `backoffUntil`.
+ * The one "can this render" check every page uses.
  */
 export type Readiness =
   | { state: "ready" }
@@ -284,7 +246,7 @@ export interface Health {
   state: HealthState;
   label: string;
   tone: HealthTone;
-  /** one sentence saying what was observed, and what to do about it */
+  /** what was observed, and what to do about it */
   detail: string;
 }
 
@@ -292,15 +254,13 @@ export interface HealthInput {
   hasKey: boolean;
   errors: string[];
   now: number;
-  /** metrics for the selected range, or null while they load */
+  /** for the selected range; null while loading */
   totals: MetricTotals | null;
-  /** when this endpoint last answered anything, ever */
   lastSeen: number | null;
-  /** an explicit connection test has been run at least once */
+  /** a connection test has been run at least once */
   tested: boolean;
 }
 
-/** What a missing key stops, by kind. */
 const NO_KEY: Record<EndpointKind, string> = {
   scripting: "This endpoint requires a key. Runs can’t start on it until one is set.",
   tts: "This endpoint requires a key. Lines routed here fail until one is set.",
@@ -319,8 +279,7 @@ const TONE: Record<HealthState, HealthTone> = {
   untested: "muted",
 };
 
-/** Observed health. An endpoint that has done nothing is never called healthy — it is "Not tested"
- *  until something has actually answered, and "No recent activity" after it falls quiet. */
+/** An endpoint that has done nothing is never healthy: "Not tested", or "No recent activity". */
 export function healthOf(u: UnifiedEndpoint, input: HealthInput): Health {
   const mk = (state: HealthState, label: string, detail: string): Health => ({
     state,
@@ -446,8 +405,7 @@ export const compact = (n: number): string =>
       ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k"
       : String(Math.round(n));
 
-/** A rate that may be tiny (0.045 audio minutes a minute) or huge (12k tokens a minute) and has to
- *  stay readable at both ends — `compact` alone rounds the small end away to "0". */
+/** Readable from 0.045 to 12k; `compact` alone rounds the small end to "0". */
 export const metricValue = (n: number): string =>
   n === 0
     ? "0"
@@ -459,7 +417,6 @@ export const metricValue = (n: number): string =>
           ? n.toFixed(1)
           : n.toFixed(n < 0.1 ? 3 : 2);
 
-/** Unit of the throughput metric, which differs by kind. */
 const THROUGHPUT_UNIT: Record<EndpointKind, string> = {
   scripting: "tokens/min",
   tts: "audio min/min",
@@ -474,7 +431,6 @@ const THROUGHPUT_LABEL: Record<EndpointKind, string> = {
 };
 export const throughputLabel = (kind: EndpointKind): string => THROUGHPUT_LABEL[kind];
 
-/** Validation errors for any kind, reusing the scripting rules where they apply. */
 export function endpointErrors(u: UnifiedEndpoint): string[] {
   switch (u.kind) {
     case "scripting":
@@ -486,16 +442,13 @@ export function endpointErrors(u: UnifiedEndpoint): string[] {
   }
 }
 
-/**
- * What every request-sending kind is checked for alike: a base URL a request can be appended to,
- * a name, a model and a concurrency. `kind` says which path must not be on the base URL already.
- */
+/** `kind` says which path must not already be on the base URL. */
 function connectionErrors(
   e: Pick<Endpoint, "baseUrl" | "name" | "model" | "concurrency">,
   kind: "tts" | "transcription",
 ): string[] {
   const errors: string[] = [];
-  // a simulated endpoint names no host — this server answers it — so it has no URL to check
+  // a simulated endpoint names no host: this server answers it
   if (!isSimulated(e.baseUrl))
     try {
       const url = new URL(e.baseUrl);
@@ -517,18 +470,13 @@ function speechEndpointErrors(e: Endpoint): string[] {
   if (!Number.isSafeInteger(e.maxChars) || e.maxChars < 0)
     errors.push("Maximum characters must be zero or a positive whole number.");
   if (!e.voices.length) errors.push("No voices yet — fetch or add one before this can render.");
-  // The rate card is validated on every kind. A scripting profile gets this through
-  // `profileErrors`; leaving it out here let an imported speech endpoint keep a malformed window, a
-  // duplicate promotion id or an end date before its start, and stay enabled with it.
   errors.push(...pricingProblems(ensurePricing(e)));
   errors.push(...billingProblems(billingOf(e)));
-  // The server refuses a line whose format, bitrate and rate cannot be asked for together, so an
-  // endpoint set up that way (imported, or saved before the base URL moved) is not ready either.
+  // the server refuses a format, bitrate and rate that cannot be asked for together
   errors.push(...encodingProblems(e).map((p) => p + "."));
   return errors;
 }
 
-/** A transcriber's errors: its connection, its one rate, and the schedule and promotions on it. */
 export function transcriberErrors(t: Transcriber): string[] {
   const errors = connectionErrors(t, "transcription");
   if (!Number.isFinite(t.perMinute) || t.perMinute < 0)
@@ -540,8 +488,7 @@ export function transcriberErrors(t: Transcriber): string[] {
   return errors;
 }
 
-/** Redact anything that looks like a credential before an error body is shown or copied. A key
- *  echoed back in a provider's error message must not become the thing you paste into an issue. */
+/** Redact anything that looks like a credential before an error body is shown or copied. */
 export function sanitize(text: string): string {
   return text
     .replace(/\b(sk|rk|pk|api|key|token)[-_][A-Za-z0-9_-]{8,}/gi, "$1-[redacted]")

@@ -1,7 +1,6 @@
 <script setup lang="ts">
-// The reader's right rail: the cast *in this chapter*, with aliases, spoiler-hidden descriptions,
-// the voice each is read in and an inline rename; the rest of the cast collapsed under it with
-// their lines across the book. A name filters the reader to that speaker's lines.
+// The reader's right rail: the cast in this chapter, then the rest collapsed. A name filters the
+// reader to that speaker.
 import { computed, ref } from "vue";
 import { plural } from "@/lib/contents";
 import { GENDER } from "@/lib/scriptReview";
@@ -18,21 +17,18 @@ import type { Character } from "@/types";
 const props = defineProps<{
   bookId: string;
   chapterId: number;
-  /** whether every scripted chapter's script has been read, so a line count across the book is one */
+  /** every chapter's script is read, so book-wide counts are complete */
   bookCounted: boolean;
-  /** how many of those scripts could not be read */
   bookUnread: number;
 }>();
-/** read the scripts that could not be, again */
 defineEmits<{ retry: [] }>();
-/** the speaker the reader is filtered to; "" for everyone */
+/** "" for everyone */
 const speaker = defineModel<string>("speaker", { required: true });
 const castStore = useCastStore();
 const scriptsStore = useScriptsStore();
 const reader = useReader();
 const { cast, counts, inChapter, segments } = useScript(props);
-/** lines of this chapter nobody reads — site text, and notes this book does not read — which no
- *  speaker's count includes */
+/** unread lines (site text, skipped notes), in no speaker's count */
 const unspoken = computed(
   () => segments.value.length - Object.values(counts.value).reduce((n, lines) => n + lines, 0),
 );

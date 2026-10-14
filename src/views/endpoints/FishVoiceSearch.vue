@@ -2,11 +2,8 @@
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useUiStore } from "@/stores/ui";
 
-// Searching Fish Audio's public catalogue, on a Fish endpoint's Voices tab.
-//
-// Fish Audio's public voices, a page at a time, through the server — which asks with the saved key.
-// A result is only a result until "Add" puts it on this endpoint, and the write-behind saves it like
-// any other voice.
+// Searching Fish Audio's public catalogue (via the server, with the saved key) on a Fish
+// endpoint's Voices tab; "Add" puts a result on this endpoint.
 import { computed, reactive } from "vue";
 import { keyInPlace, type VoiceListPage } from "@/services/endpointSettings";
 import { ApiError } from "@/services/http";
@@ -30,7 +27,6 @@ import type { Endpoint, FoundVoice, Voice } from "@/types";
 const props = defineProps<{ endpoint: Endpoint }>();
 const endpointsStore = useEndpointsStore();
 const uiStore = useUiStore();
-/** the sample being fetched, if any — one at a time */
 const { loading: sampling, play, playUrl, playingId } = useVoiceSample();
 
 const needsKeyFirst = computed(() => props.endpoint.needsKey && !keyInPlace(props.endpoint));
@@ -56,7 +52,7 @@ const search = reactive({
   error: "",
   result: null as VoiceListPage | null,
 });
-/** Only the latest search's answer is shown; an earlier one arriving late is dropped. */
+/** A late answer to an earlier search is dropped. */
 let searches = 0;
 async function runSearch(page = 1) {
   const n = ++searches;
@@ -84,9 +80,8 @@ async function runSearch(page = 1) {
 }
 const has = (v: Voice) => props.endpoint.voices.some((x) => x.id === v.id);
 
-// A public voice found by the search plays Fish's own recording of it: a file on Fish's CDN, free,
-// nothing rendered. One that has none is rendered by this endpoint like a listed voice. Either way
-// it plays under an id of its own, apart from the listed voice's sample it may later become.
+// Plays Fish's free CDN recording, else renders via this endpoint; its own id keeps it apart from
+// the listed voice's sample it may become.
 const foundId = (v: FoundVoice) => `found:${props.endpoint.id}/${v.id}`;
 const foundTitle = (v: FoundVoice) => {
   if (!v.sample)

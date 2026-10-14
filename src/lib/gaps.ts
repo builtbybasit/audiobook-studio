@@ -1,6 +1,5 @@
-// The gaps between words in a line: where a segment can be cut, and where an expression can be
-// placed. Pure over the text, so the strip, the editor and the tests agree on what a gap is. And
-// the words themselves as the app compares them (`wordsOf`), whoever is comparing.
+// The gaps between words in a line (where a segment can be cut or an expression placed), and the
+// words themselves as every comparison reads them (`wordsOf`).
 
 export interface WordToken {
   /** the word and the whitespace after it, exactly as in the source */
@@ -14,11 +13,11 @@ export interface WordToken {
 export interface WordGap {
   at: number;
   strong: boolean;
-  /** the edge of the line, only offered when placing something, never for a cut */
+  /** only offered when placing, never for a cut */
   edge?: "start" | "end";
 }
 
-/** Words with the whitespace that follows each, so joining the texts back gives the source. */
+/** Joining the texts back gives the source. */
 export function tokensOf(text: string): WordToken[] {
   const out: WordToken[] = [];
   const re = /\S+\s*/g;
@@ -32,16 +31,14 @@ export function tokensOf(text: string): WordToken[] {
 }
 
 /**
- * The words of a text as they are compared: lower case, curly quotes folded, punctuation gone, an
- * apostrophe inside a word kept. One rule for every comparison of words — a scripting answer
- * against its prose (`fidelity`), a line against its site text, a clip heard back against its line
- * (`alignHeard`) — so none of them disagrees with another about what a word is.
+ * Lower case, curly quotes folded, punctuation gone, inner apostrophes kept. The one rule for every
+ * word comparison (`fidelity`, `alignHeard`).
  */
 export function wordsOf(text: string): string[] {
   return folded(text).toLowerCase().match(WORD) ?? [];
 }
 
-/** The same words with their capitals kept, for a comparison that needs to know a name from a word. */
+/** `wordsOf` with capitals kept, to tell a name from a word. */
 export function writtenWordsOf(text: string): string[] {
   return folded(text).match(WORD) ?? [];
 }
@@ -49,10 +46,7 @@ export function writtenWordsOf(text: string): string[] {
 const folded = (text: string): string => text.normalize("NFKC").replace(/[‘’ʼ`´]/g, "'");
 const WORD = /[\p{L}\p{N}]+(?:'[\p{L}\p{N}]+)*/gu;
 
-/**
- * The gaps of a line. A cut needs a word on each side, so "split" offers only the gaps inside;
- * "place" offers the two edges as well.
- */
+/** "split" offers only inner gaps (a cut needs a word on each side); "place" adds the edges. */
 export function gapsOf(text: string, mode: "split" | "place"): WordGap[] {
   const tokens = tokensOf(text);
   const inside = tokens.slice(1).map((t) => ({ at: t.at, strong: t.strong }));
@@ -64,7 +58,6 @@ export function gapsOf(text: string, mode: "split" | "place"): WordGap[] {
   ];
 }
 
-/** What a gap is called: before the words that follow it, or an edge of the line. */
 export function gapLabel(text: string, at: number, max = 28): string {
   if (at <= 0) return "before the line";
   if (at >= text.length) return "after the line";

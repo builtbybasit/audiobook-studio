@@ -7,19 +7,9 @@ import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
 
-// Script reader: narration flows as prose; dialogue and thought are lifted into cards with a
-// speaker pill (a persona's masked, with the line's effects after it, `LinePill`) and the voice
-// direction. Right rail (toggleable, `ChapterCastRail`) = the cast *in this chapter* with aliases,
-// spoiler-hidden descriptions and inline rename; the rest of the cast is collapsed. Any segment can
-// be clicked to edit speaker / type / direction in place (`SegmentEditor`). Typography via the Aa
-// menu.
-// The model's segment boundaries are not always right — two speakers in one segment, or a sentence cut
-// in half — so the editor can split a segment at any word gap (click the gap; sentence ends are marked)
-// and join it with its neighbour. Both invalidate the audio they touch and both are undoable.
-// Text that is not the story — a site's boilerplate, a translator's note — stays in the script as a
-// line of its own and is shown for what it is: struck through or muted, with a chip saying whether
-// it is read, one click from being story again. What the site-text detector thinks otherwise is
-// shown under the line it is about, to accept or dismiss.
+// Script reader: narration as prose, dialogue and thought as cards. Any line opens an editor in
+// place (`SegmentEditor`) that can also split and join lines. Site text and notes stay in the script,
+// marked rather than stripped; the detector's disagreements show under their line.
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useScript } from "@/views/scripting/shared";
@@ -84,30 +74,21 @@ const uiStore = useUiStore();
 const reader = useReader();
 const route = useRoute();
 const router = useRouter();
-// Every scripted chapter's script, for what is counted across the book: the rest of the cast's
-// lines, the directions already in use, and the chapter the player moves on to.
+// Every chapter's script, for book-wide counts and the player's next chapter.
 const bookScripts = useBookScripts(() => props.bookId);
-// the library's effects, for the names of the line effects on the cards and in the editor
+// for the line effects' names
 useEffects();
 const volume = computed(() => libraryStore.volumeOf(props.bookId, props.chapterId));
 const multiVolume = computed(() => libraryStore.volumesOf(props.bookId).length > 1);
 
-/**
- * Which lines are shown. "Dialogue only" is the characters' lines, so it leaves out site text as it
- * leaves out narration; "Site text" is the one place every marked line and every line the detector
- * questions can be read together, and it is in the address so another page can link to it. Neither
- * filter can make a marked line vanish: the header counts them whatever is shown, and the line
- * under the filters says how many the filter is hiding.
- */
+/** In the URL so another page can link to "Site text". Hidden marked lines are still counted. */
 const mode = useQueryParam("lines", enumParam(["all", "dialogue", "site"], "all"));
 const warnOpen = ref(false); // the unverified-chunk banner reads as one line until asked
 const speaker = ref(""); // '' = everyone
 /** the line whose editor is open */
 const open = ref<number | null>(null);
-/** the line the keys act on */
+/** the line the keys act on; mirrored to `?seg=` so links and reloads land on it */
 const focus = ref<number | null>(null);
-// …and in the URL as `?seg=`, so a link to a line — from Search, the review inbox or the ledger's
-// edit key — lands on it, and a reload keeps your place
 const linked = useQueryParam("seg", idParam());
 const editing = provideSegmentEditing(props, { open, focus });
 const { splitting, editingText, nextOf, gapOf, bookGap, setPause } = editing;
@@ -122,10 +103,9 @@ const rows = computed(() =>
   ),
 );
 const chapter = computed(() => libraryStore.chapter(props.bookId, props.chapterId)!);
-/** Its reading number: undefined for a chapter the audiobook skips, which is then said so. */
+/** undefined for a skipped chapter */
 const number = computed(() => libraryStore.numberOf(props.bookId, props.chapterId));
-// Its place among the kept chapters of its volume, counted as the reading number is: the volume's
-// own position (`volumeIndex`) counts the cover and contents pages too.
+// Counted among kept chapters; `volumeIndex` would count cover and contents pages too.
 const numberInVolume = computed(
   () =>
     libraryStore
@@ -135,10 +115,8 @@ const numberInVolume = computed(
       ).length,
 );
 const book = computed(() => libraryStore.bookById(props.bookId));
-/** the lines that are not the story, and the lines the detector questions, however they are typed */
 const siteText = computed(() => segments.value.filter((s) => s.type === "watermark").length);
 const notes = computed(() => segments.value.filter((s) => s.type === "note").length);
-/** what the "Site text" filter would show: every marked line, and every line the detector questions */
 const siteRows = computed(() => segments.value.filter(inSite).length);
 /** marked lines the filters in force leave off the page */
 const hiddenSite = computed(
@@ -161,9 +139,7 @@ const fallbacks = computed(() => segments.value.filter((s) => s.fallback));
 
 const { continuing, announce } = useBurstToast();
 
-/** Lengthen or shorten the silence after a line from the keyboard. The chips in the editor show
- *  what they did; a keystroke can land on a line that has scrolled away, so this one says the new
- *  gap out loud and can be stepped back. */
+/** Keyboard pause nudge. Toasts with undo: the line may have scrolled out of view. */
 let pauseWas: number | null = null;
 function nudgePause(s: Segment, step: number) {
   const key = `pause:${s.id}`;
@@ -187,17 +163,12 @@ function nudgePause(s: Segment, step: number) {
   );
 }
 
-// ---- hearing the line you are editing ----
-// The player is app-wide and the chapter's timeline is built in one place, so the reader plays the
-// same queue the ledger does: pressing play on a line starts the chapter from that line and keeps
-// going, and whichever page you leave it on, the mini player carries it.
+// Plays the same chapter queue as the ledger, from this line on.
 const { p, playQueue, toggle } = usePlayer();
 const queueId = computed(() => chapterQueueId(props.bookId, props.chapterId));
-/** the clip under the playhead is this line, and it is actually running */
 const onClip = (s: Segment) => p.clipId === clipOf(s.id) && p.playing;
 function playLine(s: Segment) {
   if (!s.audio.duration) return;
-  // pressing it again on the line under the playhead stops it rather than starting it over
   if (p.id === queueId.value && p.clipId === clipOf(s.id)) return toggle();
   const q = chapterQueue(props.bookId, props.chapterId, {
     href: (id) => `/book/${props.bookId}/scripting?ch=${id}`,
@@ -206,8 +177,7 @@ function playLine(s: Segment) {
   const at = segmentStart(props.bookId, props.chapterId, s.id);
   if (q && at != null) playQueue(q, at);
 }
-// Reading along: the page follows the playhead, but only while it is playing and only within this
-// chapter, so scrolling back to re-read something is never fought over.
+// Follow the playhead only while playing this chapter, so scrolling back is never fought.
 watch(
   () => p.clipId,
   (id) => {
@@ -216,14 +186,11 @@ watch(
   },
 );
 
-// stale nudge: lines whose audio is out of date — edited after narration, or a half of a split that
-// has never been rendered at all (only counts once the chapter has audio) — counted as the ledger's
-// "Re-narrate changed" counts them, so a line of site text is never one
+// Counted as the ledger's "Re-narrate changed" counts them.
 const stale = computed(() => narrationStore.changedSegments(props.bookId, props.chapterId).length);
 const edits = computed(() => segments.value.filter((s) => s.edited).length);
 
-// re-script: run the LLM again on this chapter, optionally re-applying manual edits; then show the
-// diff. The button is held to the same blockers as the page's Run, and says them.
+// Re-script: held to the same blockers as the page's Run.
 const rescriptOpen = ref(false);
 const rescriptBlockers = computed(
   () => scriptingStore.scriptEstimate(props.bookId, [props.chapterId]).blockers,
@@ -242,22 +209,19 @@ function jumpTo(id: number) {
   );
 }
 
-// ---- history: the versions this chapter's script has been through. It takes over the reader's
-// body rather than opening beside it, so there is never a question of which script is on screen —
-// and `?history=1` opens it, which is how the seeded scenario lands on it.
+// History replaces the reader's body, so only one script is ever on screen.
 const history = useQueryParam<boolean>("history", {
   parse: (text) => text === "1",
   serialize: (on) => (on ? "1" : undefined),
   default: false,
 });
 const historyPanel = ref<{ back: () => boolean } | null>(null);
-// read through the query so the count is right before the panel has been opened
+// via the query so the count is right before the panel opens
 const { versions: knownVersions } = useChapterHistory(
   () => props.bookId,
   () => props.chapterId,
 );
 const versionCount = computed(() => knownVersions.value.length);
-/** Follow a change in the comparison back to the line it belongs to, in the script itself. */
 function jumpFromHistory(id: number) {
   history.value = false;
   jumpTo(id);
@@ -281,11 +245,8 @@ useReaderKeys({
   playLine,
   assignSpeaker,
 });
-/** Reassign the focused line by number key. The picker in the editor needs no toast — you are
- *  looking at what you changed — but a keystroke can land on a line that has scrolled away, and a
- *  speaker swapped in silence is only found later, in the audio. So this one names both speakers,
- *  quotes the line, and carries the undo. A mistyped number corrected straight away is one
- *  message, from the speaker you started with to the one you meant. */
+/** Number-key speaker swap. Toasts with undo since the line may be off screen; a quick correction
+ *  merges into one toast from the original speaker. */
 let assignWas = "";
 let assignUndo: () => void = () => {};
 function assignSpeaker(id: number, name: string) {
@@ -308,7 +269,6 @@ function assignSpeaker(id: number, name: string) {
   );
 }
 
-// a line the address names that is not the one in hand came from a link: go to it
 onMounted(() => {
   if (linked.value) jumpTo(linked.value);
 });
@@ -327,7 +287,6 @@ watch(open, (v) => {
     class="grid h-full gap-4"
     :class="reader.showCast ? 'lg:grid-cols-[1fr_300px]' : 'grid-cols-1'"
   >
-    <!-- reader -->
     <div class="card flex min-h-0 min-w-0 flex-col">
       <div class="border-b border-zinc-200 px-4 pb-3 pt-4 sm:px-6 dark:border-zinc-800">
         <div class="flex flex-wrap items-start gap-2">
@@ -463,7 +422,6 @@ watch(open, (v) => {
         </div>
       </div>
 
-      <!-- the versions this chapter's script has been through, in place of the script itself -->
       <ScriptHistory
         v-if="history"
         ref="historyPanel"
@@ -587,7 +545,6 @@ watch(open, (v) => {
           :style="{ fontSize: reader.size + 'px', lineHeight: reader.lineHeight }"
         >
           <template v-for="s in rows" :key="s.id">
-            <!-- unverified chunk kept whole -->
             <div
               v-if="s.fallback"
               :id="'seg-' + s.id"
@@ -625,7 +582,7 @@ watch(open, (v) => {
                 </div>
               </details>
             </div>
-            <!-- site text and notes: in the script, word for word, and shown for what they are -->
+            <!-- site text and notes -->
             <p
               v-else-if="isSiteText(s.type)"
               :id="'seg-' + s.id"
@@ -676,7 +633,7 @@ watch(open, (v) => {
                 <component :is="onClip(s) ? PauseIcon : PlayIcon" class="icon-sm icon-fill" />
               </button>
             </p>
-            <!-- narration: plain prose -->
+            <!-- narration -->
             <p
               v-else-if="s.type === 'narration'"
               :id="'seg-' + s.id"
@@ -703,8 +660,7 @@ watch(open, (v) => {
                   >[{{ s.direction }}]</span
                 ></span
               >
-              <!-- in the same column as the cards' own, so the controls line up down the chapter;
-                   hidden until the line is hovered or read, so the page stays prose -->
+              <!-- same column as the cards' controls -->
               <button
                 v-if="s.audio.duration"
                 class="icon-btn line-tool mt-0.5 shrink-0"
@@ -716,7 +672,7 @@ watch(open, (v) => {
                 <component :is="onClip(s) ? PauseIcon : PlayIcon" class="icon-sm icon-fill" />
               </button>
             </p>
-            <!-- dialogue / thought: card -->
+            <!-- dialogue / thought -->
             <div
               v-else
               :id="'seg-' + s.id"
@@ -772,7 +728,7 @@ watch(open, (v) => {
                 ><template v-else><ExpressionText :book-id="bookId" :segment="s" /></template>
               </p>
             </div>
-            <!-- the detector disagrees with this line's type: it says why, and a person decides -->
+            <!-- the detector disagrees with this line's type -->
             <div
               v-if="s.siteCheck && !s.fallback"
               class="-mt-2 mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-sky-200 bg-sky-50 px-2 py-1 font-sans text-[11px] leading-normal text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-200"
@@ -804,14 +760,12 @@ watch(open, (v) => {
                 Dismiss
               </button>
             </div>
-            <!-- inline editor -->
             <SegmentEditor
               v-if="open === s.id"
               :book-id="bookId"
               :chapter-id="chapterId"
               :segment="s"
             />
-            <!-- a line that holds, or runs straight on, shown where the gap actually falls -->
             <div
               v-if="s.pause != null && nextOf(s)"
               class="-mt-1 mb-3 flex items-center gap-2 font-sans text-[10px] leading-none text-zinc-400"
@@ -868,7 +822,6 @@ watch(open, (v) => {
       </div>
     </div>
 
-    <!-- cast rail -->
     <ChapterCastRail
       v-if="reader.showCast"
       v-model:speaker="speaker"

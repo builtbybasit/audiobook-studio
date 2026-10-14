@@ -9,7 +9,7 @@ import "@/toasts.css";
 import { createToastflow } from "vue-toastflow";
 
 const pinia = createPinia();
-// Toastflow runtime only — `{ css: false }` skips its stylesheet; the card is ours (components/Toasts.vue)
+// Toastflow runtime only: `{ css: false }` skips its stylesheet; the card is components/Toasts.vue
 const toastflow = createToastflow(
   {
     position: "bottom-right",
@@ -32,10 +32,8 @@ const toastflow = createToastflow(
 );
 createApp(App)
   .use(pinia)
-  // Reads are queries (`src/queries/`): the plugin holds their cache, in a store of its own on
-  // this pinia. Nothing is re-read on focus or reconnect — what changes a script, a cast or the
-  // queue in this app is a request this app made, and each one invalidates what it changed. The
-  // queue is the one thing that moves on its own, and it polls (auto-refetch) while a job is live.
+  // Query cache for `src/queries/`. No refetch on focus or reconnect: every change is a request
+  // this app made, which invalidates what it changed. Only the queue moves alone, and it polls.
   .use(PiniaColada, {
     plugins: [PiniaColadaAutoRefetch()],
     queryOptions: { refetchOnWindowFocus: false, refetchOnReconnect: false },

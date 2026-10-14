@@ -1,8 +1,6 @@
-// A book's id is a directory name, and its files are removed without anyone waiting.
-//
-// Two ways a book's files used to go wrong. A title with a letter outside ASCII gave the book an
-// id the file modules refuse, so its audio was written and could never be fetched or removed. And
-// a removal that failed on disk rejected with nobody listening, which Bun answers by exiting.
+// A book's id is a directory name, and its files are removed without anyone waiting: a non-ASCII
+// title must still give an id the file modules accept, and a failed removal must not reject
+// unheard (Bun exits on that).
 import { describe, expect, test } from "bun:test";
 
 import { createApp } from "~/app";
@@ -90,8 +88,7 @@ describe("removing a book whose files will not go", () => {
 
     const res = await app.request(`http://api.test/api/books/${added.id}`, { method: "DELETE" });
     expect(res.status).toBe(200);
-    // Let the removals run and fail. Before, each failure was an unhandled rejection, which ends a
-    // Bun process and fails this test.
+    // Let the removals run and fail: an unhandled rejection would end the Bun process.
     await new Promise((r) => setTimeout(r, 20));
     expect(tried.sort()).toEqual(["audiobooks", "clips"]);
 

@@ -1,15 +1,7 @@
-// Where the endpoints are configured: the speech endpoints, the scripting profiles, the
-// transcription endpoints, and the named credentials they point at.
-//
-// The same arrangement as `@/services/library`: one HTTP implementation, answering at this tab's
-// API — your library's, or the demo's. This is not `@/services/usage`, which answers for the *past*
-// requests the Endpoints page charts; this is the configuration a narration job on the server reads
-// to know what to call.
-//
-// The whole configuration travels as one document. The page binds its fields straight onto the
-// objects it edits, so there is no single action to hang a narrower request on — and the server
-// has to check the lists against each other anyway (a credential an endpoint names must be
-// in the same body), which a partial write could not let it do.
+// Endpoint configuration (speech, scripting profiles, transcription, credentials) at this tab's
+// API; past requests are `@/services/usage`. It travels as one document: the page binds fields
+// straight onto objects, and the server checks the lists against each other (a named credential
+// must be in the same body), which a partial write could not allow.
 import type {
   ClonedVoice,
   Credential,
@@ -29,37 +21,24 @@ import type { StoredEndpoint } from "@/lib/endpointTelemetry";
 import { HttpClient, seg, type FetchLike } from "@/services/http";
 import { API_BASE } from "@/services/mode";
 
-// declared in `@/types` with the server that answers them; named here too for the page that reads
-// them beside the service
 export type { EndpointProbe, VoiceListPage } from "@/types";
 
 /** What is sent: the whole configuration, replacing what the server holds. */
 export interface EndpointConfig {
   endpoints: StoredEndpoint[];
   profiles: Profile[];
-  /**
-   * Always sent: the server keeps what it holds when this is left out, which is for a page from
-   * before there were any, and this page is not one.
-   */
+  /** Always sent: left out, the server keeps what it holds. */
   transcribers: Transcriber[];
   credentials: Credential[];
   /**
-   * The library's default scripting prompt; null is the built-in one. Optional in a write, where
-   * leaving it out keeps what the server holds; always present in a read.
+   * null is the built-in prompt. Left out of a write, the server keeps its own; always in a read.
    */
   prompt?: PromptTemplate | null;
-  /**
-   * The scripting settings — the profile runs go to, and the switches beside it. Optional in a
-   * write, where leaving them out keeps what the server holds; always present in a read.
-   */
+  /** The profile runs go to, and its switches. Left out of a write, the server keeps its own. */
   script?: ScriptSettings;
 }
 
-/**
- * The configuration as the server holds it. Endpoints come back with their telemetry empty — the
- * request history is this browser's, not something the server keeps. A server nobody has saved to
- * answers with empty lists.
- */
+/** Endpoints come back with empty telemetry (request history is this browser's). */
 export interface EndpointSettings extends EndpointConfig {
   endpoints: Endpoint[];
 }
@@ -76,10 +55,10 @@ export interface VoiceListQuery {
   page?: number;
 }
 
-/** One voice saying the server's sample sentence: the audio as the endpoint answered, and its length. */
+/** One voice saying the server's sample sentence. */
 export interface VoiceSample {
   blob: Blob;
-  /** seconds, when the server knows; a provider's own recording is timed by the file */
+  /** seconds, when the server knows */
   duration: number | null;
   /** the provider's own recording of the voice, or the endpoint saying the sample sentence */
   source: "recording" | "rendered";
@@ -88,10 +67,8 @@ export interface VoiceSample {
 export interface EndpointSettingsService {
   getSettings(): Promise<EndpointSettings>;
   /**
-   * Replace the whole configuration. Refused whole when any part of it does not hold together.
-   *
-   * An entry's `apiKey` is the one write-only field: left out, the server keeps the key it holds;
-   * `""` forgets it. The store puts it on exactly one entry, and only when a key was typed.
+   * Refused whole when any part doesn't hold together. `apiKey` is write-only: left out, the server
+   * keeps its key; `""` forgets it. The store sends it on one entry, only when a key was typed.
    */
   putSettings(body: EndpointConfig): Promise<EndpointSettings>;
   /** Test the *saved* endpoint, with the key the server holds for it. */
@@ -102,17 +79,11 @@ export interface EndpointSettingsService {
   listVoices(id: string, query: VoiceListQuery): Promise<VoiceListPage>;
   /** Have the *saved* speech endpoint say a sentence in one voice. A real, priced request. */
   sampleVoice(id: string, voice: string): Promise<VoiceSample>;
-  /**
-   * Make a voice from samples on the *saved* endpoint's provider, with the key the server holds.
-   * The server keeps the samples with the voice, and says whether it managed to.
-   */
+  /** Clone on the *saved* endpoint's provider; the server keeps the samples and says if it did. */
   cloneVoice(id: string, request: VoiceCloneRequest): Promise<ClonedVoice>;
   /** Every voice of the *saved* endpoint whose samples are kept. */
   keptSamples(id: string): Promise<KeptVoiceSamples[]>;
-  /**
-   * Keep samples for a voice already on the *saved* endpoint, in place of any it had — for a
-   * voice cloned before samples were kept. Nothing is sent to the provider.
-   */
+  /** Keep samples for a voice cloned before samples were kept. Nothing is sent to the provider. */
   keepSamples(
     id: string,
     voice: string,
@@ -120,27 +91,21 @@ export interface EndpointSettingsService {
   ): Promise<KeptVoiceSamples>;
   /** Forget one voice's kept samples; the voice stays. */
   forgetSamples(id: string, voice: string): Promise<void>;
-  /** Take back a forget no save has made final yet; answers with the samples. */
+  /** Undo a forget no save has made final yet. */
   restoreSamples(id: string, voice: string): Promise<KeptVoiceSamples>;
-  /**
-   * What is said in one recording, heard by the transcription endpoint `id` — or, without one, the
-   * first switched on. A real request, priced into the ledger by the minute of audio sent.
-   */
+  /** On transcriber `id`, or the first enabled one. A real request, priced by the minute sent. */
   transcribe(file: File, id?: string): Promise<{ text: string }>;
   /**
-   * What the server's process has seen of each speech endpoint it has sent to: lines out and held,
-   * rate limits, the end of a cooldown. Not configuration, but the telemetry the configuration
-   * comes back without, which is why it is asked for here. An endpoint absent from the answer has
-   * had nothing sent to it since the server started.
+   * The server process's telemetry per speech endpoint (lines out and held, rate limits, cooldown).
+   * An endpoint absent from the answer has had nothing sent since the server started.
    */
   live(): Promise<Record<string, EndpointLive>>;
 }
 
-/** What a voice is made from: a name and the samples. */
 export interface VoiceCloneRequest {
   title: string;
   samples: File[];
-  /** what is said in each sample, in the same order; "" or absent where the person gave none */
+  /** in sample order; "" or absent where the person gave none */
   transcripts?: string[];
 }
 
@@ -222,10 +187,7 @@ export class HttpEndpointSettingsService implements EndpointSettingsService {
 const samplesPath = (id: string, voice: string) =>
   `/endpoints/${seg(id)}/voices/${seg(voice)}/samples`;
 
-/**
- * The samples and their transcripts as the server reads them: a `samples` file and a `transcripts`
- * text per sample, in the same order.
- */
+/** One `samples` file and one `transcripts` text per sample, in the same order. */
 function samplesForm(request: Omit<VoiceCloneRequest, "title">): FormData {
   const form = new FormData();
   for (const [i, sample] of request.samples.entries()) {
@@ -237,20 +199,17 @@ function samplesForm(request: Omit<VoiceCloneRequest, "title">): FormData {
 
 let service: EndpointSettingsService | null = null;
 
-/** The endpoint settings service: the one a test set, or the HTTP one for this tab's library. */
+/** The one a test set, or the HTTP one for this tab's library. */
 export function endpointSettingsService(): EndpointSettingsService {
   return (service ??= new HttpEndpointSettingsService());
 }
 
-/** For tests and for wiring at startup. Set it before the endpoints store loads. */
+/** For tests and startup wiring. Set it before the endpoints store loads. */
 export function setEndpointSettingsService(next: EndpointSettingsService | null): void {
   service = next;
 }
 
-/**
- * Whether the key an endpoint or profile needs is in place, for every "no key" warning and gate.
- * The key is the server's, and the browser only ever learns that one is held (`hasKey`).
- */
+/** The key is the server's; the browser only learns that one is held (`hasKey`). */
 export function keyInPlace(entry: { hasKey?: boolean } | null | undefined): boolean {
   return !!entry?.hasKey;
 }

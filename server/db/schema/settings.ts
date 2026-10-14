@@ -1,16 +1,10 @@
-// Settings that belong to the installation rather than to a book.
-//
-// One row per key, holding JSON. A table per settings group would be a table per screen that grows
-// a checkbox; this is the one place where a document really is the right shape, because nothing
-// queries across settings — they are read whole, by name, by the screen that owns them.
+// Installation-wide settings: one JSON row per key, read whole by the screen that owns it.
 import { sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 /**
- * Known keys.
- *
- *   script   `ScriptSettings` — the chosen profile, watermark stripping, keep-my-edits
- *   prompt   `PromptTemplate` — the library's default scripting prompt; absent = the built-in one
- *   thoughts `ThoughtChoice` — the library's thought effect: an effect's id or "none"
+ *   script   `ScriptSettings`
+ *   prompt   `PromptTemplate`; absent = the built-in one
+ *   thoughts `ThoughtChoice`: an effect id or "none"
  */
 export type SettingKey = "script" | "prompt" | "thoughts";
 

@@ -1,10 +1,6 @@
-// The order the endpoint configuration's writes reach the server in.
-//
-// Every write is the whole configuration, and the server takes each as the whole truth, so two out
-// at once could land in either order and leave the server holding the older one. These hold the
-// server's answers back and give them in the order a loaded server might — newest first — to check
-// that only one write is ever out, that what changed meanwhile goes in the one write after it, and
-// that a flush says how its writes went. `endpointsBackend.test.ts` has the write-behind itself.
+// The order the endpoint configuration's writes reach the server in. Each write is the whole
+// configuration, so two out at once could land in either order: only one is ever out, what changed
+// meanwhile goes in the next, and a flush says how its writes went.
 import { afterEach, beforeEach, expect, jest, test } from "bun:test";
 
 import { ApiError } from "@/services/http";

@@ -1,8 +1,7 @@
 <script lang="ts">
 import type { Segment } from "@/types";
 
-/** Is there an audit trail to open? One definition: the row that opens it and the `i` key ask this
- *  too, and a row that says "click for render details" over an empty strip is a lie. */
+/** Is there an audit trail to open? The row and the `i` key both ask this. */
 export const hasDetails = (s: Segment): boolean => !!(s.audio.at || s.audio.error || s.audio.cuts);
 </script>
 
@@ -10,10 +9,7 @@ export const hasDetails = (s: Segment): boolean => !!(s.audio.at || s.audio.erro
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useUiStore } from "@/stores/ui";
 
-// One clip's audit trail: what it was actually rendered with, what the dictionary sent in its place,
-// why it no longer matches the script, what came back when it failed, every take of the line, and
-// how a line too long for its endpoint was cut up. It is a record of a request, so nothing here is
-// re-derived from what the book holds now — the facts come off the clip itself.
+// One clip's audit trail. Every fact comes off the clip itself, never re-derived from the book.
 import { errorStatus, lineLink, onClip, useJob } from "@/views/narration/shared";
 import { hhmm } from "@/lib/format";
 import { sanitize } from "@/lib/endpoints";
@@ -29,7 +25,7 @@ import {
 import type { Take } from "@/types";
 
 const props = defineProps<{ bookId: string; chapterId: number; segment: Segment }>();
-/** the failed or drifted clip should be rendered again — the ledger owns every run entry point */
+/** the ledger owns every run entry point */
 defineEmits<{ retry: [] }>();
 const endpointsStore = useEndpointsStore();
 const uiStore = useUiStore();
@@ -37,11 +33,8 @@ const { chapter, epName, drift } = useJob(props);
 const { play } = usePlayer();
 const AT = { sentence: "sentence", clause: "clause", word: "word", char: "hard cut" };
 /**
- * What the clip recorded about the request that made it, as JSON.
- *
- * Only what the server kept on the clip: the request body itself is not recorded, and each provider
- * shapes its own, so writing one out here would be a request nobody sent. The endpoint's own
- * requests, with their receipts, are on its Activity tab.
+ * What the clip recorded about the request that made it, as JSON. The request body is not
+ * recorded, so none is invented here; the endpoint's Activity tab has the requests.
  */
 function clipRecord(s: Segment) {
   const a = s.audio;
@@ -93,8 +86,7 @@ async function copyRecord(s: Segment) {
     uiStore.toast("Could not copy the clip record", { kind: "error" });
   }
 }
-/** The audit trail as a strip of labelled facts — what this clip was actually rendered with. The
- *  free-text ones (style, direction) go last and take the rest of the line: they are whole phrases. */
+/** The audit trail as labelled facts; free-text ones (style, direction) go last, full width. */
 interface Fact {
   label: string;
   value: string;
@@ -108,8 +100,7 @@ function facts(s: Segment): Fact[] {
     { label: "voice", value: endpointsStore.voiceLabel(a.voiceRef) || a.voice || "—" },
     { label: "endpoint", value: epName(a.endpoint) },
     { label: "model", value: a.model ?? "—", mono: true },
-    // what the file came back at, which is not always what was asked for — absent on a clip
-    // rendered before rates were recorded, and then there is nothing true to say
+    // the rate the file came back at, not the one asked for; absent when not recorded
     ...(a.sampleRate ? [{ label: "sample rate", value: sampleRateLabel(a.sampleRate) }] : []),
     { label: "read as", value: a.type ?? s.type },
     { label: "rendered", value: hhmm(a.at) },
@@ -154,7 +145,6 @@ const takePlaying = (s: Segment, t: Take | undefined) => !!t && onClip(takeId(s,
     <td></td>
     <td colspan="5" class="py-2 pr-4">
       <div class="border-l-2 border-violet-400 pl-3 text-xs dark:border-violet-500">
-        <!-- what this clip was rendered with -->
         <div v-if="facts(segment).length" class="flex items-start gap-3">
           <div class="flex min-w-0 flex-1 flex-wrap gap-x-5 gap-y-1.5">
             <div

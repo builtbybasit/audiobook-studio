@@ -1,11 +1,6 @@
-// The seam the library reads and writes through.
-//
-// `EndpointService` next door already does this for the Endpoints page; this is the same idea for
-// the books themselves. Everything above it works in the shapes `@/types` defines and does not
-// know what answered — which is what lets a test point the page at a library of its own.
-//
-// Only the HTTP implementation lives here. It asks the library this tab is on (`API_BASE`): yours,
-// or the demo's, which the server holds as a second library with a database of its own.
+// The seam the library reads and writes through, as `EndpointService` is for endpoints, so a test
+// can point the page at a library of its own. The HTTP implementation asks this tab's library
+// (`API_BASE`): yours, or the demo's.
 import type {
   Book,
   BookUpdated,
@@ -46,8 +41,6 @@ import { HttpClient, seg, type FetchLike } from "@/services/http";
 import { API_BASE } from "@/services/mode";
 
 export { ApiError, type FetchLike } from "@/services/http";
-// The answers are declared in `@/types` with the server that writes them; these are named here too
-// for the stores and queries that read them beside the service.
 export type {
   Cast,
   ChapterLines,
@@ -59,8 +52,7 @@ export type {
 } from "@/types";
 
 /**
- * A book's settings, any of them. A key left out is left alone; `null` clears it — for `pacing`,
- * back to the built-in gaps.
+ * A book's settings. A key left out is left alone; `null` clears it (`pacing`: the built-in gaps).
  */
 export interface BookSettings {
   budget?: { cap: number | null; paused: boolean } | null;
@@ -68,17 +60,17 @@ export interface BookSettings {
   pacing?: Pacing | null;
   /** the book's notes and its own prompt; `null` clears both */
   prompt?: BookPrompt | null;
-  /** read translator's and author's notes aloud (`Book.readNotes`) */
+  /** `Book.readNotes` */
   readNotes?: boolean;
-  /** check each chapter by ear once it is narrated (`Book.checkByEar`) */
+  /** `Book.checkByEar` */
   checkByEar?: boolean;
-  /** the book's thought effect (`Book.thoughts`): an id or "none"; `null` = the library's */
+  /** `Book.thoughts`: an id or "none"; `null` = the library's */
   thoughts?: ThoughtChoice | null;
-  /** the voice for speakers with none of their own (`Book.characterVoice`); `null` = the Narrator's */
+  /** `Book.characterVoice`; `null` = the Narrator's */
   characterVoice?: CharacterVoice | null;
 }
 
-/** The two forms a chapter's prose comes in. See `LibraryService.chapterText`. */
+/** See `LibraryService.chapterText`. */
 export type TextFormat = "markdown" | "plain";
 
 /** One chapter's review decisions, stated outright. Absent means "not". */
@@ -88,9 +80,9 @@ export interface ReviewDecision {
   kept?: boolean;
 }
 
-/** What an edit sends: the script as it now stands, the revision it read, and what produced it. */
 export interface ScriptEdit {
   segments: Segment[];
+  /** the revision the edit was made from */
   ifRevision: number;
   /** an ordinary edit when left out */
   origin?: VersionOrigin;
@@ -98,31 +90,23 @@ export interface ScriptEdit {
 
 export interface LibraryService {
   books(): Promise<Book[]>;
-  /** A book and its chapters, as the contents review needs them. */
   book(id: string): Promise<ImportedBook>;
   /**
-   * The chapter's prose, as the EPUB contained it.
-   *
-   * `markdown` is what is stored and what the contents review renders — headings, emphasis, and
-   * the tables a chapter was laid out in. `plain` is that with the Markdown resolved away, and is
-   * what **anything that counts, bills or sends the text to a model must ask for**: the stored
-   * form would have a link's address and a table's pipes read aloud and charged for.
+   * `markdown` is what is stored and rendered. Anything that counts, bills or sends text to a model
+   * must ask for `plain`, or a link's address and a table's pipes get read aloud and charged for.
    */
   chapterText(bookId: string, chapterId: number, format?: TextFormat): Promise<string>;
-  /**
-   * For each of `names`, the ids of the chapters whose text names it as written — same case, a
-   * whole word or phrase — in book order.
-   */
+  /** For each name, the chapters whose text has it as a whole word, same case, in book order. */
   mentions(bookId: string, names: readonly string[]): Promise<Record<string, number[]>>;
-  /** The chapter's script as it stands on the server: empty until a scripting job has written one. */
+  /** Empty until a scripting job has written one. */
   chapterScript(bookId: string, chapterId: number): Promise<ChapterScript>;
-  /** Several chapters' prose in one read, by id; a chapter the book does not have is left out. */
+  /** A chapter the book does not have is left out. */
   chapterTexts(
     bookId: string,
     chapterIds: readonly number[],
     format: TextFormat,
   ): Promise<Record<number, string>>;
-  /** Several chapters' scripts in one read, by id; a chapter the book does not have is left out. */
+  /** A chapter the book does not have is left out. */
   chapterScripts(
     bookId: string,
     chapterIds: readonly number[],
@@ -135,66 +119,50 @@ export interface LibraryService {
   importVolume(bookId: string, file: File, name?: string): Promise<ImportedBook>;
   /** The review is done: the book, or its new volume, joins the library. */
   confirmImport(bookId: string): Promise<Book>;
-  /** Cancel an import: an unconfirmed book goes entirely; a new volume comes off its book. */
+  /** An unconfirmed book goes entirely; a new volume comes off its book. */
   discardImport(bookId: string): Promise<"book" | "volume">;
-  /** Skip chapters for the audiobook, or include them again. Nothing is deleted either way. */
+  /** Nothing is deleted either way. */
   skipChapters(bookId: string, ids: number[], skip: boolean): Promise<Chapter[]>;
   /** Keep a noted chapter as it is, and stop the suggestion asking. */
   keepChapters(bookId: string, ids: number[]): Promise<Chapter[]>;
   /**
-   * Put chapters' review decisions to exactly these, whatever they are now.
-   *
-   * What an Undo sends: skip and keep each apply a rule that only runs forwards — including a
-   * noted chapter counts as having looked at it — so an undo records what the chapters were and
-   * puts that back rather than asking the inverse rule to guess.
+   * Set review decisions outright; what an Undo sends. Skip and keep only run forwards (including a
+   * noted chapter counts as looking at it), so an undo restores state instead of inverting.
    */
   setDecisions(bookId: string, decisions: ReviewDecision[]): Promise<Chapter[]>;
   removeBook(bookId: string): Promise<void>;
   removeVolume(bookId: string, volumeId: number): Promise<"book" | "volume">;
   /**
-   * Take every script and clip off the book so it can be scripted afresh; each script stays in
-   * its chapter's history. `cast` takes every speaker but the Narrator too. Refused while any job
-   * of the book is queued or running.
+   * Take every script and clip off the book (scripts stay in history); `cast` also drops every
+   * speaker but the Narrator. Refused while any job of the book is queued or running.
    */
   startOver(bookId: string, options: { cast: boolean }): Promise<StartedOver>;
   /**
-   * Change a book's budget, script budget or pacing. Changing the pacing re-times every narrated
-   * chapter on the server, so the chapters come back with the book — and a new length for the
-   * pauses inside a line stales the clips of the lines holding one, which come back as `stale`.
+   * A pacing change re-times every narrated chapter, so the chapters come back with the book; a
+   * new in-line pause length stales the clips of lines holding one.
    */
   updateBook(bookId: string, settings: BookSettings): Promise<BookUpdated>;
-  /** Make this JPEG or PNG the book's own cover, the shelf's and the overview's. */
+  /** JPEG or PNG; the shelf's and overview's cover. */
   changeCover(bookId: string, file: File): Promise<Book>;
-  /** Give a volume a new name. */
   renameVolume(bookId: string, volumeId: number, name: string): Promise<Book>;
   /**
-   * Cut the book into these volumes: where each begins and its name, in reading order, the first
-   * at chapter 1. Chapter numbers stay; which volume each belongs to is rewritten. Refused while
-   * an audiobook of the book is being built, or while a volume of a shelved book is in review.
+   * Volume starts in reading order, the first at chapter 1. Chapter numbers stay. Refused while an
+   * audiobook is building or a shelved book's volume is in review.
    */
   setVolumes(bookId: string, volumes: VolumeStart[]): Promise<ImportedBook>;
   /**
-   * Read the volumes in this order — every volume of the book, once each. The chapters are
-   * renumbered to follow, and the server moves everything filed under a chapter number with them.
-   * Refused while an audiobook of the book is being built or a volume is still in its review.
+   * Every volume, once each. Chapters are renumbered and the server moves everything filed under a
+   * chapter number with them. Refused while an audiobook is building or a volume is in review.
    */
   reorderVolumes(bookId: string, order: number[]): Promise<ImportedBook>;
 
   // ---------- a chapter's script, edited by a person ----------
-  /**
-   * Replace a chapter's script with what a person made of it. `ifRevision` names the revision the
-   * caller read; an edit against a script that has moved since is refused with a conflict, the
-   * way a stale job result is, and nothing is written.
-   */
+  /** Refused with a conflict, writing nothing, when the script has moved past `ifRevision`. */
   editScript(bookId: string, chapterId: number, edit: ScriptEdit): Promise<EditedScript>;
   /**
-   * Send one chunk of a chapter with a prompt that need not be saved, and see what comes back.
-   * Nothing is written to the script; the request is priced into the book's ledger and held to its
-   * budget. A refused answer comes back as a result with `error`, not as a rejection.
-   */
-  /**
-   * Send one chunk with a prompt that need not be saved, and see what comes back; nothing is
-   * written. Aborting `signal` cancels the request on the server too, before or while it is sent.
+   * Send one chunk with an unsaved prompt; nothing is written to the script, but the request is
+   * priced and held to the budget. A refusal comes back as `error`, not a rejection. Aborting
+   * `signal` cancels it on the server too.
    */
   tryPrompt(
     bookId: string,
@@ -208,25 +176,24 @@ export interface LibraryService {
     chapterId: number,
     name: string,
   ): Promise<{ version: ScriptVersion; history: ChapterHistory }>;
-  /** Forget one version. What an Undo of a checkpoint sends. */
+  /** What an Undo of a checkpoint sends. */
   dropVersion(bookId: string, chapterId: number, versionId: number): Promise<ChapterHistory>;
 
   // ---------- the cast ----------
   cast(bookId: string): Promise<Cast>;
-  /** One speaker, written as stated: new or replaced. Returns the cast as it now stands. */
+  /** New or replaced. Returns the cast as it now stands. */
   putCharacter(bookId: string, character: Character): Promise<Character[]>;
-  /** Change a speaker's name; every line that names them moves with it. */
+  /** Every line that names them moves with it. */
   renameCharacter(bookId: string, from: string, to: string): Promise<MovedLines>;
-  /** Fold one speaker into another; the lines move and the name becomes an alias. */
+  /** The lines move and the name becomes an alias. */
   mergeCharacter(bookId: string, from: string, into: string): Promise<MovedLines>;
-  /** Take a speaker off the cast; their lines go to the Narrator. */
+  /** Their lines go to the Narrator. */
   deleteCharacter(bookId: string, name: string): Promise<MovedLines>;
   /** Put a speaker back on exactly these lines, and back in the cast: what an Undo sends. */
   attribute(bookId: string, character: Character, lines: ChapterLines[]): Promise<MovedLines>;
   /**
-   * The pronunciation dictionary, replaced whole. Every rendered clip that now reads the old
-   * pronunciation is marked stale; `restore` names lines an earlier change staled (what an Undo
-   * sends), and those that read this pronunciation again go back to done.
+   * Replaced whole; clips reading an old pronunciation go stale. `restore` (an Undo) names lines an
+   * earlier change staled; those that read this pronunciation again go back to done.
    */
   putLexicon(bookId: string, entries: LexEntry[], restore?: ChapterLines[]): Promise<LexiconSaved>;
   /** Keep a retake as the clip in the book, or discard it; either way it is judged once. */
@@ -236,10 +203,7 @@ export interface LibraryService {
     segmentId: number,
     verdict: "accept" | "reject",
   ): Promise<Judged>;
-  /**
-   * Raise, replace or take down one line's flag, and nothing else about the script — so it names
-   * no revision, and a run writing clips beside it cannot make it refuse.
-   */
+  /** Names no revision, so a run writing clips beside it cannot make it refuse. */
   flagLine(
     bookId: string,
     chapterId: number,
@@ -249,38 +213,29 @@ export interface LibraryService {
 
   // ---------- finished audiobooks ----------
   /**
-   * Keep an image to write into this book's audiobooks in place of the EPUB's cover. Answers with
-   * the url it is served from, which is what a build's `settings.cover` has to name: the server
-   * embeds only an image it holds for this book. The same image twice is the same url.
+   * Answers with the url a build's `settings.cover` must name: the server embeds only an image it
+   * holds for this book. The same image twice is the same url.
    */
   uploadCover(bookId: string, file: File): Promise<{ cover: string }>;
   exports(bookId: string): Promise<ExportItem[]>;
   removeExport(bookId: string, exportId: number): Promise<void>;
 
   // ---------- the script as a file ----------
-  /**
-   * What importing a script file into this book would do: the chapters it matches, the ones it
-   * refuses, and how its cast, dictionary and voices differ from the book's. Nothing is written —
-   * applying the plan is the store's, through the same edits a restore makes.
-   */
+  /** What importing a script file would do. Nothing is written; the store applies the plan. */
   planScriptImport(bookId: string, file: File): Promise<ScriptImportPlan>;
   /** What ticking "Include voice samples" would add to this book's export: one entry per speaker. */
   scriptExportSamples(bookId: string): Promise<ScriptExportSamples>;
 
   // ---------- voice samples waiting with a speaker ----------
   /**
-   * Keep the recordings `file` carries for these speakers, to wait with them until someone clones
-   * them. The server reads them from the file again; answers with what it kept.
-   */
-  /**
-   * Keep what `file` carries for these speakers. `replaced` names the rows those speakers already
-   * had, which the server put aside rather than deleting, so the import's Undo can bring them back.
+   * Keep what `file` carries for these speakers until someone clones them. `replaced` names rows
+   * put aside (not deleted) so the import's Undo can bring them back.
    */
   storeSpeakerSamples(bookId: string, file: File, speakers: string[]): Promise<StoredSamples>;
   speakerSamples(bookId: string): Promise<SpeakerSamples[]>;
   /** One kept recording, as a file the clone form can send on. */
   speakerSampleFile(bookId: string, sampleId: number, sample: KeptSample): Promise<File>;
-  /** Put a speaker's recordings aside: hidden at once, gone for good a day later. */
+  /** Hidden at once, gone for good a day later. */
   discardSpeakerSamples(bookId: string, sampleId: number): Promise<void>;
   /** Bring back recordings put aside, while the server still holds them. */
   restoreSpeakerSamples(bookId: string, sampleId: number): Promise<SpeakerSamples>;
@@ -605,10 +560,7 @@ export class HttpLibraryService implements LibraryService {
   }
 }
 
-/**
- * Where a book's script is downloaded from, as `<book>.script.zip`. A URL rather than a request:
- * the browser follows it and saves what comes back, the way a built audiobook is downloaded.
- */
+/** `<book>.script.zip`, as a URL the browser follows and saves, like a built audiobook. */
 export function scriptExportUrl(bookId: string, samples = false): string {
   return `${API_BASE}/books/${seg(bookId)}/script-export${samples ? "?samples=1" : ""}`;
 }
@@ -620,10 +572,7 @@ export function libraryService(): LibraryService {
   return (service ??= new HttpLibraryService());
 }
 
-/**
- * Point the app at a different implementation. For tests and for wiring at startup; `null` goes
- * back to the HTTP one, built afresh when it is next asked for.
- */
+/** For tests and startup wiring; `null` goes back to a fresh HTTP one. */
 export function setLibraryService(next: LibraryService | null): void {
   service = next;
 }

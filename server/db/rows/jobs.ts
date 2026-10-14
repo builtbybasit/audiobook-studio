@@ -47,12 +47,7 @@ export function toJob(row: JobRow, events: readonly EventRow[] = []): Job {
   return j;
 }
 
-/**
- * What this job is holding against the book's cap.
- *
- * Read off whichever run detail the job carries, and stored as a column so the budget gate can sum
- * it across unfinished jobs without opening every job's detail.
- */
+/** What this job holds against the book's cap; a column so the budget gate can sum it. */
 const reservedOf = (j: Job): number => j.scriptRun?.reserved ?? j.narrationRun?.reserved ?? 0;
 
 const estimatedOf = (j: Job): number | null =>

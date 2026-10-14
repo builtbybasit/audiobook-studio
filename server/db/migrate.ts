@@ -1,19 +1,8 @@
-// Schema creation, applied at startup and by the tests.
-//
-// Drizzle Kit generates SQL into `drizzle/` from `server/db/schema.ts`; this applies whatever is
-// there to the database it is handed. Running it against an up-to-date database does nothing, so
-// booting the server is always safe.
-//
-// **Foreign keys are off while it runs.** SQLite cannot alter most of a table in place, so a
-// schema change drizzle-kit cannot express as `ALTER TABLE` is written as a rebuild: create
-// `__new_chapters`, copy the rows across, `DROP TABLE chapters`, rename. With foreign keys on, that
-// `DROP` deletes every row and fires every `ON DELETE CASCADE` pointing at the table — every
-// script, clip, job and export row a book owns, gone on the next boot. The generated SQL does say
-// `PRAGMA foreign_keys=OFF` before it, but drizzle runs all pending migrations inside one
-// transaction, and inside a transaction SQLite ignores that pragma. So it is set here, on the
-// connection, before drizzle begins — the procedure SQLite's own documentation gives for
-// altering a table — and SQLite's `foreign_key_check` is asked afterwards whether every reference
-// still lands, before the keys go back on and the server trusts the result.
+// Applies the generated migrations in `drizzle/`; a no-op on an up-to-date database.
+// Foreign keys go off on the connection first: a table rebuild's `DROP TABLE` would otherwise fire
+// every ON DELETE CASCADE, and the migration's own `PRAGMA foreign_keys=OFF` is ignored inside
+// drizzle's transaction. `foreign_key_check` then confirms every reference still lands.
+// See https://www.sqlite.org/lang_altertable.html#otheralter
 import { migrate as drizzleMigrate } from "drizzle-orm/bun-sqlite/migrator";
 
 import type { Db } from "~/db/client";

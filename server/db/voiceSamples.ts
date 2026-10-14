@@ -1,8 +1,5 @@
-// Every read and write of the samples kept for a cloned voice.
-//
-// The rows are tied to a voice by value, not by a foreign key: a save of the endpoints replaces
-// every voice row, so `reconcileClones` is what decides, after each save, which kept samples
-// still have a voice and which do not.
+// Samples kept for cloned voices. Tied to a voice by value, not foreign key, since an endpoints
+// save replaces every voice row; `reconcileClones` decides after each save which survive.
 import { and, asc, eq, isNotNull, isNull } from "drizzle-orm";
 
 import type { KeptSample, KeptVoiceSamples } from "@/types";
@@ -10,26 +7,21 @@ import type { Db, Tx } from "~/db/client";
 import type { EndpointConfig } from "~/db/endpoints";
 import { clonedVoices, voiceSamples } from "~/db/schema";
 
-/**
- * How long kept samples wait before a save may remove them: a clone for the page to save its
- * voice, a removed voice for its Undo or its return, a forget for its Undo.
- */
+/** How long kept samples wait before a save may remove them (room for the page's save or Undo). */
 export const GRACE_MS = 24 * 60 * 60 * 1000;
 
-/** A voice whose samples went, and the files its rows named, for the caller to remove. */
 export interface DroppedSamples {
   endpointId: string;
   voiceId: string;
   files: string[];
 }
 
-/** What to keep: the voice and the samples already on disk. */
 export interface KeepSamples {
   endpointId: string;
   voiceId: string;
   title: string;
   at: number;
-  /** a voice already in a saved configuration, as when an older voice is given its samples */
+  /** the voice is already in a saved configuration */
   attached: boolean;
   samples: KeptSample[];
 }
@@ -37,11 +29,9 @@ export interface KeepSamples {
 const whereVoice = (endpointId: string, voiceId: string) =>
   and(eq(clonedVoices.endpointId, endpointId), eq(clonedVoices.voiceId, voiceId));
 
-/** A voice's samples as every read sees them: not forgotten. */
 const whereShown = (endpointId: string, voiceId: string) =>
   and(whereVoice(endpointId, voiceId), isNull(clonedVoices.forgottenAt));
 
-/** The samples kept for one voice, or undefined when there are none. */
 export function readKept(
   db: Db | Tx,
   endpointId: string,
@@ -52,11 +42,7 @@ export function readKept(
   return { ...keptOf(voice), samples: samplesOf(db, endpointId, voiceId) };
 }
 
-/**
- * The samples a script export can carry for a voice: kept, not forgotten, and the voice still in
- * the saved configuration (`missing_since` unset), since a voice that is gone is not one a book
- * speaks with. Undefined otherwise.
- */
+/** What a script export carries: not forgotten, and the voice not missing from the config. */
 export function readCarried(
   db: Db | Tx,
   endpointId: string,
@@ -71,7 +57,6 @@ export function readCarried(
   return { ...keptOf(voice), samples: samplesOf(db, endpointId, voiceId) };
 }
 
-/** Every voice of one endpoint that has samples kept. */
 export function readKeptFor(db: Db | Tx, endpointId: string): KeptVoiceSamples[] {
   return db
     .select()
@@ -90,7 +75,6 @@ function keptOf(v: typeof clonedVoices.$inferSelect): Omit<KeptVoiceSamples, "sa
   };
 }
 
-/** The samples a voice's rows name, forgotten or not. */
 export function samplesOf(db: Db | Tx, endpointId: string, voiceId: string): KeptSample[] {
   return db
     .select()
@@ -107,10 +91,7 @@ export function samplesOf(db: Db | Tx, endpointId: string, voiceId: string): Kep
     }));
 }
 
-/**
- * Keep these samples for a voice, in place of any it had. Answers with the files the voice had
- * that it no longer names, for the caller to remove from disk once the rows are committed.
- */
+/** Replaces a voice's samples; returns the dropped files for the caller to delete after commit. */
 export function keepSamples(tx: Tx, keep: KeepSamples): string[] {
   const before = samplesOf(tx, keep.endpointId, keep.voiceId).map((s) => s.file);
   tx.delete(clonedVoices).where(whereVoice(keep.endpointId, keep.voiceId)).run();
@@ -140,10 +121,7 @@ export function keepSamples(tx: Tx, keep: KeepSamples): string[] {
   return before.filter((f) => !seen.has(f));
 }
 
-/**
- * Forget the samples kept for one voice: hidden from every read now, removed by a save after
- * the grace period, and back with `restoreSamples` until then. True when there were any.
- */
+/** Hidden now, removed by a save after `GRACE_MS`, and back with `restoreSamples` until then. */
 export function forgetSamples(tx: Tx, endpointId: string, voiceId: string, now: number): boolean {
   return (
     tx
@@ -155,7 +133,6 @@ export function forgetSamples(tx: Tx, endpointId: string, voiceId: string, now: 
   );
 }
 
-/** Take back a forget whose samples a save has not removed yet. True when there was one. */
 export function restoreSamples(tx: Tx, endpointId: string, voiceId: string): boolean {
   return (
     tx
@@ -168,19 +145,11 @@ export function restoreSamples(tx: Tx, endpointId: string, voiceId: string): boo
 }
 
 /**
- * Line the kept samples up with a configuration just saved, in the same transaction. Answers
- * with the voices whose samples went, and the files their rows named, for the caller to remove
- * from disk after the commit.
- *
- * - A voice the configuration holds is **attached**, and no longer missing.
- * - An attached voice the configuration no longer holds is **missing** from this save on. Removing
- *   a voice or an endpoint offers Undo and a settings import can bring a voice back, so it keeps
- *   its samples — and gets them back if it returns — until a save after the grace period, when
- *   they go: they were kept for making that voice, not to outlive it.
- * - An unattached voice is spared: the clone answered before the page saved the voice it made, and
- *   a save in that moment is not a removal. One that has waited past the grace period is a voice
- *   the page never kept, and it goes.
- * - A forgotten voice goes once its grace period has passed, whatever the configuration holds.
+ * Runs in the save's transaction; returns what went, for the caller to delete after commit.
+ * - In the config: attached, not missing.
+ * - Attached but gone from the config: missing; kept for Undo/import until `GRACE_MS` passes.
+ * - Unattached (clone not yet saved by the page): spared until `GRACE_MS`, then dropped.
+ * - Forgotten: dropped after `GRACE_MS`, whatever the config holds.
  */
 export function reconcileClones(tx: Tx, config: EndpointConfig, now: number): DroppedSamples[] {
   const held = new Set(config.endpoints.flatMap((e) => e.voices.map((v) => `${e.id}\0${v.id}`)));

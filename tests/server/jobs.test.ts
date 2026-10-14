@@ -1,10 +1,6 @@
-// The queue: the same work is never queued twice, a cancel stops it, a restart finds it again, and
-// a result never lands on top of newer work.
-//
-// Every test drives the real runner against the real routes with a provider that reads the prose
-// and never the network. Where a run has to be genuinely in flight — to be cancelled, edited under
-// or renumbered — the provider is `gatedProvider`, which holds the door until the test says so, so
-// nothing here waits on a timer.
+// The queue: work is never queued twice, a cancel stops it, a restart finds it again, and a
+// result never lands on newer work. `gatedProvider` holds an in-flight run until the test opens
+// it, so nothing waits on a timer.
 import { describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 
@@ -48,8 +44,7 @@ interface Failure {
   error: { code: string; message: string; detail?: string };
 }
 
-// Long enough that a chapter cut at 700 characters (`small` below) goes as several requests, and no
-// longer: every paragraph is scripted again in every test that runs one.
+// Long enough that a chapter cut at 700 characters (`small`) goes as several requests.
 const dialogue = () => [
   "The ledger lay open on the table. “We are short again,” said Mara.",
   "Rain ran down the shutters while she counted. Nobody answered her.",
@@ -388,8 +383,7 @@ describe("failure", () => {
   test("a kind this server cannot run fails at once and says so", async () => {
     const api = testApi();
     const { id } = await shelved(api);
-    // Every kind this server ships has a handler, so the rule is shown by taking one away: it
-    // belongs to the runner, and a build is what a server built without an encoder would be.
+    // Every shipped kind has a handler, so remove one, as a server built without an encoder would.
     const bare = testRunner(api.db, collectingLogger().log, { handlers: { export: undefined } });
     const { job } = bare.enqueue({ kind: "export", bookId: id, chapterId: null, label: "Build" });
     await bare.idle();
@@ -491,8 +485,8 @@ describe("the worker keeps going", () => {
   });
 
   test("a handler that finished is done, however late a cancel or a stop arrived", async () => {
-    // The handler takes a cancel back by throwing; one that returned is past the point where it
-    // could. Calling it cancelled would have its `onSettled` undo work it had committed.
+    // A handler takes a cancel by throwing; one that returned is past that point, and calling it
+    // cancelled would have its `onSettled` undo committed work.
     const db = testDb();
     db.run(
       `insert into books (id, title, author, cover_from, cover_to, added_at) values ('b0','B','A','#000','#111',0)`,
@@ -745,8 +739,8 @@ async function saveProfile(api: ReturnType<typeof testApi>, profile: Profile) {
 }
 
 /**
- * The fake, remembering what each request was sent and what it answered. `wait` holds a request
- * back by its text, so a test can make the chunks come back out of order.
+ * The fake, recording what each request sent and got. `wait` delays a request by its text, so
+ * chunks can come back out of order.
  */
 function recording(wait: (text: string) => number = () => 0) {
   const inner = fakeScriptingProvider();
@@ -880,8 +874,8 @@ const ledger = (api: ReturnType<typeof testApi>) =>
   endpointRequests(api.db, "scripting", "openai", 0);
 
 /**
- * What one chapter of this fixture holds while it is queued, read off a run of it on a book of its
- * own in the same API — so the figure is the server's, and the book under test has spent nothing.
+ * What one chapter of this fixture holds while queued, measured on a separate book in the same
+ * API, so the figure is the server's and the book under test has spent nothing.
  */
 async function oneChapterHolds(api: ReturnType<typeof testApi>): Promise<number> {
   const other = await shelved(api, ["Solo"]);
@@ -921,8 +915,7 @@ describe("a scripting run's spending", () => {
   });
 
   test("a request cancelled once it was out is one row at a cost nobody knows, counted at what it held; the chunk never sent leaves none", async () => {
-    // the profile's own model, reached through a gateway that answers nothing until the request
-    // is closed, with a key handed over so the request goes out
+    // a gateway that answers nothing until the request is closed, and a key so the request goes out
     let onStart!: () => void;
     const started = new Promise<void>((r) => (onStart = r));
     let requests = 0;

@@ -1,11 +1,6 @@
-// The scripting provider a server runs with: each run to the profile it was queued with.
-//
-// A profile whose base URL is `simulated://…` is answered here by the fake, which reads the prose
-// and never the network, at the pace and failure rate the profile's simulation gives it. One whose
-// base URL names a command-line tool (`codex:`, `claude-code:`) runs that tool on this computer.
-// Every other profile goes to its chat-completions model. The choice is made per request, from the
-// target, so one server holds real and simulated profiles side by side and nothing about which
-// is which lives outside the Endpoints page.
+// The scripting provider a server runs with, chosen per request from the target: a simulated
+// profile goes to the fake, a CLI base URL (`codex:`, `claude-code:`) to that tool, any other to
+// its chat-completions model.
 import { isSimulated } from "@/lib/providers";
 import { cliOf } from "@/lib/providers/cli";
 import { chatScriptingProvider, type ChatScriptingOptions } from "~/providers/chatScripting";

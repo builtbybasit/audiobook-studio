@@ -1,13 +1,6 @@
-// Voice samples waiting with a speaker: kept from a script file, read, discarded, restored and, a
-// day after a discard, removed. See docs/script-transfer.md, slice 3.
-//
-// **Stored when the import is applied, never when it is planned.** The plan route writes nothing;
-// the page, once the person applies, sends the same file back with the speakers whose recordings
-// it should keep, and this reads it again through the same guard and the same judgement.
-//
-// **A discard is undoable, the way a forget is.** Slice 2's forget hides a voice's recordings and
-// removes them a day later; a discard here does the same, so the toast's Undo can bring them back.
-// The removal happens on the next read of the book's samples after the grace period.
+// Voice samples waiting with a speaker: kept from a script file when the import is applied (never
+// when planned), read, discarded and restored. A discard hides them; the first read of the book's
+// samples after the grace period removes them, so Undo works until then.
 import { existsSync } from "node:fs";
 
 import type { KeptSample, ScriptFileVoice, SpeakerSamples, StoredSamples } from "@/types";
@@ -40,15 +33,13 @@ import {
 } from "~/speakerSamples/folder";
 
 export interface SampleOptions {
-  /** the clock a discard is stamped and a purge judged by; the real one unless a test moves it */
   now?: () => number;
-  /** what one voice's recordings may come to; the clone route's unless a test lowers them */
+  /** the clone route's unless a test lowers them */
   limits?: SampleLimits;
 }
 
 // ---------- reading ----------
 
-/** A voice an export carries again: the speaker, and how to read each recording. */
 export interface WaitingVoice {
   speaker: string;
   title: string;
@@ -60,10 +51,7 @@ export interface WaitingVoice {
   }[];
 }
 
-/**
- * The recordings still waiting with this book's speakers, for an export to carry again. A
- * discarded row is not carried: the person said they are not wanted.
- */
+/** Discarded rows are not carried. */
 export function readSpeakerSamplesForExport(
   db: Db,
   bookId: string,
@@ -74,8 +62,7 @@ export function readSpeakerSamplesForExport(
     .map((w) => ({
       speaker: w.speaker,
       title: w.title,
-      // A recording gone from disk — removed by hand, a folder cleared — is left out rather than
-      // failing the export, and a voice with none left is not carried at all.
+      // a recording gone from disk is left out rather than failing the export
       samples: w.samples.flatMap((s) => {
         const path = disk.path(bookId, s.file);
         if (!path || !existsSync(path)) return [];
@@ -93,10 +80,7 @@ function requireBook(db: Db, bookId: string): void {
   if (!getBook(db, bookId)) throw notFound("There is no book by that id", `id: ${bookId}`);
 }
 
-/**
- * The samples waiting in this book, after removing any a discard left behind longer than the
- * grace period — the read is where that happens, as a save of the endpoints is for slice 2.
- */
+/** Purges discards past the grace period first: the read is where that happens. */
 export function listSamples(
   db: Db,
   files: SpeakerSampleFiles,
@@ -108,7 +92,6 @@ export function listSamples(
   return waitingSamples(db, bookId);
 }
 
-/** Remove the rows discarded longer ago than the grace period, then the files nothing names. */
 export function purgeDiscarded(
   db: Db,
   files: SpeakerSampleFiles,
@@ -123,17 +106,9 @@ export function purgeDiscarded(
 }
 
 /**
- * Keep the recordings `upload` carries for `speakers`.
- *
- * Every speaker must be one this book has, and one whose recordings the file carries and the
- * judgement passes: this is the apply step of a plan the page already showed, so a speaker that
- * fails here is a request that does not match the plan, refused whole. A speaker who already has
- * recordings waiting has them put aside the soft way — discarded, not deleted — so the import's
- * Undo can bring them back; `replaced` names those rows.
- *
- * The file is read twice: once holding only the head of each recording, to learn from the cast
- * which folders these speakers' recordings are in, and again holding whole recordings from those
- * folders alone — so a file carrying twenty voices keeps in memory only the ones asked for.
+ * The apply step of a plan the page showed: a speaker that fails is refused whole. Recordings a
+ * speaker already had are discarded, not deleted (`replaced`), for Undo. The file is read twice,
+ * heads first, so only the folders asked for are held whole in memory.
  */
 export async function storeSamples(
   db: Db,
@@ -173,8 +148,7 @@ export async function storeSamples(
   if (judged.some((j) => j.clips.some((c) => c.partial)))
     fail(500, "The recordings were not read whole", "This is a bug; nothing was kept.");
 
-  // Written first, then named by rows in one transaction; a failure between leaves no file that
-  // no row names — except one another row already named, which was never this call's to remove.
+  // Files first, then rows; on failure remove only the files this call wrote that no row names.
   const before = namedFiles(db, bookId);
   const written: string[] = [];
   try {
@@ -200,7 +174,6 @@ export async function storeSamples(
   }
 }
 
-/** Hide one row's recordings now; the read a day later removes them unless Undo came first. */
 export function discardSamples(
   db: Db,
   bookId: string,
@@ -214,7 +187,6 @@ export function discardSamples(
   return { id };
 }
 
-/** Take back a discard; a row already removed by the purge is gone for good. */
 export function restoreSamples(db: Db, bookId: string, id: number): SpeakerSamples {
   requireBook(db, bookId);
   const row = sampleRow(db, bookId, id);
@@ -223,7 +195,6 @@ export function restoreSamples(db: Db, bookId: string, id: number): SpeakerSampl
   return toSpeakerSamples(db, { ...row, discardedAt: null });
 }
 
-/** Where one waiting recording is on disk, and what it is; 404 for anything else. */
 export function sampleFile(
   db: Db,
   files: SpeakerSampleFiles,

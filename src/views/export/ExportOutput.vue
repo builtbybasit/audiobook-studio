@@ -4,9 +4,7 @@ import { useExportsStore } from "@/stores/exports";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 
-// How the audiobook is written. The two questions everyone answers — what format, and one file or
-// many — are on the surface with the name and the quality; everything else folds away with its
-// current value on the summary line.
+// How the audiobook is written: format and file split up front, everything else folded away.
 import { computed, ref } from "vue";
 
 import {
@@ -68,7 +66,7 @@ const pacingSummary = computed(
     `${secs(pacing.value.line)} / ${secs(pacing.value.turn)} between lines · ${secs(s.chapterGap)} between chapters`,
 );
 
-// ---- loudness. What the build will do; the figures are the build's, measured from the audio.
+// ---- loudness; the figures are measured from the audio by the build
 const loudnessSummary = computed(() =>
   s.normalize ? `levelled to ${s.loudness} LUFS` : "off · levels left as rendered",
 );
@@ -87,7 +85,7 @@ const markerSummary = computed(() => {
     : (MARKER_PATTERNS.find((p) => p.value === s.markerPattern)?.sample ?? s.markerPattern);
 });
 
-/** Presets per gap, with the built-in default among them so a fresh book shows a chip lit. */
+/** Presets per gap, including the default so a fresh book shows a chip lit. */
 const PACING_PRESETS = {
   line: [0, 0.25, DEFAULT_PACING.line, 0.5, 1],
   turn: [0, 0.5, DEFAULT_PACING.turn, 1, 1.5],
@@ -96,8 +94,7 @@ const PACING_PRESETS = {
 const sample = computed(() => chapters.value.slice(0, 3));
 const volNameOf = (volumeId: number) => volumes.value.find((v) => v.id === volumeId)?.name ?? null;
 
-// ---- the cover. What is shown is what the build embeds: the image chosen here, else the EPUB's own,
-// else nothing — the gradient stands in on screen and is never written into a file.
+// ---- the cover: the chosen image, else the EPUB's own. The gradient is never written to a file.
 const coverShown = computed(() => s.cover ?? book.value.coverImage);
 const coverCaption = computed(() =>
   s.cover
@@ -126,7 +123,6 @@ const trackSample = computed(() =>
 
 <template>
   <div class="card">
-    <!-- the two everyday questions -->
     <div class="space-y-4 p-4">
       <div class="grid gap-4 sm:grid-cols-2">
         <div>
@@ -211,7 +207,6 @@ const trackSample = computed(() =>
       </div>
     </div>
 
-    <!-- everything else, with its current answer on the fold -->
     <ExportSection title="Book details and cover" :summary="metaSummary" :icon="MetaIcon">
       <div class="grid gap-3 text-sm sm:grid-cols-2">
         <label>Title<input v-model="s.title" class="input mt-1 w-full" /></label>
@@ -317,8 +312,7 @@ const trackSample = computed(() =>
       </template>
     </ExportSection>
 
-    <!-- Pauses: the overlap the app used to have twice. It is stated here and edited here, but the
-         numbers live on the book, so the reader, the ledger, the duration and the player agree. -->
+    <!-- edited here, but the numbers live on the book so every page agrees -->
     <ExportSection title="Pauses" :summary="pacingSummary" :icon="PauseIcon">
       <p class="mb-3 text-xs leading-relaxed text-zinc-500">
         Silence is stitched, never rendered — changing it re-times the book and costs nothing. The

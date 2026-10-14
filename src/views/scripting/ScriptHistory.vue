@@ -1,12 +1,7 @@
 <script setup lang="ts">
 import { chapterName } from "@/lib/chapterNumber";
-// The chapter's script history, in the reader where the script is.
-//
-// Three states, and which one you are in is said at the top of the panel every time: the **list**
-// of versions with the current script at the head of it, a read-only **preview** of one version,
-// and a **comparison** of one against the current script. Nothing here changes the script except
-// Restore, which shows what it would do — in lines and in clips — before it is pressed, and can be
-// taken back from its toast afterwards.
+// The chapter's script history: a list, a read-only preview, or a comparison with the current
+// script. Only Restore changes anything; it shows its effect first and is undoable from its toast.
 import { useHistoryStore } from "@/stores/history";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
@@ -63,12 +58,11 @@ const checkpoint = ref("");
 const clock = useNow({ interval: 15000 });
 const now = computed(() => clock.value.getTime());
 
-// the chapter's history: read from the server when the panel opens, or the store's own
 const { versions, head, status } = useChapterHistory(
   () => props.bookId,
   () => props.chapterId,
 );
-/** the history has been read: an empty list before then is not a chapter with no history */
+/** an empty list before this is not a chapter with no history */
 const loaded = computed(() => status.value === "success");
 const current = computed(() => scriptsStore.segmentsOf(props.bookId, props.chapterId));
 const selected = computed(() => versions.value.find((v) => v.id === selectedId.value) ?? null);
@@ -86,7 +80,7 @@ const busy = computed(() => historyStore.busyJobs(props.bookId, props.chapterId)
 const name = computed(() => chapterName(libraryStore.numberOf(props.bookId, props.chapterId)));
 const consequences = computed(() => (plan.value ? restoreConsequences(plan.value) : []));
 
-/** How many lines this version differs from the current script by — the list's own summary. */
+/** lines this version differs from the current script by */
 function differences(v: ScriptVersion): number | null {
   const c = historyStore.comparisonOf(props.bookId, props.chapterId, v.id);
   return c ? c.lines : null;
@@ -102,13 +96,12 @@ function compare(v: ScriptVersion) {
   selectedId.value = v.id;
   mode.value = "compare";
 }
-/** Open (or close) the plan under one version, which is where restoring is decided. */
 function askRestore(v: ScriptVersion) {
   selectedId.value = v.id;
   planFor.value = planFor.value === v.id && mode.value === "list" ? null : v.id;
   mode.value = "list";
 }
-/** Cancelling a run cannot be undone, so it is asked for first — the rule the app holds to. */
+/** Cancelling a run cannot be undone, so it is confirmed first. */
 const confirmCancel = ref(false);
 function cancelRun() {
   const job = busy.value[0];
@@ -122,7 +115,7 @@ function doRestore() {
   if (id == null) return;
   if (historyStore.restore(props.bookId, props.chapterId, id)) {
     planFor.value = null;
-    emit("close"); // the point of restoring is to be looking at the restored script
+    emit("close"); // show the restored script
   }
 }
 async function save() {
@@ -145,9 +138,7 @@ function back(): boolean {
   return false;
 }
 defineExpose({ back });
-// a preview or a comparison starts at its own beginning, not at the list's scroll position
 watch([mode, selectedId], () => void nextTick(() => body.value?.scrollTo({ top: 0 })));
-// a chapter change while the panel is open: nothing selected there is still selected here
 watch(
   () => props.chapterId,
   () => {
@@ -160,7 +151,6 @@ watch(
 
 <template>
   <div class="flex min-h-0 flex-1 flex-col">
-    <!-- which of the three you are looking at, said the same way every time -->
     <div
       class="flex flex-wrap items-center gap-2 border-b px-4 py-2 text-xs sm:px-6"
       :class="
@@ -210,7 +200,7 @@ watch(
     <div ref="body" class="min-h-0 flex-1 overflow-auto px-4 py-4 sm:px-6">
       <!-- ---------- the list ---------- -->
       <div v-if="mode === 'list'" class="mx-auto max-w-3xl space-y-4">
-        <!-- what you are working on now -->
+        <!-- the current script -->
         <div class="rounded-lg border-2 border-violet-400 p-3 dark:border-violet-500/60">
           <div class="flex flex-wrap items-baseline gap-2">
             <span
@@ -239,7 +229,6 @@ watch(
           </p>
         </div>
 
-        <!-- name this state -->
         <div class="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
           <div class="label mb-1.5 flex items-center gap-1.5">
             <CheckpointIcon class="icon-sm" /> Save a checkpoint
@@ -262,7 +251,6 @@ watch(
           </p>
         </div>
 
-        <!-- everything before it -->
         <div>
           <div class="label mb-2">Earlier versions · newest first</div>
           <p v-if="!loaded" class="text-xs text-zinc-500" role="status">
@@ -318,7 +306,7 @@ watch(
                 </button>
               </div>
 
-              <!-- what restoring this one would do, before it is pressed -->
+              <!-- restore plan -->
               <div
                 v-if="planFor === v.id && plan"
                 class="mt-3 rounded-md border border-violet-300 bg-violet-50/60 p-3 text-xs dark:border-violet-500/40 dark:bg-violet-500/5"
@@ -367,7 +355,7 @@ watch(
                     }}
                     and everything after it stay where they are.
                   </p>
-                  <!-- a run in flight would write over what you restore, so it goes first -->
+                  <!-- a run in flight would overwrite the restore, so it goes first -->
                   <div
                     v-if="busy.length"
                     class="mt-2 flex flex-wrap items-center gap-2 rounded border border-amber-300 bg-amber-400/10 p-2 text-amber-800 dark:border-amber-500/40 dark:text-amber-200"
@@ -389,7 +377,6 @@ watch(
                     >
                       Cancel the run
                     </button>
-                    <!-- the one step here that Undo cannot take back, so it is asked for -->
                     <div
                       v-if="confirmCancel && !busy[0].cancelled"
                       class="basis-full rounded-md border border-red-300 bg-red-50 px-3 py-2 text-[11px] leading-relaxed text-zinc-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-zinc-200"
@@ -450,8 +437,7 @@ watch(
           :style="{ fontSize: reader.size + 'px', lineHeight: reader.lineHeight }"
         >
           <template v-for="s in selected.segments" :key="s.id">
-            <!-- not the story: shown as the reader shows it, so a version that marked more or
-                 less of the chapter as site text reads that way -->
+            <!-- site text, marked as the reader marks it -->
             <p v-if="isSiteText(s.type)" class="mb-3 flex items-start gap-2">
               <span
                 class="min-w-0 flex-1"

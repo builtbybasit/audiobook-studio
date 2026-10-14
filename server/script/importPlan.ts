@@ -1,18 +1,6 @@
-// What importing a script file into a book would do, worked out without writing anything.
-// See docs/script-transfer.md#import.
-//
-// **Read, match and show first.** A script file is someone's paid scripting runs and an afternoon
-// of corrections; the book it lands in has its own. So this answers with a plan — which chapters
-// pair, which are refused and why, what the cast, dictionary and voices would gain — and the page
-// writes only what the person then ticks, through the paths a restore already uses.
-//
-// **Matched on the source, never on the lines.** A file chapter carries the fingerprint of the
-// words its script was made from (`sourceHash`); a chapter of this book pairs with it only when
-// its own words give the same fingerprint. Titles and numbers are never looked at: a renumbered or
-// retitled copy of the book still pairs, and one corrected typo in the EPUB refuses that chapter.
-//
-// Reading the file into its parts, and refusing what cannot be one, is `scriptFile.ts`; this file
-// is what the plan makes of what was read.
+// Plans a script-file import without writing anything; the page writes only what the person ticks.
+// Chapters pair on `sourceHash` (the words the script was made from), never titles or numbers.
+// Reading the file is `scriptFile.ts`.
 import type {
   Character,
   CharacterVoice,
@@ -53,21 +41,17 @@ import {
   type SampleLimits,
 } from "~/speakerSamples/folder";
 
-/**
- * What the plan asks providers, when it asks them anything: whether a voice this install lacks is
- * one the provider can hand over. Listing spends nothing, so the real lister is the default and
- * only a test hands over another.
- */
+/** Provider lookups for voices this install lacks. Listing is free; the real lister is default. */
 export interface ImportPorts {
   voices?: VoiceLister;
   signal?: AbortSignal;
-  /** how long every voice lookup together may take; a test shortens it */
+  /** total budget for all voice lookups */
   lookupMs?: number;
-  /** what one voice's recordings may come to; the clone route's, unless a test lowers them */
+  /** the clone route's limits by default */
   sampleLimits?: SampleLimits;
 }
 
-/** Read, check and match `upload` against `bookId`'s chapters; the plan the import page shows. */
+/** Read, check and match `upload` against `bookId`'s chapters. */
 export async function planScriptImport(
   db: Db,
   bookId: string,
@@ -102,7 +86,7 @@ export async function planScriptImport(
 
 // ---------- matching ----------
 
-/** The tags a speaker's lines are spoken with: those of the endpoint their voice is on. */
+/** A speaker's expression tags: those of the endpoint their voice is on. */
 function tagsOf(
   cast: Character[],
   characterVoice: CharacterVoice | undefined,
@@ -240,7 +224,7 @@ function lexiconDiff(book: LexEntry[], file: ScriptFileTerm[]): ScriptImportPlan
 
 // ---------- voices ----------
 
-/** The host a voice hint names its provider by; the export writes the same. */
+/** The host a voice hint names its provider by, as the export writes it. */
 function hostOf(baseUrl: string): string {
   try {
     return new URL(baseUrl).host;
@@ -249,24 +233,14 @@ function hostOf(baseUrl: string): string {
   }
 }
 
-/** How long one import may spend asking providers about voices, all lookups together. */
 const LOOKUP_MS = 15_000;
 
-/** What asking a provider came to: its voices, or why it could not be asked. */
 type Lookup = { voices: FoundVoice[] } | { failed: string };
 
 /**
- * One row per speaker whose voice the file names, and what that voice can become here.
- *
- * **Plainly the same voice, or not at all.** `here` needs this install to have the voice by the
- * same provider host, id **and** label on an enabled endpoint; a label that differs is some other
- * voice that happens to share an id. **Ticked on arrival only where nothing is lost**: a speaker
- * this import adds, or one still on the Narrator's voice — and only when the voice can be used.
- *
- * **Bounded, and honest when it runs out.** Every lookup shares one deadline, however the request
- * itself is doing; each endpoint's library and each public id is asked once per plan, and speakers
- * are looked up side by side. A lookup that failed or ran out of time is `unchecked`, never
- * `private`: "this provider did not answer" and "this voice cannot be had" are different advice.
+ * One row per speaker whose voice the file names. A match needs the same host, id and label.
+ * Pre-ticked only for a new speaker or one on the Narrator's voice. All lookups share one deadline;
+ * a failed or timed-out lookup is `unchecked`, never `private`.
  */
 async function voiceRows(
   db: Db,
@@ -309,8 +283,7 @@ async function voiceRows(
         match,
         ticked: (isNew || current === null) && usable,
       };
-      // The recordings the file carries for this voice, when it carries any: what cloning it
-      // again would start from, for a voice this install cannot otherwise have.
+      // The file's recordings for this voice, to clone it again from.
       const folder = folderOf(speaker.samples);
       if (folder) row.samples = rowSamples(judgeVoiceFolder(folder, read.voices, limits));
       return row;
@@ -331,13 +304,11 @@ async function matchVoice(
   );
   if (options.length) return { kind: "here", options };
 
-  // Not on an endpoint here yet: can the provider hand it over? A provider's own voices (OpenAI's,
-  // Gemini's, Qwen's) come back without a request; Fish finds one public voice by its id. Held to
-  // the same id-and-label test as a voice already here.
+  // Not here yet: can the provider hand it over (its library, or Fish's public catalogue by id)?
   const same = (v: FoundVoice): boolean => v.id === hint.voiceId && v.label === hint.voiceLabel;
   let failed: string | undefined;
   for (const e of endpoints) {
-    // only Fish has a public catalogue; asking any other provider would only be refused
+    // only Fish has a public catalogue
     const queries: VoiceQuery[] = [{ source: "library" }];
     if (isFishAudio(e)) queries.push({ source: "public", query: hint.voiceId });
     for (const query of queries) {
@@ -364,7 +335,7 @@ async function listSafely(
 ): Promise<Lookup> {
   if (signal.aborted) return { failed: "the lookup ran out of time" };
   try {
-    // Raced against the signal as well, so a lister that ignores it still cannot hold the import.
+    // Raced too, so a lister that ignores the signal can't hold the import.
     const aborted = new Promise<never>((_, reject) =>
       signal.addEventListener("abort", () => reject(signal.reason), { once: true }),
     );

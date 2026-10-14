@@ -1,9 +1,6 @@
-// Keeping a speech endpoint's format, bitrate and rate a combination its API can be asked for.
-//
-// The picker narrows its lists to what the chosen format offers, but two moves change the lists
-// under a choice already made: switching format, and saving a base URL that speaks another API.
-// Each has to keep what still fits, put back what does not, and say so — a combination left
-// invalid is one the server refuses the next line with.
+// Keeping a speech endpoint's format, bitrate and rate a combination its API accepts. Switching
+// format or saving a base URL of another API changes the lists under a choice: keep what fits,
+// put back what does not, and say so, or the server refuses the next line.
 import { describe, expect, test } from "bun:test";
 
 import {

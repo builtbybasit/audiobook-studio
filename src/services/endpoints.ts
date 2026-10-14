@@ -1,12 +1,6 @@
-// What the Endpoints page reads of an endpoint's past requests, and what a connection test costs.
-//
-// The requests themselves are the server's: every one a job sent, priced when it completed, and
-// summed there too — the charts, the totals and the percentiles come back already worked out over
-// every row in the range (`~/usage/ledger`), and the Activity list comes a page at a time. What is
-// left here is what both sides share — the ranges and their buckets, the shapes of a summary and a
-// page, and the rule a row's time is read by — and the estimate shown before a test is run, priced
-// through the same engine the server prices with. The test itself is the server's
-// (`endpointsStore.testSaved`).
+// What the Endpoints page shares with the server about past requests (ranges, summary and page
+// shapes, the row-time rule), plus the probe estimate priced through the server's pricing engine.
+// The requests and their sums live on the server (`~/usage/ledger`).
 import type {
   BillableUnits,
   EndpointKind,
@@ -35,7 +29,7 @@ export interface EndpointDescriptor {
   key: string;
   id: string;
   kind: EndpointKind;
-  /** the full rate card — base rates, the peak/off-peak schedule and the promotions */
+  /** base rates, schedule and promotions */
   pricing?: { base: RateSet; config: PricingConfig };
   /** tts: what the rate is per */
   billing?: TtsBilling;
@@ -44,11 +38,7 @@ export interface EndpointDescriptor {
 }
 
 /**
- * The one deliberate request a connection test sends, as the estimate beside the button counts it.
- *
- * It is priced through the same engine every other request goes through — at the rates in force
- * *now*, schedule and promotions included. Pricing a probe off the base rates instead told an
- * operator sitting inside a 40% off-peak window the wrong number.
+ * A connection test's one request, priced at the rates in force now (schedule and promotions too).
  */
 export const PROBE = {
   scripting: { inputTokens: 24, outputTokens: 8 },
@@ -57,7 +47,7 @@ export const PROBE = {
   transcription: { seconds: 3.39 },
 } as const;
 
-/** The probe's sample line, counted the way the endpoint's own billing model counts it. */
+/** The probe's line, counted the way the endpoint bills. */
 export const probeUnits = (billing: TtsBilling): BillableUnits =>
   measureSpeech(
     {
@@ -68,8 +58,7 @@ export const probeUnits = (billing: TtsBilling): BillableUnits =>
     billing,
   );
 
-/** What one probe would cost at the rates in force at `at`. `null` = this endpoint's rate is not
- *  known, which is never the same as free. */
+/** At the rates in force at `at`. `null` = rate not known, never the same as free. */
 export function probeCost(ep: EndpointDescriptor, at: number = Date.now()): number | null {
   switch (ep.kind) {
     case "scripting":
@@ -93,7 +82,7 @@ export function probeCost(ep: EndpointDescriptor, at: number = Date.now()): numb
 
 // ---------- ranges, summaries & pages ----------
 
-/** The ranges the Endpoints page offers, and how many buckets the server folds each into. */
+/** How many buckets the server folds each range into. */
 export const RANGES: { value: RangeKey; label: string; ms: number; buckets: number }[] = [
   { value: "1h", label: "1 hour", ms: 3600e3, buckets: 24 },
   { value: "6h", label: "6 hours", ms: 6 * 3600e3, buckets: 36 },
@@ -101,24 +90,22 @@ export const RANGES: { value: RangeKey; label: string; ms: number; buckets: numb
   { value: "7d", label: "7 days", ms: 7 * 24 * 3600e3, buckets: 42 },
 ];
 
-/** One endpoint's past, as the server sums it over every row its ledger holds — never a page. */
+/** Summed by the server over every ledger row, never over a page. */
 export interface EndpointSummary {
   /** the range asked for, folded into the buckets the charts draw, with its totals */
   series: MetricSeries;
-  /** what it has been charged since the start of the day the page asked about; `unknown` counts
-   *  the requests whose cost nobody knows, which are never added in as $0 */
+  /**
+   * since the start of the day asked about; `unknown` counts unpriced requests, never added as $0
+   */
   today: { cost: number; unknown: number };
-  /** when it last settled anything, ever; null when nothing has */
+  /** null when nothing has settled */
   lastSeen: number | null;
 }
 
-/**
- * Which of an endpoint's settled requests the Activity list asks for. Every filter is the server's,
- * so a count and the pages after the first say the same as the rows on screen.
- */
+/** Every filter is the server's, so counts and later pages match the rows on screen. */
 export interface RequestFilter {
   range: RangeKey;
-  /** a clicked chart bucket, from its `from` up to (not including) its `to` */
+  /** a clicked chart bucket, `to` exclusive */
   window?: { from: number; to: number } | null;
   status?: RequestStatus | "all";
   bookId?: string | null;
@@ -128,18 +115,14 @@ export interface RequestFilter {
 /** One page of an endpoint's settled requests, newest first. */
 export interface RequestPage {
   requests: RequestRecord[];
-  /** what to ask for the page after this one with; null on the last */
+  /** cursor for the next page; null on the last */
   next: string | null;
-  /** how many requests match the filter, over every page */
+  /** matching the filter, over every page */
   total: number;
-  /** how many requests the range holds, filtered or not */
+  /** in the range, unfiltered */
   of: number;
 }
 
-/**
- * When a request counts as having happened: when it settled, or when it was queued if it has not.
- * The one rule every bucket, total, filter and limit reads a row's time by — the server's ledger
- * says the same in SQL (`rowAt` in `~/usage/ledger`).
- */
+/** Settled time, else queued time. The ledger's SQL matches (`rowAt` in `~/usage/ledger`). */
 export const recordAt = (r: Pick<RequestRecord, "finishedAt" | "queuedAt">): number =>
   r.finishedAt ?? r.queuedAt;

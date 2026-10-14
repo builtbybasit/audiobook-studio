@@ -1,13 +1,7 @@
 <script setup lang="ts">
-// The right half of the editor: whatever the step list has selected — a plugin, a Mix or one of
-// its layers — at full size. A plugin's numbers as sliders with their range and unit; a Mix's
-// layers; a layer's own steps, each one click from being selected here. The foot moves, copies
-// and deletes what is selected.
-//
-// Every change is made in place on the chain the store holds, then `change` tells the editor to
-// write it behind (`effectsStore.update`), so a slider moves the sound at once and the server hears
-// about it when the drag settles. A delete leaves nothing selected — a second click on Delete must
-// not take out the next step unseen — and offers the step back until something else is picked.
+// The right half of the editor: the selected plugin, Mix or layer at full size.
+// Changes are made in place, then `change` has the editor write them behind. A delete leaves
+// nothing selected, so a second click on Delete can't take out the next step unseen.
 import { computed, ref, watch } from "vue";
 import {
   ArrowDown as DownIcon,

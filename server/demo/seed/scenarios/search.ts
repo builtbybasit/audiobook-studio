@@ -1,14 +1,8 @@
-// A seeded situation for the Search page's bulk corrections: one character's alias scattered
-// through the book as if the model had mis-attributed it, a few flagged lines, and clips in all
-// three states.
-//
-// `applySearchDemo` mutates the book it is handed and reports what it did; the caller took a
-// snapshot first and puts the book back with it, so seeding one scenario can never be observed by
-// the next. Nothing persists.
+// For the Search page's bulk corrections: an alias mis-attributed through the book, a few flagged
+// lines, and clips in all three states.
 import { newSpeaker } from "~/demo/seed/world/cast";
 import type { Chapter, Character, Segment } from "@/types";
 
-/** The character an alias is scattered from, and the alias itself. */
 export interface SearchDemoTarget {
   main: string;
   alias: string;
@@ -23,7 +17,6 @@ export function searchDemoTarget(cast: Character[]): SearchDemoTarget | null {
   return { main: main.name, alias: main.aliases[0] ?? main.name.split(" ").at(-1)! };
 }
 
-/** What the seeding did, for the toast that reports it. */
 export interface SearchDemoResult {
   moved: number;
   flagged: number;
@@ -39,7 +32,7 @@ export function applySearchDemo(
   now: number,
 ): SearchDemoResult {
   const { main, alias } = target;
-  // the alias is a speaker of its own, with no voice — exactly what a re-script leaves behind
+  // a voiceless speaker of its own, as a re-script leaves it
   if (!cast.some((c) => c.name === alias)) cast.push(newSpeaker(alias, cast.length));
   let moved = 0;
   let flagged = 0;
@@ -47,7 +40,7 @@ export function applySearchDemo(
   let cleared = 0;
   for (const [i, c] of scripted.entries()) {
     const segs = segmentsOf(c.id);
-    // every other chapter contributes mis-attributed lines, so matches span the whole book
+    // every other chapter, so matches span the book
     if (i % 2 === 1) {
       const his = segs.filter((x) => x.speaker === main);
       for (const [j, s] of his.entries())
@@ -69,7 +62,7 @@ export function applySearchDemo(
         flagged++;
         continue;
       }
-      // and clips in every state: rendered, already stale, never rendered
+      // clips in every state: rendered, stale, never rendered
       if (s.audio.status === "done" && staled < 4 && s.id % 5 === 2) {
         s.audio.status = "stale";
         if (c.narration === "done") c.narration = "stale";

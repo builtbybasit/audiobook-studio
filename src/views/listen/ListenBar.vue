@@ -1,14 +1,7 @@
 <script setup lang="ts">
-// The Listen page's player: one slim bar floating at the foot, always the same. The transport on
-// the left, one plain progress line across the middle with the time under the pointer, the clock,
-// and the tools on the right — repeat this line, flag it, speed, follow the reading, stop at the
-// chapter's end. Nothing in it is written in words: the line being read is on the page, lit, with
-// its speaker named there, and the bar only moves the sound. The dot before the line is the
-// speaker's colour, for the eye that wants it.
-//
-// The player is the app's one player; this bar reads and drives it directly. What it cannot know
-// is the chapter — which queue to start, and where a click on the line lands in it — so starting
-// and seeking are the page's, asked for by event.
+// The Listen page's player bar: transport, progress line, clock and line tools, with no text (the
+// lit line on the page names the speaker). It drives the app's one player directly; starting and
+// seeking need the chapter's queue, so they are the page's, asked for by event.
 import { computed, ref } from "vue";
 import {
   ChevronFirst as PrevIcon,
@@ -34,13 +27,10 @@ const props = defineProps<{
   color: string;
   /** the chapter's length, silence included */
   total: number;
-  /** the player holds this chapter */
   isThis: boolean;
-  /** the page keeps the line being read in view */
   follow: boolean;
 }>();
 const emit = defineEmits<{
-  /** play or pause this chapter */
   play: [];
   /** listen from `at` seconds into the chapter */
   seek: [at: number];
@@ -52,14 +42,13 @@ const { p, skip, next, prev, cycleRate, repeatClip, setStopAtEnd } = usePlayer()
 
 const pos = computed(() => (props.isThis ? p.pos : 0));
 const pct = computed(() => (props.total ? (pos.value / props.total) * 100 : 0));
-/** time gone, or — tapped — time left */
+/** time gone, or (tapped) time left */
 const remaining = ref(false);
 const clock = computed(() =>
   remaining.value ? `−${fmt(Math.max(0, props.total - pos.value))}` : fmt(pos.value),
 );
 
-// Where along the line the pointer is, 0…1, from the line's own edge: `offsetX` is relative to the
-// element under the pointer, which may be the fill.
+// 0…1 from the line's own edge: `offsetX` is relative to the element under the pointer (the fill)
 const frac = (e: MouseEvent): number => {
   const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
   return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));

@@ -1,12 +1,5 @@
-// A file on disk as a response, a part of it at a time when the client asks for one.
-//
-// `<audio>` does not download a clip and then play it. It asks for the part it needs next, with a
-// `Range` header, and it only knows it may do that because the first answer said
-// `Accept-Ranges: bytes`. Bun does not answer ranges for a `Response` built in a fetch handler — it
-// sends the whole file with a 200 whatever was asked — so a long clip or a WAV audiobook could not
-// be seeked at all, and Safari may refuse media served that way outright. The header is parsed by
-// `range-parser`, the one Express's `send` uses; the slicing is Bun's own, which reads only the
-// bytes the slice covers.
+// A file on disk as a response, with `Range` support. Bun ignores `Range` on a `Response` built in
+// a fetch handler, so without this `<audio>` can't seek and Safari may refuse the media outright.
 import type { BunFile } from "bun";
 import type { Context } from "hono";
 import parseRange from "range-parser";
@@ -14,23 +7,15 @@ import parseRange from "range-parser";
 import { notFound, type ApiError } from "~/lib/errors";
 
 export interface ServeOptions {
-  /** what the 404 says when there is no such file, and its detail */
+  /** the 404's message when there is no such file */
   missing: string;
   detail?: string;
-  /**
-   * Whether the name is the bytes' hash, so what it serves can never change and may be kept for
-   * good — true unless said otherwise. A file that can change under its name is revalidated.
-   */
+  /** true (default) when the name is the bytes' hash and can be cached for good */
   immutable?: boolean;
-  /** anything else the file's answer carries, such as the name a download is saved under */
   headers?: Record<string, string>;
 }
 
-/**
- * The file at `path` as `type`, a part at a time when asked (`fileResponse`), or a 404 saying
- * `missing` when there is no path or nothing is there. Every route that hands out a file on disk
- * answers through this, so each says the same thing about caching and about a file that is gone.
- */
+/** Every route serving a file on disk goes through this, for uniform caching and 404s. */
 export async function serveFile(
   c: Context,
   path: string | null | undefined,
@@ -49,15 +34,8 @@ export async function serveFile(
 }
 
 /**
- * The file, or the part of it the request's `Range` names.
- *
- * - no `Range`, or one this does not answer: the whole file, 200. A server may always ignore
- *   `Range`, and does here for a malformed header, a unit other than bytes and a request for
- *   several ranges at once, which a media element never makes.
- * - one range inside the file: that part, 206, with the `Content-Range` saying where it sits.
- * - a range the file does not reach: 416, with the size, so the client can ask again.
- *
- * `headers` are the file's own — its type, how long it may be kept — and go on every answer.
+ * One byte range: 206. Out of the file: 416. Anything else (none, malformed, multiple ranges, which
+ * a media element never asks for): the whole file, 200.
  */
 export function fileResponse(
   req: Request,
@@ -67,8 +45,7 @@ export function fileResponse(
   const size = file.size;
   const base = { ...headers, "accept-ranges": "bytes" };
   const header = req.headers.get("range");
-  // The length said outright, not left to the body: a `HEAD` is answered by the `GET` route with
-  // the body taken off, and Bun would then count what is left, which is nothing.
+  // explicit, because a `HEAD` reuses the `GET` route with the body stripped and Bun would count 0
   const whole = { ...base, "content-length": String(size) };
   if (!header) return new Response(file, { headers: whole });
 

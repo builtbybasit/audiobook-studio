@@ -1,7 +1,6 @@
-// The batch speech API from the client's side (`docs/speech-batch-api.md`), against a fake server
-// that speaks it: what a server's capabilities are read as and how long they are kept, what a batch
-// is sent as, how each item's answer lands on its own line whatever order it comes in, and what the
-// ledger is told about every item — however the batch, or the item, ended.
+// The batch speech API from the client's side (`docs/speech-batch-api.md`), against a fake server:
+// capabilities and their caching, the batch request, answers landing on their own line in any
+// order, and the ledger told about every item however it ended.
 import { describe, expect, test } from "bun:test";
 
 import { endpointSpeechProvider } from "~/providers/endpointSpeech";

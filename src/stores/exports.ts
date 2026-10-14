@@ -1,10 +1,5 @@
-// Export drafts, results and update decisions.
-//
-// The finished audiobooks are the server's: `useBookExports` in `@/queries` reads a book's in, and
-// `exports` is every such read as the query cache holds it — nothing here edits one. Forgetting
-// one is a request, and building one is a job the server runs — `buildExport` sends the selection
-// and the settings and puts the entry that comes back at the top of the book's list, rather than
-// encoding anything here.
+// Export drafts, results and update decisions. Audiobooks are the server's (`useBookExports`); a
+// build is a server job, and `buildExport` puts the entry it answers with at the top of the list.
 import { useQueryCache } from "@pinia/colada";
 import {
   chapterStates,
@@ -53,7 +48,7 @@ const isExportsKey = (key: readonly unknown[]): boolean =>
 export const useExportsStore = defineStore("exports", {
   state: (): ExportsState => ({ _exportDraft: null }),
   getters: {
-    /** Every book's audiobooks the server has listed so far; a book not read yet has none here. */
+    /** Every book's audiobooks listed so far; an unread book has none here. */
     exports(): ExportItem[] {
       return useQueryCache()
         .getEntries({ key: ["books"], predicate: (e) => isExportsKey(e.key) })
@@ -62,17 +57,15 @@ export const useExportsStore = defineStore("exports", {
   },
   actions: {
     // ---------- the seam ----------
-    /** One book's audiobooks as `change` leaves them, until the server's list is read again. */
+    /** Change one book's audiobooks locally until the server's list is read again. */
     _edit(bookId: string, change: (list: ExportItem[]) => ExportItem[]): void {
       useQueryCache().setQueryData<ExportItem[]>(keys.exports(bookId), (list) =>
         change(list ?? []),
       );
     },
     // ---------- export ----------
-    // A build makes one *export*, which is one or more files: grouping decides how many and nothing
-    // else changes. An export is identified by `key` (name + format + grouping), so building the
-    // same audiobook again is a new version of it rather than a second entry, and every chapter of
-    // it is encoded again. The encoding is the server's, and so is the file.
+    // One build makes one export (one or more files, by grouping). `key` (name + format + grouping)
+    // identifies it, so rebuilding is a new version, not a second entry.
     /** Everything the page needs to describe a build, with no side effects. */
     exportPlanFor(bookId: string, ids: number[], settings: ExportSettings): ExportPlan {
       const libraryStore = useLibraryStore();
@@ -86,7 +79,7 @@ export const useExportsStore = defineStore("exports", {
       const chapters = libraryStore.chaptersOf(bookId).filter((c) => ids.includes(c.id));
       return reviewOf(chapters, settings);
     },
-    /** One fingerprint per chapter, so a finished export can tell which of its chapters have moved. */
+    /** One fingerprint per chapter, so a finished export can tell which of its chapters moved. */
     exportStateFor(bookId: string, ids: number[]): Record<number, string> {
       const castStore = useCastStore();
       const libraryStore = useLibraryStore();
@@ -119,7 +112,7 @@ export const useExportsStore = defineStore("exports", {
     exportScopeOf(e: ExportItem): Set<number> {
       const libraryStore = useLibraryStore();
 
-      // entries from before the scope was recorded keep the reading they were built under
+      // entries without a recorded scope keep the reading they were built under
       const scope = e.scope ?? (e.grouping === "volume" ? "volumes" : "book");
       if (scope === "chosen") return new Set(e.chapterIds);
       const all = libraryStore.chaptersOf(e.bookId);
@@ -128,12 +121,9 @@ export const useExportsStore = defineStore("exports", {
       return new Set(all.filter((c) => vols.has(c.volumeId)).map((c) => c.id));
     },
     /**
-     * Why a finished export no longer matches the book. `settings` is the form as it stands now,
-     * so the page can also say "you have changed the bitrate since".
-     *
-     * `added` is only what the export claimed and has not got; chapters narrated *outside* its scope
-     * are `outside` and are offered as their own decision. A deliberately partial export is not an
-     * unfinished whole-book one.
+     * Why a finished export no longer matches the book; `settings` is the form now, for "you
+     * changed the bitrate since". `added` is only what it claimed; chapters outside its scope are
+     * `outside`, a separate decision.
      */
     exportUpdateFor(e: ExportItem, settings?: ExportSettings): ExportUpdate {
       const libraryStore = useLibraryStore();
@@ -173,18 +163,14 @@ export const useExportsStore = defineStore("exports", {
         needed: !!(added.length || changed.length || missing.length || diff.length),
       };
     },
-    /** Narrated chapters a finished export does not contain yet. Kept for the book overview. */
+    /** Narrated chapters a finished export does not contain yet. */
     newSince(exp: ExportItem): number[] {
       return this.exportUpdateFor(exp).added;
     },
     /**
-     * Queue a build. `ids` is exactly what goes in — the page has already resolved anything that
-     * could not, so nothing is dropped here silently.
-     *
-     * The server decides whether this build can run and starts the job, and what comes back is the
-     * audiobook it is already writing. Nothing is marked here before it answers — a refusal that
-     * never reached the server must not look like one that did — and the refusals themselves are
-     * the server's, stated in the same words as the readiness review's blockers.
+     * Queue a build of exactly `ids`; the page already resolved anything that could not go in.
+     * The server decides and refuses, in the readiness review's words; nothing is marked here
+     * before it answers.
      */
     async buildExport(
       bookId: string,
@@ -206,11 +192,9 @@ export const useExportsStore = defineStore("exports", {
           settings,
           opts.updates ?? null,
         );
-        // added rather than read: the book's other audiobooks are still as last read, and this
-        // one belongs at the top
+        // added rather than reread: the other audiobooks are unchanged, and this one goes on top
         this._edit(bookId, (list) => [entry, ...list.filter((e) => e.id !== entry.id)]);
-        // the Queue page picks the job up from its own poll, and the audiobooks are read again
-        // because the server has just marked the version this build replaces
+        // reread: the server has just marked the version this build replaces
         await Promise.all([jobsStore._changed(), invalidate({ key: keys.exports(bookId) })]);
         return this.exports.find((e) => e.id === entry.id) ?? entry;
       } catch (cause) {
@@ -219,11 +203,9 @@ export const useExportsStore = defineStore("exports", {
       }
     },
     /**
-     * Use this image as the audiobook's cover: `settings.cover` names it once it can be built with,
-     * and not before. Anything but a JPEG or a PNG is turned away here, without a request. The
-     * image is uploaded first and the url it answers with is the cover, because a build names only
-     * an image the server holds for this book. A refusal says why and leaves the cover that was
-     * chosen before. Returns whether the cover changed.
+     * Upload an image (JPEG or PNG only, checked here) and make its url the cover: a build only
+     * names images the server holds. A refusal says why and keeps the old cover. Returns whether
+     * the cover changed.
      */
     async chooseCover(bookId: string, settings: ExportSettings, file: File): Promise<boolean> {
       const uiStore = useUiStore();
@@ -245,10 +227,8 @@ export const useExportsStore = defineStore("exports", {
       }
     },
     /**
-     * The settings an existing export was built with, in the shape the form uses. A build records
-     * everything it ran with, cover and marker pattern included, so an update starts from the
-     * audiobook you made rather than from the defaults. Consent to stale clips is the one thing
-     * never inherited: it is given for one build, in front of the review.
+     * The settings an export was built with, as form values, so an update starts from it. Consent
+     * to stale clips is never inherited: it is given per build, in front of the review.
      */
     settingsFromExport(e: ExportItem): ExportSettings {
       if (e.settings) return { ...DEFAULT_EXPORT_SETTINGS, ...e.settings, useStale: false };
@@ -264,9 +244,9 @@ export const useExportsStore = defineStore("exports", {
       } as ExportSettings;
     },
     /**
-     * Hand a build back to the Build tab rather than starting it: tick these chapters, fill the form
-     * with these settings, and let the readiness review ask its questions. Update and Retry come
-     * here whenever going ahead would mean shrinking the selection or answering for you.
+     * Hand a build to the Build tab instead of starting it, for the readiness review to ask its
+     * questions. Update and Retry do this whenever going ahead would shrink the selection or
+     * answer for you.
      */
     stageExport(
       bookId: string,
@@ -276,10 +256,7 @@ export const useExportsStore = defineStore("exports", {
     ): void {
       this._exportDraft = { bookId, ids: [...ids], settings: { ...settings }, updates };
     },
-    /**
-     * Chapters an export wants back that no build can contain: gone from the book, or skipped by it
-     * now. They cannot even be ticked in the list, so they are named rather than staged.
-     */
+    /** Chapters an export wants that no build can contain (gone or skipped); named, not staged. */
     _buildable(
       bookId: string,
       ids: number[],
@@ -299,10 +276,8 @@ export const useExportsStore = defineStore("exports", {
       return { ids: ok, dropped };
     },
     /**
-     * Build the failed attempt again, with the settings it was started with. If anything has moved
-     * since it fell over — a chapter re-scripted, one narrating now — that is a new decision, so the
-     * retry goes to the Build tab for the same review a first build gets. Resolves to the build it
-     * started, or null when it started none.
+     * Rebuild a failed attempt with its settings. If anything moved since, it goes to the Build tab
+     * for review instead. Resolves to the build started, or null.
      */
     async retryExport(exportId: number): Promise<ExportItem | null> {
       const jobsStore = useJobsStore();
@@ -312,8 +287,7 @@ export const useExportsStore = defineStore("exports", {
       const failed = this.exports.find((e) => e.id === exportId);
       if (!failed || failed.status !== "failed") return null;
       const run = jobsStore.jobs.find((j) => j.id === failed.jobId)?.exportRun;
-      // the settings it was started with, stale consent included: retrying *this* build is not a
-      // new choice. What it must never do is give consent that was never given.
+      // its own settings, stale consent included: retrying *this* build is not a new choice
       const settings = run?.settings ?? this.settingsFromExport(failed);
       const { ids, dropped } = this._buildable(failed.bookId, run?.chapterIds ?? failed.chapterIds);
       const review = reviewOf(
@@ -329,8 +303,7 @@ export const useExportsStore = defineStore("exports", {
         });
         return null;
       }
-      // the failed attempt's row is the server's, and the read after the build says what it kept;
-      // the build says for itself whether it started: a retry has nothing left to decide here
+      // the build says for itself whether it started
       return await this.buildExport(failed.bookId, ids, settings, {
         updates: failed.replaces ?? undefined,
       });
@@ -349,15 +322,9 @@ export const useExportsStore = defineStore("exports", {
       return `${parts.join(", ")}. It is waiting on the Build tab with everything it was ${verb} with — nothing was built.`;
     },
     /**
-     * Bring a finished export up to date: it is built again as a new version, and the version that
-     * is current now stays current until the new one lands.
-     * `extra` adds chapters — the ones narrated since, or the ones outside its scope you chose to
-     * fold in.
-     *
-     * An update is the same audiobook again, so it keeps everything it contained. A chapter whose
-     * audio has gone is not dropped to make the update go through, and stale clips are not accepted
-     * on your behalf: either sends the build to the Build tab, where the readiness review that
-     * guards a first build asks the same questions about this one.
+     * Rebuild a finished export as a new version; the current one stays until it lands. `extra`
+     * adds chapters. It keeps everything it contained: missing audio or stale clips send it to the
+     * Build tab rather than being dropped or accepted for you.
      */
     async updateExport(exportId: number, extra: number[] = []): Promise<ExportItem | null> {
       const libraryStore = useLibraryStore();

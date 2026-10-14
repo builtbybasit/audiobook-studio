@@ -1,8 +1,5 @@
-// Keeping, reading and forgetting the samples a cloned voice was made from.
-//
-// The bytes go to disk first and the rows second, so a row never names a file that is not there;
-// files a change leaves unnamed are removed after the commit, in the background, the way a removed
-// book's clips are. A leftover file is a warning in the log, never a failed request.
+// Keeping, reading and forgetting a cloned voice's samples. Bytes go to disk before rows, so a row
+// never names a missing file; files left unnamed are removed in the background after the commit.
 import type { KeptSample, KeptVoiceSamples } from "@/types";
 import type { Db } from "~/db/client";
 import { readEndpoint } from "~/db/endpoints";
@@ -30,9 +27,8 @@ export interface KeepRequest {
 }
 
 /**
- * Write the samples, then the rows; the files a replacement left behind go afterwards. A keep
- * that fails part way takes back the files it wrote, except any a row already names — the same
- * bytes kept for this voice before are that row's, not this call's.
+ * A keep that fails part way takes back the files it wrote, except any a row already names: the
+ * same bytes kept for this voice before are that row's.
  */
 export async function keepSampleFiles(db: Db, files: VoiceFiles, keep: KeepRequest): Promise<void> {
   const samples: KeptSample[] = [];
@@ -80,37 +76,30 @@ export async function keepSampleFiles(db: Db, files: VoiceFiles, keep: KeepReque
     });
 }
 
-/** Every voice of one saved endpoint that has samples kept. */
 export function keptFor(db: Db, id: string): KeptVoiceSamples[] {
   if (!readEndpoint(db, id))
     throw notFound("There is no saved speech endpoint by that id", `id: ${id}`);
   return readKeptFor(db, id);
 }
 
-/** One voice's kept samples; a voice with none is not found. */
 export function keptOf(db: Db, id: string, voiceId: string): KeptVoiceSamples {
   const kept = readKept(db, id, voiceId);
   if (!kept) throw notFound("This voice has no samples kept", `voice: ${voiceId}`);
   return kept;
 }
 
-/**
- * Forget one voice's samples and keep the voice. They are hidden at once and removed by a save
- * after the grace period, so the forget's Undo (`restoreSampleFiles`) can bring them back until then.
- */
+/** Hidden at once, removed by a save after the grace period; Undo is `restoreSampleFiles`. */
 export function forgetSampleFiles(db: Db, id: string, voiceId: string): void {
   if (!db.transaction((tx) => forgetSamples(tx, id, voiceId, Date.now())))
     throw notFound("This voice has no samples kept", `voice: ${voiceId}`);
 }
 
-/** Take back a forget; its samples are answered as they were. */
 export function restoreSampleFiles(db: Db, id: string, voiceId: string): KeptVoiceSamples {
   if (!db.transaction((tx) => restoreSamples(tx, id, voiceId)))
     throw notFound("These samples are gone for good", `voice: ${voiceId}`);
   return keptOf(db, id, voiceId);
 }
 
-/** Where one kept sample is on disk, and what it is served as. */
 export function sampleFile(
   db: Db,
   files: VoiceFiles,
@@ -124,7 +113,7 @@ export function sampleFile(
   return { path, type: SAMPLE_MIME[sample.format] };
 }
 
-/** After a save: remove from disk the samples `reconcileClones` dropped — only those. */
+/** After a save: remove only the samples `reconcileClones` dropped. */
 export function removeDropped(files: VoiceFiles, gone: readonly DroppedSamples[]): void {
   for (const g of gone)
     inBackground(files.remove(g.endpointId, g.voiceId, g.files), "voice samples left on disk", {

@@ -6,13 +6,9 @@ import { useScriptsStore } from "@/stores/scripts";
 import ReadFailure, { scriptsUnread } from "@/components/ReadFailure.vue";
 import { useUiStore } from "@/stores/ui";
 
-// What pressing Build would produce, and what stands in the way. The plan is read off one structure
-// (`planOf`), so the file count, the names, the order, the running time and the size can never
-// disagree with each other or with the selection on the left.
-//
-// Problems are stated as things to do. Nothing is ever dropped quietly: "leave them out" is one of
-// the offered actions and it *removes the chapters from the selection*, so what the list shows and
-// what the build contains stay the same set.
+// What pressing Build would produce, and what stands in the way. Everything shown is read off
+// `planOf`, so counts, names and sizes cannot disagree. "Leave them out" removes chapters from the
+// selection rather than dropping them quietly, so the list and the build stay the same set.
 import { computed, ref, watch } from "vue";
 
 import { usePlayer } from "@/composables/usePlayer";
@@ -64,9 +60,7 @@ const review = computed(() =>
   exportsStore.exportReviewFor(props.bookId, props.selected, props.settings),
 );
 const blocked = computed(() => review.value.blockers.length > 0);
-// The flagged lines, the retakes waiting for a verdict and the review below are read from the
-// chapters' lines. A chapter whose lines are not here reads as one with nothing flagged, so the
-// build waits for them rather than passing a review nobody could have seen.
+// A chapter whose lines are not loaded would read as "nothing flagged", so the build waits for them.
 const unchecked = computed(() => props.reading || props.unread.length > 0);
 /** The image the build embeds, if any: the one chosen, else the EPUB's own, else none at all. */
 const coverNote = computed(() =>
@@ -97,8 +91,7 @@ const running = computed(() =>
     .find((e) => e.key === exportKey(props.settings) && e.status === "building"),
 );
 
-/** Review work is separate from render readiness: a playable clip can still be flagged as wrong,
- * and a finished retake can still be waiting beside the clip in the book for a human verdict. */
+/** Separate from render readiness: a playable clip can be flagged, or have a retake to judge. */
 const audioReview = computed(() => {
   const flagged: { chId: number; segId: number }[] = [];
   const retakes: { chId: number; segId: number }[] = [];
@@ -129,9 +122,8 @@ const reviewLink = (kind: "flagged" | "review") => {
 };
 
 /**
- * Lines of the selected chapters the audiobook leaves out: site text, and notes unless the book
- * reads them. Said beside what the build contains, with the way to them, because a line marked as
- * site text by mistake is otherwise a sentence missing from the file that nothing points at.
+ * Lines of the selected chapters the audiobook leaves out. Shown with a link, because a line
+ * marked as site text by mistake is otherwise a silently missing sentence.
  */
 const notRead = computed(() => {
   const book = libraryStore.bookById(props.bookId);
@@ -150,11 +142,7 @@ const notRead = computed(() => {
 const silent = computed(() => chapters.value.filter((c) => c.duration <= 0).length);
 
 const files = ref(false);
-/**
- * One id per *timeline*, not one per page. Preview volume 1 and then volume 2, or change the
- * selection, the pacing or the chapter gap, and the player is being handed something new — it must
- * load it, not read the second press as pause/resume of the first.
- */
+/** One id per timeline, so a changed selection or gap loads anew instead of resuming the old one. */
 function previewId(ids: number[]): string {
   const state = exportsStore.exportStateFor(props.bookId, ids);
   const of = `${props.settings.chapterGap}|${ids.map((id) => `${id}=${state[id] ?? ""}`).join("|")}`;
@@ -164,9 +152,8 @@ const preview = computed(() => previewId(props.selected));
 const playing = computed(() => player.id === preview.value && player.playing);
 
 /**
- * The export as the player wants it: every clip in order with the silence that will be stitched
- * between them — the book's pacing inside a chapter, the export's own gap between two. The prototype
- * renders no files, so this is a *timed* run: same timeline, same gaps, silent.
+ * The export as the player wants it: every clip in order, with the book's pacing inside a chapter
+ * and the export's gap between two. Clips without audio play as timed silence.
  */
 function previewQueue(ids: number[], title: string): Queue | null {
   const pacing = castStore.pacingOf(props.bookId);
@@ -194,8 +181,6 @@ function previewQueue(ids: number[], title: string): Queue | null {
     });
   });
   if (!clips.length) return null;
-  // Honest about what it is: the gaps and the running time are exactly what the file would have,
-  // but this prototype has rendered no audio, so the run is timed rather than heard.
   const live = clips.filter((c) => c.url).length;
   return {
     id: previewId(ids),
@@ -241,7 +226,6 @@ const ACTION_LABEL: Record<string, string> = {
 
 <template>
   <div class="card">
-    <!-- the expected output -->
     <div class="border-b border-zinc-200 p-4 dark:border-zinc-800">
       <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
         <div class="label">What you will get</div>
@@ -366,7 +350,6 @@ const ACTION_LABEL: Record<string, string> = {
       />
     </div>
 
-    <!-- problems, as things to do -->
     <div
       v-if="review.blockers.length"
       class="space-y-2 border-b border-zinc-200 p-4 dark:border-zinc-800"
@@ -474,7 +457,6 @@ const ACTION_LABEL: Record<string, string> = {
       </div>
     </div>
 
-    <!-- what a build will do -->
     <div class="p-4">
       <div
         v-if="review.usingStale"

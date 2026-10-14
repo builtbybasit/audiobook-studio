@@ -418,8 +418,7 @@ describe("refused before any request", () => {
     await expect(
       provider(fetch).speak(line(fish, { signal: ctl.signal, sent: r.sent })),
     ).rejects.toBe(reason);
-    // what the provider did with a request it was mid-way through is not knowable: billed or not,
-    // nobody here can say
+    // what the provider did with a request cut mid-way is unknowable: billed or not
     expect(r.got).toEqual([
       expect.objectContaining({ status: "cancelled", billed: null, audioSeconds: 0 }),
     ]);

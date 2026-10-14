@@ -1,13 +1,6 @@
-// What the Voices tab's clone and keep forms hold a pick of samples to, read from the endpoint's
-// provider (`cloning`) rather than written for any one of them.
-//
-// The server refuses a sample outside what the provider takes, with the file's own name
-// (`server/voices/clone.ts`), in the words of `lib/voiceSamples.ts`, which the page says too. The
-// page holds the same limits up front so a pick is fixed before anything is sent: the picker offers
-// only the formats the provider takes, a pick past the most it takes is cut and the cut said, and a
-// file too large, or named as a format the provider does not take, blocks the button with its name.
-// The server still reads each file's first bytes and is the one that decides; a name is only a
-// guess, so a file named as no known format is left for it to judge.
+// Sample limits for the Voices tab's clone and keep forms, from the provider's `cloning`. They
+// mirror the server's (`server/voices/clone.ts`) so a pick is fixed before sending; the server
+// still sniffs each file and decides, so a file with an unknown extension is left to it.
 import type { CloneSupport, SampleFormat } from "@/lib/providers";
 import {
   formatsSaid,
@@ -20,15 +13,15 @@ import {
   wrongFormatSaid,
 } from "@/lib/voiceSamples";
 
-/** One sample as a form holds it: the file, and what is said in it when the person gave that. */
+/** A sample file and, if given, its transcript. */
 export interface SampleRow {
   file: File;
   transcript: string;
-  /** cut in the form, so a transcript typed for the whole file may no longer match it */
+  /** cut in the form, so a transcript of the whole file may no longer match */
   trimmed?: boolean;
 }
 
-/** The names a sample of each format goes by; Opus is as often in an Ogg file as on its own. */
+/** Opus is as often in an Ogg file as on its own. */
 const EXTENSIONS: Record<SampleFormat, readonly string[]> = {
   wav: [".wav"],
   mp3: [".mp3"],
@@ -37,14 +30,11 @@ const EXTENSIONS: Record<SampleFormat, readonly string[]> = {
   flac: [".flac"],
 };
 
-/** The file picker's `accept`: every name a format the provider takes goes by. */
+/** The file picker's `accept`. */
 export const acceptOf = (cloning: CloneSupport): string =>
   cloning.formats.flatMap((f) => EXTENSIONS[f]).join(",");
 
-/**
- * The limits in one short line beside the picker: "Up to 20 files, 20 MB each · WAV, MP3, M4A,
- * Opus or FLAC", or for a provider that takes one, "One file, up to 10 MB · WAV or MP3".
- */
+/** E.g. "Up to 20 files, 20 MB each · WAV, MP3, M4A, Opus or FLAC". */
 export function limitsSaid(cloning: CloneSupport): string {
   const max = maxSamplesOf(cloning);
   const size = sizeSaid(maxSampleBytesOf(cloning));
@@ -52,7 +42,7 @@ export function limitsSaid(cloning: CloneSupport): string {
   return `${count} · ${formatsSaid(cloning.formats)}`;
 }
 
-/** The samples picked, up to the most one voice is made from, and how many were not. */
+/** The pick capped at the provider's maximum, and how many were left out. */
 export function pickOf<T>(
   items: readonly T[],
   cloning: CloneSupport,
@@ -61,13 +51,13 @@ export function pickOf<T>(
   return { samples, leftOut: items.length - samples.length };
 }
 
-/** What the page says of a pick cut short: "Only the first 20 are used: 3 left out." */
+/** "Only the first 20 are used: 3 left out." */
 export const leftOutSaid = (leftOut: number, cloning: CloneSupport): string =>
   maxSamplesOf(cloning) === 1
     ? `Only one sample is used: ${leftOut} left out.`
     : `Only the first ${maxSamplesOf(cloning)} are used: ${leftOut} left out.`;
 
-/** The format a file's name says it is, or null when its name says none this app knows. */
+/** null when the extension is none this app knows. */
 export function formatOfName(name: string): SampleFormat | null {
   const dot = name.lastIndexOf(".");
   if (dot < 0) return null;
@@ -77,12 +67,8 @@ export function formatOfName(name: string): SampleFormat | null {
   return null;
 }
 
-/**
- * Why these samples cannot be sent as they are, naming the first file at fault, or null when
- * nothing stops them: a file larger than the provider takes, one named as a format it does not
- * make a voice from, or all of them past what the server reads in one go. `who` is what the
- * sentence calls the provider.
- */
+/** Why these samples can't be sent (too large, wrong format, over the total), naming the first
+ *  file at fault; null when fine. `who` names the provider in the sentence. */
 export function pickProblem(
   samples: readonly File[],
   cloning: CloneSupport,
@@ -98,11 +84,10 @@ export function pickProblem(
   return null;
 }
 
-/** Whether a provider that needs a transcript of each sample is still owed one for some row. */
+/** A provider needing per-sample transcripts is still owed one. */
 export const transcriptsMissing = (rows: readonly SampleRow[], cloning: CloneSupport): boolean =>
   cloning.transcript === "required" && rows.some((r) => !r.transcript.trim());
 
-/** The rows as the store's request takes them: the files, and the transcripts beside them. */
 export const requestOf = (rows: readonly SampleRow[]) => ({
   samples: rows.map((r) => r.file),
   transcripts: rows.map((r) => r.transcript.trim()),

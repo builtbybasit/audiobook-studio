@@ -35,5 +35,4 @@ export function makeChapters(book: BookSeed, r: Rng): Chapter[] {
   return list;
 }
 
-/** The volumes of one seeded book, by id — what the export fixtures split their files along. */
 export const volumesOfSeed = (id: string): Volume[] => makeVolumes(bookSeed(id));

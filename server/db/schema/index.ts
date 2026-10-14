@@ -1,8 +1,4 @@
-// Every table, in one import.
-//
-// The tables are grouped by the part of the app that owns them, mirroring the ownership the store
-// guide sets out in `src/stores/README.md` — so the question "who writes this" has the same answer
-// on both sides of the wire.
+// Every table, grouped by the part of the app that owns it, as the stores are.
 export * from "~/db/schema/library";
 export * from "~/db/schema/cast";
 export * from "~/db/schema/script";

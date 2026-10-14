@@ -1,9 +1,6 @@
-// Removing a volume from a book whose chapters have work and files attached.
-//
-// Removing a volume renumbers every chapter after it, and most of what hangs off a chapter follows
-// through a foreign key. These are the parts that did not: the duplicate key a live job is found
-// by, the clips those chapters rendered, an audiobook left with nothing in it, and a build that
-// would have recorded where each chapter landed under numbers that no longer mean the same thing.
+// Removing a volume from a book whose chapters have work and files attached. Most of a chapter
+// follows the renumbering by foreign key; these cover what does not: a live job's dedupe key, the
+// clips, an emptied audiobook, and a build recording chapters under numbers that changed.
 import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -16,7 +13,7 @@ import * as ops from "~/library/ops";
 import { epubFile, story } from "../support/epub";
 import { narrateChapters, scriptChapters, testApi, type TestApi } from "../support/server";
 
-// A few paragraphs a chapter: the narrated test renders every line, and more lines prove nothing more.
+// A few paragraphs a chapter: the narrated test renders every line.
 const chapters = (...titles: string[]) =>
   epubFile({ chapters: titles.map((title) => ({ title, paragraphs: story(3) })) });
 

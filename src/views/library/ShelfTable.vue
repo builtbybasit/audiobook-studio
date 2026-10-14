@@ -1,8 +1,5 @@
 <script setup lang="ts">
-// The shelf as a table: one row per book, the pipeline as columns, so twenty books can be
-// compared at a glance and the one that needs a hand is found by scanning down a column. Progress
-// is per stage, the way the overview shows it, so the two pages agree. A column header that can
-// order the shelf is a button; the order itself belongs to the page, which keeps it in the URL.
+// The shelf as a table: one row per book, the pipeline as columns. The sort lives in the page's URL.
 import type { Book } from "@/types";
 import type { PickedFile } from "@/components/addEpub";
 import type { ShelfSort } from "@/views/library/shelf";

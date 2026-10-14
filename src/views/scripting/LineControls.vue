@@ -1,9 +1,6 @@
 <script setup lang="ts">
-// In the editor of a dialogue or thought line: who it is spoken as — the character or one of their
-// personas — and the line effects it is heard through. Both change only how the line sounds: a
-// persona with no voice of its own speaks in its character's, so a clip needs Re-apply, not new
-// speech — unless the persona has a voice or a delivery style of their own
-// (`scriptsStore.retouchLines`).
+// Who a dialogue/thought line is spoken as, and its line effects. A voiceless persona needs only
+// Re-apply, not new speech (`scriptsStore.retouchLines`).
 import { computed, ref } from "vue";
 import { VenetianMask as MaskIcon } from "@lucide/vue";
 import { plural } from "@/lib/contents";
@@ -29,7 +26,7 @@ function speakAs(to: string) {
   const { bookId, chapterId } = props;
   const moves = speakAsMoves(segments.value, props.segment.id, to, group.value, rest.value);
   if (!moves.length) return;
-  // the script as it was, clips' freshness with it: a switch that needed new speech is undone whole
+  // includes clip freshness, so a switch that needed new speech is undone whole
   const undo = scriptsStore._editSnapshot(bookId, chapterId);
   const respoken = scriptsStore.retouchLines(
     bookId,
@@ -44,7 +41,7 @@ function speakAs(to: string) {
   });
 }
 
-// ---- line effects: every one offered to the model, and any the line has that no longer is
+// ---- line effects: those offered to the model, plus any the line still has
 const on = computed(() => new Set(props.segment.effects));
 const shown = computed(() => {
   const offered = new Set(lineEffectsOf(effectsStore.effects).map((e) => e.id));
@@ -53,7 +50,7 @@ const shown = computed(() => {
 function toggle(id: string) {
   const next = new Set(on.value);
   if (!next.delete(id)) next.add(id);
-  // kept in the library's order, the order they run in
+  // library order is run order
   const effects = effectsStore.effects.filter((e) => next.has(e.id)).map((e) => e.id);
   scriptsStore.retouchLines(props.bookId, props.chapterId, [{ id: props.segment.id, effects }]);
 }

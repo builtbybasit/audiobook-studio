@@ -1,15 +1,7 @@
 <script setup lang="ts">
-// A book's say over the scripting prompt: notes the prompt places where it says `{{book.notes}}`,
-// and a whole prompt of its own it may switch on in place of the library's (and any endpoint's
-// replacement). See `@/lib/prompt` for how the layers are put together.
-//
-// Notes are only sent where the prompt in force names their tag, so the panel says when the
-// prompt this book would be sent drops its notes, or the chosen endpoint's, and offers to add the
-// tag when that prompt is the book's own. Under it, the draft can be tried on one chunk.
-//
-// The panel edits a draft and writes it whole when the typing stops, or the focus leaves: a
-// keystroke's worth of notes is not worth a request. A draft that could not be sent — notes too
-// long, a replacement without its excerpt — stays here with the reasons and is not written.
+// A book's scripting prompt layer: notes for `{{book.notes}}`, or a whole replacement prompt (see
+// `@/lib/prompt`). Warns when the prompt in force drops the notes' tag. The draft saves on idle or
+// blur; an invalid draft stays here with its reasons and is not written.
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { storedBookPrompt, useLibraryStore } from "@/stores/library";
@@ -40,9 +32,8 @@ const endpointsStore = useEndpointsStore();
 const libraryStore = useLibraryStore();
 const scriptingStore = useScriptingStore();
 
-/** How long the draft has to sit still before it is written. */
 const SAVE_AFTER_MS = 800;
-/** Built here: a literal pair of braces in the template would end the interpolation it sits in. */
+/** Built here: literal braces in the template would end the interpolation. */
 const NOTES_TAG = "{{book.notes}}";
 const ENDPOINT_NOTES_TAG = "{{endpoint.notes}}";
 
@@ -58,7 +49,7 @@ const saved = (): BookPrompt => {
   };
 };
 const draft = ref<BookPrompt>(saved());
-// notes of nothing but spaces are no notes: saving them again would change nothing
+// whitespace-only notes count as none
 const dirty = computed(
   () =>
     JSON.stringify(storedBookPrompt(draft.value) ? draft.value : EMPTY) !== JSON.stringify(saved()),
@@ -82,8 +73,7 @@ watch(
   },
   { deep: true },
 );
-// what the server answered (or read back after refusing) is what the panel shows, unless there is
-// typing it has not seen yet
+// show the server's copy unless there is unsaved typing
 watch(
   () => JSON.stringify(saved()),
   () => {
@@ -92,20 +82,20 @@ watch(
 );
 onBeforeUnmount(flush);
 
-/** The library's default: what the book gets when it does not replace it, and what reset puts back. */
+/** also what reset puts back */
 const libraryDefault = computed(() => libraryPrompt(endpointsStore.prompt));
 
 const replace = computed({
   get: () => draft.value.replace,
   set(on: boolean) {
-    // switched on with nothing typed yet, it starts from what the book would otherwise be sent
+    // an empty replacement starts from what the book would otherwise be sent
     if (on && !draft.value.system.trim() && !draft.value.user.trim())
       Object.assign(draft.value, libraryDefault.value);
     draft.value.replace = on;
   },
 });
 
-// ---- what a run of the chosen endpoint would send, for this book ----
+// ---- what a run of the chosen endpoint would send ----
 
 const profile = computed(() => scriptingStore.runProfile);
 const resolved = computed(() =>
@@ -115,7 +105,7 @@ const resolved = computed(() =>
     book: draft.value,
   }),
 );
-/** Notes the prompt in force never says where to put, the book's or the endpoint's: not sent. */
+/** notes whose tag the prompt in force lacks, so they are not sent */
 const dropped = computed(() =>
   droppedNotes(
     resolved.value,
@@ -124,13 +114,12 @@ const dropped = computed(() =>
     "book",
   ),
 );
-/** Put the line that places `owner`'s notes at the end of this book's system prompt. */
+/** Appends `owner`'s notes tag to this book's system prompt. */
 function addTag(owner: NotesOwner) {
   draft.value.system = withNotesLine(draft.value.system, owner);
 }
 
-// the chapter the preview is built on: the book's first; the trial below picks its own
-// the preview reads as the first chapter the audiobook keeps, a skipped cover having no number
+// the preview uses the first kept chapter; the trial picks its own
 const chapter = computed(() => {
   const chapters = libraryStore.chaptersOf(props.bookId);
   return chapters.find((c) => !c.excluded) ?? chapters[0];
@@ -157,7 +146,7 @@ const preview = computed<RenderedPrompt | null>(() => {
     chapter: { title: ch.title, number: libraryStore.numberOf(props.bookId, ch.id) ?? ch.id },
     part: 1,
     parts: parts.value.length,
-    // a persona says whose it is only when that character is in the cast, as a run's request does
+    // personaOf only when that character is in the cast, as in a run
     cast: characters.value.map((c) => ({
       name: c.name,
       aliases: c.aliases,

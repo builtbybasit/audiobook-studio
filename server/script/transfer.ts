@@ -1,5 +1,5 @@
 // A book's script written out as a file to keep, send, edit or carry to a newer EPUB of the same
-// book. See docs/script-transfer.md#the-file-and-the-export; reading one back is `importPlan.ts`.
+// book. Reading one back is `importPlan.ts`.
 import JSZip from "jszip";
 
 import type {
@@ -36,17 +36,9 @@ import { readSpeakerSamplesForExport } from "~/speakerSamples/store";
 import type { VoiceFiles } from "~/voices/files";
 
 /**
- * Which chapter of a book a script belongs to, told by the words of its source.
- *
- * **The source, never the lines.** A script cannot rebuild its chapter: the scripting model drops
- * the quotation marks around dialogue and squashes whitespace, its answer is accepted with 2% of
- * words missing or added, and the reader's rewrite changes words on purpose. So this is sha256
- * over the chapter's own words in reading order, read through `wordsOf` — the same normalisation
- * the answer check uses — so a re-imported EPUB that differs only in markup, curly quotes or
- * spacing still matches, and one corrected typo does not.
- *
- * **One function, called by export and import both.** Two copies of the normalisation would drift
- * until every chapter was refused.
+ * Fingerprint of a chapter's source words (not its script lines, which can't rebuild it): sha256
+ * over `wordsOf`, so markup, quotes and spacing don't matter but a fixed typo does. Export and
+ * import must share this one function.
  */
 export function sourceHash(body: string): { hash: string; words: number } {
   const words = wordsOf(plainText(body));
@@ -55,10 +47,8 @@ export function sourceHash(body: string): { hash: string; words: number } {
 }
 
 /**
- * How another install can recognise a voice: the provider's host, the voice's id and label.
- *
- * A `VoiceRef` is never written, because its endpoint id is a key local to this database. A voice
- * on an endpoint that no longer has it writes no hint — there is nothing left to recognise.
+ * How another install can recognise a voice: provider host, voice id and label. Not the
+ * `VoiceRef`, whose endpoint id is local to this database.
  */
 function voiceHint(ref: string | null, endpoints: readonly Endpoint[]): VoiceHint | undefined {
   if (!ref) return undefined;
@@ -78,7 +68,7 @@ function voiceHint(ref: string | null, endpoints: readonly Endpoint[]): VoiceHin
 
 // ---------- voice samples ----------
 
-/** One recording a speaker's voice would carry: what it is, and how to read its bytes. */
+/** One recording a speaker's voice would carry. */
 interface CarriedSample {
   name: string;
   format: KeptSample["format"];
@@ -93,19 +83,12 @@ interface CarriedVoice {
   samples: CarriedSample[];
 }
 
-/**
- * Recordings that came in a script file and still wait with a speaker, to be carried again. A
- * discarded set is not carried.
- */
+/** Recordings that came in a script file and still wait with a speaker, to be carried again. */
 function waitingVoices(db: Db, bookId: string, audioDir: string): CarriedVoice[] {
   return readSpeakerSamplesForExport(db, bookId, audioDir);
 }
 
-/**
- * The recordings slice 2 keeps for the clone a speaker is voiced by — or none, when the voice is
- * not a clone with recordings, its recordings were forgotten, or the voice has left the saved
- * configuration (`missing_since`), since a voice that is gone is not one this book speaks with.
- */
+/** The kept recordings of the clone a speaker is voiced by; none if the voice is gone. */
 function keptCloneOf(
   db: Db,
   c: Character,
@@ -134,10 +117,7 @@ function keptCloneOf(
   };
 }
 
-/**
- * Every speaker of the book whose voice's recordings an export can carry: the clone the speaker is
- * voiced by, or failing that the recordings still waiting with them from an earlier import.
- */
+/** Speakers whose recordings an export can carry: their clone's, else ones left by an import. */
 function carriedVoices(
   db: Db,
   bookId: string,
@@ -154,10 +134,7 @@ function carriedVoices(
   return out;
 }
 
-/**
- * What ticking "Include voice samples" would add to this book's export, so the option can say
- * whose recordings it hands over and how much before anyone ticks it. Empty when there are none.
- */
+/** What "Include voice samples" would add to this book's export, shown before it is ticked. */
 export function exportSamples(db: Db, bookId: string, audioDir: string): ScriptExportSamples {
   if (!getBook(db, bookId)) throw notFound("There is no book by that id");
   return {
@@ -212,12 +189,8 @@ function termOf(e: LexEntry): ScriptFileTerm {
 const json = (value: unknown): string => JSON.stringify(value, null, 2) + "\n";
 
 /**
- * The book's script as `<book>.script.zip`.
- *
- * **Every chapter with a script, excluded or not.** Exclusion is the importing book's decision, made
- * on its own Contents page; a script left out here could not be got back there. A chapter with no
- * script writes no file, and one whose run is still going is written as it last stood. Indented
- * JSON, because a person opening a chapter file to fix its speakers is one of the reasons it exists.
+ * The book's script as `<book>.script.zip`. Every scripted chapter goes, excluded or not: exclusion
+ * is the importing book's call. Indented JSON, since people edit these files by hand.
  */
 export async function buildScriptExport(
   db: Db,
@@ -254,8 +227,7 @@ export async function buildScriptExport(
     manifest.chapters.push({ file, title: chapter.title, sourceHash: hash, words });
   }
 
-  // Recordings of a person go only when asked for, every time: `samples` is the ask. Stored rather
-  // than deflated — audio barely compresses, and inflating it on the other side is time for nothing.
+  // Recordings go only when asked for. Stored, not deflated: audio barely compresses.
   const folders = new Map<string, string>();
   if (samples) {
     const taken = new Set<string>();

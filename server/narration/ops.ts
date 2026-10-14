@@ -1,14 +1,6 @@
-// What a person does to one line's narration, as operations: ask for another take of it, and say
-// which take they are keeping.
-//
-// A retake is the demo's comparison — a new clip rendered beside the one in the book, for the
-// listener to judge — put through the same queue as a bulk run. The request writes the lines'
-// queued clips in the transaction that creates the job, so the chapter reads as a run in progress
-// from the moment the route answers, and the job runs at the scope that wants nothing new
-// (`RunScope`'s `pending`), so the handler renders exactly the clips this request queued and marks
-// none of them `auto`: a retake that lands waits, where a bulk replacement takes over. The verdict
-// is the other half. Both end by settling the chapter the way a run does, because a kept take is a
-// clip that plays and a chapter's length is asked of the clips that play.
+// A person's operations on one line's narration: ask for a retake, and keep or drop it. A retake
+// is queued like a bulk run at the `pending` scope and never `auto`, so it waits beside the clip in
+// the book for a verdict. Both settle the chapter, since its length is asked of the clips that play.
 import type { Judged, RetakesQueued, Segment } from "@/types";
 import { isSpoken } from "@/lib/siteText";
 import type { Db } from "~/db/client";
@@ -37,7 +29,6 @@ import { assertWithinBudget } from "~/usage/budget";
 
 export type Verdict = "accept" | "reject";
 
-/** The chapter and its script, or the refusal that says which of them there is not. */
 function requireScripted(db: Db, bookId: string, chapterId: number, what: string) {
   requireBook(db, bookId);
   const chapter = library.getChapter(db, bookId, chapterId);
@@ -47,7 +38,7 @@ function requireScripted(db: Db, bookId: string, chapterId: number, what: string
   return { chapter, segs };
 }
 
-/** The refusal names the chapter by its reading number, the one the page shows, never its id. */
+/** Names the chapter by its reading number, never its id. */
 function beingNarrated(db: Db, bookId: string, chapterId: number, then: string) {
   const name = library.chapterName(db, bookId, chapterId);
   return conflict(
@@ -57,18 +48,9 @@ function beingNarrated(db: Db, bookId: string, chapterId: number, then: string) 
 }
 
 /**
- * Render another take of these lines, as one job.
- *
- * A line that already has a retake — waiting for a verdict, or still rendering — or whose own clip
- * is in flight is left out and said so, because one comparison at a time is what a verdict is a
- * verdict on; a line not in the script is said so too, and so is one the book does not read aloud
- * (`isSpoken`), which is never rendered. A line with a playable clip gets its retake
- * beside it, numbered after every take the line has seen; one with nothing worth keeping renders in
- * place, which is a plain re-render and not a comparison. Nothing is written when nothing is
- * queued. A chapter with a run in flight is refused rather than joined: the queue's
- * one-job-per-chapter rule would hand back that run's job in any case. A retake is held to the
- * book's budget exactly as a bulk run is: priced at its worst case, refused whole with a 409 when
- * it does not fit, and held by its job until its lines settle.
+ * One job of retakes. A line with a retake or clip already in flight is skipped: a verdict is on one
+ * comparison at a time. A chapter with a run in flight is refused, not joined. Held to the book's
+ * budget like a bulk run. See `queuedSlot` for where each take lands.
  */
 export function retakeLines(
   db: Db,
@@ -93,7 +75,7 @@ export function retakeLines(
   }
   if (!queued.length)
     return { job: null, queued: [], skipped, chapters: library.listChapters(db, bookId) };
-  // held to the book's budget as a bulk run is, before anything is written
+  // before anything is written
   const cost = narrationCost(db, bookId, queued);
   assertWithinBudget(db, bookId, {
     kind: "narration",
@@ -110,8 +92,7 @@ export function retakeLines(
     label: RETAKE_LABEL,
     bulk: { id: nextRunId(db), op: RETAKE_LABEL, index: 1, total: 1, scope: RETAKE_LABEL },
     run: { narrationRun: narrationRunOf(cost, queued.length, "pending") },
-    // in the same transaction as the row, so the lines hold their slots before the run can start
-    // and the chapter cannot read as queued after the worker has moved on
+    // with the job row, so the slots are held before the run can start
     onCreated: (tx) => {
       for (const s of queued) {
         const { slot, queued: clip } = queuedSlot(s.audio, { auto: false });
@@ -121,10 +102,8 @@ export function retakeLines(
       bumpRevision(tx, bookId, chapterId);
     },
   });
-  // the check above and the enqueue are not one transaction; a run that slipped in between is the
-  // job handed back, and it was not this request's, so the lines were not queued
+  // a run that slipped in between the check and the enqueue was handed back instead
   if (!created) throw beingNarrated(db, bookId, chapterId, "ask for the retake");
-  // the chapters as they now stand, since the one retaken reads as queued from here on
   return {
     job,
     queued: queued.map((s) => s.id),
@@ -134,19 +113,9 @@ export function retakeLines(
 }
 
 /**
- * Keep or drop a line's retake.
- *
- * The verdict the Narration page asks for, on rows and in one transaction. Kept, the retake
- * becomes the clip in the book with the takes it displaces behind it, and the listener's complaint
- * comes off the line — the retake answered it. Dropped, the retake joins the take list marked
- * rejected if it rendered and simply goes if it did not, and the clip in the book is left exactly
- * as it was; whether that clip has drifted from its line since is the browser's reading to make.
- * Either way the chapter is settled from the clips that now play, and the revision moves, since the
- * script a client holds has a clip in it that is no longer there.
- *
- * A retake still rendering has nothing to judge yet, and one that never produced a clip cannot be
- * kept; both are refused, so a verdict is only ever on a comparison that can be heard. A chapter
- * with a run in flight is refused too: its status is the run's to write until the run ends.
+ * Kept, the retake becomes the clip in the book and the line's flag is cleared. Dropped, it joins
+ * the takes as rejected (or goes, if it never rendered). Refused while rendering, for an accept with
+ * no clip, and while a run owns the chapter.
  */
 export function judgeTake(
   db: Db,

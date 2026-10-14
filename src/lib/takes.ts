@@ -1,6 +1,5 @@
-// The lifecycle of one rendered clip. Pure functions on `SegmentAudio`, shared by the store's
-// retake actions and by the server's narration, so a clip put back in the queue by a retry and one
-// put back by a rate limit end up in exactly the same state.
+// The lifecycle of one rendered clip, shared by the store's retakes and the server's narration so
+// both leave a clip in the same state.
 import type { SegmentAudio, Take } from "@/types";
 
 /** Back to the queue without losing the take history or a comparison in progress. */
@@ -15,20 +14,11 @@ export const requeue = (a: SegmentAudio): SegmentAudio => ({
   ...(a.auto ? { auto: true } : {}),
 });
 
-/**
- * The number the next take of this line gets: one past the highest the line has seen, the take list
- * included. Reading it off the clip in the book alone repeats a number after a take was rejected.
- */
+/** One past the highest seen, takes included, so a rejected take's number is never reused. */
 export const nextTakeNumber = (a: SegmentAudio): number =>
   Math.max(a.n ?? 1, ...(a.takes ?? []).map((t) => t.n)) + 1;
 
-/**
- * Freeze what `audio` currently holds so it survives the next render.
- *
- * The receipt comes with it. A take that was paid for was paid for whether or not the listener kept
- * it, and dropping `charge` here left the clip's cost with nothing behind it — no rate, no instant,
- * no reason — the moment a retake displaced it.
- */
+/** Freeze `audio` so it survives the next render; its `charge` comes too, as it was paid for. */
 export const snapshotTake = (a: SegmentAudio): Take => ({
   n: a.n ?? 1,
   at: a.at ?? Date.now(),

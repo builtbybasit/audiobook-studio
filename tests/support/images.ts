@@ -1,8 +1,5 @@
-// Pictures for the cover tests: real enough to be read as what they claim to be.
-//
-// A PNG is spelled out here — one pixel, every chunk and checksum as the format asks — so that the
-// tests that only sniff and store a cover need nothing installed. A JPEG is harder to write by hand
-// and only matters where ffmpeg reads it, so it is made by ffmpeg, in the tests that have one.
+// Cover test images. The PNG is spelled out by hand so sniff-and-store tests need nothing
+// installed; a real JPEG is made by ffmpeg, only in tests that have it.
 
 /** A valid 1×1 PNG. */
 export const PNG = Uint8Array.from(

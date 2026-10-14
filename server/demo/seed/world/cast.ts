@@ -1,9 +1,5 @@
-// Seeded casting. OpenAI for dialogue, the free local Kokoro for the Narrator on two books (cheap
-// narration, premium dialogue); one Drowned character sits on the paused Azure proxy, which is a
-// routing blocker the Cast page exists to show you how to fix.
-//
-// Every entry is built fresh, `aliases` included, so a merge or a rename in one world can never
-// reach back into the read-only seeds in `fixtures/books.ts`.
+// Seeded casting: OpenAI for dialogue, local Kokoro for two books' Narrators, and one Drowned
+// character on the paused Azure proxy (a routing blocker). Entries are built fresh, `aliases` too.
 import { voiceRef } from "~/demo/seed/fixtures/voices";
 import { PALETTE } from "~/demo/seed/fixtures/style";
 import type { BookSeed } from "~/demo/seed/fixtures/books";
@@ -15,14 +11,8 @@ const fish = (v: string): VoiceRef => voiceRef("fish", v);
 const gem = (v: string): VoiceRef => voiceRef("gemini", v);
 
 /**
- * Speakers seeded onto a particular endpoint because of how that endpoint **bills**, not because of
- * how it sounds.
- *
- * One book is deliberately spread across three billing models, so a single narration run produces
- * character-billed, byte-billed and token-billed requests side by side and the estimate has to add
- * three different kinds of arithmetic into one figure. Elder Mo's lines are the ones the
- * pronunciation dictionary rewrites into Hanzi, which is what makes his UTF-8 byte count diverge
- * from his character count — the whole reason byte billing is a separate model.
+ * Speakers routed by how the endpoint bills: one book spans character, byte and token billing.
+ * Elder Mo's lines get Hanzi from the dictionary, so his bytes diverge from his characters.
  */
 const SEED_ROUTE: Record<string, Record<string, VoiceRef>> = {
   cliche: {
@@ -72,6 +62,4 @@ export function makeCharacters(b: BookSeed): Character[] {
   ];
 }
 
-// A walk-on speaker is defined once, in `@/lib/cast`, so the server's scripting job and this
-// world bring one in the same way.
 export { newSpeaker } from "@/lib/cast";

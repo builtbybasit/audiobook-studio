@@ -1,10 +1,5 @@
-// Where a real provider sends a request: the stored endpoint or profile, with its key.
-//
-// Built by the job at the moment of dispatch — the base URL and model from the configuration the
-// run was queued with, the key read fresh from `endpoints.api_key` — and handed to the provider,
-// which is the only thing that ever puts the key on the wire. A target is never stored and never
-// logged whole: `apiKey` is on the logger's redaction list, but the rule is not to spread one into
-// a log record in the first place.
+// Where a real provider sends a request: the endpoint or profile with its key, built at dispatch
+// and read fresh from `endpoints.api_key`. Never stored, and never spread into a log record.
 import type {
   Endpoint,
   EndpointKind,
@@ -24,67 +19,43 @@ import type { TranscriptionProvider, TranscriptionTarget } from "~/providers/tra
 import type { VoiceCloner } from "~/providers/clone";
 import type { VoiceLister } from "~/providers/voices";
 
-/** The pair a server is started with: what scripting and narration send their work to. */
+/** What the server sends work to. The optional ones default to the real ones; tests swap them. */
 export interface Providers {
   scripting: ScriptingProvider;
   speech: SpeechProvider;
-  /**
-   * Where the Voices tab's lists come from. Listing voices spends nothing, so the endpoints' own
-   * lister is the default everywhere and only a test hands over another.
-   */
   voices?: VoiceLister;
-  /**
-   * What renders the Voices tab's samples: the endpoints' own provider unless a test hands over
-   * another, so a sample is the endpoint's voice — a tone for a simulated one — and its request is
-   * priced into the ledger like any other.
-   */
+  /** renders the Voices tab's samples, priced into the ledger like any other request */
   samples?: SpeechProvider;
-  /**
-   * What makes a voice from recordings on the Voices tab. Real by default, like the two above: it
-   * is a click that asks for exactly this, and only a test hands over another.
-   */
   cloner?: VoiceCloner;
-  /**
-   * What hears a clone sample, or a rendered line, back as words. The transcription endpoints' own
-   * by default; only a test hands over another.
-   */
   transcription?: TranscriptionProvider;
 }
 
 export interface ProviderTarget {
-  /** the endpoint's or profile's own id, as the page names it */
   id: string;
-  /** what the Endpoints page calls it, for messages */
+  /** for messages */
   name: string;
-  /** the base URL as configured, e.g. `https://api.fish.audio/v1`; no trailing path */
+  /** e.g. `https://api.fish.audio/v1`; no trailing slash */
   baseUrl: string;
   model: string;
-  /** null when none is kept; a provider whose endpoint `needsKey` refuses without one */
   apiKey: string | null;
   needsKey: boolean;
-  /** per-request wall clock and retries after the first, with the page's defaults filled in */
+  /** defaults filled in */
   timeoutSec: EndpointOps["timeoutSec"];
   maxRetries: EndpointOps["maxRetries"];
-  /** how long to hold off after a 429 that names no Retry-After */
+  /** the hold-off after a 429 that names no Retry-After */
   cooldownSec: EndpointOps["cooldownSec"];
-  /** speech only: the server the endpoint names, for a base URL that cannot say (`Endpoint.server`) */
+  /** speech only: for a base URL that cannot say which server it is (`Endpoint.server`) */
   server?: SpeechServer | null;
-  /**
-   * For a simulated endpoint or profile (`isSimulated(baseUrl)`), how it behaves in place of a
-   * server: how long each answer takes and how often one fails. Absent for every other target.
-   */
+  /** only for a simulated target (`isSimulated(baseUrl)`) */
   simulation?: Simulation;
 }
 
-/** How a simulated target behaves: what the endpoint's `latency` and `failRate` say. */
 export interface Simulation {
-  /** how long each answer takes, in milliseconds */
   latencyMs: number;
-  /** the share of requests that fail, 0 to 1 */
+  /** 0 to 1 */
   failRate: number;
 }
 
-/** A speech endpoint as a request needs it, its key read now and its unset ops defaulted. */
 export function speechTarget(db: Db | Tx, e: Endpoint): ProviderTarget {
   return {
     ...targetOf(e, "tts", readEndpointKey(db, "tts", e.id)),
@@ -92,7 +63,6 @@ export function speechTarget(db: Db | Tx, e: Endpoint): ProviderTarget {
   };
 }
 
-/** A scripting profile as a request needs it — the one the run was queued with — and its key now. */
 export function scriptTarget(db: Db | Tx, p: Profile): ScriptTarget {
   return {
     ...targetOf(p, "scripting", readEndpointKey(db, "scripting", p.id)),
@@ -101,7 +71,6 @@ export function scriptTarget(db: Db | Tx, p: Profile): ScriptTarget {
   };
 }
 
-/** A transcription endpoint as a request needs it, and its key now. */
 export function transcriberTarget(db: Db | Tx, t: Transcriber): TranscriptionTarget {
   return {
     ...targetOf(t, "transcription", readEndpointKey(db, "transcription", t.id)),
@@ -122,16 +91,14 @@ function targetOf(
     baseUrl: e.baseUrl.trim().replace(/\/+$/, ""),
     model: e.model,
     apiKey,
-    // a simulated one is answered here, and a command-line tool signs in with its own login, so a
-    // key either was saved as needing would only refuse it
+    // simulated targets and CLIs never need a key, whatever was saved
     needsKey: e.needsKey && !isSimulated(e.baseUrl) && !cliOf(e.baseUrl),
     timeoutSec: e.timeoutSec ?? d.timeoutSec,
     maxRetries: e.maxRetries ?? d.maxRetries,
     cooldownSec: e.cooldownSec ?? d.cooldownSec,
     ...(isSimulated(e.baseUrl) && {
       simulation: {
-        // a profile has no latency of its own: it answers in a tenth of the time it estimates a
-        // chunk takes, the pace the browser's demo scripts at
+        // a profile has no latency: a tenth of its chunk estimate, the browser demo's pace
         latencyMs: Math.max(
           0,
           ("latency" in e ? e.latency : "secPerChunk" in e ? e.secPerChunk * 100 : 0) || 0,

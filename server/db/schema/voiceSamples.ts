@@ -1,47 +1,24 @@
-// The samples a cloned voice was made from, kept with the voice.
-//
-// A clone is made in one request and the provider keeps only the voice; without these rows the
-// samples would be gone the moment the upload finished, and a voice could never travel with a
-// book's script to someone who has to make it again on their own account.
-//
-// **Neither table points at `voices`.** Saving the endpoints clears every endpoint and voice row
-// and lays the whole configuration down again (`server/db/endpoints.ts`), so a cascade from
-// `voices` would delete every sample on every save. The two are tied to a voice by value —
-// `(endpoint_id, voice_id)`, as a character's `VoiceRef` is — and `saveEndpoints` reconciles them
-// against what was saved: see `reconcileClones` in `server/db/voiceSamples.ts`.
+// The samples a cloned voice was made from (the provider keeps only the voice).
+// Neither table points at `voices`: saving endpoints rewrites every voice row, so they key by value
+// and are reconciled by `reconcileClones` in server/db/voiceSamples.ts.
 import { foreignKey, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 import type { SampleFormat } from "~/providers/clone";
 
-/**
- * A voice whose samples are kept: one made here, or one made before samples were kept and
- * given them afterwards.
- */
 export const clonedVoices = sqliteTable(
   "cloned_voices",
   {
     endpointId: text("endpoint_id").notNull(),
     voiceId: text("voice_id").notNull(),
-    /** what the voice was called when it was made */
+    /** the voice's name when made */
     title: text("title").notNull(),
-    /** epoch ms the samples were kept */
+    /** epoch ms */
     madeAt: integer("made_at").notNull(),
-    /**
-     * A saved configuration has held this voice. Until one has, the voice is the page's to add — the
-     * clone answers before the page saves it — so a save without it is not yet a removal.
-     */
+    /** a saved configuration has held this voice; until then a save without it is not a removal */
     attached: integer("attached", { mode: "boolean" }).notNull().default(false),
-    /**
-     * Epoch ms a save first went without this attached voice. Removing a voice or an endpoint on
-     * the page offers Undo, and a settings import can drop a voice and bring it back, so a missing
-     * voice keeps its samples for a grace period and gets them back when it returns; a later
-     * save after the grace period removes them.
-     */
+    /** Epoch ms a save first lacked this voice; samples survive a grace period for Undo. */
     missingSince: integer("missing_since"),
-    /**
-     * Epoch ms the person forgot these samples. Hidden from every read at once, restorable by
-     * the forget's Undo until a save after the grace period removes them.
-     */
+    /** Epoch ms forgotten: hidden at once, restorable by Undo until the grace period ends. */
     forgottenAt: integer("forgotten_at"),
   },
   (t) => [primaryKey({ columns: [t.endpointId, t.voiceId] })],
@@ -53,14 +30,13 @@ export const voiceSamples = sqliteTable(
   {
     endpointId: text("endpoint_id").notNull(),
     voiceId: text("voice_id").notNull(),
-    /** `<sha>.<ext>` — the name on disk, and the one a url asks for */
+    /** `<sha>.<ext>`, the name on disk and in urls */
     file: text("file").notNull(),
-    /** the name the person's file had, for showing */
+    /** the uploaded file's name, for showing */
     name: text("name").notNull(),
-    /** what the bytes say they are, which is what they are served as */
+    /** sniffed from the bytes; served as this */
     format: text("format").$type<SampleFormat>().notNull(),
     bytes: integer("bytes").notNull(),
-    /** what is said in it, as the person gave it; null when they gave none */
     transcript: text("transcript"),
     position: integer("position").notNull().default(0),
   },

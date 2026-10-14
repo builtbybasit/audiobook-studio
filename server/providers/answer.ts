@@ -1,14 +1,7 @@
-// A successful answer from a speech endpoint, turned into a clip — or into a failure a person can
-// read, when it is not the audio that was asked for.
-//
-// Every speech provider ends the same way: a 2xx whose body is audio in the format the endpoint
-// asked for — or, for those that answer JSON around it (Gemini, MiniMax, Qwen), whose JSON leads to
-// that audio, read here too (`jsonAnswer`). What "is audio" means depends on the format. A WAV is rewritten under a plain
-// header, its duration counted from the samples that arrived (`wav.ts`). An MP3 or an Opus file is
-// kept byte for byte — that is the point of asking for one, a tenth of the size — and is read by
-// `probeClip` to prove it is what it says and to learn how long it plays. An answer in another
-// format than the one asked for is refused rather than kept as what it turned out to be: a local
-// server that ignores `response_format` would otherwise leave an endpoint set to MP3 writing WAV.
+// A speech endpoint's 2xx turned into a clip, or a readable failure. A WAV is rewritten under a
+// plain header (`wav.ts`); MP3 and Opus are kept byte for byte once `probeClip` reads them. An
+// answer in another format than asked is refused: a server ignoring `response_format` would
+// otherwise leave an MP3 endpoint writing WAV.
 import type { AudioFormat, SampleRate } from "@/types";
 import { AUDIO_MIME, encodingProblems, FORMAT_LABEL } from "@/lib/endpointShapes";
 import { probeClip } from "~/audio/probe";
@@ -17,15 +10,10 @@ import type { SpeechInput } from "~/providers/speech";
 import type { ProviderTarget } from "~/providers/target";
 import { plainWav } from "~/providers/wav";
 
-/**
- * Whether reading a body failed because the attempt's clock ran out. `call` hands back the answer
- * while its body may still be arriving, under the same per-attempt clock, so a slow body ends in
- * that clock's `TimeoutError` rather than in anything wrong with what was sent.
- */
+/** A slow body ends in the attempt clock's `TimeoutError`; `call` returns before the body is in. */
 const timedOut = (e: unknown): boolean =>
   e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
 
-/** The failure for a body the attempt's clock cut off; see `timedOut`. */
 const cutOff = (target: ProviderTarget, res: Response, what: string): ProviderError =>
   new ProviderError(
     `${target.name} answered ${res.status} but did not finish sending ${what} within ${target.timeoutSec} s`,
@@ -33,11 +21,7 @@ const cutOff = (target: ProviderTarget, res: Response, what: string): ProviderEr
     true,
   );
 
-/**
- * A successful answer's body as JSON, for a provider that answers JSON around the audio. A body
- * that is not JSON is reported as such, and one the clock cut off as a timeout; a cancel throws
- * the signal's reason.
- */
+/** For a provider that answers JSON around the audio. */
 export async function jsonAnswer<T>(
   target: ProviderTarget,
   res: Response,
@@ -56,7 +40,6 @@ export async function jsonAnswer<T>(
   }
 }
 
-/** An answer as a clip: the bytes to keep, what they are, and how long they play. */
 export interface AnsweredAudio {
   bytes: Uint8Array;
   format: AudioFormat;
@@ -64,13 +47,7 @@ export interface AnsweredAudio {
   duration: number;
 }
 
-/**
- * A successful answer's body as a clip in `format`. A 200 that carries JSON or text is a refusal
- * dressed as success — some servers answer that way — and is reported with what it said; an empty
- * body, or one that is not readable audio in `format`, is reported as such. None of them is
- * retried: another attempt at a request that was answered is not what any of them needs. A cancel
- * mid-body throws the signal's reason, as every other cancel does.
- */
+/** A 200 carrying JSON or text is a refusal dressed as success. None of these is retried. */
 export async function audioAnswer(
   target: ProviderTarget,
   res: Response,
@@ -101,12 +78,7 @@ export async function audioAnswer(
   return audioClip(target, bytes, format, res.status);
 }
 
-/**
- * Bytes a provider answered as audio, held to the format they were asked in: a WAV under a plain
- * header, an MP3 or an Opus file kept as it is once `probeClip` has read it. `status` is what the
- * answer that carried them said, for the message; the bytes may have come in the body itself or
- * inside JSON (a batch's item, `speech/batch.ts`). Neither failure is retried.
- */
+/** Bytes held to the format asked for; `status` is only for the message. Not retried. */
 export async function audioClip(
   target: ProviderTarget,
   bytes: Uint8Array,
@@ -131,11 +103,7 @@ export async function audioClip(
   }
 }
 
-/**
- * A line whose format, bitrate and rate this endpoint's API cannot be asked for together fails
- * before any request, with the first reason the Endpoints page shows beside those fields. Sending
- * it anyway would be refused, or answered in something other than what the endpoint says it keeps.
- */
+/** Fails before any request with the first reason the Endpoints page shows (`encodingProblems`). */
 export function refuseEncoding(
   target: ProviderTarget,
   { encoding, sampleRate }: Pick<SpeechInput, "encoding" | "sampleRate">,

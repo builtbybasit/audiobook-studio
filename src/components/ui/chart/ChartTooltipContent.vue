@@ -12,7 +12,7 @@ const props = withDefaults(
     nameKey?: string;
     labelKey?: string;
     labelFormatter?: (d: number | Date) => string;
-    /** Added: series carry units (ms, currency), so the raw number is rarely what to print. */
+    /** Added: series carry units, so the raw number is rarely what to print. */
     valueFormatter?: (value: number, key: string) => string;
     payload?: Record<string, any>;
     config?: ChartConfig;
@@ -30,8 +30,7 @@ const props = withDefaults(
 // TODO: currently we use `createElement` and `render` to render the
 // const chartContext = useChart(null)
 
-// Walked in config order, not datum order, so the rows line up with the legend and with the order
-// the series were drawn in.
+// config order, not datum order, so rows line up with the legend
 const payload = computed(() => {
   return Object.keys(props.config)
     .filter((key) => key in props.payload)

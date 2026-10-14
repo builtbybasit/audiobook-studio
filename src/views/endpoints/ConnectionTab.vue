@@ -2,15 +2,9 @@
 import { useUiStore } from "@/stores/ui";
 import { plural } from "@/lib/contents";
 
-// Three things get confused with each other and are kept apart here:
-//
-//   the saved model configuration — this row, its name, its model id, its limits and prices
-//   the provider connection      — base URL + credential, which several configurations may share
-//   the quota group              — whose rate limit and spend pool this configuration draws on
-//
-// Renaming a configuration is harmless. Changing its base URL, model or credential points it at a
-// different provider, so edits are staged and applied deliberately, and when work is in flight the
-// Save button says what will and won't move.
+// Keeps apart the saved configuration (name, model, limits, prices), the provider connection
+// (base URL + credential, possibly shared) and the quota group (shared rate limit and spend pool).
+// Edits are staged (see state.ts); with work in flight, Save asks first.
 import { computed, ref, watch } from "vue";
 import { keyInPlace } from "@/services/endpointSettings";
 import ServerKeyField from "@/views/endpoints/ServerKeyField.vue";
@@ -49,12 +43,11 @@ import type { ConnectionTest, EndpointKind } from "@/types";
 
 const props = defineProps<{
   u: UnifiedEndpoint;
-  /** every endpoint on the page, for "who else shares this connection" */
+  /** for "who else shares this connection" */
   all: UnifiedEndpoint[];
-  /** unfinished jobs that would go through this endpoint */
   busy: number;
   testing: boolean;
-  /** what a probe would cost at the rates as configured; null when the rate is unknown */
+  /** null when the rate is unknown */
   probeCost: number | null;
 }>();
 const emit = defineEmits<{ test: []; remove: [] }>();
@@ -67,17 +60,14 @@ const confirming = ref(false);
 const errors = computed(() => endpointErrors(props.u));
 const test = computed<ConnectionTest | undefined>(() => ui.tests[props.u.key]);
 const now = Date.now();
-/**
- * The server keeps one key per endpoint and nothing per named credential, so the key field is
- * always this endpoint's own and goes to the server; a credential only names the account.
- */
+// The server keeps one key per endpoint, none per credential; a credential only names the account.
 const endpointsStore = useEndpointsStore();
 const CRED_OPTIONS = computed(() => [
   { value: "__own__", label: "This endpoint’s own key", hint: "kept on the server" },
   ...endpointsStore.credentials.map((c) => ({ value: c.id, label: c.label, hint: "" })),
 ]);
 
-/** Which server a speech endpoint talks to, for one its base URL cannot name. */
+/** For a speech server its base URL cannot name. */
 const SERVER_OPTIONS = [
   { value: "", label: "Known by its base URL", hint: "" },
   { value: "breezecpp", label: "Breeze-TTS-2.cpp", hint: "breeze-server" },
@@ -96,7 +86,6 @@ const credential = computed({
   },
 });
 
-/** Other saved configurations pointing at the same base URL + credential. */
 const sameConnection = computed(() =>
   props.all.filter(
     (x) =>
@@ -114,14 +103,11 @@ const sameQuota = computed(() =>
 
 const keyHeld = computed(() => keyInPlace(props.u.entry));
 
-// What differs by kind, said once per kind.
-/** what a preset fills in besides the connection */
 const PRESET_FILLS: Record<EndpointKind, string> = {
   scripting: "token prices",
   tts: "billing",
   transcription: "rate per audio minute",
 };
-/** why the kind cannot change in place */
 const TYPE_FIXED: Record<EndpointKind, string> = {
   scripting: "Fixed: scripting endpoints are picked by a run, so the type can’t change in place.",
   tts: "Fixed: speech endpoints are picked by a voice, so the type can’t change in place.",
@@ -133,13 +119,11 @@ const MODEL_PLACEHOLDER: Record<EndpointKind, string> = {
   tts: "tts-1-hd",
   transcription: "whisper-1",
 };
-/** what the connection test sends, as the cost line counts it */
 const PROBE_SAYS: Record<EndpointKind, string> = {
   scripting: "~24 input and 8 output tokens",
   tts: "12 characters of sample text",
   transcription: "A 3-second recording of “The quick brown fox…”",
 };
-/** what removing it leaves behind */
 const REMOVE_SAYS: Record<EndpointKind, string> = {
   scripting:
     "Past jobs keep the model and prices they ran with; a run needs another endpoint picked for it.",
@@ -166,8 +150,7 @@ function save() {
         ? `Nothing was re-routed. ${preset}’s prices and limits apply from the next request.`
         : "Nothing was re-routed — only this configuration’s labels changed.",
   });
-  // A new base URL can speak an API without the format or rate this endpoint was set to; what was
-  // put back is said on its own, so it is not lost inside the saved message.
+  // its own toast, so it isn't lost inside the saved message
   if (repaired.length)
     uiStore.toast("Audio format adjusted for the new API", {
       kind: "warn",
@@ -179,10 +162,8 @@ function discard() {
   confirming.value = false;
 }
 // ---------- presets ----------
-// A preset is staged like any other edit: the connection half fills the form, and the rest —
-// billing or token prices, limits, concurrency — waits in the same draft, so Save applies all of it
-// and Discard drops all of it. This tab is not remounted per endpoint, so the chosen preset and its
-// note are forgotten when another endpoint is selected.
+// Staged like any edit (`stagePreset`). This tab isn't remounted per endpoint, so the chosen
+// preset and its note are dropped when another endpoint is selected.
 const {
   options: presetOptions,
   presetId,
@@ -194,39 +175,32 @@ const {
   fill: (fields, preset) => stagePreset(props.u, preset.label, fields),
   next: "Review it below, then Save — its prices and limits go on with it. Discard puts everything back.",
 });
-/** A `simulated:` base URL is answered by the server itself: there is no request line, no key and
- *  no account, so the form says that instead of asking for them. */
+/** A `simulated:` base URL is answered by the server itself: no request line, key or account. */
 const simulated = computed(() => isSimulated(draft.value.baseUrl));
-/** A `codex:` or `claude-code:` base URL runs that tool on this computer, signed in with its own
- *  login: there is no URL and no key, only which program to run when it is not the one on PATH. */
+/** A `codex:`/`claude-code:` base URL runs that local tool with its own login: no URL or key,
+ *  only the program path when it isn't the one on PATH. */
 const cli = computed(() => cliOf(draft.value.baseUrl));
-// read as typed, spaces and all, so a path with one in it can be typed; saving trims it
+// untrimmed so a path with spaces can be typed; saving trims it
 const program = computed({
   get: () => (cli.value ? draft.value.baseUrl.trimStart().slice(cli.value.scheme.length) : ""),
   set: (v: string) => {
     if (cli.value) draft.value.baseUrl = cli.value.scheme + v;
   },
 });
-// Typing a simulated base URL over a hosted one stages "needs no key" with it, so the endpoint is
-// not left waiting on a key it will never be asked for; so does a tool's. Selecting another
-// endpoint changes nothing.
+// Typing a simulated or tool base URL stages "needs no key"; selecting another endpoint doesn't.
 watch([() => props.u.key, () => simulated.value || !!cli.value], ([key, now], [was]) => {
   if (key === was && now) draft.value.needsKey = false;
 });
-/** Where a request actually goes. Fish Audio serves /tts, not the OpenAI-style /audio/speech, so
- *  this follows the draft and updates the moment a preset or a hand-typed base URL changes it. */
+/** Where a request goes, from the draft: Fish Audio serves /tts, not /audio/speech. */
 const PATH: Record<EndpointKind, () => string> = {
   scripting: () => KIND_PATH.scripting,
   tts: () => ttsRequestPath(draft.value),
   transcription: () => KIND_PATH.transcription,
 };
 const path = computed(() => (simulated.value || cli.value ? "" : PATH[props.u.kind]()));
-/** Where the connection test goes: the request itself, or what stands in for it — a transcriber is
- *  sent its sample recording there. */
 const PROBE_PATH: Record<EndpointKind, () => string> = {
   scripting: () => path.value,
-  // what is tested is what is saved; Breeze has no request that renders nothing on its speech
-  // route, so its voice list stands in
+  // tests what is saved; Breeze can't render nothing, so its voice list stands in
   tts: () =>
     props.u.endpoint?.server === "breezecpp"
       ? "/voices"
@@ -241,7 +215,6 @@ const probeSays = computed(() =>
     ? "A voice list, nothing spoken"
     : PROBE_SAYS[props.u.kind],
 );
-/** The staged changes as the banner lists them; a preset's prices and limits are one of them. */
 const changeList = computed(() =>
   changes.value
     .map((c) => (c === "preset" ? `prices and limits from ${draft.value.preset?.label}` : c))

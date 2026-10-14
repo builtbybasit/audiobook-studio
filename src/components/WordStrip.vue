@@ -1,10 +1,6 @@
 <script setup lang="ts">
-// A line as a strip of words with the gaps between them made visible and clickable. It is the
-// one control the editor uses both to cut a segment in two and to place an expression, so the
-// two learn the same gesture. The gaps show from the start — light ticks, darker where a sentence
-// ends — never only on hover. Expression chips sit inline where they fall and, when asked, open.
-//
-// Keyboard: the strip takes focus as a whole; ← → walk the gaps, Enter picks, Escape cancels.
+// A line as a strip of words with visible, clickable gaps: the one control for both cutting a
+// segment and placing an expression. Keyboard: ← → walk the gaps, Enter picks, Escape cancels.
 import { computed, ref, watch } from "vue";
 import { Pause as PauseIcon } from "@lucide/vue";
 import { chipLook, chipText } from "@/lib/expressions";
@@ -17,18 +13,18 @@ const props = withDefaults(
     text: string;
     /** "split": gaps inside the line only; "place": the two edges as well */
     mode: "split" | "place";
-    /** whether the gaps are offered at all — without them the strip is just the line and its chips */
+    /** without gaps the strip is just the line and its chips */
     gaps?: boolean;
     expressions?: ExpressionAnnotation[];
     issueOf?: (id: number) => string | undefined;
-    /** why a scripted tag is left out for this voice, if it is: drawn dimmed, never as an issue */
+    /** why a scripted tag is left out for this voice: drawn dimmed, never as an issue */
     skippedOf?: (id: number) => string | undefined;
-    /** the chip that is being moved: drawn hollow, since its place is what is being chosen */
+    /** drawn hollow, since its place is being chosen */
     movingId?: number | null;
     quote?: "dialogue" | "thought" | "";
-    /** what a gap does, for its label: "cut" or "place" */
+    /** for the gap's label */
     verb?: string;
-    /** the book's pacing, for how long a pause chip says it is */
+    /** for a pause chip's length */
     pacing?: Pacing;
   }>(),
   {
@@ -55,7 +51,7 @@ type Piece =
   | { kind: "chip"; a: ExpressionAnnotation; look: ReturnType<typeof chipLook>; review: boolean };
 
 const gapList = computed(() => gapsOf(props.text, props.mode));
-/** Words, gaps and chips in reading order. A chip sits before the gap it is anchored at. */
+/** Words, gaps and chips in reading order; a chip sits before the gap it is anchored at. */
 const pieces = computed<Piece[]>(() => {
   const out: Piece[] = [];
   const chips = [...props.expressions].sort(
@@ -84,7 +80,6 @@ const pieces = computed<Piece[]>(() => {
   return out;
 });
 
-// roving focus over the gaps, for the keyboard
 const active = ref<number | null>(null);
 watch(
   () => props.gaps,

@@ -35,7 +35,7 @@ async function seededProfiles() {
 
 describe("token accounting", () => {
   test("cached input is a slice of the total input, never an addition to it", () => {
-    // the example from the brief: 10,000 input of which 8,000 cached
+    // 10,000 input of which 8,000 cached
     const usage = normalizeUsage(
       {
         prompt_tokens: 10_000,
@@ -110,7 +110,7 @@ describe("token accounting", () => {
     expect(openai.inputTokens).toBe(anthropic.inputTokens);
     expect(openai.cachedInput).toBe(anthropic.cachedInput);
     expect(uncachedInput(openai)).toBe(uncachedInput(anthropic));
-    // the same rate card therefore charges the same request the same way whichever shape it arrived in
+    // so one rate card charges the same request the same, whichever shape it arrived in
     const at = utc(THU, "12:00");
     const a = priceRequest(card({ cachedInput: 0.25 }), config(), openai, { at });
     const b = priceRequest(card({ cachedInput: 0.25 }), config(), anthropic, { at });
@@ -389,8 +389,8 @@ describe("reservations and budgets", () => {
       .chaptersOf(book.id)
       .slice(0, 2)
       .map((c) => c.id);
-    // the estimate counts the prose the page has read, and checks the budget against the spending
-    // the app shell has read, so read both
+    // the estimate counts the prose the page has read and checks the budget against the shell's
+    // spending, so read both
     const texts = pinia.run(() => ids.map((id) => useChapterText(book.id, id, "plain")));
     const spend = pinia.run(() => useBookSpend(book.id));
     while (texts.some((t) => !t.text.value) || !spend.spend.value) await flush();
@@ -457,8 +457,7 @@ describe("historical accuracy", () => {
 });
 
 describe("the seeded world", () => {
-  // The demo library is seeded with these profiles as they are (`tests/server/demoWorld.test.ts`
-  // compares the two field for field), so they are read here without opening it.
+  // Read without opening the demo: `tests/server/demoWorld.test.ts` checks the seed matches.
   test("the seeded endpoints cover every pricing case the demo claims to", () => {
     const now = Date.now();
     const profiles = makeProfiles(now);
@@ -482,10 +481,8 @@ describe("the seeded world", () => {
 
 describe("input is not always the dearest way an input token is charged", () => {
   //
-  // Cached and cache-write tokens are slices of the input, and nothing makes them cheaper than it. A
-  // cache write usually costs *more* — the app's own switch defaults one to 125% of the input rate —
-  // so "the whole input at the ordinary rate" is a middle case, not a ceiling, and a reservation
-  // worked out that way can be overshot by the very first request that writes to the cache.
+  // Cached and cache-write tokens are slices of the input, and a cache write usually costs *more*
+  // (the switch defaults it to 125%), so a reservation at the ordinary input rate can be overshot.
 
   test("the dearest input rate is what a reservation is taken at, not the ordinary one", () => {
     const p = newProfile({
@@ -504,7 +501,7 @@ describe("input is not always the dearest way an input token is charged", () => 
     expect(e.reserve).toBeCloseTo((e.inputTokens * 1.25 + p.maxOutputTokens * 4) / 1e6, 12);
     expect(e.reserve).toBeGreaterThan(ordinary);
 
-    // and a request that really does write its whole input to the cache fits inside that reservation
+    // and a request that writes its whole input to the cache fits inside that reservation
     const usage = normalizeUsage(
       { inputTokens: e.inputTokens, cacheWrite: e.inputTokens, cachedInput: 0, outputTokens: 0 },
       "internal",

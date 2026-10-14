@@ -1,9 +1,7 @@
-// Making a voice from a recording through Alibaba's Model Studio: the one JSON request its voice
-// cloning reference gives for the Qwen-TTS family (`qwen-voice-enrollment`, the file as a base64
-// data URL), sent once whatever fails; the Qwen-Audio models, which take a recording only as a
-// public link, refused before anything is sent; what the route refuses first — a second file, a
-// format Model Studio does not list, a file over its 10 MB — and how a voice made this way is then
-// spoken with and listed.
+// Making a voice through Alibaba's Model Studio: one JSON request (`qwen-voice-enrollment`, the
+// file as a base64 data URL) for the Qwen-TTS family, sent once whatever fails. Qwen-Audio models
+// take a recording only as a public link, so they are refused up front, as are a second file, an
+// unlisted format and a file over 10 MB.
 import { describe, expect, test } from "bun:test";
 
 import type { Endpoint } from "@/types";

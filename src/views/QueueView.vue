@@ -5,8 +5,8 @@ import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
 
-// Queue: every job across every book. Running now (with live detail), the pending queue (cancellable),
-// endpoint utilisation, and history with retry. A clock tick keeps elapsed times moving.
+// Queue: every job across every book. Running now, the pending queue, endpoint utilisation, and
+// history with retry. A clock tick keeps elapsed times moving.
 import { computed, ref } from "vue";
 import { useNow } from "@vueuse/core";
 
@@ -25,8 +25,6 @@ import {
   RotateCcw as RetryIcon,
   X as CloseIcon,
 } from "@lucide/vue";
-// the pricing line reads the endpoint's billing model rather than the legacy per-1M-characters
-// number, which says nothing useful about a byte-billed or token-billed endpoint
 import { pricingLabel, unifyEndpoint } from "@/lib/endpoints";
 import { useBooks, useEndpointLive } from "@/queries";
 import { hhmm } from "@/lib/format";
@@ -44,10 +42,8 @@ function openRow(event: MouseEvent, job: Job) {
 }
 const clock = useNow({ interval: 500 });
 const now = computed(() => clock.value.getTime());
-// the endpoint pool's busy slots and back-off, as the server's gate holds them when one answers
 useEndpointLive();
-// the chapters of every book the queue names, which the rows, their line counts and "Retry failed"
-// read: the Queue can be the first page opened, before any of those books has been
+// the Queue can be the first page opened, before any of the books it names has loaded
 useBooks(() => jobsStore.jobs.map((j) => j.bookId));
 
 const icon: Record<JobKind, Component> = {
@@ -71,25 +67,22 @@ const counts = computed(() => ({
   failed: jobsStore.jobs.filter((j) => j.status === "failed").length,
 }));
 const filter = ref("all");
-// What "retry failed" would actually re-run, asked of the store rather than re-derived here. A
-// chapter's *label* cannot answer it — a failed re-script puts the status back and a failed
-// narration replacement leaves the chapter reading as narrated — so counting labels both hid this
-// button in the two cases it exists for and quoted the wrong number when it did show.
+// Asked of the store: a chapter's label cannot answer it (a failed re-script puts the status back,
+// a failed narration replacement still reads as narrated).
 const retryable = computed(() => jobsStore.retryableFailures().length);
 const shown = computed(() =>
   filter.value === "all" ? history.value : history.value.filter((j) => j.status === filter.value),
 );
 
 const book = (j: Job) => libraryStore.bookById(j.bookId);
-// The chapter by its reading number only: a title further on would give the plot away.
+// by reading number only: a later title would give the plot away
 const chapterRef = (j: Job) =>
   j.chapterId == null ? undefined : libraryStore.chapterRef(j.bookId, j.chapterId);
 const elapsed = (j: Job) =>
   fmtDur(((j.finishedAt ?? now.value) - (j.startedAt ?? now.value)) / 1000);
 const fmtDur = (s: number) =>
   s < 60 ? `${s.toFixed(s < 10 ? 1 : 0)}s` : `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
-// A running chapter's lines as the server counts them, or as its script counts them when a page
-// has it open: the Queue can be the first page opened, and a chapter no page read is not 0 of 0.
+// from the server's count or a loaded script: a chapter no page read is not 0 of 0
 function segStats(j: Job) {
   const lines = j.chapterId == null ? undefined : scriptsStore.lineCountsOf(j.bookId, j.chapterId);
   return {
@@ -99,16 +92,14 @@ function segStats(j: Job) {
     failed: lines?.failed ?? 0,
   };
 }
-// One count per running row, not one per number on it: the four figures below a narration row are
-// the same count, and the row re-renders twice a second while the clock ticks.
+// One count per running row: its four figures share it, and the row re-renders twice a second.
 const segStatsOf = computed(() => {
   const by: Record<number, ReturnType<typeof segStats>> = {};
   for (const j of running.value) by[j.id] = segStats(j);
   return by;
 });
-// The estimate counts down, so it is re-read as the clock advances. The tick is used in the
-// expression rather than parked in a spare const: a `const _tick = now.value` nobody reads is the
-// first thing a "remove unused variable" pass deletes, and deleting it silently freezes the ETA.
+// Uses the tick in the expression, not a spare `const _tick = now.value` that an unused-variable
+// pass would delete, silently freezing the ETA.
 const eta = computed(() => {
   const e = jobsStore.eta;
   return e && { ...e, at: now.value + e.seconds * 1000 };
@@ -186,7 +177,6 @@ async function toggleNotify() {
 
     <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
       <div class="min-w-0 space-y-5">
-        <!-- running -->
         <section class="card overflow-hidden">
           <div
             class="flex items-center gap-2 border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-800"
@@ -300,7 +290,6 @@ async function toggleNotify() {
 
         <UpNext :queued="queued" @open="selectedId = $event" />
 
-        <!-- history -->
         <section class="card overflow-hidden">
           <div
             class="flex items-center gap-2 border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-800"
@@ -406,7 +395,6 @@ async function toggleNotify() {
         </section>
       </div>
 
-      <!-- endpoints -->
       <aside class="space-y-3">
         <div class="card p-4">
           <div class="label mb-3">Endpoint pool</div>
@@ -444,8 +432,6 @@ async function toggleNotify() {
               {{ pricingLabel(unifyEndpoint(e)) }}
             </div>
           </div>
-          <!-- the pool is app-wide and so is the page that edits it; a book's Narration tab only
-               shows where that book's lines land -->
           <RouterLink
             to="/endpoints"
             class="btn-ghost btn-xs mt-2 w-full justify-center"

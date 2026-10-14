@@ -1,8 +1,5 @@
-// Bulk script corrections: the part that can be decided from a segment alone.
-// Nothing here mutates and nothing here reaches the store — the Search page previews a batch with
-// `bulkOutcome` before anything is applied, and the store applies it through the same per-segment
-// actions a single edit uses. Labels live where `FLAG_LABEL` lives; this file stays label-free so
-// the store can import it.
+// Bulk script corrections, decided per segment (pure). The Search page previews with `bulkOutcome`;
+// the store applies through the single-edit actions. Label-free so the store can import it.
 import { DIRECTIONS } from "@/lib/cast";
 import type { BulkAction, BulkOutcome, Segment, SegmentMap } from "@/types";
 import type { UiOption } from "@/ui/types";
@@ -23,35 +20,30 @@ export function bulkOutcome(s: Segment, a: BulkAction): BulkOutcome {
       : { changes: true, skip: null };
   }
   if (!s.flag) return { changes: true, skip: null };
-  // an existing flag is kept unless the batch explicitly replaces it, and replacing a flag with the
-  // same kind and the same note changes nothing either
+  // a flag is kept unless the batch replaces it, and the same kind and note changes nothing
   if (!a.replace) return { changes: false, skip: "already-flagged" };
   return s.flag.kind === a.flag && s.flag.note === a.note.trim()
     ? { changes: false, skip: "same-flag" }
     : { changes: true, skip: null };
 }
 
-/** True when applying the action invalidates a clip that was already rendered from this line.
- *  Flagging says something about the audio; it does not change what would be sent. */
+/** Flagging does not change what would be sent, so it invalidates nothing. */
 export function bulkInvalidates(a: BulkAction): boolean {
   return a.kind !== "flag";
 }
 
-/** Everything a bulk correction reads or writes on a line. An open preview watches this: an edit
- *  made elsewhere invalidates what it promised, while a clip finishing in the background does not. */
+/** What a bulk correction touches, without the clip, so a background render keeps a preview valid. */
 export function scriptFingerprint(s: Segment | undefined): string {
   if (!s) return "gone";
   return JSON.stringify([s.speaker, dirOf(s), s.flag?.kind ?? "", s.flag?.note ?? ""]);
 }
-/** The same, plus the clip: undo compares against this, so a line whose audio moved on since the
- *  batch — re-rendered, retaken, re-narrated — is left alone rather than rolled back. */
+/** Plus the clip: undo leaves a line alone whose audio moved on since the batch. */
 export function segmentFingerprint(s: Segment | undefined): string {
   if (!s) return "gone";
   return JSON.stringify([scriptFingerprint(s), s.audio.status]);
 }
 
-/** Directions offered by the pickers: the ones this book already uses, most-used first, then the
- *  presets it has not used yet. Free text is allowed on top of these. */
+/** The book's directions, most-used first, then unused presets. */
 export function directionOptions(segments: SegmentMap, bookId: string): UiOption[] {
   const used = new Map<string, number>();
   for (const k of Object.keys(segments))

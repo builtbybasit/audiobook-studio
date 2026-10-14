@@ -1,15 +1,9 @@
-// Speaking a line as a character or as one of their personas.
-//
-// A linked persona (`personaOwner`) is one identity with its character. One with no voice of its
-// own is read in its character's, so moving a line between them changes only the effects it is
-// heard through; one with a voice of its own needs new speech (`sameReading`).
+// Speaking a line as a character or one of their personas. A persona without its own voice reads
+// in its character's, so a move changes only effects; one with a voice needs new speech.
 import { personaOwner } from "@/lib/cast";
 import type { Character, Segment } from "@/types";
 
-/**
- * Who a line spoken by `name` may be spoken as: their character first, then the character's
- * personas in cast order. Just `name` for a speaker who has no personas and is none.
- */
+/** The character first, then their personas in cast order; just `name` when there are none. */
 export function identityGroup(
   name: string,
   cast: readonly Pick<Character, "name" | "personaOf">[],
@@ -24,11 +18,7 @@ export function identityGroup(
   return [owner.name, ...personas.map((p) => p.name)];
 }
 
-/**
- * The lines a switch to `to` moves, each with the speaker it had: line `id`, and with `rest` every
- * dialogue or thought line after it in the chapter that anyone in `group` speaks. A line already
- * spoken as `to` is not a move.
- */
+/** Line `id` (and with `rest`, every later dialogue/thought line by `group`) not already `to`. */
 export function speakAsMoves(
   segments: readonly Pick<Segment, "id" | "type" | "speaker">[],
   id: number,

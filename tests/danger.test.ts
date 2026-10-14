@@ -1,12 +1,6 @@
-// One rule for danger, and the point of having one: you never have to work out which kind of
-// destructive control you are looking at.
-//
-// If it can be undone it happens at once and offers Undo; if it cannot, it asks first. Removing a
-// speaker, a voice or an endpoint toasts with an undo and none of them asks. Removing a novel or a
-// volume, and discarding an import, are gone from the server for good — nothing puts a book back in
-// the database — so their controls ask first, and the toast after says it cannot be undone rather
-// than offering a button that would lie. The toast is what the confirmation step would have said,
-// so it carries the same facts.
+// One rule for danger: what can be undone happens at once and offers Undo; what cannot asks first.
+// Removing a novel or a volume, or discarding an import, is gone from the server for good, so it
+// asks first and the toast after says it cannot be undone.
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 
 import { libraryService } from "@/services/library";

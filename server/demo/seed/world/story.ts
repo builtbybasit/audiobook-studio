@@ -1,10 +1,5 @@
-// The situations the seeded books are in. `seedPipeline` gives every book a clean "scripted up to
-// here, narrated up to here" shape; this is where each one is nudged into the state a screen needs
-// to be worth looking at — a failed chapter, an unverified chunk, an alias the model invented, a
-// take waiting to be compared, a long serial mid-flight.
-//
-// Everything here mutates the draft it is handed and nothing here is shared, so a fresh world is a
-// fresh set of situations.
+// Nudges the seeded books from `seedPipeline`'s clean shape into states worth showing: a failed
+// chapter, an unverified chunk, an invented alias, a take to compare, a serial mid-flight.
 import { PALETTE } from "~/demo/seed/fixtures/style";
 import { noteOf } from "~/demo/seed/fixtures/notices";
 import { routeOf, seedAudit, timeOf } from "~/demo/seed/world/audio";
@@ -34,7 +29,7 @@ export function seedStory(w: WorldDraft, now: number): void {
     });
     segs.forEach((x, i) => (x.id = i + 1));
   }
-  // ch 12 of Cliché: the LLM emitted the alias "Ning" as its own speaker → merge suggestion on the Cast page
+  // ch 12 of Cliché: the alias "Ning" as its own speaker → merge suggestion on the Cast page
   {
     let n = 0;
     for (const seg of w.segments["cliche:12"])
@@ -76,8 +71,7 @@ export function seedStory(w: WorldDraft, now: number): void {
           : undefined,
     };
   });
-  // ch 1 of Starforge: a listened-to chapter. Two lines are flagged as bad audio and one of them has
-  // already been retaken, so the ledger opens on a take waiting to be compared.
+  // ch 1 of Starforge: two lines flagged as bad audio, one already retaken and waiting to compare
   {
     const segs = w.segments["starforge:1"];
     const spoken = segs.filter((x) => x.type !== "narration");
@@ -99,11 +93,10 @@ export function seedStory(w: WorldDraft, now: number): void {
       note: "flat — the line is meant to land as a threat",
       at: now - 31 * 60000,
     };
-    // take 2 is rendered and waiting: the ledger opens on a comparison, and until it is accepted the
-    // chapter still plays, times and exports take 1
+    // until take 2 is accepted, the chapter plays, times and exports take 1
     const first = { ...(retaken.audio as SegmentAudio) };
     retaken.direction = "cold, deliberate";
-    // the direction was changed on the line before the retake was asked for, so take 1 is out of date
+    // the direction changed before the retake, so take 1 is stale
     retaken.audio = { ...first, status: "stale", n: 1 };
     retaken.candidate = {
       ...first,
@@ -114,15 +107,12 @@ export function seedStory(w: WorldDraft, now: number): void {
       at: now - 19 * 60000,
     };
     w.chapters.starforge[0].narration = "stale";
-    // pacing set by ear while listening: a beat after the threat lands, none before the answer
     retaken.pause = 1.5;
     if (spoken[1]) spoken[1].pause = 0;
     w.chapters.starforge[0].duration = timeOf(segs, bookOf("starforge"));
   }
 
-  // Thousand Gates: a long serial mid-flight. Most of it is narrated and current; a handful of
-  // w.chapters are stale, one failed outright, one is only half rendered, and the tail has no audio
-  // yet — the mix a build has to explain rather than quietly work around.
+  // Thousand Gates: a serial mid-flight, with stale, failed, half-rendered and unnarrated chapters
   {
     const chs = w.chapters.gates;
     const stale = [37, 88, 140, 152, 191];
@@ -141,7 +131,7 @@ export function seedStory(w: WorldDraft, now: number): void {
       for (const s of w.segments["gates:96"])
         s.audio = { status: "failed", endpoint: null, ms: 0, duration: 0 };
     }
-    // and one where most lines landed but a few did not — a build here would leave holes
+    // most lines landed, a few did not
     {
       const c = chs[140];
       c.narration = "failed";

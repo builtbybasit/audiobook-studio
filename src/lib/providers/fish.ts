@@ -3,10 +3,8 @@
 import { fixedPauses, type SpeechProviderShape } from "@/lib/providers/types";
 
 /**
- * The models Fish's text-to-speech reference names. It also says what happens to any other: "If
- * omitted or set to an unrecognized value, the request falls back to `s2.1-pro`" — the paid model,
- * whatever the endpoint was priced as. So the server refuses a model not on this list before any
- * request rather than let a typo in `s2.1-pro-free` bill at s2.1-pro's rate.
+ * Fish falls back to the paid `s2.1-pro` for an unrecognised model, so the server refuses any
+ * model not listed rather than let a typo in `s2.1-pro-free` bill at the paid rate.
  */
 export const FISH_MODELS = [
   "s1",
@@ -22,10 +20,8 @@ export const fish: SpeechProviderShape = {
   matches: (baseUrl) => /(^|\/\/)([a-z0-9-]+\.)*fish\.audio(\/|$)/i.test(baseUrl),
   requestPath: () => "/tts",
   /**
-   * From https://docs.fish.audio/api-reference/endpoint/openapi-v1/text-to-speech. Its WAV also
-   * goes to 8 kHz, below the 16 kHz this app keeps speech at, and its `pcm` is WAV without the
-   * header, so neither is offered. The Opus default is the schema's `-1000` (automatic); the prose
-   * note on the same page says 32 kbps, and the schema is what the server is sent.
+   * From https://docs.fish.audio/api-reference/endpoint/openapi-v1/text-to-speech. No 8 kHz (below
+   * the app's 16 kHz floor) and no headerless `pcm`.
    */
   formats: [
     {
@@ -53,18 +49,15 @@ export const fish: SpeechProviderShape = {
       label: "Opus · mono, in Ogg",
       rates: [48000],
       defaultRate: 48000,
-      // Only automatic. The API lists 24, 32, 48 and 64 kbps, but on 2026-09-23 asking for 24 or 32
-      // kbps came back at about 272 kbps — five times the size of automatic, which ran near 60 — so
-      // offering them would make "smaller" the larger file. Add them back when Fish honours them.
+      // only automatic: asking for 24 or 32 kbps returned ~272 kbps, larger than automatic (~60).
+      // Add them back when Fish honours them.
       bitrates: [{ value: -1000, label: "Automatic" }],
       defaultBitrate: -1000,
     },
   ],
-  // Fish's models page: the S2 family takes free-form cues in square brackets (`[whispers
-  // sweetly]`, `[laughing nervously]`), S1 its emotions in parentheses. `drama-3-preview` is not
-  // described there; it is served beside the S2 family, so it is given theirs. Both name two pauses,
-  // "brief" and "extended", with no length: `[break]` and `[long-break]` for S2, `(break)` and
-  // `(long-break)` for S1 (https://docs.fish.audio/developer-guide/core-features/emotions).
+  // S2 takes free-form cues in square brackets, S1 emotions in parentheses; `drama-3-preview` is
+  // undocumented and given S2's. Two pauses with no length each
+  // (https://docs.fish.audio/developer-guide/core-features/emotions).
   tags: (model) =>
     model.trim().toLowerCase() === "s1"
       ? {
@@ -83,13 +76,10 @@ export const fish: SpeechProviderShape = {
           hint: "Fish's S2 models take cues in square brackets, in words of your choosing.",
           pause: fixedPauses("[break]", "[long-break]"),
         },
-  // Fish's pricing and API docs say nothing of charging for a refused request.
   billsFailures: false,
   models: FISH_MODELS,
-  // https://docs.fish.audio/features/voice-cloning and the create-model reference: 1 to 20 samples
-  // under `voices`, WAV, MP3, M4A or Opus for a model — and FLAC, which the speech reference takes
-  // as reference audio and a model upload has taken too. `texts`, "corresponding to the voices",
-  // is optional: "if unspecified, ASR will be performed on the voices".
+  // https://docs.fish.audio/features/voice-cloning: FLAC is undocumented for models but accepted;
+  // without `texts` Fish transcribes the samples itself
   cloning: {
     maxSamples: 20,
     maxSampleBytes: 20 * 1024 * 1024,

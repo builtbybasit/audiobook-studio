@@ -1,9 +1,6 @@
-// Import → review contents → add, over HTTP.
-//
-// The rules here are the ones `src/stores/library.ts` already applies in the demo: nothing is
-// deleted by a skip, including a noted chapter counts as having looked at it, a book waits out of
-// the library until its review is confirmed, and chapter numbering stays continuous across
-// volumes whatever is added or removed.
+// Import → review contents → add, over HTTP: a skip deletes nothing, keeping a noted chapter
+// counts as looking at it, a book stays out of the library until its review is confirmed, and
+// numbering stays continuous across volumes.
 import { describe, expect, test } from "bun:test";
 
 import type { Book, Chapter } from "@/types";
@@ -232,9 +229,8 @@ describe("a novel split across several EPUBs", () => {
     await api.request(`/api/books/${id}/confirm`, { method: "POST" });
     await api.import<ImportResult>(await volume(["Two"]), { bookId: id });
 
-    // Neither of these files is an EPUB. Parsed first, both would be refused for that — and a
-    // thousand-chapter volume is seconds of work to do and throw away. The answer that matters is
-    // the one about where the volume was going.
+    // Neither file is an EPUB, but the answer that matters is where the volume was going: parsing
+    // first would waste seconds on a thousand-chapter volume.
     const junk = () =>
       new File(["this is not a zip"], "vol.epub", { type: "application/epub+zip" });
     const missing = await api.import<{ error: { message: string } }>(junk(), { bookId: "no-such" });

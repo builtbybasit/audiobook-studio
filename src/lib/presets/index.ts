@@ -1,6 +1,4 @@
-// The provider presets, one catalogue per kind of endpoint (`speech.ts`, `scripting.ts`,
-// `transcription.ts`), and the lookups the pages and the store use. `lib/endpoints.ts` re-exports
-// all of it, which is where callers import it from.
+// The provider presets, one catalogue per endpoint kind. Callers import via `lib/endpoints.ts`.
 import type { EndpointKind } from "@/types";
 import type { ScriptingPreset, TranscriptionPreset, TtsPreset } from "@/lib/presets/preset";
 import { SCRIPTING_PRESETS } from "@/lib/presets/scripting";
@@ -23,7 +21,6 @@ const CATALOGUES = {
   transcription: TRANSCRIPTION_PRESETS,
 } satisfies Record<EndpointKind, unknown[]>;
 
-/** The presets for one kind of endpoint. */
 export const presetsOf = <K extends EndpointKind>(kind: K): (typeof CATALOGUES)[K] =>
   CATALOGUES[kind];
 

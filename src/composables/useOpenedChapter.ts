@@ -1,9 +1,6 @@
-// The chapter a stage (Scripting, Narration) has open.
-//
-// It is kept in the URL as `?ch=`, so a link — the command palette's, a review moving on to the
-// next retake in another chapter — opens the chapter it names, and it is remembered per book, so
-// the chapter follows you between stages. With no `?ch=` the page opens the chapter it was last on,
-// else the stage's own first choice, and writes that into the address once it is on screen.
+// The chapter a stage (Scripting, Narration) has open, kept in `?ch=` so links open it, and
+// remembered per book so it follows you between stages. Without `?ch=`: the last chapter, else the
+// stage's own pick, written into the address once shown.
 import { useLibraryStore } from "@/stores/library";
 import { useUiStore } from "@/stores/ui";
 import { computed, onMounted, watch } from "vue";
@@ -19,8 +16,8 @@ export function useOpenedChapter(
   const libraryStore = useLibraryStore();
   const uiStore = useUiStore();
   const ch = useQueryParam("ch", idParam());
-  // `?seg=` names a line in the chapter it came with, so opening another one here drops it; a link
-  // that sets both keeps its line
+  // `?seg=` belongs to the chapter it came with, so opening another drops it; a link setting both
+  // keeps its line
   const seg = useQueryParam("seg", textParam());
   const remembered = (): number => {
     const chapters = libraryStore.chaptersOf(bookId);
@@ -28,7 +25,7 @@ export function useOpenedChapter(
   };
   const opened = computed(() => ch.value ?? remembered());
 
-  /** open a chapter from this page — the picker */
+  /** open a chapter from this page (the picker) */
   function open(id: number): void {
     if (id === opened.value) return;
     ch.value = id;

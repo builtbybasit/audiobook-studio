@@ -1,7 +1,5 @@
 <script setup lang="ts">
-// One chapter, in full, beside the list: where it sits in the book, what the import saw in it and
-// why, the text with any note marked, and the decision. Opening it changes nothing — the list keeps
-// its scroll and its filter, and the buttons here are the same actions the row offers.
+// One chapter in full beside the list, with what the import saw in it and the decision.
 import { computed } from "vue";
 import { stateOf } from "@/lib/contents";
 import { STATE_CHIP, words } from "@/views/contents/shared";
@@ -150,9 +148,7 @@ const noticeWords = computed(() =>
         <div v-if="p.notice" class="label mb-1 text-amber-700 dark:text-amber-300">
           {{ note?.kind === "mixed" ? "Author note" : "Notice" }}
         </div>
-        <!-- The import stores a chapter as Markdown, so the review shows what the file laid out:
-             headings, emphasis, and the table a character list or a timetable was built in. The
-             seeded demo's prose has no Markdown in it and parses to itself. -->
+        <!-- the import stores a chapter as Markdown -->
         <MarkdownText :text="p.text" />
       </div>
     </div>

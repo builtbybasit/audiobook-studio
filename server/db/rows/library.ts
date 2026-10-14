@@ -1,9 +1,5 @@
 // Books, volumes and chapters, between rows and the shapes the app reads.
-//
-// One rule holds across every file in this directory: **absent is not null**. The domain marks
-// things by leaving them out — a chapter with no note has no `note` key, not a null one — and a
-// mapper that hands back `{ note: null }` produces an object that compares unequal to the one that
-// went in, and a UI that renders "null" where it should render nothing.
+// Rule for every mapper here: absent is not null. A chapter with no note has no `note` key.
 import type {
   Book,
   BookPrompt,
@@ -22,10 +18,7 @@ type BookRow = typeof books.$inferSelect;
 type VolumeRow = typeof volumes.$inferSelect;
 type ChapterRow = typeof chapters.$inferSelect;
 
-/**
- * A book's own pacing, or none when it keeps the default. A pacing saved before the pauses inside a
- * line were asked for has their default lengths.
- */
+/** A book's own pacing, or undefined for the default; unset inline pauses get default lengths. */
 export function toPacing(
   row: Pick<BookRow, "pacingLine" | "pacingTurn" | "pacingInlineShort" | "pacingInlineLong">,
 ): Pacing | undefined {
@@ -38,12 +31,7 @@ export function toPacing(
   };
 }
 
-/**
- * Rebuild a book from its row and the volumes that belong to it, already in reading order.
- *
- * `counts` is how its chapters stand, for a shelf that has not read them; the round-trip test
- * leaves it out because the seeded world's books carry none.
- */
+/** Rebuild a book from its row and its volumes, already in reading order. */
 export function toBook(row: BookRow, vols: readonly VolumeRow[], counts?: ChapterCounts): Book {
   const book: Book = {
     id: row.id,
@@ -56,8 +44,7 @@ export function toBook(row: BookRow, vols: readonly VolumeRow[], counts?: Chapte
   if (counts) book.chapters = counts;
   if (row.importing) book.importing = true;
   if (row.coverImage != null) book.coverImage = row.coverImage;
-  // A budget exists once either half of it has been set; absent is not the same as "no cap, not
-  // paused", and the overview reads the difference.
+  // a budget exists once either half is set; absent differs from "no cap, not paused"
   if (row.budgetCap != null || row.budgetPaused != null)
     book.budget = { cap: row.budgetCap ?? null, paused: row.budgetPaused ?? false };
   if (row.scriptBudget != null) book.scriptBudget = row.scriptBudget;
@@ -72,10 +59,7 @@ export function toBook(row: BookRow, vols: readonly VolumeRow[], counts?: Chapte
   return book;
 }
 
-/**
- * A book's notes and its own prompt, or nothing when neither was ever set. The four columns are
- * written together (`bookPromptValues`), so any one of them set is the whole value.
- */
+/** Undefined when never set; the four columns are written together, so any one set is the value. */
 function toBookPrompt(row: BookRow): BookPrompt | undefined {
   if (
     row.promptNotes == null &&
@@ -92,7 +76,7 @@ function toBookPrompt(row: BookRow): BookPrompt | undefined {
   };
 }
 
-/** A book's prompt as its four columns; nothing, all four null. */
+/** Undefined clears all four columns. */
 export const bookPromptValues = (p: BookPrompt | null | undefined) => ({
   promptNotes: p?.notes ?? null,
   promptReplace: p ? p.replace : null,
@@ -132,7 +116,7 @@ export function toChapter(row: ChapterRow): Chapter {
   return c;
 }
 
-/** A book, flattened for insertion. `addedAt` arrives as the epoch ms the caller recorded. */
+/** `addedAt` is epoch ms. */
 export function bookValues(book: Book, addedAt: number): typeof books.$inferInsert {
   return {
     id: book.id,
@@ -176,11 +160,8 @@ export function volumeValues(
 }
 
 /**
- * A chapter's own id, for the rows that must not be rewritten when chapters are renumbered.
- *
- * Random rather than derived. Anything built out of the book id and the chapter number would be
- * exactly the moving address it exists to avoid, and would collide the first time a volume was
- * removed and a later chapter took a number an earlier one had already been spent against.
+ * A chapter's stable id, for rows that must survive renumbering. Random, since one derived from
+ * the chapter number would move and collide when a volume is removed.
  */
 export const newChapterUid = (): string => crypto.randomUUID();
 

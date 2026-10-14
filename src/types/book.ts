@@ -1,17 +1,15 @@
-// The library: a book, the volumes it was assembled from, its chapters, its cast, and the two
-// per-book settings — the pronunciation dictionary and the pacing — that change how it sounds
-// without changing a word of it.
+// The library: a book, its volumes, chapters and cast, and the per-book settings (pronunciation
+// dictionary, pacing) that change how it sounds without changing a word of it.
 import type { Gender, VoiceRef } from "@/types/common";
 import type { ThoughtChoice } from "@/types/effect";
 import type { BookPrompt } from "@/types/scripting";
 
-/** One entry of a book's pronunciation dictionary. The book text is never rewritten: the term is
- *  swapped for `say` on the way to the endpoint, so the reader still shows the author's spelling. */
+/** The book text is never rewritten: the term is swapped for `say` on the way to the endpoint. */
 export interface LexEntry {
   id: number;
   /** as it is written in the book */
   term: string;
-  /** what the endpoint is sent instead — respell it the way it should sound */
+  /** respelled the way it should sound */
   say: string;
   /** reference spelling for humans; never sent anywhere */
   ipa?: string;
@@ -22,10 +20,7 @@ export interface LexEntry {
   enabled: boolean;
 }
 
-/**
- * Default silence between clips, and the lengths of the pauses inside a line, in seconds. Per-line
- * overrides live on the segment; a pause placed with a length of its own keeps it.
- */
+/** Seconds. Per-line overrides live on the segment; a pause with its own length keeps it. */
 export interface Pacing {
   /** after a line followed by the same speaker */
   line: number;
@@ -40,12 +35,8 @@ export interface Pacing {
 export type ScriptingStatus = "none" | "queued" | "running" | "done" | "failed" | "fallback";
 
 /**
- * What a non-story chapter turned out to be.
- *
- * `mixed`, `title` and `unreadable` are the three that need a person. The last of those is not a
- * notice at all — it is the import saying the file listed a chapter it could not read — but it
- * reaches the reader through the same review, and giving it a channel of its own would mean a
- * second place to look before trusting a book's contents.
+ * What a non-story chapter turned out to be. `mixed`, `title` and `unreadable` need a person;
+ * `unreadable` is the import failing to read a listed chapter, shown in the same review.
  */
 export type NoticeKind =
   | "hiatus"
@@ -66,21 +57,18 @@ export type NoticeKind =
   | "front"
   | "unreadable";
 
-/**
- * The kinds the seeded demo has wording for: every notice, which is all of them but `unreadable`.
- *
- * Nothing in the demo reads a file, so nothing in it can fail to. Writing a fixture body for one
- * would be inventing a failure the demo cannot actually produce.
- */
+/** The kinds the demo has wording for: it reads no files, so nothing in it can be unreadable. */
 export type DemoNoticeKind = Exclude<NoticeKind, "unreadable" | "empty" | "front">;
 
 /**
- * A suggestion attached to a chapter when the EPUB was read: this looks like a notice rather than
- * story. It never removes anything by itself — `Chapter.excluded` is the user's decision, and a
- * chapter the user looked at and kept records that in `Chapter.kept`.
+ * An import-time suggestion that a chapter looks like a notice. It never removes anything:
+ * `Chapter.excluded` is the user's decision, and `Chapter.kept` records a look-and-keep.
  */
 export interface ChapterNote {
-  /** skip: the whole chapter reads as a notice, or is a cover or an empty page; review: story and a note together, or a title that only looks like one */
+  /**
+   * skip: the whole chapter is a notice, cover or empty page; review: story and a note together, or
+   * a title that only looks like one
+   */
   verdict: "skip" | "review";
   kind: NoticeKind;
   /** the one line shown beside the title, e.g. “Possible hiatus announcement” */
@@ -89,7 +77,7 @@ export interface ChapterNote {
   evidence: string[];
   /** for a chapter that mixes a note with story: where the note sits */
   at?: "start" | "end";
-  /** which wording of the notice this chapter reads with, so repeats differ (prototype text only) */
+  /** which wording of the notice this chapter reads with, so repeats differ (demo text only) */
   variant?: number;
 }
 export type NarrationStatus = "none" | "queued" | "running" | "done" | "failed" | "stale";
@@ -112,23 +100,18 @@ export interface Chapter {
   note?: ChapterNote;
   /** the user reviewed the note and chose to keep the chapter */
   kept?: boolean;
-  /**
-   * The chapter's lines as the server last counted them, so a page can show how far a chapter
-   * has got without reading its script. On every chapter the server lists; absent on one the
-   * browser or an import built before it was stored.
-   */
+  /** Line counts as the server last stored them, so a page needn't read the script. */
   lines?: LineCounts;
   /**
-   * Set while a re-script is queued. `was` is the status to go back to if the attempt produces nothing, so a failed or
-   * cancelled replacement leaves a chapter that still has a usable script saying so; `token` is the
-   * job allowed to write the result, so a late callback cannot overwrite a newer run or a restore.
+   * Set while a re-script is queued. `was` is the status to restore if the attempt produces
+   * nothing; `token` is the job allowed to write the result, so a late callback can't overwrite a
+   * newer run or a restore.
    */
   rescript?: { was?: ScriptingStatus; token?: number };
 }
 
 /**
- * A chapter's lines, and how many of them have a clip done, being rendered, or failed. Counts the
- * lines the book reads aloud (`isSpoken` in `@/lib/siteText`); the others are `skipped`.
+ * Counts the lines the book reads aloud (`isSpoken` in `@/lib/siteText`); the rest are `skipped`.
  */
 export interface LineCounts {
   total: number;
@@ -151,24 +134,16 @@ export interface Volume {
 }
 
 /**
- * Where a volume begins, and what it is called: the whole of a book's volumes is a list of these in
- * reading order, the first one at the book's first chapter. Writing the list is how a book is cut
- * into volumes, joined back, or has a boundary moved — the server rewrites which volume each
- * chapter belongs to and keeps every volume row that still begins where it did.
+ * Where a volume begins. A book's volumes are a list of these in reading order, the first at the
+ * first chapter; writing the list cuts, joins or moves volumes.
  */
 export interface VolumeStart {
-  /** the chapter the volume begins at, by its number */
+  /** chapter number */
   chapter: number;
   name: string;
 }
 
-/**
- * How a book's chapters stand, counted.
- *
- * A book listed by the server carries these so the shelf can say "12 chapters" and how far along
- * they are before the book has been opened and its chapters read. They are counts of the chapters
- * as stored; once the chapters themselves are here, they are what is counted.
- */
+/** Stored chapter counts, so the shelf can show progress before a book's chapters are read. */
 export interface ChapterCounts {
   total: number;
   /** not skipped for the audiobook */
@@ -184,46 +159,42 @@ export interface Book {
   /** two-stop gradient for the generated cover */
   cover: [string, string];
   /**
-   * The cover image the EPUB carried, where the server can serve it from — `/api/books/:id/covers/…`, or under `/demo/api` for the demo library's books.
-   * Absent when the book had none, and in the demo, which has no files; the gradient stands in.
+   * Where the server serves the EPUB's cover (`/api/books/:id/covers/…`, or under `/demo/api`).
+   * Absent when the book had none; the gradient stands in.
    */
   coverImage?: string;
   addedAt: string;
   volumes: Volume[];
-  /** how the chapters stand, counted; present on a book the server listed */
+  /** present on a book the server listed */
   chapters?: ChapterCounts;
   /** imported in this session and not yet added to the library */
   importing?: boolean;
-  /** prototype: the import sample this book's text is read from; a seeded book reads as itself */
+  /** demo: the import sample this book's text is read from; a seeded book reads as itself */
   sample?: string;
-  /** spend ceiling and the user's pause switch; absent until either is set */
+  /** absent until either is set */
   budget?: { cap: number | null; paused: boolean };
   scriptBudget?: number | null;
   /** default gaps between clips; absent = the built-in pacing */
   pacing?: Pacing;
-  /** notes for the scripter, and a whole prompt of its own it may switch on; absent = neither */
+  /** notes for the scripter, and a prompt of its own it may switch on; absent = neither */
   prompt?: BookPrompt;
   /** read translator's and author's notes (`note` lines) aloud; absent = skip them */
   readNotes?: boolean;
   /**
-   * Check each chapter by ear after it is narrated: a `check` job hears its clips on the first
-   * transcription endpoint switched on. Absent = only when asked.
+   * After narration a `check` job hears each chapter on the first enabled transcriber.
+   * Absent = only on request.
    */
   checkByEar?: boolean;
-  /**
-   * The thought effect this book's `thought` lines get: an effect's id, or "none" to narrate them
-   * as the voice made them. Absent = the library's (`src/lib/effects.ts`).
-   */
+  /** Effect for `thought` lines: an id or "none". Absent = the library's (`src/lib/effects.ts`). */
   thoughts?: ThoughtChoice;
   /** the voice a speaker with none of their own is read in; absent = the Narrator's */
   characterVoice?: CharacterVoice;
 }
 
 /**
- * The book's Character voice: what a speaker with no voice of their own is read in, before the
- * Narrator's. One voice for all of them, or one by gender — neutral and unknown share `other`,
- * since unknown is most of a fresh cast. Both shapes are kept, so switching between them loses
- * nothing; a slot left empty falls through to the Narrator's voice.
+ * The voice for speakers with none of their own, before the Narrator's: one voice, or one per
+ * gender (neutral and unknown share `other`). Both shapes are kept so switching loses nothing; an
+ * empty slot falls through to the Narrator.
  */
 export interface CharacterVoice {
   by: "one" | "gender";
@@ -252,17 +223,15 @@ export interface Character {
   /** their thought lines' effect: an effect's id or "none"; absent = the book's */
   thoughts?: ThoughtChoice;
   /**
-   * The character this speaker is a persona of — a disguise or false identity of theirs (a mask,
-   * a name strangers know them by), by name. A linked persona speaks with that character's effect,
-   * then its own, in its own voice when it has one picked and that character's otherwise; a name
-   * not in the cast (or its own) links nobody. Absent = a speaker in their own right.
+   * The character this speaker is a disguise of, by name. A persona gets that character's effect,
+   * then its own, in its own voice if picked and theirs otherwise. A name not in the cast (or its
+   * own) links nobody.
    */
   personaOf?: string;
   /**
-   * The scripting model found this speaker to be a disguise: with no `personaOf`, one whose wearer
-   * the book has not said yet ("masked, identity unknown"), whom a later chapter's answer may link;
-   * with one, a link the model made, shown only behind a spoiler. Linking or unlinking by hand
-   * clears it, so a model's note never undoes what a person did. Absent = not found by the model.
+   * The scripting model found this speaker to be a disguise: unlinked, the wearer is still unknown;
+   * linked, the link is the model's and shown behind a spoiler. Linking by hand clears it, so a
+   * model's note never undoes a person's choice.
    */
   masked?: boolean;
 }

@@ -1,9 +1,6 @@
 <script setup lang="ts">
-// A row of tabs on reka-ui's Tabs, inside the page's own `TabsRoot`: the underline under the open
-// one and the muted rest, the same on every page that has tabs. The list's border and spacing are
-// the caller's `class`, since each row sits differently in its page. A tab's count, dot or badge
-// goes in the `tab` slot, after its label; anything else in the row (a collapse button) goes in the
-// default slot, after the last tab.
+// A row of tabs on reka-ui's Tabs, inside the page's own `TabsRoot`, styled the same everywhere.
+// Border and spacing come from `class`; the `tab` slot holds a count or badge, the default extras.
 import { TabsList, TabsTrigger } from "reka-ui";
 
 defineProps<{ tabs: readonly { value: string; label: string }[] }>();

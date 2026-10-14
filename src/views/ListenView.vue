@@ -2,17 +2,9 @@
 import { useCastStore } from "@/stores/cast";
 import { useLibraryStore } from "@/stores/library";
 
-// Listen: a chapter read along with its audio. The line under the playhead is lit, and on a line a
-// check by ear has heard, so is the word being said — from the times the transcriber put on its
-// words, never from an estimate. Only the chapter's own spoken text is on the page: no cast notes,
-// nothing from later chapters.
-//
-// It plays the same chapter queue the reader and the ledger do (`useChapterQueue`), so a chapter
-// started on one of those keeps playing here, and the mini player takes you back to this page.
-// The page's own player is the slim bar at the foot (`ListenBar`): the transport, the position in
-// the chapter, and what a listener does while hearing a line — flag it, repeat it, stop at the
-// chapter's end. The keys are the ledger's: j/k lines, , and . ten seconds, f flag, r repeat, and
-// [ ] the flagged lines.
+// Listen: a chapter read along with its audio. The line under the playhead is lit, and on a line
+// a check by ear heard, the word too, from the transcriber's times, never an estimate. It plays the
+// shared chapter queue (`useChapterQueue`); the player is `ListenBar`, with the ledger's keys.
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useDocumentVisibility } from "@vueuse/core";
@@ -49,14 +41,14 @@ const { opened, open } = useOpenedChapter(
   (chapters) => chapters.find(isNarrated)?.id ?? chapters.find(isScripted)?.id,
 );
 const { segments, loaded, status, refetch } = useChapterScript(bookId, opened);
-// The word marks. Until the server answers — or when it cannot, or the chapter was never checked —
-// there are none, and every line lights up whole: no error is worth showing for that.
+// Word marks. None until the server answers, or ever for an unchecked chapter: lines then light up
+// whole, with no error shown.
 const { lines: heard } = useChapterHeard(bookId, opened);
 
 const book = computed(() => libraryStore.bookById(bookId));
 const chapters = computed(() => libraryStore.chaptersOf(bookId));
 const chapter = computed(() => libraryStore.chapter(bookId, opened.value));
-// chapters by their reading number — their place among the kept ones — never by id
+// by reading number, never by id
 const numbers = computed(() => libraryStore.chapterNumbers[bookId]);
 const chapterOptions = computed(() =>
   chapters.value.map((c) => ({
@@ -65,10 +57,8 @@ const chapterOptions = computed(() =>
     hint: isNarrated(c) ? fmt(c.duration) : "no audio",
   })),
 );
-/** this chapter's reading number, and how many chapters the audiobook keeps */
 const place = computed(() => numbers.value?.get(opened.value));
 const kept = computed(() => numbers.value?.size ?? 0);
-/** the narrated chapter before or after this one, to step to */
 function neighbour(d: 1 | -1): Chapter | null {
   const i = chapters.value.findIndex((c) => c.id === opened.value);
   for (let j = i + d; j >= 0 && j < chapters.value.length; j += d) {
@@ -80,7 +70,7 @@ function neighbour(d: 1 | -1): Chapter | null {
 const before = computed(() => neighbour(-1));
 const after = computed(() => neighbour(1));
 
-/** what is read aloud; site text is not, and is not shown */
+/** site text is not read aloud, so it is not shown */
 const rows = computed(() => segments.value.filter((s) => isSpoken(s, book.value)));
 const narrated = computed(() => heardLines(segments.value, book.value).length);
 const marks = computed(() => {
@@ -93,37 +83,33 @@ const marks = computed(() => {
 });
 const colorOf = (name: string): string =>
   castStore.charactersOf(bookId).find((c) => c.name === name)?.color ?? "#71717a";
-/** the chapter's length as the bar draws it: the clips and the silence between them */
+/** the clips and the silence between them */
 const total = computed(() => {
   const last = chapterTimeline(segments.value, castStore.pacingOf(bookId), book.value).at(-1);
   return last ? last.end + last.gap : 0;
 });
 
-// ---- the player ----
 const { p, playQueue, seekTo, skip, next, prev, repeatClip, layout, now } = usePlayer();
 const queueId = computed(() => chapterQueueId(bookId, opened.value));
 const isThis = computed(() => p.id === queueId.value);
-/** the line under the playhead, while this chapter is the one loaded */
 const current = computed(() =>
   isThis.value && p.clipId?.startsWith("seg") ? Number(p.clipId.slice(3)) : null,
 );
-/** the line the bar and the keys act on: the one playing, else the first with a clip */
+/** the one playing, else the first with a clip */
 const focus = computed(
   () => rows.value.find((s) => s.id === current.value) ?? rows.value.find((s) => s.audio.duration),
 );
 const buildQueue = () =>
   chapterQueue(bookId, opened.value, {
     href: (id) => `/book/${bookId}/listen?ch=${id}`,
-    // the page follows playback into the next chapter, as the ledger does
     onChapter: (id) => void router.replace({ query: { ...route.query, ch: String(id) } }),
   });
-/** Press play: toggle this chapter, or start it — from `at` seconds in, when given. */
+/** Toggle this chapter, or start it `at` seconds in. */
 function playChapter(at?: number) {
   if (at != null && isThis.value) return seekTo(at);
   const q = buildQueue();
   if (q) playQueue(q, at);
 }
-/** Listen from `offset` seconds into a line: moved to while this chapter plays, else started there. */
 function listenFrom(s: Segment, offset: number) {
   const at = segmentStart(bookId, opened.value, s.id);
   if (at == null) return;
@@ -133,16 +119,13 @@ function listenFrom(s: Segment, offset: number) {
   if (q) playQueue(q, at + offset);
 }
 
-// ---- the word being said ----
-// One index, set from an animation frame while a line with marks plays: the tick moves the
-// playhead ten times a second, and a word is often shorter than that. It only changes when the word
-// does, so a frame that lands on the same word renders nothing.
+// Set from an animation frame: the tick moves the playhead only ten times a second, and a word is
+// often shorter than that. It only changes when the word does.
 const word = ref(-1);
 let lineMarks: WordMark[] | null = null;
 let lineStart = 0;
-// A click puts the playhead on the word's start, but until its clip has loaded and plays, the
-// element can sit a hair short of it — on the word before, for as long as the load takes. So the
-// spot clicked holds until the playhead reaches it, the line changes, or `HOLD_MS` goes by.
+// Until a clicked word's clip loads and plays, the playhead can sit a hair short of it, on the
+// word before. So the clicked spot holds until reached, the line changes, or `HOLD_MS` passes.
 const HOLD_MS = 1500;
 let held: { id: number; at: number; until: number } | null = null;
 const update = () => {
@@ -162,7 +145,7 @@ watch(
   { immediate: true },
 );
 const visible = useDocumentVisibility();
-/** the frame loop runs only while it has something to follow, and someone to show it to */
+/** runs only while there is something to follow and the page is visible */
 const following = computed(
   () =>
     p.playing &&
@@ -192,10 +175,8 @@ watch(
 );
 onBeforeUnmount(() => cancelAnimationFrame(raf));
 
-// ---- reading along ----
-// The page keeps the line being read in view, but only while it plays and only when the line
-// changes, so scrolling back to re-read something is never fought over: a scroll while it plays
-// turns following off, and the bar's button (or a click on a line) turns it on again.
+// Keep the playing line in view only when the line changes, so scrolling back is never fought
+// over: a scroll while it plays turns following off; the bar's button or a line click turns it on.
 const follow = ref(true);
 const scrollTo = (id: number | null) =>
   id != null &&
@@ -208,14 +189,13 @@ const onWheel = () => {
   if (isThis.value && p.playing) follow.value = false;
 };
 watch(current, (id) => p.playing && follow.value && scrollTo(id));
-// …and arriving on a chapter that is already playing finds its place once the script is in
+// arriving on a chapter already playing finds its place once the script is in
 watch(loaded, (v) => v && p.playing && scrollTo(current.value), { flush: "post", immediate: true });
 
-// ---- flags, and the keys ----
-/** the line whose flag popover is open beside it; the bar's, for the line playing, is its own */
+/** the line whose flag popover is open; the bar's is its own */
 const flagOpen = ref<number | null>(null);
 const barFlag = ref(false);
-/** a word for the pronunciation dictionary goes to the Narration page, which has the panel */
+/** the Narration page has the dictionary panel */
 const pronounce = (word: string) =>
   void router.push({
     path: `/book/${bookId}/narration`,

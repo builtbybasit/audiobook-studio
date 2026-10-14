@@ -5,14 +5,9 @@ import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
 
-// Script search across every scripted chapter of the book: text, speaker, direction. Results open the
-// reader at that exact segment — and can be ticked instead, for a correction applied to many lines at
-// once: change speaker, set or clear direction, flag for review. Selecting is not opening: the
-// checkbox never navigates, and the row's link never selects.
-//
-// The selection is a set of segment keys, not a slice of what is on screen, so "select all matching"
-// covers matches further down the list than the page shows. Changing the query or the filters throws
-// the selection away rather than carry hidden lines into a correction.
+// Script search across the book's scripted chapters. A result opens the reader at its line, or is
+// ticked for a bulk correction; the checkbox never navigates and the link never selects. The
+// selection is a set of keys, so "select all matching" covers lines below the page.
 import { computed, nextTick, ref, watch } from "vue";
 import type { Component } from "vue";
 import { isScripted } from "@/lib/scriptReview";
@@ -46,8 +41,7 @@ useCast(bookId);
 const { failed: unread, loading: reading, retry: readAgain } = useBookScripts(bookId);
 const q = useQueryParam("q", textParam());
 const speaker = useQueryParam("speaker", textParam());
-// the story's types, then the two that are not the story — a link can land on every line of site
-// text in the book (`?type=watermark`)
+// story types, then the two that are not story (`?type=watermark` lands on all site text)
 const TYPES = ["all", "dialogue", "narration", "thought", "watermark", "note"] as const;
 const type = useQueryParam("type", enumParam(TYPES, "all"));
 const { contains } = useFilter({ sensitivity: "base" });
@@ -74,9 +68,7 @@ const results = computed(() => {
 });
 const total = computed(() => results.value.reduce((a, r) => a + r.hits.length, 0));
 
-// ---------- what is on screen ----------
-// Results are shown a page at a time; the counts and every "select all" always speak for the whole
-// match set, never for the page.
+// Paged; counts and every "select all" speak for the whole match set, never the page.
 const PAGE = 40;
 const shown = ref(PAGE);
 const pages = computed(() => {
@@ -96,7 +88,6 @@ const pages = computed(() => {
 });
 const onScreen = computed(() => pages.value.reduce((a, r) => a + r.hits.length, 0));
 
-// ---------- selection ----------
 const selected = ref(new Set<string>());
 const keyOf = (chId: number, segId: number) => `${chId}:${segId}`;
 const isOn = (chId: number, segId: number) => selected.value.has(keyOf(chId, segId));
@@ -109,7 +100,7 @@ const targets = computed<BulkTarget[]>(() =>
     .sort((a, b) => a.chId - b.chId || a.segId - b.segId),
 );
 const selectedChapters = computed(() => new Set(targets.value.map((t) => t.chId)).size);
-/** what changed last, for the screen reader and the strip under the search box */
+/** for the screen reader and the strip under the search box */
 const announcement = ref("");
 
 function set(keys: string[], on: boolean) {
@@ -151,8 +142,7 @@ function clearSelection() {
   announcement.value = n ? `Selection cleared — ${plural(n, "line")}.` : "";
 }
 
-// a different query or filter means a different match set: the old selection is dropped rather than
-// carried along invisibly
+// a different match set drops the selection rather than carry hidden lines into a correction
 const criteria = computed(() => JSON.stringify([q.value.trim(), speaker.value, type.value]));
 watch(criteria, () => {
   shown.value = PAGE;
@@ -168,9 +158,7 @@ watch(criteria, () => {
   });
 });
 
-// ---------- corrections ----------
-// The bar's three actions open one panel, in place, under the buttons. Re-pressing the same button
-// closes it, and closing puts the focus back where it came from.
+// One panel for the bar's three actions; re-pressing closes it and returns focus to the button.
 type BulkKind = "speaker" | "direction" | "flag";
 const ACTIONS: { kind: BulkKind; label: string; icon: Component }[] = [
   { kind: "speaker", label: "Change speaker…", icon: SpeakerIcon },
@@ -204,7 +192,6 @@ function undo() {
   announcement.value = `Undone: ${last.value.result.label}.`;
 }
 
-// ---------- display helpers ----------
 function mark(text: string): { t: string; hit?: boolean }[] {
   const s = q.value.trim();
   if (!s) return [{ t: text }];
@@ -254,7 +241,6 @@ const colorOf = (n: string) => cast.value.find((c) => c.name === n)?.color ?? "#
       />
     </div>
 
-    <!-- scope: what is selected, out of what -->
     <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-zinc-500">
       <label v-if="total" class="flex items-center gap-1.5">
         <UiCheckbox
@@ -279,7 +265,6 @@ const colorOf = (n: string) => cast.value.find((c) => c.name === n)?.color ?? "#
     </div>
     <p aria-live="polite" class="sr-only">{{ announcement }}</p>
 
-    <!-- what just happened, with the batch's one undo -->
     <div
       v-if="last"
       class="card flex flex-wrap items-center gap-x-3 gap-y-1 border-violet-300 p-3 text-sm dark:border-violet-500/40"
@@ -303,9 +288,7 @@ const colorOf = (n: string) => cast.value.find((c) => c.name === n)?.color ?? "#
       </button>
     </div>
 
-    <!-- bulk actions: only while something is selected. The bar sticks to the top of the results, so
-         it never covers them or the player at the bottom, and its panel opens inside it rather than
-         over the lines it is about. A tall panel scrolls inside the bar instead of eating the page. -->
+    <!-- sticky above the results, never over them or the player; a tall panel scrolls inside -->
     <div
       v-if="selected.size"
       class="sticky top-0 z-30 -mx-1 max-h-[70dvh] overflow-y-auto rounded-lg border border-violet-300 bg-white/95 shadow-sm backdrop-blur dark:border-violet-500/40 dark:bg-zinc-900/95"

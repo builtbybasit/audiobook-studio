@@ -1,6 +1,5 @@
-// What the Scripting page says about a profile, read off its requests in the server's ledger: the
-// health dot, the activity figures and the estimate's observed cache rate (`src/lib/scriptActivity.ts`,
-// `src/queries/scriptActivity.ts`).
+// What the Scripting page says about a profile from its ledger requests: the health dot, the
+// activity figures and the estimate's observed cache rate.
 import { describe, expect, test } from "bun:test";
 
 import { recentCacheRate, scriptTelemetry } from "@/lib/scriptActivity";

@@ -1,8 +1,6 @@
 <script setup lang="ts">
-// The library's line effects, set in one table: every effect, with the "Use when" sentence that
-// offers it to the scripting model. One left blank is not offered. The effects are the library's,
-// so the sheet says "All books"; making or taking one apart stays in the effects sheet, which
-// "Tune" opens on it (`tune`).
+// The library's line effects: each effect's "Use when" sentence offers it to the scripting model;
+// a blank one is not offered. "Tune" opens the effects sheet on it.
 import { DialogTitle } from "reka-ui";
 import { X as CloseIcon } from "@lucide/vue";
 

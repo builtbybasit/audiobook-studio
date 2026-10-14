@@ -1,9 +1,6 @@
 <script setup lang="ts">
-// The chapter list of the contents review: reading order, grouped by volume, every row a decision.
-// The checkbox is the decision itself — ticked means "in the audiobook" — so there is no second
-// selection to keep track of; shift ticks a range of what is on screen, the volume header ticks a
-// volume, and the strip above the list ticks a kind of note. Opening a chapter is a separate click
-// and never changes a tick.
+// The contents review's chapter list, grouped by volume. The checkbox is the decision itself
+// ("in the audiobook"), not a selection; opening a chapter never changes a tick.
 import { computed, nextTick, ref } from "vue";
 import { numberCell } from "@/lib/chapterNumber";
 import { excerptOf, stateOf } from "@/lib/contents";
@@ -45,8 +42,6 @@ function excerpt(c: Chapter): string {
   return e;
 }
 
-// A row shows its reading number, which a tick here gives or takes away, so the column renumbers
-// the moment a chapter is skipped or kept; a skipped row shows a dash.
 const libraryStore = useLibraryStore();
 const numbers = computed(() => libraryStore.chapterNumbers[props.bookId]);
 const pad = computed(() => String(numbers.value?.size ?? 0).length);

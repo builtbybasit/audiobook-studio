@@ -1,21 +1,8 @@
 <script setup lang="ts">
-// One chart, four readings of the same buckets, drawn with Unovis (`@unovis/vue`) inside
-// shadcn-vue's chart shell: `ChartContainer` holds the config the legend and the tooltip are
-// both read from, so a metric's label and colour are written once, here, in PARTS.
-//
-// Clicking a bar filters the Activity list to exactly the requests that made it — the server sums a
-// bucket and filters the list by the same rule for a row's time, so "what caused this spike" is
-// always answerable.
-// SVG bars can't hold focus, so the plot is also a keyboard control: focus it and ←/→ walk the
-// buckets, Enter picks one, Esc clears. The readout under the chart is the live region that
-// announces whichever bucket the pointer or the keyboard is on.
-//
-// Throughput and spend are interval totals, while errors are discrete event counts, so bars make
-// their magnitude and empty buckets easy to compare. Latency is a trend: one line shows the total
-// wait a user experienced, while the readout retains the queue/provider split needed to diagnose it.
-//
-// When nothing in the range reported usage, throughput is unknown rather than zero, so the
-// throughput chart plots requests a minute instead of an empty strip.
+// One chart, four readings of the same buckets, drawn with Unovis in shadcn-vue's chart shell; a
+// metric's label and colour live once, in PARTS. Clicking a bar filters Activity to its requests.
+// SVG bars can't hold focus, so the plot is a keyboard control (←/→, Enter, Esc) with the readout
+// below as its live region.
 import { computed, ref } from "vue";
 import { plural } from "@/lib/contents";
 import { CurveType } from "@unovis/ts";
@@ -49,10 +36,10 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ pick: [MetricBucket | null] }>();
 
-/** Each metric is one or more series. Non-latency series are drawn as stacked bars. */
+/** Non-latency series are drawn as stacked bars. */
 interface ChartBucket extends MetricBucket {
   latencyMs: number;
-  /** requests a minute — what the throughput chart plots when no request reported usage */
+  /** requests a minute: plotted when no request reported usage (throughput unknown, not zero) */
   requestRate: number;
 }
 interface Part {
@@ -85,7 +72,6 @@ const setLatencyView = (value: string | number | null) => {
 const REQUEST_RATE: Part[] = [
   { key: "requestRate", label: "requests/min", color: "var(--chart-1)" },
 ];
-/** Throughput with no usage reported anywhere in the range: plot how many requests ran instead. */
 const byRequests = computed(
   () => props.metric === "throughput" && props.series.totals.throughput == null,
 );
@@ -96,7 +82,7 @@ const parts = computed(() =>
       ? REQUEST_RATE
       : PARTS[props.metric],
 );
-/** Latency plots one total line, but its tooltip also names the two values that make up that total. */
+/** Latency plots one total line; its tooltip also names the queue/provider split. */
 const chartConfig = computed<ChartConfig>(() => {
   if (props.metric === "latency")
     return {
@@ -114,12 +100,12 @@ const buckets = computed<ChartBucket[]>(() =>
     requestRate: bucket.requests / ((bucket.to - bucket.from) / 60_000),
   })),
 );
-/** Bars are placed on a time axis, so Unovis needs the spacing to size them. */
+/** Unovis needs the bucket spacing to size bars on a time axis. */
 const step = computed(() => {
   const [a, b] = buckets.value;
   return b ? b.from - a.from : 60_000;
 });
-/** A bucket's reading of one part; `undefined` where it is not known (no bar is drawn). */
+/** `undefined` where unknown, so no bar is drawn. */
 const valueOf = (b: ChartBucket, key: keyof ChartBucket): number | undefined =>
   (b[key] as number | null) ?? undefined;
 const totalOf = (b: ChartBucket): number =>
@@ -141,10 +127,8 @@ const colors = computed(() => parts.value.map((p) => p.color));
 
 const isSelected = (b: ChartBucket): boolean =>
   !!props.selected && props.selected.from === b.from && props.selected.to === b.to;
-/** Dim everything but the bucket in play — the one the keyboard cursor is on, or the one the
- *  Activity list is filtered to. A new function identity each time is what tells Unovis to redraw. */
+/** Dim all but the highlighted bucket. A new function identity is what tells Unovis to redraw. */
 const barStyle = computed(() => {
-  // an empty bucket has nothing to pick out, so landing on one dims nothing
   const focus = highlighted.value && totalOf(highlighted.value) > 0 ? highlighted.value : null;
   return (b: ChartBucket) => (focus && focus.from !== b.from ? { opacity: 0.25 } : {});
 });
@@ -204,7 +188,7 @@ function onKey(e: KeyboardEvent) {
   }
 }
 
-/** The bucket the chart is pointing at, whether by pointer, keyboard or an active filter. */
+/** By pointer, keyboard or an active filter. */
 const highlighted = computed(() => {
   if (cursor.value != null) return buckets.value[cursor.value] ?? null;
   return props.selected ? (buckets.value.find(isSelected) ?? null) : null;
@@ -215,13 +199,11 @@ const shown = computed(() => {
   if (i != null) return buckets.value[i] ?? null;
   return buckets.value.find(isSelected) ?? null;
 });
-/** the request-rate fallback carries its unit in its label, so the values go bare */
 const unit = computed(() =>
   props.metric === "throughput" && !byRequests.value ? " " + throughputUnit(props.series.kind) : "",
 );
 
-/** Unovis wants tooltip content as an HTML string, so the shadcn card is rendered to one. Rebuilt
- *  per metric: the buckets are the same objects throughout, only the reading of them changes. */
+/** Unovis wants tooltip content as an HTML string, so the shadcn card is rendered to one. */
 const tooltip = computed(() =>
   componentToString(chartConfig.value, ChartTooltipContent, {
     labelFormatter: (t: number | Date) => stamp(Number(t)),

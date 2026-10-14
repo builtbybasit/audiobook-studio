@@ -1,35 +1,7 @@
-// A line spoken by ElevenLabs, as its own API takes it.
-//
-// ElevenLabs is neither Fish- nor OpenAI-shaped
-// (https://elevenlabs.io/docs/api-reference/text-to-speech/convert): the voice rides in the path —
-// `POST /v1/text-to-speech/{voice_id}` — the model in the body as `model_id`, the key in an
-// `xi-api-key` header, and the format in an `output_format` query that names the rate and, for an
-// MP3, the bitrate in one word (`wav_24000`, `mp3_44100_128`). The answer is the audio itself, so it
-// is read the way Fish's and OpenAI's are (`audioAnswer`). BreezeBlue copies all of this, and its
-// module (`breezeblue.ts`) is built from the pieces here.
-//
-// Only the words are sent. ElevenLabs has no instructions field: `eleven_v3` takes delivery as
-// bracketed audio tags written into the text (`[whispers]`, `[laughs]`), which is what the
-// endpoint's Expressions tab is for. It bills per character of that text, which the ledger counts
-// from what was sent. An answer may also carry ElevenLabs' own count in a `character-cost` header —
-// its request-stitching guide reads it, though the API reference does not list it for this
-// endpoint — and when it is a count, it is reported beside what was sent; anything else in it is
-// ignored, since a blank read as 0 would price the line at nothing.
-//
-// Voices are an account's own — premade, cloned, designed and saved from the library — at
-// `GET /v2/voices`, a hundred a page. With no `voice_type` it answers every kind
-// (https://elevenlabs.io/docs/api-reference/voices/search), so a voice cloned here is among them.
-//
-// A voice is cloned with Instant Voice Cloning, `POST /v1/voices/add`
-// (https://elevenlabs.io/docs/api-reference/voices/ivc/create), as multipart: the voice's `name` and
-// every sample under `files`. `remove_background_noise` is left at its default, off — the docs warn
-// that on clean samples it "can make the quality worse" — and no `labels` are sent, since nothing
-// here knows the speaker's gender or accent. The voice is usable at once and its `voice_id` is
-// what a line is spoken with. The answer also says whether the voice `requires_verification`: then
-// it exists on the account but ElevenLabs will not speak with it until the person has verified it
-// on ElevenLabs' site. It is answered all the same, named so it says what is left to do — failing
-// here would leave the voice made on the account and the recordings unkept, and a
-// second try would make a second voice.
+// ElevenLabs' API (https://elevenlabs.io/docs/api-reference/text-to-speech/convert): the voice in
+// the path, `xi-api-key`, and `output_format` naming rate and bitrate (`mp3_44100_128`). No
+// instructions field: `eleven_v3` takes inline `[whispers]` tags. BreezeBlue copies all of this
+// (`breezeblue.ts`).
 import type { EndpointProbe, SpeechUsage, Voice } from "@/types";
 import { normalizeSpeechUsage } from "@/lib/pricing";
 import { elevenlabs } from "@/lib/providers/elevenlabs";
@@ -41,35 +13,25 @@ import type { SpeechInput } from "~/providers/speech";
 import type { ProviderTarget } from "~/providers/target";
 import type { SpeechWire } from "~/providers/speech/wire";
 
-/** A voice list is read whole, a hundred a page where the page size can be asked for. */
 const VOICE_PAGE = 100;
-/** …up to this many pages. */
 export const VOICE_PAGES = 10;
 
-/** ElevenLabs serves its API under `/v1` on its host, whatever path the base URL was saved with. */
+/** `/v1` on the host, whatever path the base URL was saved with. */
 export const elevenLabsRoot = (baseUrl: string): string => `${new URL(baseUrl).origin}/v1`;
 
-/** The key in ElevenLabs' own header, alone — for a body that types itself: a form. */
+/** Alone, for a body that sets its own content type (a form). */
 export function elevenLabsKeyHeader(target: ProviderTarget): Record<string, string> {
   return target.apiKey ? { "xi-api-key": target.apiKey } : {};
 }
 
-/** The headers every ElevenLabs JSON request carries: its key goes in its own header. */
 export function elevenLabsHeaders(target: ProviderTarget): Record<string, string> {
   return { "content-type": "application/json", ...elevenLabsKeyHeader(target) };
 }
 
-/**
- * What the person must do before a cloned voice speaks, when the provider says it must be verified
- * first — said beside the voice rather than in its name, so a line that fails on it is no surprise.
- */
+/** For a clone that `requires_verification`, shown beside the voice. */
 export const verifyFirst = (target: ProviderTarget): string =>
   `Verify this voice on ${target.name} before a line is spoken with it.`;
 
-/**
- * The `output_format` a line is asked for, from the endpoint's format, rate and bitrate, and what
- * `shape` gives the rest: for WAV, 24 kHz, which every ElevenLabs plan may ask for.
- */
 export function elevenLabsOutputFormat(
   input: Pick<SpeechInput, "encoding" | "sampleRate">,
   shape: SpeechProviderShape = elevenlabs,
@@ -81,17 +43,17 @@ export function elevenLabsOutputFormat(
   return `wav_${rate}`;
 }
 
-/** The characters an answer's `character-cost` header counts, when it holds a count. */
+/**
+ * `character-cost`: read by ElevenLabs' stitching guide, though the reference does not list it.
+ * Only a real count is kept; a blank read as 0 would price the line at nothing.
+ */
 function characterCost(res: Response): SpeechUsage | null {
   const header = res.headers.get("character-cost")?.trim() ?? "";
   const characters = /^\d+$/.test(header) ? Number(header) : 0;
   return characters > 0 ? normalizeSpeechUsage({ characters }, "plain") : null;
 }
 
-/**
- * One line as either API takes it, `shape` saying which; `instructions` is what goes beside the
- * words, or nothing.
- */
+/** For ElevenLabs or BreezeBlue, `shape` saying which. */
 export function elevenLabsRequest(
   shape: SpeechProviderShape,
   input: SpeechInput,
@@ -115,7 +77,7 @@ export function elevenLabsRequest(
     },
     format,
     text: input.text,
-    // what was sent beside the words, and so what the ledger counts
+    // as sent, and so as the ledger counts
     instructions,
     async read(res, { signal, counted }) {
       counted(characterCost(res));
@@ -124,10 +86,7 @@ export function elevenLabsRequest(
   };
 }
 
-/**
- * The Test button for either API: its model list, `GET /v1/models`, a bare array — which needs the
- * key and costs nothing, and says when the configured model is not one this key can speak with.
- */
+/** Test button for either API: `GET /v1/models` proves the key for free and checks the model. */
 export async function modelsProbe(
   target: ProviderTarget,
   signal: AbortSignal,
@@ -166,6 +125,9 @@ export async function modelsProbe(
 }
 
 export const elevenLabsWire: SpeechWire = {
+  // Instant Voice Cloning (https://elevenlabs.io/docs/api-reference/voices/ivc/create). Background
+  // noise removal stays off (the docs: it "can make the quality worse" on clean samples). A voice
+  // that `requires_verification` is still returned: failing would orphan it on the account.
   async clone(target, request, signal, options) {
     const form = new FormData();
     form.set("name", request.title);
@@ -195,11 +157,14 @@ export const elevenLabsWire: SpeechWire = {
     };
   },
 
-  // ElevenLabs has no instructions field, so nothing is sent beside the words, and none is billed
+  // no instructions field, so none are billed
   request: (input, target, voice) => elevenLabsRequest(elevenlabs, input, target, voice, ""),
   probe: modelsProbe,
 
-  /** Gender is one of a voice's free-form labels, when it has it. */
+  /**
+   * `GET /v2/voices` answers every kind with no `voice_type`
+   * (https://elevenlabs.io/docs/api-reference/voices/search). Gender is a free-form label.
+   */
   async voices(target, signal, options) {
     const voices: Voice[] = [];
     let token: string | null = null;

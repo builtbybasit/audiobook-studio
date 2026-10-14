@@ -1,7 +1,6 @@
-// Speech to text: the transcription endpoints. The wire against a `fetch` that answers from memory
-// — the form sent, the words read back, a server with no word times, a refusal — and the routes
-// over it: saved with the rest of the configuration and its key kept write-only, tested, and asked
-// what is said in a clone sample, priced into the ledger by the minute of audio sent.
+// Speech to text: the transcription wire against a fake `fetch` (form sent, words read back, no
+// word times, refusals), and the routes: saved with a write-only key, tested, asked for a clone
+// sample's words, and priced by the minute of audio.
 import { describe, expect, test } from "bun:test";
 
 import type { RequestRecord, Transcriber } from "@/types";

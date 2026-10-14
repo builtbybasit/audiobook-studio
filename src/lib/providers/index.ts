@@ -1,10 +1,6 @@
-// Which provider a speech endpoint's base URL speaks, and what that provider is.
-//
-// The one list of providers, read in order: the first whose `matches` says yes to the base URL is
-// the endpoint's, and `compatible` — OpenAI's shape, which the local servers copy — says yes to
-// anything, so it is last. Adding a provider is a file beside this one, a line here, and its wire
-// module under `server/providers/speech/`; the server's registry is keyed by the same ids, so it
-// will not compile until the wire module is there too.
+// Which provider a speech endpoint speaks. The first whose `matches` takes the base URL wins;
+// `compatible` takes anything, so it is last. A new provider also needs its wire module under
+// `server/providers/speech/` (the server registry will not compile without it).
 import type { Endpoint } from "@/types";
 import { breezeblue } from "@/lib/providers/breezeblue";
 import { breezecpp } from "@/lib/providers/breezecpp";
@@ -51,19 +47,12 @@ export const SPEECH_PROVIDERS: readonly SpeechProviderShape[] = [
   compatible,
 ];
 
-/**
- * The provider a speech endpoint speaks: the server it names (`Endpoint.server`), or else the one
- * its base URL is recognised by — `compatible` when no other claims it.
- */
+/** `Endpoint.server` when set, else by base URL. */
 export const speechProviderOf = (e: Pick<Endpoint, "baseUrl" | "server">): SpeechProviderShape =>
   (e.server && SPEECH_PROVIDERS.find((p) => p.id === e.server)) ||
   (SPEECH_PROVIDERS.find((p) => p.matches(e.baseUrl)) ?? compatible);
 
-/**
- * How an endpoint makes a voice from samples, or null when it cannot: its provider has no cloning,
- * clones only for other models than the endpoint's (`cloning.models`), or clones only where the
- * endpoint says its server makes voices (`cloning.optIn`) and this one does not.
- */
+/** Null when the provider cannot clone for this endpoint's model or `makesVoices` opt-in. */
 export function cloningOf(
   e: Pick<Endpoint, "baseUrl" | "server" | "model" | "makesVoices">,
 ): CloneSupport | null {
@@ -73,10 +62,7 @@ export function cloningOf(
   return cloning.models.includes(e.model.trim()) ? cloning : null;
 }
 
-/**
- * The models to switch the endpoint to for it to clone, when its provider clones only for others
- * than the endpoint's; empty when it clones already, or its provider never does.
- */
+/** The models to switch to so the endpoint can clone; empty when it already can, or never can. */
 export function cloneModelsFor(
   e: Pick<Endpoint, "baseUrl" | "server" | "model">,
 ): readonly string[] {
@@ -84,6 +70,5 @@ export function cloneModelsFor(
   return cloning?.models && !cloningOf(e) ? cloning.models : [];
 }
 
-/** How an endpoint's model takes expression tags, or null when it takes none. */
 export const tagSyntaxOf = (e: Pick<Endpoint, "baseUrl" | "server" | "model">): TagSyntax | null =>
   speechProviderOf(e).tags(e.model ?? "");

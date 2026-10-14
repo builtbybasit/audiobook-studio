@@ -1,11 +1,7 @@
 <script setup lang="ts">
-// Importing a script file into this book. See docs/script-transfer.md#import.
-//
-// The server reads the file, matches its chapters to this book's by their source words and
-// answers with a plan; nothing is written until **Apply** is pressed. The page reads top to bottom
-// in the order things are decided — which chapters, which voices, then the button that names the
-// work — and once applied it becomes the report of what happened, where the cast and dictionary
-// differences the book kept can each be taken from the file after all.
+// Importing a script file into this book. The server matches the file's chapters to this book's by
+// their source words and answers with a plan; nothing is written until Apply. Once applied, the
+// page becomes the report, where kept cast and dictionary differences can still be taken.
 import { computed, reactive, ref, watch } from "vue";
 import { useBookId } from "@/composables/useBookId";
 import { useCast } from "@/queries";
@@ -58,8 +54,7 @@ async function pick(e: Event) {
   }
 }
 
-/** Each voice row's choice, reset whenever a new plan arrives — declared before the watcher that
- *  fills it, which runs at once. */
+/** Reset per plan; declared before the watcher that fills it, which runs at once. */
 interface VoiceChoice {
   use: boolean;
   /** the voice to give them: an option of `here`, or one picked by Replace… */
@@ -67,7 +62,6 @@ interface VoiceChoice {
 }
 const choices = reactive<Record<string, VoiceChoice>>({});
 
-// ---------- chapters ----------
 const busy = (c: ImportChapter) => historyStore.busyJobs(bookId, c.chapterId).length > 0;
 const ticked = ref(new Set<number>());
 watch(
@@ -78,7 +72,7 @@ watch(
   },
   { immediate: true },
 );
-/** The matched chapters, in this book's reading order, grouped by volume when there are several. */
+/** In reading order, grouped by volume when there are several. */
 const groups = computed(() => {
   const volumes = libraryStore.volumesOf(bookId);
   const rows = [...(plan.value?.chapters ?? [])].sort((a, b) => a.chapterId - b.chapterId);
@@ -119,10 +113,7 @@ function tick(c: ImportChapter, e: MouseEvent) {
   );
 }
 
-/**
- * Each chapter's restore plan, worked out once per plan and current script rather than per render:
- * a preview is a full `planRestore` plus a comparison, and ticking a row must not redo 200 of them.
- */
+/** Once per plan and script, not per render: ticking a row must not redo 200 previews. */
 const previews = computed(() => {
   const m = new Map<number, RestorePlan>();
   for (const c of ordered.value)
@@ -131,7 +122,6 @@ const previews = computed(() => {
   return m;
 });
 
-/** What applying one chapter does, in the words the row shows. */
 function consequence(c: ImportChapter): string {
   if (busy(c)) return "a run is in flight on this chapter — cancel it first";
   const r = previews.value.get(c.chapterId);
@@ -155,7 +145,6 @@ const REFUSED: Record<RefusalReason, string> = {
   malformed: "The file could not be read",
 };
 
-// ---------- voices ----------
 function resetVoices() {
   for (const k of Object.keys(choices)) delete choices[k];
   for (const row of plan.value?.voices ?? [])
@@ -205,14 +194,12 @@ async function apply() {
   }
 }
 
-/** The line a private voice's row gives the recordings the file carries for it. */
 function samplesLine(s: VoiceRowSamples): string {
   if (s.kind === "refused") return `Samples not kept: ${s.reason}`;
   return `Samples included · ${plural(s.count, "recording")}, ${sizeLabel(s.bytes)}`;
 }
 
-// ---------- the report ----------
-/** Each speaker whose samples the import kept, and where they can be cloned — once they are kept. */
+/** Each speaker whose samples the import kept, and where they can be cloned. */
 const keptSamples = computed(() =>
   (report.value?.samples ?? []).map((speaker) => {
     const waiting = samplesStore.waitingFor(bookId, speaker);
@@ -221,7 +208,7 @@ const keptSamples = computed(() =>
 );
 const castNow = computed(() => castStore.charactersOf(bookId));
 const lexNow = computed(() => castStore.lexiconOf(bookId));
-/** The differences that still stand: one taken from the file drops off the list. */
+/** one taken from the file drops off the list */
 const speakerDiffs = computed(() =>
   (plan.value?.cast.differ ?? []).filter((d) => {
     const c = castNow.value.find((x) => x.name === d.name);
@@ -290,7 +277,6 @@ const SKIPPED = {
 
     <div class="min-h-0 flex-1 overflow-y-auto">
       <div class="mx-auto max-w-4xl space-y-4 p-4 sm:p-6">
-        <!-- choosing the file -->
         <section v-if="!plan" class="card p-6 text-center">
           <FileIcon class="mx-auto h-8 w-8 text-zinc-400" />
           <p class="mt-2 text-sm font-medium">Choose a script file</p>
@@ -314,7 +300,6 @@ const SKIPPED = {
           </label>
         </section>
 
-        <!-- the report, once applied -->
         <template v-else-if="report">
           <section class="card p-4">
             <h2 class="text-sm font-semibold">
@@ -461,7 +446,6 @@ const SKIPPED = {
           </section>
         </template>
 
-        <!-- the plan -->
         <template v-else>
           <section class="card">
             <div

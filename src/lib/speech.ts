@@ -1,39 +1,33 @@
-// How a line is *said*, as opposed to how it is written. Two render-time transforms live here and
-// neither one touches the book: the per-book pronunciation dictionary rewrites names and invented
-// words on their way to the endpoint, and the pacing rules decide how much silence is stitched in
-// after each clip. The script the reader shows is always the original prose.
+// How a line is said, not written: the pronunciation dictionary, what a voice may be sent
+// (`sayable`), and pacing. Render-time only; the book's text is never touched.
 import type { Book, LexEntry, Pacing, SampleRate, Segment, TagBracket } from "@/types";
 import { heardLines } from "@/lib/siteText";
 
 /** One dictionary substitution, with offsets into the *original* text. */
 export interface LexHit {
-  /** the text as it was written, exactly as matched */
+  /** as written, exactly as matched */
   term: string;
-  /** what the endpoint is sent instead */
   say: string;
   from: number;
   to: number;
 }
 
 export interface Spoken {
-  /** the text that actually goes out */
   text: string;
   hits: LexHit[];
 }
 
-/** A run of the original text, marked when the dictionary replaces it. */
 export interface Mark {
   text: string;
   say?: string;
 }
 
 const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-/** letters and digits make a word; a term only matches when neither side continues one */
+/** a term only matches when neither side continues a word */
 const WORDY = /[\p{L}\p{N}]/u;
 
 export const termOf = (e: LexEntry): string => e.term.trim();
 export const sayOf = (e: LexEntry): string => e.say.trim();
-/** entries that are switched on and actually say something */
 export const active = (list: LexEntry[]): LexEntry[] =>
   list.filter((e) => e.enabled && termOf(e) && sayOf(e));
 
@@ -47,7 +41,7 @@ function matcher(list: LexEntry[]): { re: RegExp; byTerm: Map<string, LexEntry> 
   };
 }
 
-/** Every dictionary hit in `text`, left to right, without overlaps. */
+/** Left to right, without overlaps. */
 export function hitsIn(text: string, list: LexEntry[]): LexHit[] {
   const m = matcher(list);
   if (!m) return [];
@@ -67,7 +61,7 @@ export function hitsIn(text: string, list: LexEntry[]): LexHit[] {
   return out;
 }
 
-/** The text as the endpoint will receive it. A replacement is never itself re-matched. */
+/** A replacement is never itself re-matched. */
 export function speak(text: string, list: LexEntry[]): Spoken {
   const hits = hitsIn(text, list);
   if (!hits.length) return { text, hits };
@@ -81,34 +75,26 @@ export function speak(text: string, list: LexEntry[]): Spoken {
 }
 
 /**
- * What a voice may be sent, and nothing else: Latin letters (the books are English) and digits, the
- * punctuation that shapes how a line is read, the few symbols a voice says — `+5`, `10%`, `$3`,
- * `94/100` — and round and angle brackets, less those the voice reads as its own tags (`sayable`).
- * Square and curly brackets are never sent: nobody says them, and Fish reads `[…]` as its own tag.
+ * What a voice may be sent: Latin letters (books are English), digits, reading punctuation and the
+ * symbols a voice says (`+5`, `10%`). Never `[]{}`: Fish reads `[…]` as its own tag.
  */
 const SAYABLE =
   /[A-Za-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u024F0-9\s.,!?;:'"‘’“”\-–—…+%$£€#&/°()<>]/;
 const BRACKET_CHARS: Record<TagBracket, string> = { round: "()", square: "[]", angle: "<>" };
 /** each closing bracket's opener */
 const CLOSES: Record<string, string> = { ")": "(", ">": "<" };
-/**
- * An HTML tag, whole: a table or list the book kept as markup, a stat sheet in a LitRPG. Only HTML's
- * own elements, so `<Rare>` in a line is prose.
- */
+/** Only HTML's own elements, so `<Rare>` in a line is prose. */
 const HTML_TAG =
   /<\/?(a|b|i|u|s|p|br|hr|em|strong|small|big|sub|sup|span|font|div|ul|ol|li|table|thead|tbody|tfoot|tr|td|th|h[1-6]|blockquote|code|pre|img)\b[^<>]*>/iy;
-/** a tag that ends a line of a table or list, read as the end of a sentence */
+/** read as the end of a sentence */
 const BLOCK = /^(br|p|div|li|ul|ol|table|tr|td|th|h[1-6])$/i;
-/** A footnote reference, `[1]`: a number nobody reads out. */
+/** A footnote reference, `[1]`. */
 const FOOTNOTE = /\[\d{1,3}\]/y;
 
 /**
- * A line as a voice is sent it, before any expression tag goes in: only what `SAYABLE` allows, less
- * the round or angle `brackets` the voice reads as tags, so prose is never taken for one; HTML tags and footnote
- * references out; and single quotes around a whole line (a thought) out. A voice given the rest
- * reads it out — "F A S T E R punct apostrophe", "div class" — or takes it for its own markup and
- * says nothing like the line. `at` maps an offset in `text` as given to the same place in what is
- * left. A line that would be left with no letter or digit is kept as it is.
+ * A line as a voice is sent it, before tags: only `SAYABLE`, less the voice's tag `brackets`; HTML
+ * tags, footnotes and a whole-line single quote out. `at` maps an offset in `text` into the result.
+ * A line left with no letter or digit is kept as is.
  */
 export function sayable(
   text: string,
@@ -119,7 +105,6 @@ export function sayable(
   const close = text.trimEnd().length - 1;
   const quoted = open < close && /['‘]/.test(text[open]) && /['’]/.test(text[close]);
   let out = "";
-  /** where each offset of `text` lands in `out` */
   const map: number[] = [];
   for (let i = 0; i < text.length;) {
     HTML_TAG.lastIndex = FOOTNOTE.lastIndex = i;
@@ -136,7 +121,7 @@ export function sayable(
     map[i] = out.length;
     const c = text[i];
     if (SAYABLE.test(c) && !tagChars.includes(c) && !(quoted && (i === open || i === close))) {
-      // a bracket with nothing said in it — a kaomoji's, once its face is gone — is not sent either
+      // a bracket with nothing said in it (a kaomoji's, once its face is gone) is dropped
       const opened = CLOSES[c] ? out.lastIndexOf(CLOSES[c]) : -1;
       if (opened >= 0 && !WORDY.test(out.slice(opened))) out = out.slice(0, opened).trimEnd();
       else out += c;
@@ -150,7 +135,7 @@ export function sayable(
   return { text: said, at: (i) => Math.min(Math.max(map[i] - lead, 0), said.length) };
 }
 
-/** The original text cut into runs, so the reader can underline what is said differently. */
+/** Runs of the original text, so the reader can underline what is said differently. */
 export function marks(text: string, list: LexEntry[]): Mark[] {
   const hits = hitsIn(text, list);
   if (!hits.length) return [{ text }];
@@ -166,11 +151,8 @@ export function marks(text: string, list: LexEntry[]): Mark[] {
 }
 
 // ---------- pacing ----------
-// Silence is not rendered, it is stitched: changing a pause re-times the chapter but invalidates no
-// audio. `line` is the gap after an ordinary line, `turn` the longer one when the voice changes.
-// `inlineShort` and `inlineLong` are the exception: they are the lengths of the pauses inside a
-// line (`[[pause]]`, `[[long pause]]`), which are part of what the line is sent as, so changing one
-// makes the clips of the lines that hold such a pause stale.
+// Silence between lines is stitched, not rendered, so changing it stales no audio. `inlineShort`
+// and `inlineLong` are the exception: pauses inside a line are sent with it, so they do.
 
 export const DEFAULT_PACING: Pacing = { line: 0.35, turn: 0.7, inlineShort: 0.4, inlineLong: 1 };
 /** offered in the reader; `null` = back to the book default */
@@ -178,19 +160,17 @@ export const PAUSE_STEPS: (number | null)[] = [null, 0, 0.25, 0.5, 1, 1.5, 2.5];
 
 export const pacingOrDefault = (p: Pacing | undefined): Pacing => ({ ...DEFAULT_PACING, ...p });
 
-/** The gap this book would use after `s`, before its neighbour, with no override in play. */
+/** The book's gap after `s`, ignoring the line's override. */
 export function defaultPause(s: Segment, next: Segment | undefined, pacing: Pacing): number {
   if (!next) return 0;
   return next.speaker === s.speaker ? pacing.line : pacing.turn;
 }
 
-/** The gap actually used after `s` — the line's own override, else the book default. */
 export function pauseAfter(s: Segment, next: Segment | undefined, pacing: Pacing): number {
   if (!next) return 0;
   return s.pause ?? defaultPause(s, next, pacing);
 }
 
-/** One clip of a chapter's timeline: where it starts and ends, and the silence stitched after it. */
 export interface TimelineClip {
   s: Segment;
   start: number;
@@ -199,15 +179,8 @@ export interface TimelineClip {
 }
 
 /**
- * A chapter as it plays: every line with a clip, in order, placed on one clock with the silence
- * stitched after each. Unrendered lines take no time at all, and a gap is measured to the next
- * line that *plays*, not the next line of the script. So do lines the book does not read — site
- * text, and notes unless it reads them (`isSpoken`) — even when they kept a clip from before they
- * were marked.
- *
- * The one layout of a chapter: the player's queue, "play from here", the ledger's scrubber and the
- * chapter's silence all read it, so a line cannot start at one second on the bar and another in
- * the player.
+ * A chapter as it plays: the heard clips on one clock, with the silence after each measured to the
+ * next clip that plays. The one layout every player and scrubber reads.
  */
 export function chapterTimeline(
   segments: Segment[],
@@ -225,7 +198,6 @@ export function chapterTimeline(
   });
 }
 
-/** Total silence stitched between the clips of one chapter; unrendered lines take no time at all. */
 export function silenceOf(
   segments: Segment[],
   pacing: Pacing,
@@ -234,39 +206,32 @@ export function silenceOf(
   return chapterTimeline(segments, pacing, book).reduce((a, x) => a + x.gap, 0);
 }
 
-/** How long a chapter plays: every clip it plays, and the silence stitched between them. */
 export const chapterSeconds = (
   segments: Segment[],
   pacing: Pacing,
   book: Pick<Book, "readNotes"> | undefined,
 ): number => {
   const timeline = chapterTimeline(segments, pacing, book);
-  // summed as two totals, clips then silence, so a figure stored before is the figure read now
+  // summed as two totals, clips then silence, so float rounding matches stored figures
   return (
     timeline.reduce((a, x) => a + x.s.audio.duration, 0) + timeline.reduce((a, x) => a + x.gap, 0)
   );
 };
 
-/** seconds, exact but never noisy: 1s, 1.75s, 0.35s */
+/** 1s, 1.75s, 0.35s */
 export const secs = (n: number): string => `${Number(n.toFixed(2))}s`;
 
 // ---------- voice instructions ----------
 
 /**
- * The voice instructions submitted beside a line.
- *
- * A character's standing style and a line's own direction are not part of the prose — the reader
- * never sees them — but they go over the wire with the request, and a provider that meters what it
- * receives meters them too. Composed in one place so the count that is billed and the audit trail
- * on the clip can never be two different strings.
- *
- * Empty when there is nothing to say, so an endpoint sending no instructions is charged for none.
+ * The voice instructions sent beside a line, often metered. Composed in one place so the billed
+ * count and the clip's record are the same string.
  */
 export function speechInstructions(parts: { style?: string; direction?: string }): string {
   return [parts.style?.trim(), parts.direction?.trim()].filter(Boolean).join(". ");
 }
 
-/** Every rate an endpoint can be asked for, lowest first. The server refuses any other. */
+/** The server refuses any other. */
 export const SAMPLE_RATES: readonly SampleRate[] = [16000, 22050, 24000, 32000, 44100, 48000];
 
 /** 44100 → "44.1 kHz", 16000 → "16 kHz". */

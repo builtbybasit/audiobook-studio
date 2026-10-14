@@ -1,9 +1,6 @@
-// What a scripting request is recorded as costing, from the gateway's answer to the ledger's row.
-//
-// OpenRouter says in every answer what the request was charged — at whichever of its providers
-// served it, which need not be the rate its listing shows — so that figure is the cost, and the one
-// worked out from the profile's card stays on the receipt beside it. A gateway that says nothing is
-// priced from the card as before.
+// What a scripting request is recorded as costing. OpenRouter reports the charge per answer, at
+// whichever provider served it (not necessarily its listed rate), so that is the cost and the card's
+// figure stays on the receipt; a gateway that reports nothing is priced from the card.
 import { describe, expect, test } from "bun:test";
 
 import type { Book, Profile } from "@/types";

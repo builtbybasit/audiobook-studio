@@ -1,31 +1,7 @@
-// Many lines sent to a speech server in one request, and each line's answer read as it lands — the
-// client side of the batch speech API (`docs/speech-batch-api.md`).
-//
-// Only a server that speaks OpenAI's shape can have it: it is an extension a local server writes
-// for itself, and no hosted provider has the route. So it is the compatible wire's (`openai.ts`),
-// and the provider asks it before a run whether the endpoint's model takes batches at all — `GET
-// …/audio/speech/capabilities`, read leniently, as the spec asks: unknown fields are ignored, and a
-// server that has no such route, does not list the model, or lists it with no `batch` is one that
-// takes a line at a time. That answer is the provider's to remember (`endpointSpeech.ts`).
-//
-// A batch goes out through `call`, so a refusal of the whole of it — a 429 or 503 from a server too
-// busy for it, a 400 for a request it cannot read — is retried, waited on and told to the gate like
-// a line's. What comes back is a stream of JSON lines, one per item as the server finishes it, in
-// whatever order that is, and a last `done`. It is read as it arrives, never buffered whole, and
-// each item is told to the caller the moment its line lands. That changes what the endpoint's
-// `timeoutSec` means: a batch of sixteen lines may take minutes and be perfectly healthy, so the
-// attempt's clock stops at the headers (`headersOnly`) and the stream keeps its own — the same
-// number of seconds, run again from every chunk that arrives. A server that is slow to its first
-// item says it is alive with a `ping` line, and that is bytes like any other.
-//
-// Each item is a line as far as the ledger is concerned, and is reported through its own `sent`
-// exactly once, by `send.ts`'s rule: an item answered `done` was generated and is billed, with what
-// the server counted for it, even when its audio then proves unusable — cut short, not the format
-// asked for; one answered `failed` is not, unless the provider bills failures; so is every item of
-// a batch refused whole after the retries, and every item a stream that was cut off never reached,
-// with the reason. A cancel reports every item still open as `cancelled`, billed or not nobody can
-// say: what the server made of the items it was still rendering is not knowable. A cut is thrown as a `BatchCut`, whose lines the job may send again,
-// and a refusal as the `ProviderError` `call` gave up with, whose lines it does not.
+// Client side of the batch speech API (`docs/speech-batch-api.md`): answers stream back as NDJSON in
+// any order. The attempt's clock stops at the headers; the stream keeps an idle clock of
+// `timeoutSec`, rewound by every chunk (`ping` too). A cut stream throws `BatchCut` (its lines may
+// go again); a whole-batch refusal throws `call`'s `ProviderError` (they may not).
 import type { AudioFormat, SpeechUsage } from "@/types";
 import { normalizeSpeechUsage } from "@/lib/pricing";
 import { audioClip } from "~/providers/answer";
@@ -35,17 +11,16 @@ import type { SentSpeech } from "~/providers/sent";
 import { BatchCut, type BatchLimits, type SpeechBatch } from "~/providers/speech";
 import type { ProviderTarget } from "~/providers/target";
 
-/** What a server answers when it has no capabilities route: no batches, and no promises. */
+/** No capabilities route: no batches. */
 const NO_ROUTE = new Set([404, 405, 501]);
 
 const isRecord = (x: unknown): x is Record<string, unknown> =>
   !!x && typeof x === "object" && !Array.isArray(x);
 
-/** A limit as the capabilities give it: a count of at least one, or null for none of that kind. */
+/** A count of at least one, or null. */
 const limit = (x: unknown): number | null =>
   typeof x === "number" && Number.isFinite(x) && x >= 1 ? Math.floor(x) : null;
 
-/** The limits the capabilities give `model`, or null when they list it taking no batches. */
 function limitsOf(body: unknown, model: string): BatchLimits | null {
   const models = isRecord(body) && Array.isArray(body.models) ? body.models : [];
   const entry = models.find((m) => isRecord(m) && m.id === model.trim());
@@ -58,10 +33,8 @@ function limitsOf(body: unknown, model: string): BatchLimits | null {
 }
 
 /**
- * Whether the endpoint's model takes batches, and how many: asked of the server every time, with
- * the endpoint's retries. Null for a server with no capabilities route, one that answers something
- * that is not them, or one that does not list the model as taking batches. Anything else — no
- * answer, a refused key, a server fault — is thrown: it says nothing about batches either way.
+ * `GET …/audio/speech/capabilities`, read leniently per the spec. Null when there is no route, no
+ * readable answer, or no `batch` for the model; any other failure is thrown.
  */
 export async function batchCapabilities(
   target: ProviderTarget,
@@ -85,21 +58,16 @@ export async function batchCapabilities(
     body = await res.json();
   } catch {
     if (signal.aborted) throw signal.reason;
-    // a page that answers every path — a web app's fallback — is not a batch server
+    // a web app's fallback page is not a batch server
     return null;
   }
   return limitsOf(body, target.model);
 }
 
-/** What the Test button adds when the endpoint takes batches. */
 export const takesBatches = (limits: BatchLimits): string =>
   "takes batches" + (limits.maxItems ? ` of up to ${limits.maxItems} lines` : "");
 
-/**
- * What an item's `usage` says, in the ledger's shape: the characters and the seconds the spec
- * requires, and the tokens a model that counts them adds. Labelled as totals, which is what they
- * are; null when the item carried no usage at all.
- */
+/** An item's `usage` in the ledger's shape, as totals; null when it carried none. */
 function usageOf(usage: unknown): SpeechUsage | null {
   if (!isRecord(usage)) return null;
   const read = normalizeSpeechUsage(
@@ -115,11 +83,8 @@ function usageOf(usage: unknown): SpeechUsage | null {
 }
 
 /**
- * Send `batch` and tell `batch.answered` each item's clip or failure as its line arrives; see the
- * header for what is reported to the ledger. `voices[i]` is item `i`'s voice id, and every item has
- * already been through the checks a line gets before a request. Resolves once every item has been
- * answered; throws a `ProviderError` when the batch was refused whole or the stream was cut off
- * first — the items not yet answered are then the caller's — or the signal's reason on a cancel.
+ * Resolves once every item is answered. Throws when the batch was refused whole or cut off (the
+ * unanswered items are then the caller's), or the signal's reason on a cancel.
  */
 export async function sendBatch(
   batch: SpeechBatch,
@@ -131,9 +96,9 @@ export async function sendBatch(
   if (signal.aborted) throw signal.reason;
   if (!items.length) return;
   const format: AudioFormat = items[0].encoding.format;
-  // what goes on the wire for each item, and so what the ledger counts
+  // as sent, and so as the ledger counts
   const instructions = items.map((item) => item.instructions.trim());
-  // our own name for each item — its place — which the answer is matched back by
+  // each item's place, which the answer is matched back by
   const ids = items.map((_, i) => String(i));
   const body = {
     model: target.model,
@@ -148,7 +113,6 @@ export async function sendBatch(
 
   const stats: CallStats = { attempts: 0, rateLimited: false };
   const startedAt = Date.now();
-  /** the items not yet answered, by index */
   const open = new Set(items.keys());
   const report = (
     i: number,
@@ -164,7 +128,6 @@ export async function sendBatch(
       instructions: instructions[i],
       ...rest,
     });
-  /** The batch went wrong as a whole: every item still open is reported, and left to the caller. */
   const failOpen = (e: unknown, billed: boolean): never => {
     for (const i of open)
       report(i, {
@@ -179,7 +142,6 @@ export async function sendBatch(
       });
     throw e;
   };
-  /** Cancelled once the batch went out: every item still open is reported, at a cost nobody knows. */
   const cancelOpen = (): never => {
     if (stats.attempts)
       for (const i of open)
@@ -187,8 +149,7 @@ export async function sendBatch(
     throw signal.reason;
   };
 
-  // The stream's own clock: aborted when nothing has arrived for `timeoutSec`, which closes the
-  // request as a cancel would, and is told apart from one by which of the two fired.
+  // The stream's idle clock; told apart from a cancel by which signal fired.
   const idle = new AbortController();
   const live = AbortSignal.any([signal, idle.signal]);
   let res: Response;
@@ -208,17 +169,15 @@ export async function sendBatch(
     return failOpen(e, billsFailures);
   }
 
-  /** One item's line: its clip, or why it has none, told and reported. */
   async function answer(line: Record<string, unknown>): Promise<void> {
-    // matched by the id it was sent with, or by its place when the line names no id
+    // by id, or by place when the line names no id
     const i =
       typeof line.id === "string"
         ? ids.indexOf(line.id)
         : Number.isInteger(line.index)
           ? (line.index as number)
           : -1;
-    // an item this batch did not send, or one already answered: the spec has every item answered
-    // once, so a second answer is the server's mistake and the first one stands
+    // unknown, or already answered: the first answer stands
     if (!open.has(i)) return;
     if (line.status === "done") {
       open.delete(i);
@@ -237,7 +196,7 @@ export async function sendBatch(
             : new Uint8Array();
         clip = await audioClip(target, bytes, format, res.status);
       } catch (e) {
-        // rendered, and so billed, whatever became of it here
+        // rendered, and so billed
         report(i, {
           status: "failed",
           audioSeconds: 0,
@@ -279,37 +238,34 @@ export async function sendBatch(
       });
       batch.answered(i, { error });
     }
-    // any other status is one this client does not know, and the item stays open
+    // an unknown status leaves the item open
   }
 
   const reader = res.body?.getReader();
   const decoder = new TextDecoder();
   let buffered = "";
   const stream = {
-    /** the `done` line arrived */
     finished: false,
-    /** a refusal written into the stream in place of the items, in OpenAI's error shape */
+    /** a refusal in place of the items, in OpenAI's error shape */
     refused: null as ProviderError | null,
   };
-  /** why the stream ended early, when reading it failed */
   let cut: unknown = null;
   let clock: ReturnType<typeof setTimeout> | undefined;
   const wind = (): void => {
     clearTimeout(clock);
     clock = setTimeout(() => idle.abort(), target.timeoutSec * 1000);
   };
-  // a `fetch` that does not end its body on an abort still has its reader cancelled
+  // for a `fetch` that does not end its body on an abort
   const close = (): void => void reader?.cancel().catch(() => {});
   live.addEventListener("abort", close, { once: true });
 
-  /** One line of the stream. A line that is not JSON is skipped, as an unknown type is. */
+  /** A line that is not JSON is skipped, as an unknown type is. */
   async function take(text: string): Promise<void> {
     let line: unknown;
     try {
       line = JSON.parse(text);
     } catch {
-      // if it was an item, that item is never answered, and is caught below as one the stream
-      // left open
+      // an item lost this way is caught below as left open
       return;
     }
     if (!isRecord(line)) return;
@@ -324,7 +280,7 @@ export async function sendBatch(
       );
       stream.finished = true;
     }
-    // `ping`, and any type this client does not know: it arrived, and so wound the clock
+    // `ping` and unknown types only rewind the clock
   }
 
   try {
@@ -360,13 +316,12 @@ export async function sendBatch(
   } finally {
     clearTimeout(clock);
     live.removeEventListener("abort", close);
-    // after `done` nothing follows; before it, closing the request is what stops the server
+    // before `done`, closing the request is what stops the server
     close();
   }
 
   if (signal.aborted) return cancelOpen();
   if (stream.refused) return failOpen(stream.refused, billsFailures);
-  // every item answered: whatever became of the rest of the stream, nothing was lost with it
   if (!open.size) return;
   const why = idle.signal.aborted
     ? `sent nothing for ${target.timeoutSec} s part-way through a batch`

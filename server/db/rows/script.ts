@@ -1,10 +1,6 @@
-// Segments, the clips rendered from them, and a chapter's script history.
-//
-// The interesting half is the clip. `SegmentAudio`, the retake waiting for a verdict and every
-// superseded `Take` are one table with a `role`, so this file is where the three are told apart
-// again. A `Take` is a strict subset of a `SegmentAudio` — no status, no split detail, no error —
-// so reading one back has to stop at the fields a take actually has, or a round-tripped take comes
-// back carrying `status: "none"` and compares unequal to the one that went in.
+// Segments, their clips and a chapter's script history. Current clip, retake and takes share one
+// table split by `role`. A `Take` is a strict subset of `SegmentAudio`, so reading one back must
+// stop at a take's fields or it round-trips with an extra `status`.
 import type {
   ChapterHistory,
   HeardLine,
@@ -21,7 +17,7 @@ type ClipRow = typeof clips.$inferSelect;
 type VersionRow = typeof scriptVersions.$inferSelect;
 type HeadRow = typeof scriptHeads.$inferSelect;
 
-/** A clip row's shared audit fields, as both `SegmentAudio` and `Take` carry them. */
+/** Fields both `SegmentAudio` and `Take` carry. */
 function auditOf(row: ClipRow): Partial<Take> {
   return {
     ...(row.voiceRef != null ? { voiceRef: row.voiceRef } : {}),
@@ -67,7 +63,7 @@ export function toSegmentAudio(row: ClipRow, takes: readonly ClipRow[] = []): Se
   return a;
 }
 
-/** A superseded clip. Deliberately narrower than `SegmentAudio`. */
+/** A superseded clip; deliberately narrower than `SegmentAudio`. */
 export function toTake(row: ClipRow): Take {
   const t: Take = {
     n: row.n ?? 1,
@@ -82,7 +78,7 @@ export function toTake(row: ClipRow): Take {
   return t;
 }
 
-/** One clip, flattened. `role` is what tells the three kinds apart on the way back out. */
+/** One clip, flattened; `role` tells the three kinds apart. */
 export function clipValues(
   bookId: string,
   chapterId: number,
@@ -145,7 +141,7 @@ export function segmentClipValues(
   return rows;
 }
 
-/** One line, with the clips that belong to it. */
+/** One line, with its clips. */
 export function toSegment(row: SegmentRow, clipRows: readonly ClipRow[]): Segment {
   const current = clipRows.find((c) => c.role === "current");
   const takes = clipRows.filter((c) => c.role === "take").sort((a, b) => (a.n ?? 0) - (b.n ?? 0));
@@ -157,8 +153,7 @@ export function toSegment(row: SegmentRow, clipRows: readonly ClipRow[]): Segmen
     speaker: row.speaker,
     text: row.text,
     direction: row.direction,
-    // A line always has an audio object, even before anything has been rendered: the store reads
-    // `segment.audio.status` unconditionally, so "no clip yet" is a status rather than a missing key.
+    // always an audio object: the store reads `segment.audio.status` unconditionally
     audio: current
       ? toSegmentAudio(current, takes)
       : { status: "none", endpoint: null, ms: 0, duration: 0 },
@@ -247,7 +242,7 @@ export function scriptHeadValues(
   };
 }
 
-/** A check by ear's finding, without the endpoint that heard it, which only the ledger needs. */
+/** A check by ear's finding, without the endpoint (only the ledger needs it). */
 export const toHeardLine = (row: typeof heard.$inferSelect): HeardLine => ({
   text: row.text,
   heard: row.heard,

@@ -1,9 +1,6 @@
 <script setup lang="ts">
-// Contents review, in three tabs: "To decide" is an inbox of only the chapters the import flagged;
-// "All chapters" the whole list, searched and filtered, read on the right; "Volumes" where the
-// book is cut. The state and every action live in useContents.ts; this is the frame around them —
-// the header with the import's buttons, the tab row, the reader beside the first two tabs (a
-// bottom sheet on a phone).
+// Contents review: "To decide" (only the chapters the import flagged), "All chapters", and
+// "Volumes". State and actions live in useContents.ts; this is the frame around them.
 import { nextTick, onMounted, ref } from "vue";
 import { DialogTitle, TabsContent, TabsList, TabsRoot, TabsTrigger } from "reka-ui";
 import { plural } from "@/lib/contents";
@@ -49,7 +46,6 @@ async function discard() {
 
 <template>
   <div v-if="p.book.value" class="flex h-full min-h-0 flex-col">
-    <!-- header: what book, what this review is for, and the button that adds it -->
     <div
       class="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-zinc-200 bg-white px-4 py-2.5 sm:px-6 dark:border-zinc-800 dark:bg-zinc-900"
     >
@@ -135,7 +131,6 @@ async function discard() {
         <ContentsVolumes :page="p" />
       </TabsContent>
 
-      <!-- the first two tabs share the reader on the right -->
       <div
         v-if="p.tab.value !== 'volumes'"
         class="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_minmax(340px,44%)]"
@@ -238,7 +233,6 @@ async function discard() {
           </div>
         </TabsContent>
 
-        <!-- the chapter being read (wide screens) -->
         <aside class="hidden min-h-0 lg:block" aria-label="Chapter">
           <ContentsPreview
             v-if="p.wide.value && p.openedChapter.value"
@@ -267,7 +261,6 @@ async function discard() {
       </div>
     </TabsRoot>
 
-    <!-- narrow screens: the chapter opens as a sheet over the list -->
     <UiSheet
       v-if="!p.wide.value"
       side="bottom"

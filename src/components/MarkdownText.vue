@@ -1,20 +1,13 @@
 <script setup lang="ts">
-// A chapter's prose, as the EPUB laid it out: headings, emphasis, lists, links and the tables a
-// chapter was sometimes built in.
-//
-// **Nothing here renders HTML.** The text came out of a file somebody uploaded, so `v-html` would
-// be a straight path from "import this EPUB" to running script on the page. Every branch below
-// interpolates text, which Vue escapes, and the decisions worth testing — which links are
-// followable, how a run of stress flattens — are in `@/lib/markdown` rather than in this template.
+// A chapter's prose as the EPUB laid it out. **Nothing here renders HTML**: the text comes from an
+// uploaded file, so `v-html` would run its scripts. Link and stress rules live in `@/lib/markdown`.
 import { computed } from "vue";
 import type { Token, Tokens } from "marked";
 
 import { blocksOf, inlineOf, piecesOf, rowsOf } from "@/lib/markdown";
 import MarkdownInline from "@/components/MarkdownInline.vue";
 
-// `text` is a chapter as it is stored; `blocks` is the inside of a block this component has already
-// parsed — a quote, or a list item, which holds blocks of its own and is drawn by recursing rather
-// than by re-lexing prose that has been lexed once.
+// `blocks`: the inside of an already-parsed quote or list item, drawn by recursing, not re-lexing.
 const props = defineProps<{ text?: string; blocks?: readonly Token[] }>();
 
 const blocks = computed(() => props.blocks ?? blocksOf(props.text ?? ""));
@@ -47,14 +40,12 @@ const blocks = computed(() => props.blocks ?? blocksOf(props.text ?? ""));
       class="my-2 space-y-0.5 pl-5"
       :class="(block as Tokens.List).ordered ? 'list-decimal' : 'list-disc'"
     >
-      <!-- An item holds blocks, not words: a list under a list is a list, and drawing the item as
-           one inline run would leave the child list nowhere to go. -->
+      <!-- an item holds blocks, so a nested list has somewhere to go -->
       <li v-for="(item, j) in (block as Tokens.List).items" :key="j">
         <MarkdownText :blocks="item.tokens" />
       </li>
     </component>
 
-    <!-- A table a chapter was laid out in: shown as the table it is, rather than dropped. -->
     <div v-else-if="block.type === 'table'" class="my-2 overflow-x-auto">
       <table class="w-full border-collapse text-[13px]">
         <tbody>
@@ -84,7 +75,6 @@ const blocks = computed(() => props.blocks ?? blocksOf(props.text ?? ""));
 
     <hr v-else-if="block.type === 'hr'" class="my-3 border-zinc-200 dark:border-zinc-800" />
 
-    <!-- A tight list item's own words: an inline run with no paragraph of its own around it. -->
     <template v-else-if="block.type === 'text'">
       <MarkdownInline :pieces="inlineOf(block)" />
     </template>

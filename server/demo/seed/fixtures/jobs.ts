@@ -1,8 +1,5 @@
-// Queue history from "earlier today", so the Queue page opens with done / failed / cancelled rows
-// to act on rather than an empty list.
-//
-// Job ids come from the store's own sequence, which is passed in: the seeded rows and everything
-// queued afterwards share one numbering, so "retry this job" addresses the same row either way.
+// Queue history from "earlier today", so the Queue page isn't empty. Ids come from the passed-in
+// sequence, shared with jobs queued later.
 import type { Job, JobKind, JobStatus } from "@/types";
 
 export function makeJobHistory(nextId: () => number, now: number = Date.now()): Job[] {

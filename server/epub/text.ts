@@ -1,19 +1,11 @@
-// Cutting one EPUB section into the chapters it holds, and handing each to the converter.
-//
-// The conversion itself is not here — `server/epub/markdown.ts` owns that, because turning
-// arbitrary publisher HTML into readable text is a long tail somebody else has already walked.
-// What is here is the part no converter can do: most web-novel EPUBs pack several chapters into one
-// XHTML file and point the table of contents at an anchor inside it, so the file has to be cut into
-// fragments *before* anything converts it.
-//
-// It cuts HTML rather than text, and hands the converter strings rather than the nodes it already
-// has parsed. Both are deliberate — see `toMarkdown`, which is tested against its own DOM and
-// quietly loses tables when given somebody else's.
+// Cuts one EPUB section into the chapters it holds before conversion (`server/epub/markdown.ts`):
+// web-novel EPUBs pack several chapters per XHTML file, with the TOC pointing at anchors. It cuts
+// HTML and hands the converter strings, not nodes: Turndown loses tables on a foreign DOM.
 import { parseHTML } from "linkedom";
 
 import { toMarkdown } from "~/epub/markdown";
 
-/** The shape this reads off linkedom's nodes, rather than the DOM lib the server does not have. */
+/** The shape read off linkedom's nodes; the server has no DOM lib types. */
 interface Node {
   nodeType: number;
   nodeValue: string | null;
@@ -37,7 +29,7 @@ interface Doc {
 export interface TextPart {
   /** the anchor the navigation pointed at, or null for the text before the first one */
   id: string | null;
-  /** the chapter, as Markdown */
+  /** Markdown */
   text: string;
 }
 
@@ -47,13 +39,8 @@ const escapeText = (s: string): string =>
 const escapeAttr = (s: string): string => escapeText(s).replace(/"/g, "&quot;");
 
 /**
- * The elements whose wrapper has to survive a cut through them.
- *
- * The walk below descends into an element only when an anchor sits inside it, and what it emits
- * then is that element's children — the wrapper itself is gone. For a block that is the point: a
- * chapter that begins halfway through a paragraph ends that paragraph. For an inline element it is
- * a loss with nowhere to appeal to, because the archive is not kept: a chapter that begins inside
- * `<em>` would arrive with the emphasis silently gone from both halves of it.
+ * Elements whose wrapper must survive a cut through them. A cut drops the wrapper it descends
+ * into: right for a block, but a cut inside `<em>` would lose the emphasis from both halves.
  */
 const INLINE = new Set([
   "a",
@@ -99,19 +86,13 @@ function anchorElement(document: Doc, id: string): Element | null {
 }
 
 /**
- * Cut a section into the HTML fragments the navigation says it holds.
- *
- * An element is taken **whole** unless an anchor lives somewhere inside it, in which case the walk
- * descends and that element's own wrapper is the thing being split. Taking elements whole is what
- * keeps the markup intact for the converter: a list, a table or a blockquote arrives as a list, a
- * table or a blockquote rather than as the text that was in it.
+ * Cut a section into the HTML fragments the navigation says it holds. An element is taken whole
+ * (keeping lists and tables intact) unless an anchor sits inside it.
  */
 function cut(document: Doc, anchors: readonly string[]): TextPart[] {
   const parts: { id: string | null; html: string[] }[] = [{ id: null, html: [] }];
   const wanted = new Set(anchors);
-  // The inline elements the walk is currently inside, outermost first. A cut closes all of them in
-  // the part it ends and opens them again in the part it starts, so neither half is left with an
-  // emphasis that only had an opening tag.
+  // Inline elements the walk is inside, outermost first; a cut closes and reopens them.
   const open: { open: string; close: string }[] = [];
 
   const startPart = (id: string): void => {
@@ -120,9 +101,7 @@ function cut(document: Doc, anchors: readonly string[]): TextPart[] {
     parts.push({ id, html: open.map((wrapper) => wrapper.open) });
   };
 
-  // Every element an anchor sits inside, so the walk knows where it has to descend and where it can
-  // take the markup whole. Worked out up front: asking "is there an anchor below me" at each level
-  // instead would re-walk the same subtrees once per level.
+  // Ancestors of every anchor, computed once so the walk doesn't re-scan subtrees per level.
   const onPath = new Set<Element>();
   for (const id of anchors) {
     let node = anchorElement(document, id)?.parentNode as Element | null | undefined;
@@ -141,8 +120,7 @@ function cut(document: Doc, anchors: readonly string[]): TextPart[] {
       }
       if (child.nodeType !== 1) continue;
       const el = child as Element;
-      // Either attribute can be the one the navigation named: `<a name="ch3" id="calibre_link-7">`
-      // is how converters leave an older book, and the link still says `#ch3`.
+      // Either attribute may be the target: `<a name="ch3" id="calibre_link-7">` linked as `#ch3`.
       const id = [el.getAttribute?.("id"), el.getAttribute?.("name")].find(
         (name): name is string => !!name && wanted.has(name),
       );
@@ -173,23 +151,17 @@ function cut(document: Doc, anchors: readonly string[]): TextPart[] {
 }
 
 /**
- * Read a section, split where the navigation says a new chapter starts inside it.
- *
- * `anchors` are element ids the table of contents pointed at. A part is returned for each one the
- * document actually contains, in document order, preceded by whatever came before the first — so a
- * caller can tell "the file had no such id" from "the id was there and the chapter was empty",
- * which are two different problems with the file.
+ * Read a section, split at the TOC's `anchors`. Returns a part per anchor the document contains,
+ * in document order, preceded by the text before the first; a missing id yields no part.
  */
 export async function sectionParts(
   html: string,
   anchors: readonly string[] = [],
 ): Promise<TextPart[]> {
-  // Nothing to cut: hand the file over as it stands, which is the common case and the one where
-  // re-serialising a parsed document could only lose something.
+  // Nothing to cut: re-serialising a parsed document could only lose something.
   if (!anchors.length) return [{ id: null, text: await toMarkdown(html) }];
 
-  // `documentElement`, not `body`: a section rendered as a bare fragment parses with its content
-  // under the root element and an empty `body` beside it, and walking `body` would find nothing.
+  // `cut` walks `documentElement`: a bare fragment parses with an empty `body`.
   const { document } = parseHTML(html);
   const parts = cut(document as unknown as Doc, anchors);
   return Promise.all(
@@ -203,17 +175,8 @@ export async function sectionText(html: string): Promise<string> {
 }
 
 /**
- * How many words a chapter is.
- *
- * Counted on whitespace-separated runs that contain at least one letter or digit, so a line of
- * dashes or a row of quotation marks does not inflate the figure the review and the run estimates
- * are both read from. CJK text has no spaces, so its characters are counted directly and scaled:
- * a "word" of Chinese prose is roughly 1.6 characters, which keeps a translated chapter's estimate
- * in the same range as an English one rather than an order of magnitude out.
- *
- * Takes **prose**, never the stored Markdown: callers run `plainText` first. Stripping in here
- * instead would mean stripping text that has already been stripped, and a `*` that a novel used as
- * a scene break would be read as emphasis the second time round and quietly deleted.
+ * Words in a chapter: whitespace runs with a letter or digit, plus CJK characters / 1.6 (about one
+ * Chinese "word"). Takes prose (`plainText` first), never stored Markdown.
  */
 export function countWords(prose: string): number {
   const cjk = prose.match(/[぀-ヿ㐀-䶿一-鿿豈-﫿]/g)?.length ?? 0;

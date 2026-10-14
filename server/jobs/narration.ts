@@ -1,49 +1,8 @@
-// The narration job: a chapter's lines in, a clip on disk for each, written one line at a time so
-// that a person watching the chapter sees them land rather than waiting for the run.
-//
-// The job mirrors the scripting job in how it finds its chapter — by number when it starts, by
-// **uid** at every write, because a removed volume renumbers the book mid-run — and differs in
-// what it writes. A scripting run replaces the script whole, once, against the revision it read;
-// a narration run touches one clip of one line at a time and never the line itself, so it has
-// nothing to refuse and instead moves the revision on with every clip it lands. That is what
-// keeps an edit made from a copy read before a clip landed from writing the clip's old state
-// back over it: the edit is refused with the 409 it already handles, and reads the chapter again.
-//
-// Which slot a line renders into is the store's rule, kept exactly (`queuedSlot`, in
-// `server/narration/chapter.ts` with the other rules a retake and a verdict share). A line with no
-// usable clip renders in place. A line that already has one renders a **candidate** beside it,
-// marked `auto`, so the chapter keeps playing the old clip until the new one lands; a replacement
-// that lands takes over and pushes the old clip into the take list, and one that fails leaves the
-// old clip exactly as it was. A cancelled run keeps what it finished and puts back what it did not
-// start.
-//
-// A retake is the same render without the `auto`: the candidate a person asked for stays beside
-// the clip in the book when it lands, for them to judge (`server/narration/ops.ts`), and one that
-// fails is theirs to discard rather than a gap in the chapter, so it does not fail the job. The
-// retake's job puts its lines in the queue when it is created and runs at a scope that wants
-// nothing new, so the handler renders exactly what it finds in flight.
-//
-// The chapter's `narration` status is the job's to keep honest, and it is asked of the clips —
-// `chapterNarration` — rather than remembered: `queued` when the job is, `running` while it runs,
-// and afterwards whatever the lines say, which is `failed` for a chapter with a gap in it.
-//
-// What a line is sent as is the browser's rule too, its reading (`@/lib/reading`): the words after
-// the book's dictionary, kept to what a voice can say, with the expression tags placed on the line
-// written in as the speaker's endpoint spells them, the instructions beside them, and the parts
-// its endpoint's limit cuts them into. Which of that is read when the run starts and which as each
-// line goes out is written down there, once. A line whose tags its endpoint cannot say is failed
-// before any request, with the reason, exactly as the browser blocks it. The endpoint's sample rate and format go with the request, and the clip
-// records the rate the file actually came back at, read from the file (`probeClip`), and is kept
-// under the extension of the format it actually came back in — which for the fake is always WAV.
-// The format is not part of what a clip is compared against later: changing an endpoint from WAV
-// to MP3 applies to the lines rendered after it, and leaves the ones already in the book alone.
-//
-// The handler plans the run (`planRun`), sends its lines and settles the chapter. What every line
-// goes through, in order — a slot, the budget, its reading and the audit trail, the request, the
-// landing, the money given back — is `lineRun`; what sending a line in parts adds is
-// `server/narration/parts.ts`, and what sending lines in batches adds is
-// `server/narration/batch.ts`, which takes its lines through `lineRun` without ordering those
-// steps itself.
+// The narration job: renders a chapter's lines to clips and lands them one at a time.
+// Finds its chapter by number at start but by uid at every write (a removed volume renumbers the
+// book mid-run). Each landed clip moves the revision on, so an edit from a stale copy gets a 409.
+// A line that already has a clip renders an `auto` candidate beside it (`queuedSlot` in
+// server/narration/chapter.ts); the old clip plays until the new one lands.
 import type { Job, NarrationQueued, NarrationScope, Segment, SegmentAudio } from "@/types";
 import { chainsFor, runnable, soundOf, thoughtEffectOf, type EffectContext } from "@/lib/effects";
 import { encodingOf } from "@/lib/endpointShapes";
@@ -115,7 +74,7 @@ import { speechTarget } from "~/providers/target";
 import { assertWithinBudget, budgetProblem, type EndpointRequest } from "~/usage/budget";
 import { dispatch } from "~/usage/dispatch";
 
-/** The way back from a label the Queue page shows to the scope it names; `SCOPE_LABEL` is one-to-one. */
+/** Queue-page label back to its scope; `SCOPE_LABEL` is one-to-one. */
 const SCOPE_OF_LABEL = new Map<string, RunScope>(
   (Object.entries(SCOPE_LABEL) as [NarrationScope, string][]).map(([scope, label]) => [
     label,
@@ -124,39 +83,28 @@ const SCOPE_OF_LABEL = new Map<string, RunScope>(
 );
 SCOPE_OF_LABEL.set(RETAKE_LABEL, "pending");
 
-/**
- * The scope a job was queued at: kept on its run detail, since the label beside it is display text
- * that may be reworded. A job queued before the scope was kept is read back from its label, and
- * a row with neither — none should exist — as `all`, the scope that leaves nothing out.
- */
+/** The scope a job was queued at. Falls back to its label (older rows), then `all`. */
 export const scopeOf = (job: Job): RunScope =>
   job.narrationRun?.scope ?? SCOPE_OF_LABEL.get(job.bulk?.scope ?? "") ?? "all";
 const labelOf = (scope: RunScope): string =>
   scope === "pending" ? RETAKE_LABEL : SCOPE_LABEL[scope];
 
-/** What makes a line's clip sound the way its effects say, as it lands. */
 export interface SoundPorts {
   /** Pedalboard, where this machine has it */
   effects?: EffectRunner;
-  /** the ffmpeg thought effect, which thought lines are given where Pedalboard is missing */
+  /** ffmpeg stand-in for thought lines where Pedalboard is missing */
   thoughtEffect?: ThoughtEffect;
 }
 
-/** How a landing line's audio is processed, and the `sound` its clip then records. */
 interface LineSound {
   sound: string;
   apply: ThoughtEffect;
 }
 
 /**
- * The sound each line of a run is given, from the effects read when the run started — like the
- * cast, a choice changed mid-run applies from the next run, and a clip that missed it reads as an
- * old sound. Null for a line no effect touches, which keeps the voice's file and no raw beside it.
- *
- * Where Pedalboard cannot run, a thought line is still heard as a thought: its thought effect is
- * replaced by the ffmpeg one, recorded as the sound `"ffmpeg"`, so a Re-apply once Pedalboard is
- * there gives it the real chain. A speaker's own effect and a line's own have no stand-in and are
- * left off, said once per run rather than once a line.
+ * Each line's sound, from effects read at run start (a mid-run change applies next run). Null for
+ * a line no effect touches. Without Pedalboard, thought lines get the ffmpeg stand-in (sound
+ * `"ffmpeg"`, so a later Re-apply upgrades it); other effects are left off, warned once per run.
  */
 function lineSounds(
   ctx: JobContext,
@@ -193,7 +141,6 @@ function lineSounds(
   };
 }
 
-/** The chapter as the job needs it: where it is, and the identity to find it by again. */
 function readChapter(db: Db, bookId: string, chapterId: number) {
   const chapter = library.getChapter(db, bookId, chapterId);
   const uid = library.chapterUid(db, bookId, chapterId);
@@ -202,9 +149,8 @@ function readChapter(db: Db, bookId: string, chapterId: number) {
 }
 
 /**
- * Put back what these lines hold in flight: a line waiting to render in place goes back to having
- * no clip, and a replacement that never landed is dropped, which leaves the clip it would have
- * replaced exactly as it was. Says how many were put back; the caller moves the revision.
+ * Put back in-flight lines: an in-place render goes back to no clip, an unlanded replacement is
+ * dropped. Returns the count; the caller moves the revision.
  */
 function putBack(tx: Tx, bookId: string, chapterId: number, segs: readonly Segment[]): number {
   let n = 0;
@@ -221,21 +167,13 @@ function putBack(tx: Tx, bookId: string, chapterId: number, segs: readonly Segme
   return n;
 }
 
-/** A line this run renders: the slot its render goes to, and the queued clip holding it meanwhile. */
 interface Target {
   s: Segment;
   slot: Slot;
   queued: SegmentAudio;
 }
 
-/**
- * Put one line in the queue.
- *
- * A retake already waiting is not thrown away: if it rendered it joins the take list marked
- * rejected, so the comparison the listener was in the middle of is still playable afterwards. A
- * line that has a clip with audio gets a replacement beside it, marked `auto`; one that has none
- * renders in place (`queuedSlot`).
- */
+/** Queue one line. A waiting retake that rendered joins the take list as rejected (stays playable). */
 function queueRender(tx: Tx, at: { bookId: string; id: number }, s: Segment): Target {
   let audio = s.audio;
   if (s.candidate) {
@@ -246,13 +184,9 @@ function queueRender(tx: Tx, at: { bookId: string; id: number }, s: Segment): Ta
 }
 
 /**
- * The plan, written in one transaction: every line this run renders holds its slot with a queued
- * clip before the first request goes out, so the chapter reads as a run in progress from the first
- * moment. A line found already queued or generating is this job's own: the queue allows one
- * narration job per chapter, so an in-flight clip can only be what the last attempt was holding
- * when the server stopped, and it is picked up rather than skipped — unless the line has since
- * become one the book does not read, which is never sent: its clip is put back as a cancel would.
- * A plan with nothing in it settles the chapter's status as it stands.
+ * Queue every target line in one transaction, before the first request. An in-flight clip can only
+ * be this job's own from before a restart (one narration job per chapter), so it is picked up —
+ * unless the line is no longer spoken, in which case it is put back.
  */
 function planRun(db: Db, uid: string, scope: RunScope): { targets: Target[]; lines: number } {
   const targets: Target[] = [];
@@ -269,7 +203,7 @@ function planRun(db: Db, uid: string, scope: RunScope): { targets: Target[]; lin
       segs.filter((s) => !isSpoken(s, book)),
     );
     if (cleared) segs = readScript(tx, at.bookId, at.id);
-    // progress counts the lines the run could be waiting on, which a line not read never is
+    // progress counts spoken lines only
     lines = segs.filter((s) => isSpoken(s, book)).length;
     const wanted = new Set(
       scope === "pending" ? [] : narrationTargets(segs, scope, true, book).run.map((s) => s.id),
@@ -296,11 +230,7 @@ function planRun(db: Db, uid: string, scope: RunScope): { targets: Target[]; lin
   return { targets, lines };
 }
 
-/**
- * A line on its way out: its reading, taken as it goes — the dictionary and the endpoint as they
- * stand now, not when the run began (`@/lib/reading` has the rule) — and its queued clip turned
- * `generating`.
- */
+/** A line on its way out. Its reading is taken at send time, not run start (`@/lib/reading`). */
 interface Line extends BatchLine<Target> {
   who: Delivery;
   reading: Reading;
@@ -310,14 +240,12 @@ interface Line extends BatchLine<Target> {
   release: () => void;
 }
 
-/** A line's delivery, its reading, and the worst case it holds while it is out. */
 interface Priced {
   who: Delivery;
   reading: Reading;
   worst: number;
 }
 
-/** What a run's lines came to, for the log's last word and the job's verdict. */
 interface Tally {
   rendered: number;
   waiting: number;
@@ -325,11 +253,9 @@ interface Tally {
 }
 
 /**
- * Everything a line goes through, whichever way it is sent, in its order: a slot on its endpoint,
- * the budget, the reservation it holds and the audit trail written as it goes out (`admit`), the
- * request (`speak`, or a batch's `speakBatch`), and what came back written where its slot is, its
- * hold given back (`land`). The run holds one of these for its lines; a batch borrows it
- * (`LineRun`), and `close` gives back whatever is still held once every line has settled.
+ * Every step a line goes through, alone or batched: gate slot (`acquire`), budget + reservation +
+ * audit trail (`admit`), request (`speak`/`speakBatch`), write-back (`land`). Batches borrow it via
+ * `LineRun`; `close` releases what is still held.
  */
 function lineRun(o: {
   ctx: JobContext;
@@ -338,7 +264,6 @@ function lineRun(o: {
   gate: SpeechGate;
   chapter: { uid: string };
   deliveryOf: (speaker: string) => Delivery;
-  /** what a line's clip is processed with as it lands (`lineSounds`) */
   soundFor: (s: Segment) => Promise<LineSound | null>;
   targets: readonly Target[];
   lines: number;
@@ -354,7 +279,7 @@ function lineRun(o: {
   const { ctx, provider, files, gate, chapter, deliveryOf, soundFor, targets, lines, stop } = o;
   const { job, db } = ctx;
 
-  /** One write against the chapter wherever it is now, moving the revision with it. */
+  /** Write against the chapter by uid, moving the revision. */
   const write = (fn: (tx: Tx, at: { bookId: string; id: number }) => void): void =>
     db.transaction((tx) => {
       const at = library.locateChapter(tx, chapter.uid);
@@ -363,9 +288,7 @@ function lineRun(o: {
       bumpRevision(tx, at.bookId, at.id);
     });
 
-  // Progress is the demo's: how many of the chapter's lines are not still waiting on this
-  // run, counted over the whole chapter so a run over three stale lines of three hundred does
-  // not start at nought.
+  // Counted over the whole chapter, so re-rendering 3 of 300 lines does not start at 0%.
   let landed = 0;
   const progress = (): void => {
     const pct = Math.round(((lines - (targets.length - landed)) / lines) * 100);
@@ -374,23 +297,18 @@ function lineRun(o: {
     if (at) library.setChapterNarration(db, at.bookId, at.id, "running", pct);
   };
 
-  // What counts as the run failing is the demo's rule: a line rendered in place that has no
-  // clip, and a replacement the run itself chose to make. A retake a person asked for is theirs
-  // to judge, so one that fails is a failed candidate for them to discard, not a failed job.
+  // A failed retake is the person's to discard, so it does not count as a failure.
   const tally: Tally = { rendered: 0, waiting: 0, failed: 0 };
-  // What this job still holds against the book's cap: the worst case it was queued with, less
-  // each line's as that line settles. The column the budget sums is kept in step with it.
+  // Held against the book's cap: the queued worst case, less each line's as it settles.
   let held = job.narrationRun?.reserved ?? 0;
   let refused: string | null = null;
 
-  /** the endpoint's limits as they are saved now, which is what "applies live" means */
+  /** read on every acquire, so limit changes apply live */
   const limitsOf = (id: string | null) => (): GateLimits | undefined => {
     const ep = id ? readEndpoint(db, id) : undefined;
     return ep && { concurrency: ep.concurrency, enabled: ep.enabled };
   };
-  // A wait worth a line in the job's log is one a person caused or can do something about — a
-  // pause, a rate limit — said once per endpoint until a line gets through again, not once for
-  // every line that queues behind it. A full concurrency is the normal state of a busy run.
+  // Log pauses and rate limits once per endpoint until a line gets through; not concurrency waits.
   const told = new Map<string, GateWait>();
   const waited = (id: string | null) => (why: GateWait) => {
     if (!id || why === "concurrency" || told.get(id) === why) return;
@@ -410,13 +328,9 @@ function lineRun(o: {
     return leave;
   };
 
-  /** Whether nothing more should go out: the run was stopped, or the budget no longer covers it. */
   const halted = (): boolean => stop.aborted || refused != null;
 
-  /**
-   * Who says a line, what it is sent as and what it holds at worst, worked out as it goes out —
-   * once, for the budget and then its commit, which follow each other with nothing in between.
-   */
+  /** Priced once per line, shared by `budgetStops` and the `commit` right after it. */
   const pricing = new Map<Target, Priced>();
   const priceOf = (t: Target): Priced => {
     let p = pricing.get(t);
@@ -427,15 +341,11 @@ function lineRun(o: {
     }
     return p;
   };
-  /** what the lines out hold, given back as each settles */
   const out = new Set<() => void>();
 
   /**
-   * The budget, asked before a line goes out: the book's with what the job still holds and its own
-   * reservation left out — a run that fitted when it was queued stops here when the cap was
-   * lowered, the book was paused, or other lines cost more than they held — and the endpoint's
-   * daily limit with the line's own worst case. The lines not yet sent are put back as they were
-   * (`onSettled`), and the clips landed stay.
+   * Budget check before each line: a run that fit when queued still stops here if the cap was
+   * lowered, the book paused, or lines cost more than held. Unsent lines are put back in `onSettled`.
    */
   const budgetStops = (t: Target): boolean => {
     const { reading, worst } = priceOf(t);
@@ -454,7 +364,6 @@ function lineRun(o: {
     return true;
   };
 
-  /** A line removed while it rendered: said, and counted as landed, and its hold given back. */
   const gone = (s: Segment, release: () => void): void => {
     const note = `Line ${s.id} was removed while it rendered; the clip was dropped`;
     ctx.note(note, "warning", { line: s.id });
@@ -463,9 +372,8 @@ function lineRun(o: {
   };
 
   /**
-   * Commit a line to going out: its reservation, its ledger reports and the audit trail on its
-   * clip. `maxChars` is where it is cut when a batch takes shorter items than the endpoint does.
-   * Null when the line was removed before it could go.
+   * Reserve, report and write the audit trail. `maxChars` overrides the cut when a batch's item limit
+   * is shorter than the endpoint's. Null when the line was removed.
    */
   const commit = (t: Target, maxChars?: number | null): Line | null => {
     const { s, slot } = t;
@@ -473,12 +381,7 @@ function lineRun(o: {
     const { plan, instructions } = reading;
     const ep = reading.reader.endpoint;
     pricing.delete(t);
-    // The line's money (`~/usage/dispatch`): its worst case held against its endpoint's daily
-    // limit and, through what the job holds, the book's cap; every request that reached the wire —
-    // each part of a split line is its own, and so is each item of a batch — priced into the
-    // ledger as it settles, its charge given back at once; and the rest given back once the line
-    // has settled, whether it rendered, failed or was never sent. A line with no endpoint goes
-    // nowhere, and holds and reports nothing.
+    // Accounting rules live in `~/usage/dispatch`; each part or batch item is its own request.
     const money =
       ep &&
       dispatch(db, {
@@ -498,14 +401,10 @@ function lineRun(o: {
         },
       });
     if (money) out.add(money.release);
-    // Where the line is cut to fit the endpoint's `maxChars` — or a batch's shorter limit —
-    // decided before it goes out so the clip can say so while it renders. A line with an issue
-    // is not sent at all, nor one with a tag longer than a batch's item limit: there are no cuts
-    // for either, and `unsendable` says why.
+    // Cut before sending so the clip records it. No cuts means unsendable (see `unsendable`).
     const cuts = maxChars ? cutReading(plan, ep, maxChars) : reading.cuts;
     const startedAt = Date.now();
-    // The audit trail, written when the request goes out: exactly what this clip is being
-    // rendered with, so a later edit to the line, the cast or the voice reads as drift.
+    // The audit trail: what this clip is rendered with, so later edits read as drift.
     const generating: SegmentAudio = {
       ...t.queued,
       status: "generating",
@@ -516,9 +415,7 @@ function lineRun(o: {
       ...(who.voice ? { voice: who.voice } : {}),
       model: provider.name,
       ...readingRecord(s, reading),
-      // Recorded as the demo records them: how many requests and at which boundary always,
-      // where each cut fell only when there was more than one part. Set every time rather than
-      // carried from the clip this one replaces, whose endpoint may have had another limit.
+      // Always set, never carried over: the replaced clip's endpoint may have had another limit.
       parts: cuts?.length,
       splitAt: cuts ? ep!.splitAt : undefined,
       cuts:
@@ -548,7 +445,6 @@ function lineRun(o: {
         voiceRef: who.voiceRef,
         sampleRate: ep?.sampleRate ?? null,
         encoding: ep ? encodingOf(ep) : { format: "wav" },
-        // the endpoint as saved now and its key read now, for the provider alone
         target: ep ? speechTarget(db, ep) : null,
         signal: stop,
         ...(money ? { sent: money.sent } : {}),
@@ -564,12 +460,8 @@ function lineRun(o: {
   };
 
   /**
-   * Why a committed line cannot be sent at all, or null: a tag the endpoint cannot say is the
-   * demo's "blocked before dispatch" — the line is not sent, rather than sent without the tag
-   * and marked stale on arrival; a tag longer than an item of the endpoint's batches may be has
-   * nowhere to go, since a tag is never cut (`cutReading`); and an Opus line in parts, or with a
-   * pause's silence added, could not be kept (`speakInParts`). Each is that line's failure, and
-   * the run goes on.
+   * Why a line cannot be sent, or null: a tag the endpoint can't say, a tag longer than a batch item
+   * (tags are never cut), or Opus in parts (`speakInParts`). Fails that line; the run goes on.
    */
   const unsendable = (line: Line): Error | null => {
     const { plan, reader } = line.reading;
@@ -586,12 +478,7 @@ function lineRun(o: {
       : null;
   };
 
-  /**
-   * Let a line go out, cut to `maxChars` when that is shorter than its endpoint's limit: the
-   * budget asked, then the line committed. Null when it does not go — the run has halted, here or
-   * before (`halted` says so), the line was removed, or it cannot be sent at all, which has been
-   * landed as the failure it is.
-   */
+  /** Budget check then commit. Null when halted, removed, or unsendable (landed as failed). */
   const admit = async (t: Target, maxChars?: number | null): Promise<Line | null> => {
     if (halted() || budgetStops(t)) return null;
     const line = commit(t, maxChars);
@@ -602,7 +489,6 @@ function lineRun(o: {
     return null;
   };
 
-  /** One line on its own — whole, or its parts one after another — and how that ended. */
   const speak = async (line: Line): Promise<Outcome> => {
     try {
       const rendered = await speakInParts(provider, line.input, line.cuts);
@@ -614,7 +500,6 @@ function lineRun(o: {
     }
   };
 
-  /** Items for one endpoint as one batch; each is `answered` as it comes back. */
   const speakBatch = (
     id: string,
     items: SpeechInput[],
@@ -628,10 +513,7 @@ function lineRun(o: {
       rateLimited: (ms) => gate.rateLimited(id, ms),
     });
 
-  /**
-   * A line's audio through its effects, as a WAV, or null — said in the log — when they could not
-   * be applied: the line keeps the clip the voice made rather than failing over a sound.
-   */
+  /** The line's audio through its effects, as WAV. Null (logged) on failure: keep the raw clip. */
   const withEffect = async (
     s: Segment,
     rendered: RenderedClip,
@@ -639,7 +521,7 @@ function lineRun(o: {
   ): Promise<{ bytes: Uint8Array; duration: number; sound: string } | null> => {
     try {
       const bytes = await fx.apply(rendered.bytes, rendered.format, stop);
-      // a room or an echo rings on a little past the last word, so the length is read again
+      // reverb rings past the last word, so re-read the length
       const { duration } = await probeClip(bytes, "wav");
       return { bytes, duration, sound: fx.sound };
     } catch (e) {
@@ -653,7 +535,6 @@ function lineRun(o: {
     }
   };
 
-  /** Write what came back — a clip, or the failure — where the line's slot is, and say so. */
   const land = async (line: Line, outcome: Outcome): Promise<void> => {
     const { t, who, generating, startedAt, release } = line;
     const { s, slot } = t;
@@ -661,8 +542,7 @@ function lineRun(o: {
     try {
       if ("error" in outcome) throw outcome.error;
       const { rendered } = outcome;
-      // the rate is read off the file, whatever was asked for: audio a build cannot read is a
-      // failed line now rather than a failed audiobook later
+      // read the rate off the file: unreadable audio fails the line now, not the export later
       let sampleRate: number;
       try {
         ({ sampleRate } = await probeClip(rendered.bytes, rendered.format));
@@ -670,9 +550,8 @@ function lineRun(o: {
         const why = (e as Error).message;
         throw new Error(`The audio that came back could not be read: ${why}`, { cause: e });
       }
-      // Kept by the book, which is where the file stays whatever the chapter's number becomes.
-      // The voice's own file is written first, and a line with effects keeps it beside the one
-      // they made, as its raw, so a Re-apply works from it without asking the voice again.
+      // Files live under the book (chapter numbers change). With effects, the voice's file is kept
+      // as `raw` so Re-apply needs no new request.
       const fx = await soundFor(s);
       const voice = await files.write(job.bookId, rendered.bytes, rendered.format);
       const processed = fx ? await withEffect(s, rendered, fx) : null;
@@ -694,9 +573,6 @@ function lineRun(o: {
       };
     } catch (e) {
       if (stop.aborted) throw e;
-      // A line that could not be rendered is a failed clip where the run put it — a failed
-      // replacement stays a candidate beside the clip it did not replace, and a failed render
-      // in place is the gap the chapter's status will say it has.
       clip = {
         ...generating,
         status: "failed",
@@ -713,16 +589,13 @@ function lineRun(o: {
       };
     }
 
-    // A replacement the run made for itself takes over as it lands; a retake stays beside the
-    // clip in the book for the verdict.
+    // An `auto` replacement takes over as it lands; a retake waits for a verdict.
     const replacement = slot === "candidate" && !!clip.auto;
     const retake = slot === "candidate" && !clip.auto;
     try {
       write((tx, at) => {
-        // A dictionary replaced while the line was out marked stale only the clips that had
-        // landed, so one that lands after it is checked here, in the same transaction as the
-        // write — the words it was sent may no longer be the words the book would send. An
-        // endpoint saved meanwhile is the same question about its tags and its rate.
+        // A dictionary or endpoint change while the line was out only marked landed clips stale,
+        // so check this one here, in the write's transaction.
         if (
           clip.status === "done" &&
           compareReading(clip, s, lineReading(tx, at.bookId, s, who)).length
@@ -790,11 +663,7 @@ function lineRun(o: {
     progress();
   };
 
-  /**
-   * One line, on its own: a slot, then its request — or its parts, one after another. The slot is
-   * the endpoint's, so it is given back as soon as the answer is in: what is done with the audio
-   * here — its effects, the files, the row — is no reason to keep the next line waiting.
-   */
+  /** The gate slot is released once the answer is in, before effects and writes. */
   const renderLine = async (t: Target): Promise<void> => {
     const answered = await sendLine(t);
     if (answered) await land(...answered);
@@ -840,10 +709,7 @@ export function narrationHandler(
       const chapter = readChapter(db, job.bookId, job.chapterId);
       const scope = scopeOf(job);
 
-      // A speaker's voice is `speakerVoice`'s — their own, the Character voice, or the Narrator's —
-      // and their style is their own: the cast store's `effectiveVoice`, read once, because the
-      // cast is the book's and a rename mid-run is the rename's problem — it marks the clips it
-      // moved stale.
+      // The cast is read once; a rename mid-run marks the clips it moved stale itself.
       const deliveryOf = bookDelivery(db, job.bookId);
       const soundFor = lineSounds(ctx, effectContext(db, job.bookId), sound);
 
@@ -859,19 +725,9 @@ export function narrationHandler(
         scope: labelOf(scope),
       });
 
-      // The lines go out as their endpoints will take them (`gate.ts`): each asks the speech gate
-      // for a slot on its speaker's endpoint, in the chapter's order, and is sent when it has one —
-      // up to the endpoint's concurrency at once, none while it is paused or cooling down after a
-      // rate limit, and lines for another endpoint alongside. They land in whatever order they are
-      // answered; each is written by its own line id, so the order they land in is nobody's business
-      // but the progress bar's.
-      //
-      // Three things stop the run short. A budget that no longer covers the next line stops anything
-      // more going out, lets the lines already out land and be paid for, and fails the job after, as
-      // a scripting run does. Anything else that goes wrong beyond one line — the chapter removed
-      // under the run — stops every line at once, those in flight included, and is what the job
-      // fails with. A cancel is the same stop, and the lines not yet written are put back
-      // (`onSettled`).
+      // Lines go out through the speech gate (`~/providers/gate`) and land in any order.
+      // A budget stop lets in-flight lines land, then fails the job. Any other error beyond one line
+      // (e.g. the chapter removed) or a cancel aborts everything; `onSettled` puts back the rest.
       const stop = new AbortController();
       const onAbort = (): void => stop.abort(signal.reason);
       signal.addEventListener("abort", onAbort, { once: true });
@@ -889,9 +745,7 @@ export function narrationHandler(
         stop: stop.signal,
       });
 
-      // Which endpoints take batches, asked once per run of each endpoint its lines go to; one
-      // that cannot say — no such route, a model it does not batch, no answer — or whose batches
-      // are switched off is sent one line at a time.
+      // Ask each endpoint once whether it batches; no answer or batches off: one line at a time.
       const groups = new Map<string, Target[]>();
       const alone: Target[] = [];
       for (const t of targets) {
@@ -926,15 +780,13 @@ export function narrationHandler(
           ...batched.map(([id, lines, limits]) => batchLines(run, id, lines, limits)),
         ].map((work) =>
           work.catch((e: unknown) => {
-            // the first thing to go wrong is the one the job fails with; what the stop then shakes
-            // loose from the other lines is only the stop
+            // the first error wins; later ones are just the stop
             if (stop.signal.aborted) return;
             fatal = { error: e };
             stop.abort(e);
           }),
         ),
       );
-      // every line has landed or been stopped: none is out at its endpoint any more
       run.close();
       signal.removeEventListener("abort", onAbort);
       if (signal.aborted) throw signal.reason;
@@ -942,8 +794,7 @@ export function narrationHandler(
       const refused = run.refused();
       if (refused != null) throw new Error(refused);
 
-      // Every line has settled, so what the job still holds is only the difference between pricing
-      // the lines one by one and together; finishing the job gives it back (`finishJob`).
+      // What is still held is the per-line vs whole-run pricing gap; `finishJob` releases it.
       let seconds = 0;
       db.transaction((tx) => {
         const at = library.locateChapter(tx, chapter.uid);
@@ -962,21 +813,15 @@ export function narrationHandler(
 
     onSettled(ctx, status) {
       if (status !== "done") putBackAfter(ctx);
-      // what landed is heard next, when the book asks for that; a run cancelled is a person
-      // stopping the work, and a check they did not ask for is not queued behind their back
+      // no auto-check after a cancel: the person stopped the work
       if (status !== "cancelled") checkAfterNarration(ctx);
     },
   };
 }
 
 /**
- * Put back what a run that did not finish was holding. `done` wrote the chapter's status inside its
- * own transaction; anything else — a cancel, a failure, a recovery that gave up on a queued job —
- * puts back what the run was holding: a line waiting to render in place goes back to having no
- * clip, and a replacement that never landed is dropped, which leaves the clip it would have
- * replaced exactly as it was. What was finished stays finished. Read off the job's row, whose
- * chapter number has followed any renumbering by cascade, rather than the number the job started
- * with.
+ * Put back what an unfinished run held (`putBack`). Uses the job row's chapter number, which follows
+ * renumbering by cascade, not the one the job started with.
  */
 function putBackAfter(ctx: JobContext): void {
   const fresh = getJob(ctx.db, ctx.job.id);
@@ -986,8 +831,7 @@ function putBackAfter(ctx: JobContext): void {
     if (!library.chapterExists(tx, bookId, chapterId)) return;
     const back = putBack(tx, bookId, chapterId, readScript(tx, bookId, chapterId));
     const segs = readScript(tx, bookId, chapterId);
-    // a run that was interrupted starts its progress again; one that ran to its end and
-    // failed on a line keeps the hundred its final write recorded
+    // interrupted: progress back to 0; ran to the end but failed a line: keep 100
     library.setChapterNarration(
       tx,
       bookId,
@@ -1000,21 +844,9 @@ function putBackAfter(ctx: JobContext): void {
 }
 
 /**
- * Queue a narration job for each chapter, as one run at one scope.
- *
- * Chapters skipped for the audiobook, chapters with no script, chapters already being narrated and
- * chapters the scope finds nothing to do in are left out and said so, rather than refused: a bulk
- * press over a selection that includes one is a person's intent for the rest. A book still in its
- * contents review has nothing to narrate yet, and that is refused. What the scope will render is
- * decided here, by the same `narrationTargets` the run itself uses, so a chapter queued is a
- * chapter with work in it.
- *
- * The run is priced before anything is queued, chapter by chapter at its worst case, and checked
- * against the book's budget whole: a run that does not fit is refused with a 409 and no chapter of
- * it is queued, because half a run is not what anyone asked for. Each job holds its own chapter's
- * figure until its lines settle. An endpoint's daily limit refuses the run only when it cannot
- * cover even the first line that endpoint is sent; past that, the job stops at the line that would
- * pass it.
+ * Queue one narration job per chapter as one run. Chapters with nothing to do are skipped, not
+ * refused. The whole run is priced at worst case first: if it doesn't fit the book's budget,
+ * nothing is queued (409). An endpoint's daily limit refuses only if it can't cover its first line.
  */
 export function enqueueNarration(
   db: Db,
@@ -1090,11 +922,10 @@ export function enqueueNarration(
         scope: SCOPE_LABEL[scope],
       },
       run: { narrationRun: narrationRunOf(cost, clips, scope) },
-      // in the same transaction as the row, so it cannot land after the worker has moved on
+      // same transaction as the row, so it can't land after the worker moved on
       onCreated: (tx) => library.setChapterNarration(tx, bookId, id, "queued", 0),
     });
     jobs.push(job);
   });
-  // the chapters as they now stand, with the queued ones marked
   return { jobs, skipped, runId, chapters: library.listChapters(db, bookId) };
 }

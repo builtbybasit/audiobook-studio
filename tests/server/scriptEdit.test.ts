@@ -398,7 +398,7 @@ describe("the history a scripting job writes", () => {
     ]);
     expect(h.versions[1].segments[0].text).toBe("By hand.");
     expect(h.head.origin).toEqual({ kind: "scripted", profile: FAKE, again: true });
-    // the same rule as the store's: the version is script content only
+    // the version is script content only
     expect(h.versions[1].segments[0].audio).toEqual({
       status: "none",
       endpoint: null,

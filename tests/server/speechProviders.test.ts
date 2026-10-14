@@ -1,9 +1,6 @@
 // Gemini, ElevenLabs, BreezeBlue, MiniMax, Cartesia and Qwen through the real speech provider,
-// against an injected `fetch` whose answers are built from each provider's docs: what each is sent
-// — its own path, key header and body — what is made of the answer, what each refuses before
-// sending anything, and what reaches the ledger: whether the request was billed, and the usage the
-// answer reported even when what came with it proved unusable. Fish Audio and the OpenAI shape are
-// `endpointSpeech.test.ts`.
+// against a `fetch` whose answers follow each provider's docs. Fish Audio and the OpenAI shape are
+// in `endpointSpeech.test.ts`.
 import { describe, expect, test } from "bun:test";
 
 import { encodingProblems, isElevenLabs, isGemini, ttsRequestPath } from "@/lib/endpointShapes";

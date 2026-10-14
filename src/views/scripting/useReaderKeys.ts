@@ -1,24 +1,18 @@
 // The reader's keyboard: j/k or ↑/↓ move, Enter edit, Esc close, 1–9 assign speaker (in-chapter
-// order), c toggles cast.
-//
-// These are single letters with no modifier, and they used to be listened for on `window`: the
-// reader kept the keyboard wherever you had wandered to, so clicking a line here and then working
-// in the chapter list meant pressing 3 over there silently reassigned a speaker in here. They now
-// belong to this pane, and the one that changes something you may not be looking at says so.
+// order), c toggles cast. Unmodified keys, so they only act while this pane owns the keyboard.
 import { onMounted, onUnmounted, type ComputedRef, type Ref } from "vue";
 import type { useReader } from "@/stores/reader";
 import type { SegmentEditing } from "@/views/scripting/segmentEditing";
 import type { Character, Segment } from "@/types";
 
 export interface ReaderKeys {
-  /** the reader's own element: the keys are its while focus or the last click is inside it */
   root: Ref<HTMLElement | null>;
-  /** the lines as the filter shows them, which j/k walk */
+  /** the filtered lines j/k walk */
   rows: ComputedRef<Segment[]>;
   segments: ComputedRef<Segment[]>;
   inChapter: ComputedRef<Character[]>;
   editing: SegmentEditing;
-  /** the history panel is over the script, and keeps only Escape */
+  /** the history panel is open and keeps only Escape */
   history: Ref<boolean>;
   /** steps the history panel back one state; false when it was already at its list */
   historyBack: () => boolean;
@@ -33,15 +27,13 @@ export interface ReaderKeys {
 export function useReaderKeys(ctx: ReaderKeys) {
   const { root, rows, segments, inChapter, editing, history, reader } = ctx;
   const { open, focus, splitting, cutAt, nextOf, doJoin, startTextEdit } = editing;
-  /** Where the last press landed. Prose and most rows are not focusable, so a click usually leaves
-   *  `document.activeElement` on `<body>` and only the pointer says which pane you are working in.
-   *  Starts inside, so a chapter you have just opened answers j/k without a click first. */
+  /** Prose isn't focusable, so a click usually leaves focus on `<body>` and only the pointer says
+   *  which pane is in use. Starts true so a freshly opened chapter answers j/k at once. */
   let pointerInside = true;
   const onPointerDown = (e: PointerEvent) => {
     pointerInside = !!root.value?.contains(e.target as Node);
   };
-  /** Whether the reader owns the keyboard: something in it has focus, or nothing anywhere does and
-   *  this is where you last clicked. */
+  /** Something in it has focus, or nothing does and the last click was here. */
   function owns(): boolean {
     const el = root.value;
     if (!el) return false;
@@ -61,15 +53,13 @@ export function useReaderKeys(ctx: ReaderKeys) {
     if (!owns()) return;
     const t = e.target as HTMLElement;
     if (t.closest('[data-expression-editor], [role="dialog"]')) return;
-    // the history panel is over the script: the reader's single-key edits would land on lines
-    // nobody is looking at, so it keeps only the way out
+    // edits would land on lines nobody can see
     if (history.value) {
       if (e.key !== "Escape" || ["INPUT", "TEXTAREA"].includes(t.tagName)) return;
       if (!ctx.historyBack()) history.value = false;
       return;
     }
-    // inside a field: let the widget (combobox/select) handle Escape itself; a second Escape
-    // closes the editor
+    // inside a field the widget handles Escape; a second Escape closes the editor
     if (
       ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName) ||
       t.isContentEditable ||
@@ -93,7 +83,6 @@ export function useReaderKeys(ctx: ReaderKeys) {
         cutAt.value = null;
       } else if (ctx.focusMode()) ctx.toggleFocus();
     } else if (e.key === "s" && focus.value) {
-      // the split lives in the editor, so the editor opens with it
       open.value = focus.value;
       splitting.value = splitting.value === focus.value ? null : focus.value;
       cutAt.value = null;
@@ -104,7 +93,7 @@ export function useReaderKeys(ctx: ReaderKeys) {
       const s = segments.value.find((x) => x.id === focus.value);
       if (s && nextOf(s)) ctx.nudgePause(s, e.key === "]" ? 0.25 : -0.25);
     } else if (e.key === "e" && focus.value) {
-      e.preventDefault(); // the field opens focused, and would otherwise be handed this very "e"
+      e.preventDefault(); // the field opens focused and would get this "e"
       const s = segments.value.find((x) => x.id === focus.value);
       if (s) startTextEdit(s);
     } else if (e.key === "p" && focus.value) {

@@ -1,18 +1,7 @@
-// What an effects sheet chooses for, and the choosing: one speaker's effect on all their lines,
-// one speaker's thought effect, or the book's thought effect. A line effect is chosen by the
-// scripting model, not here: on its sheet (`line`) nothing is chosen, and a line is only heard
-// through it.
-//
-// The list shows one row per effect plus None, and the row that is highlighted is what the subject
-// hears now — a speaker whose thoughts follow the book is shown the book's row. So choosing a row
-// is setting the subject's own choice, except that choosing the row the next level up already
-// gives (the book's, for a speaker's thoughts; all books', for the book) is following it again:
-// the subject goes back to null rather than holding a copy of the same choice that would stop
-// following when the level above changes.
-//
-// Every change leaves `changed` — a line saying what now uses what, in the scope it was made in —
-// with an undo that puts back exactly the choices it moved. A change to all books names how many
-// other books follow it: their clips have the old sound now, and each is re-applied on its own page.
+// What an effects sheet chooses for: a speaker's effect, their thought effect, or the book's
+// thought effect (a line effect is the scripting model's; its sheet only plays). The highlighted
+// row is what the subject hears now; choosing the row the level above already gives sets the
+// subject back to null, so it keeps following. Each change leaves `changed` with an exact undo.
 import { computed, ref } from "vue";
 
 import { plural } from "@/lib/contents";
@@ -106,10 +95,7 @@ export function useChoice(bookId: () => string, view: () => ChoiceView, name: ()
   const canRaise = (row: Row): boolean =>
     (view() === "thoughts" || view() === "book") && row === current.value && row !== above.value;
 
-  /**
-   * The level above takes this row and the subject follows it again: on the book's sheet all books
-   * take it; on a speaker's thoughts this book does.
-   */
+  /** The level above (all books, or this book for a speaker's thoughts) takes this row. */
   function raise(row: Row): void {
     const id = bookId();
     const to = labelOf(row);
@@ -149,10 +135,8 @@ export function useChoice(bookId: () => string, view: () => ChoiceView, name: ()
   }
 
   /**
-   * The effects a line plays through if the subject chose this row — `chainsFor` over what the
-   * stores hold, with only the subject's choice swapped. On the book's sheet a speaker's own thought
-   * effect is set aside too, so every thought line is heard through the row tried, after the
-   * speaker's own effect. On a line effect's sheet the line carries that effect and only it.
+   * The effects a line plays through if the subject chose this row: `chainsFor` with only the
+   * subject's choice swapped. On the book's sheet a speaker's own thought effect is set aside too.
    */
   function effectsFor(line: TryLine, row: Row): Effect[] {
     const ctx = effectsStore.contextFor(bookId());

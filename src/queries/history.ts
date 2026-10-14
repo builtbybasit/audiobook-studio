@@ -1,9 +1,5 @@
-// A chapter's script history, read into the history store.
-//
-// The history is the server's: an edit, a checkpoint and a restore each
-// write it there, in the transaction that writes the script, and answer with the history as it
-// now stands — which the store installs, so the panel follows without asking again. This query is
-// the read on opening a chapter, and what the queue invalidates when a scripting job lands.
+// A chapter's script history, read into the history store. Writes answer with the new history, so
+// this is only the read on opening a chapter, invalidated when a scripting job lands.
 import { computed, toValue, type MaybeRefOrGetter } from "vue";
 import { useQuery } from "@pinia/colada";
 

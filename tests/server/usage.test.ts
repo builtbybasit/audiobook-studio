@@ -1,8 +1,5 @@
-// The ledger and the budget gate, below the jobs that use them.
-//
-// A request a provider reported is priced at the card it completed under and appended; a book's
-// spending is a sum over those rows and what its unfinished jobs hold; and the one budget question
-// is asked of that sum. The jobs' own tests prove each entry point asks it — these prove the answer.
+// The ledger and the budget gate, below the jobs that use them: a reported request is priced at
+// its card and appended; a book's spending sums those rows plus what unfinished jobs hold.
 import { describe, expect, test } from "bun:test";
 
 import type { Book, BookSpend, Endpoint, Profile, RangeKey, RequestRecord } from "@/types";

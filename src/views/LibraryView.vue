@@ -3,20 +3,9 @@ import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { useUiStore } from "@/stores/ui";
 
-// The shelf. Books first: each card says the one next thing to do, how far along it is, what is
-// running or broken, and whether its audiobook still matches it. Adding is a button or a drop
-// anywhere on the page — the drop target only grows when a file is actually being dragged, so it never takes the room the books need. A book still in its contents review is a
-// card of its own rather than a book that quietly went missing.
-//
-// The shelf has two shapes — a grid of covers, and a table with the pipeline as columns — and can
-// be narrowed by a search and a state filter and put in an order. All of that lives in the URL
-// (`?view=list&q=harbour&filter=attention&sort=todo`) like the rest of the workspace state, so a
-// narrowed shelf can be linked to and survives a reload; the shape is remembered for the next
-// visit as well.
-//
-// With the server not answering, the shelf is not empty but unknown, so the page says that where
-// the books would be — how to start the server, and a retry. The demo is the server's too, so it
-// is no way round it.
+// The shelf: each book's card says the next thing to do, progress, what is running or broken, and
+// whether its audiobook still matches. View, search, filter and order live in the URL so a narrowed
+// shelf can be linked. With no server the shelf is unknown, not empty, and the page says so.
 import { useStorage } from "@vueuse/core";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
@@ -74,14 +63,13 @@ const subtitle = computed(() => {
   return parts.join(" · ");
 });
 
-// ---- grid or list
 type View = "grid" | "list";
 const VIEW_KEY = "library.view";
 const VIEWS: { key: View; label: string; icon: typeof GridIcon }[] = [
   { key: "grid", label: "Covers", icon: GridIcon },
   { key: "list", label: "Table", icon: ListIcon },
 ];
-// the last choice, remembered per browser; the URL carries it too, for a link and a private window
+// remembered per browser; the URL carries it too, for a link and a private window
 const remembered = useStorage<View>(VIEW_KEY, "grid");
 const inUrl = useQueryParam("view", enumParam<View, null>(["grid", "list"], null));
 const view = computed<View>(() => inUrl.value ?? (remembered.value === "list" ? "list" : "grid"));
@@ -89,7 +77,7 @@ function setView(v: View) {
   remembered.value = v;
   inUrl.value = v;
 }
-// a remembered choice shows in the URL too, so the link a person copies says what they saw
+// so the link a person copies says what they saw
 watch(
   inUrl,
   (v) => {
@@ -98,7 +86,6 @@ watch(
   { immediate: true },
 );
 
-// ---- search, filter, order — in the URL, read back when the URL changes
 const q = useQueryParam("q", textParam({ trim: true }));
 const filter = useQueryParam(
   "filter",
@@ -129,11 +116,10 @@ function clear() {
   q.value = "";
   filter.value = "all";
 }
-// Loading the page again reads everything a server that just started has: the shelf, the
-// endpoints and the queue alike.
+// a reload reads everything a server that just started has: shelf, endpoints and queue
 const retry = () => location.reload();
 
-// `/` puts the cursor in the search, as in the contents review
+// `/` focuses the search, as in the contents review
 const searchBox = ref<HTMLInputElement | null>(null);
 function onKey(e: KeyboardEvent) {
   const t = e.target as HTMLElement | null;
@@ -148,7 +134,6 @@ function open(b: Book) {
   uiStore.currentBookId = b.id;
   router.push(`/book/${b.id}`);
 }
-/** A chosen file opens the Add dialog; the review comes after. */
 function addFile(picked: PickedFile, bookId: string | null = null) {
   pending.value = pendingFor(picked, bookId);
 }
@@ -159,9 +144,8 @@ function onPick(e: Event) {
   if (picked) addFile(picked);
 }
 
-// ---- drop anywhere on the page. The strip under the header is the standing hint; the full-page
-// target appears only while a file is over the window, counted in and out so a drag across child
-// elements does not flicker it.
+// Drop anywhere: the full-page target shows only while a file is over the window, counted in and
+// out so a drag across child elements does not flicker it.
 const dragging = ref(false);
 let depth = 0;
 const hasFiles = (e: DragEvent) => [...(e.dataTransfer?.types ?? [])].includes("Files");
@@ -242,7 +226,6 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- the standing hint: one line, out of the way -->
     <p
       v-if="!libraryStore.unreachable"
       class="mb-4 flex items-center gap-2 rounded-lg border border-dashed border-zinc-300 px-3 py-1.5 text-xs text-zinc-500 dark:border-zinc-700"
@@ -251,7 +234,7 @@ onUnmounted(() => {
       Drop an .epub anywhere on this page — a new novel, or another volume of one you already have.
     </p>
 
-    <!-- no server: a library that cannot be read is not an empty one -->
+    <!-- a library that cannot be read is not an empty one -->
     <div
       v-if="libraryStore.unreachable"
       role="alert"
@@ -296,7 +279,6 @@ onUnmounted(() => {
         <ImportingCard v-for="b in importing" :key="b.id" :book="b" />
       </div>
 
-      <!-- find, narrow, order -->
       <div v-if="shelved.length" class="mb-4 flex flex-wrap items-center gap-2 text-xs">
         <label class="relative">
           <SearchIcon
@@ -389,7 +371,6 @@ onUnmounted(() => {
       />
     </template>
 
-    <!-- the full-page drop target, only while a file is over the window -->
     <div
       v-if="dragging"
       class="pointer-events-none fixed inset-0 z-30 grid place-items-center bg-violet-500/10 p-6 backdrop-blur-[1px]"

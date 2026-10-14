@@ -1,9 +1,5 @@
-// What has been spent, over HTTP: a book's total, and one endpoint's summary and requests.
-//
-// Both are reads of the ledger (`~/usage/ledger`), which only a job writes. There is no route that
-// appends, edits or removes a request — a settled request is a fact about the past — and none that
-// sets spending directly: the cap and the pause are the book's settings, written by
-// `PATCH /api/books/:id`.
+// Spending over HTTP, read-only: only jobs write the ledger (`~/usage/ledger`). The cap and the
+// pause are book settings (`PATCH /api/books/:id`).
 import { Hono } from "hono";
 import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
@@ -42,7 +38,7 @@ const RequestsQuery = v.object({
   limit: v.optional(v.pipe(IntParam, v.minValue(1), v.maxValue(2000)), "100"),
 });
 
-/** Mounted on `/api/books`: what one book has spent and what its unfinished work holds. */
+/** Mounted on `/api/books`. */
 export function bookUsageRoutes(db: Db): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
   app.get("/:id/spend", validate("param", BookParam), (c) => {
@@ -53,10 +49,7 @@ export function bookUsageRoutes(db: Db): Hono<PinoEnv> {
   return app;
 }
 
-/**
- * Mounted on `/api/endpoints`: one endpoint's past in a range — its summary, summed over every row,
- * and its requests a page at a time, newest first.
- */
+/** Mounted on `/api/endpoints`: a range's summary, and its requests a page at a time, newest first. */
 export function endpointUsageRoutes(db: Db): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
   const since = (range: RangeKey, now: number) => now - RANGES.find((r) => r.value === range)!.ms;

@@ -1,11 +1,6 @@
-// What a book's cast does, as operations.
-//
-// The same arrangement as `server/library/ops.ts`: a route turns a request into one of these and
-// its result into JSON, and the rules live here. The rule that shapes this file is that a speaker
-// is keyed by name and the script names speakers by name, so anything that changes a name — a
-// rename, a merge, a removal — moves lines in every chapter of the book, and does so in the same
-// transaction as the cast row. Each says which lines it moved, so an Undo can put exactly those
-// back through `attribute` rather than guessing at an inverse.
+// A book's cast operations. Speakers are keyed by name and the script names them, so a rename,
+// merge or removal moves lines in the same transaction as the cast row, and reports which lines
+// moved so an Undo can put exactly those back through `attribute`.
 import type {
   Cast,
   ChapterLines,
@@ -40,18 +35,14 @@ function requireCharacter(db: Db, bookId: string, name: string): Character {
   return c;
 }
 
-/** Refuse a speaker who wears, or thinks in, an effect the library does not have. */
 function requireEffects(db: Db, c: Character): void {
   requireEffect(db, c.effect, `${c.name}’s effect`);
   requireEffect(db, c.thoughts, `${c.name}’s thought effect`);
 }
 
 /**
- * Write one speaker as stated: a new one joins the cast, an existing one is replaced. Everything
- * about a speaker that moves no lines — gender, description, voice, delivery style, aliases, the
- * character they are a persona of, the merge suggestion being dismissed — arrives this way. A
- * persona link is checked when it changes (`personaRefusal`), so a speaker is never refused an
- * edit for a link they already had; changing it also clears `masked`, the model's finding.
+ * Insert or replace a speaker, for every edit that moves no lines. The persona link is checked only
+ * when it changes, so an existing link never blocks an edit.
  */
 export function putCharacter(db: Db, bookId: string, name: string, c: Character): Character[] {
   requireBook(db, bookId);
@@ -62,17 +53,13 @@ export function putCharacter(db: Db, bookId: string, name: string, c: Character)
     const why = personaRefusal(name, c.personaOf, cast.readCast(db, bookId));
     if (why) throw badRequest(why);
   }
-  // a person linked or unlinked them: the model's finding is theirs now, never to be redone
+  // a human changed the persona link, so the model's `masked` finding no longer applies
   if (was && (c.personaOf ?? null) !== (was.personaOf ?? null)) delete c.masked;
   cast.upsertCharacter(db, bookId, c);
   return cast.readCast(db, bookId);
 }
 
-/**
- * Change a speaker's name, and re-attribute every line that names them, and their personas with
- * them. Not the Narrator's: the Narrator is the speaker every book has and every removal hands
- * lines to, by that name.
- */
+/** Rename a speaker, moving their lines and personas. The Narrator's name is fixed. */
 export function renameCharacter(db: Db, bookId: string, from: string, to: string): MovedLines {
   requireBook(db, bookId);
   to = to.trim();
@@ -91,14 +78,8 @@ export function renameCharacter(db: Db, bookId: string, from: string, to: string
 }
 
 /**
- * Fold one speaker into another: the lines move, the name and its aliases become aliases of the
- * speaker that stays, and the speaker that went comes off the cast. Anyone can be folded into the
- * Narrator; the Narrator is folded into no one, for the reason they cannot be removed.
- *
- * The personas of the speaker that went become the personas of the one that stays — unless that
- * one is a persona themselves, or is the Narrator, and a persona of them would be refused
- * (`personaRefusal`); then they are unlinked rather than chained. A persona of the one that went
- * folded into it is a persona no more.
+ * Fold `from` into `into`: lines move and `from` with its aliases becomes aliases. Personas of
+ * `from` move to `into`, or are unlinked when `into` is a persona or the Narrator (no chains).
  */
 export function mergeCharacter(db: Db, bookId: string, from: string, into: string): MovedLines {
   requireBook(db, bookId);
@@ -110,7 +91,7 @@ export function mergeCharacter(db: Db, bookId: string, from: string, into: strin
   const src = requireCharacter(db, bookId, from);
   const dst = requireCharacter(db, bookId, into);
   if (from === into) throw badRequest("A speaker cannot be merged into themselves");
-  // a persona of the one that went, folded into it, would be a persona of themselves
+  // `into` was a persona of `from`: it can't be a persona of itself
   const personaOf = dst.personaOf === from ? undefined : dst.personaOf;
   return db.transaction((tx) => {
     cast.upsertCharacter(tx, bookId, {
@@ -126,8 +107,7 @@ export function mergeCharacter(db: Db, bookId: string, from: string, into: strin
   });
 }
 
-/** Take a speaker off the cast; the lines they read go to the Narrator, and their personas are
- *  unlinked, to keep voices of their own. */
+/** Remove a speaker; their lines go to the Narrator and their personas are unlinked. */
 export function deleteCharacter(db: Db, bookId: string, name: string): MovedLines {
   requireBook(db, bookId);
   if (name === NARRATOR) throw conflict("The Narrator cannot be removed");
@@ -142,12 +122,7 @@ export function deleteCharacter(db: Db, bookId: string, name: string): MovedLine
   });
 }
 
-/**
- * Put a speaker back on exactly these lines, and back in the cast if they are gone: what an Undo
- * of a merge or a removal sends. The rules above only run forwards — a merge folds aliases in and
- * cannot be told apart from ones that were already there — so an undo records what moved and puts
- * that back as stated.
- */
+/** The Undo of a merge or removal: put the speaker back on exactly these lines, as stated. */
 export function attribute(
   db: Db,
   bookId: string,
@@ -155,8 +130,7 @@ export function attribute(
   lines: readonly ChapterLines[],
 ): MovedLines {
   requireBook(db, bookId);
-  // put back as they were, less an effect removed since or a persona link the cast no longer
-  // allows: an Undo is not refused for either
+  // drop an effect removed since or a persona link no longer allowed, rather than refuse the Undo
   const known = (id?: string) => (id && isEffectChoice(db, id) ? id : undefined);
   const others = cast.readCast(db, bookId).filter((c) => c.name !== character.name);
   const of = character.personaOf;
@@ -174,17 +148,9 @@ export function attribute(
 }
 
 /**
- * The pronunciation dictionary, replaced whole, and the clips it changes the words of.
- *
- * A clip records what the dictionary made of its line when it was sent (`pronounced`), so a clip
- * whose line the new list would send differently no longer says what the book would, and is marked
- * stale — the cast store's `_lexRestale`, in the same transaction as the list. `restore` is the
- * inverse an Undo sends: the lines an earlier change staled, put back to `done` where the list in
- * this request sends exactly what their clip was sent. A clip is not put back because it merely
- * could be: a clip stale by a rename has words the dictionary would still send, and is not this
- * request's to clear. So only the lines the Undo names are looked at — the ones the change it
- * undoes reported, as `attribute` trusts the lines a merge reported — and each only if its text is
- * still the text it was rendered from.
+ * Replace the pronunciation dictionary, marking stale each done clip it would now send differently.
+ * `restore` (an Undo) puts back to `done` only the lines it names, and only when their text is
+ * unchanged: a clip stale for another reason is not this request's to clear.
  */
 export function putLexicon(
   db: Db,
@@ -222,7 +188,7 @@ export function putLexicon(
       }
       if (!staled.length && !back.length) continue;
       const revision = bumpRevision(tx, bookId, chapterId);
-      // a chapter a run is working through is the run's to add up when it finishes
+      // a running narration settles its chapter when it finishes
       if (!narrationInProgress(tx, bookId, chapterId)) settleChapter(tx, bookId, chapterId);
       if (staled.length) stale.push({ chapterId, ids: staled, revision });
       if (back.length) restored.push({ chapterId, ids: back, revision });

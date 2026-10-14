@@ -1,8 +1,6 @@
-// What a run would cost before anything is sent, and the figure a budget is checked against.
-//
-// An estimate is not a receipt: how much input the provider has cached and how long the audio that
-// comes back runs are only known afterwards, so every figure here says what it assumed, and the
-// budget figure (`withoutPromotions`) is the dearest the card can reach while the run is going.
+// What a run would cost before anything is sent. Cache use and audio length are only known
+// afterwards, so each figure says what it assumed; budgets check `withoutPromotions`, the dearest
+// the card can reach during the run.
 import { stamp } from "@/lib/wallClock";
 import type {
   BillableUnits,
@@ -25,12 +23,8 @@ import {
 } from "./units";
 
 /**
- * What a run would cost before anything is sent.
- *
- * Cache usage cannot be known in advance, so the headline figure assumes **none**: every input
- * token at the ordinary rate. A figure based on recently observed cache use is offered beside it,
- * clearly separate, and never used for a budget check. `withoutPromotions` is the figure a budget
- * has to survive, because a promotion can expire between the first request and the last.
+ * The headline figure assumes no cache use. A figure from recently observed cache use is offered
+ * beside it, never used for a budget check.
  */
 export function estimateRates(
   base: RateSet,
@@ -59,12 +53,7 @@ export function estimateRates(
         }
       : null;
 
-  // The same work at the dearest rates the card can reach — every discount gone and any window that
-  // raises a rate in force (`ceilingRates`) — **and** every input token at the dearest rate any
-  // input token could be charged at: what the budget must be able to cover. Cached and cache-write
-  // tokens are slices of the input, and a cache write usually costs more than ordinary input, so
-  // reserving the whole input at the ordinary rate would leave a request able to exceed its own
-  // reservation.
+  // the dearest the card can reach (`ceilingRates`), every input token at `dearestInput`
   const ceiling = ceilingRates(base, config);
   const withoutPromotions =
     (tokens.inputTokens / 1e6) * (dearestInput(ceiling) ?? 0) +
@@ -74,9 +63,7 @@ export function estimateRates(
   const dearerLater =
     (ceiling.input ?? 0) > inRate + EPSILON || (ceiling.output ?? 0) > outRate + EPSILON;
   const cautions: string[] = [];
-  // "no cache savings" is only the conservative reading where the cached and cache-write rates are
-  // cheaper than ordinary input. Where one of them is dearer — a cache write normally is — this
-  // figure is a middle case, not a ceiling, and the caution says so and names the ceiling.
+  // "no cache savings" is only a ceiling when cached and cache-write rates are not dearer
   const dearer = dearestInput({
     input: snapshot.components.input.rate,
     cachedInput: cachedRate,
@@ -120,21 +107,9 @@ export function estimateRates(
 }
 
 /**
- * What a narration run would cost before anything is sent.
- *
- * On a per-character, per-byte or per-request endpoint there is nothing unknowable here: the
- * request's cost follows from the text, so the estimate *is* the figure. The two models that bill
- * on the audio are different, and the difference is stated rather than smoothed over:
- *
- *   minute        rests on this app's own estimate of how long each line takes to read
- *   audio-tokens  rests on that **and** on the endpoint's tokens-per-second setting — an
- *                 assumption about the provider's audio tokeniser, not a measurement of anything
- *
- * The two halves come back separately (`inputCost` + `audioCost` = `cost`) because on a token-billed
- * endpoint they are worked out from different things and a single total hides which one is large.
- * `withoutPromotions` is again what a budget is checked against, because a run over a book takes
- * long enough for a discount to end inside it — or a dearer window to open: it is priced at the
- * dearest rates the card can reach (`ceilingRates`), not at the card with its windows taken away.
+ * Exact for text-billed units; per-minute and audio-token billing rest on estimated audio length
+ * (and the tokens-per-second setting). The halves come back separately (`inputCost` + `audioCost`)
+ * so a total does not hide which is large.
  */
 export function estimateSpeech(
   billing: TtsBilling,
@@ -205,10 +180,7 @@ export function estimateSpeech(
 
 // ---------- observed cache use ----------
 
-/**
- * How much of the input recent requests actually had cached. Only requests that *reported* cache
- * detail count: a provider that says nothing must not be read as a run of cache misses.
- */
+/** Only requests that reported cache detail count: silence is not a cache miss. */
 export function observedCacheRate(
   recent: TokenUsage[],
 ): { hitRate: number; samples: number } | null {

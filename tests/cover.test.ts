@@ -1,10 +1,5 @@
-// Choosing the image an audiobook carries.
-//
-// A build names its cover by the url the server gave for it — a `data:` URL in the build body is
-// refused — so the store has to upload first and put that url in the settings, and a refused
-// upload must leave the cover that was already chosen. These drive the real `HttpLibraryService`
-// over a fake `fetch`, so what is asserted is the request that went out as well as what the store
-// did with the answer.
+// Choosing the image an audiobook carries. A build names its cover by the server's url (a `data:`
+// URL is refused), so the store uploads first, and a refused upload keeps the cover already chosen.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { COVER_MAX_BYTES, coverRefusal, DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";

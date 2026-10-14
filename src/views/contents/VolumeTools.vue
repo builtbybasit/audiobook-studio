@@ -1,7 +1,6 @@
 <script setup lang="ts">
-// The ways to cut a book at once: evenly into N, every N chapters, or where the titles say a
-// volume starts — shown first, by number and the words that said so, so the person sees what
-// would be cut before it is. Each replaces every boundary the book has; Undo is in the toast.
+// Cutting the whole book at once: evenly into N, every N chapters, or where titles say a volume
+// starts. Each replaces every boundary the book has; Undo is in the toast.
 import { computed, ref } from "vue";
 import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
 import { TITLE_START } from "@/lib/volumes";

@@ -3,10 +3,8 @@ import { useCastStore } from "@/stores/cast";
 import { plural } from "@/lib/contents";
 import { useScriptsStore } from "@/stores/scripts";
 
-// "Add pronunciation…" — the search term, taken to the book's dictionary rather than replaced in the
-// prose. The dictionary rewrites a term on its way to the endpoint and never touches the book text,
-// so its scope is the whole book, not the selected results. An existing entry is detected and edited
-// through the same `updateTerm` the Pronunciation panel uses.
+// "Add pronunciation…": the search term goes to the book's dictionary, which rewrites it on the
+// way to the endpoint and never touches the text, so its scope is the whole book, not the results.
 import { computed, ref, watch } from "vue";
 import { DialogClose, DialogDescription, DialogTitle } from "reka-ui";
 import { UiDialog } from "@/ui";
@@ -48,7 +46,7 @@ const existing = computed<LexEntry | undefined>(() =>
     ? castStore.lexiconOf(props.bookId).find((e) => same(e.term, word.value))
     : undefined,
 );
-// re-read an existing entry's respelling when the user types their way onto one
+// pick up an existing entry's respelling when the user types onto one
 watch(existing, (e) => {
   if (e && !say.value.trim()) say.value = e.say;
 });
@@ -60,13 +58,12 @@ const draft = computed<LexEntry>(() => ({
   enabled: true,
   matchCase: existing.value?.matchCase,
 }));
-/** The entry as the matcher sees it while the respelling is still being typed: `speak` ignores an
- *  entry with no replacement, and the count of matching lines should not wait for one. */
+/** `speak` ignores an entry with no replacement; the line count should not wait for one. */
 const probe = computed<LexEntry>(() => ({
   ...draft.value,
   say: draft.value.say || draft.value.term,
 }));
-/** How many lines of the whole book this entry would change, and one of them to look at. */
+/** how many lines of the whole book this entry would change, and one to show */
 const scope = computed(() => {
   if (!draft.value.term) return { lines: 0, chapters: 0, sample: "" };
   const prefix = props.bookId + ":";
@@ -88,7 +85,6 @@ const before = computed(() => (scope.value.sample ? marks(scope.value.sample, [p
 const after = computed(() =>
   scope.value.sample && draft.value.say ? speak(scope.value.sample, [draft.value]).text : "",
 );
-/** Rendered clips that carry the old pronunciation and would be marked stale. */
 const staleClips = computed(() => {
   if (!draft.value.term || !draft.value.say) return 0;
   const prefix = props.bookId + ":";
@@ -118,7 +114,7 @@ function save() {
 </script>
 
 <template>
-  <!-- Esc, Cancel and the close button dismiss this; a stray click outside does not. -->
+  <!-- a stray click outside does not dismiss this -->
   <UiDialog
     :open="open"
     class="flex max-h-[92dvh] w-[min(620px,96vw)] flex-col rounded-xl bg-white dark:bg-zinc-950"

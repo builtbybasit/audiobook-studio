@@ -1,13 +1,7 @@
 <script setup lang="ts">
-// The book as one bar: a segment per volume, as long as its share of the chapters, and a handle at
-// every boundary that drags along the bar to move it. The drag is drawn here and written once, on
-// release — a boundary dragged across fifty chapters is one write and one Undo.
-//
-// Click a segment to pick its row; double-click the bar to cut it where the pointer is. Right-click
-// a segment for its menu — rename, cut here, cut in the middle, join with the volume before or
-// after, skip or include the whole volume — and right-click a handle for its own: move it by one or
-// ten, delete it. A handle takes the keyboard too: ← → move it (shift for ten), Delete removes it.
-// Chapters are named by number only: a title here would give the plot away.
+// The book as one bar: a segment per volume and a draggable handle at every boundary. A drag is
+// written once, on release, so it is one write and one Undo. Handle keys: ← → (shift for ten),
+// Delete. Chapters are named by number only: a title would give the plot away.
 import { computed, nextTick, ref } from "vue";
 import {
   ContextMenuContent,
@@ -44,7 +38,6 @@ const bar = ref<HTMLElement | null>(null);
 const indexOf = computed(() => new Map(p.chapters.value.map((c, i) => [c.id, i])));
 /** where each volume begins, as an index into the chapters; one past the end closes the last */
 const starts = computed(() => rows.value.map((v) => indexOf.value.get(v.first.id) ?? 0));
-/** the chapter index under a pointer */
 function indexAt(e: { clientX: number }): number {
   const r = bar.value!.getBoundingClientRect();
   const f = (e.clientX - r.left) / r.width;
@@ -54,7 +47,7 @@ const pct = (n: number) => `${(n / total.value) * 100}%`;
 const num = (i: number) => p.numbers.value?.get(p.chapters.value[i]?.id) ?? "—";
 const hover = ref<number | null>(null);
 
-// ---- drag a handle: drawn from `drag.at` until the pointer is released, then written once
+// ---- drag a handle: drawn from `drag.at`, written on release
 const drag = ref<{ k: number; at: number } | null>(null);
 const boundary = (n: number) =>
   drag.value?.k === n ? drag.value.at : (starts.value[n] ?? total.value);
@@ -201,7 +194,6 @@ const whole = (v: VolumeRowInfo) => ({ name: v.name, all: v.all, chapters: v.all
       </ContextMenuRoot>
     </div>
 
-    <!-- handles: one at every boundary, so every volume but the first -->
     <template v-for="(v, i) in rows" :key="'h' + v.id">
       <ContextMenuRoot v-if="v.startsHere">
         <ContextMenuTrigger

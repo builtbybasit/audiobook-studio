@@ -1,9 +1,5 @@
-// Page state that has to outlive the route.
-//
-// Leaving the Endpoints page and coming back must not lose which tab you were on, what you had
-// half-typed into a connection form, or how you had the activity list filtered. None of that is
-// domain state, so it doesn't belong in the store — it lives here, at module scope, reactive and
-// keyed by `<kind>:<id>`.
+// Endpoints page state that outlives the route (tab, half-typed forms, activity filters).
+// Not domain state, so not in the store: module-scope, keyed by `<kind>:<id>`.
 import { reactive } from "vue";
 import { opsOf } from "@/lib/endpoints";
 import { encodingChanged, repairEncoding } from "@/lib/audioFormat";
@@ -43,10 +39,7 @@ export const TABS: { id: TabId; label: string }[] = [
   { id: "activity", label: "Activity" },
 ];
 
-/** The tabs each kind has. Only a speech endpoint has a voice catalogue and expression tags, and
- *  only a chat model is sent a prompt; a transcriber has none of the three. Kept here so the
- *  trigger list and the "is this tab still valid" check that guards a remembered tab can't drift
- *  apart. */
+/** One list for both the tab triggers and the remembered-tab check, so they can't drift. */
 const KIND_TABS: Record<EndpointKind, TabId[]> = {
   scripting: ["overview", "connection", "requests", "prompt", "pricing", "activity"],
   tts: ["overview", "connection", "voices", "requests", "expressions", "pricing", "activity"],
@@ -56,8 +49,7 @@ const KIND_TABS: Record<EndpointKind, TabId[]> = {
 export const tabsFor = (kind: EndpointKind): { id: TabId; label: string }[] =>
   TABS.filter((t) => KIND_TABS[kind].includes(t.id));
 
-/** Connection changes are staged, never live-applied: switching provider under a running book is
- *  exactly the kind of silent change this page is supposed to prevent. */
+/** Staged, never live-applied: a provider switch must not silently hit a running book. */
 export interface ConnectionDraft {
   name: string;
   model: string;
@@ -67,8 +59,7 @@ export interface ConnectionDraft {
   quotaGroup: string;
   /** speech only: the server named for a base URL that cannot say (`Endpoint.server`) */
   server: SpeechServer | null;
-  /** what a preset filled in beyond the connection — billing or token prices, limits, concurrency —
-   *  held here with the rest, so Save applies it and Discard drops it */
+  /** a preset's non-connection fields (prices, limits), applied on Save, dropped on Discard */
   preset: StagedPreset | null;
 }
 
@@ -101,9 +92,9 @@ interface PageState {
   metric: "throughput" | "latency" | "spend" | "errors";
   tab: Record<string, TabId>;
   drafts: Record<string, ConnectionDraft>;
-  /** a scripting endpoint's prompt being edited, by key; absent is the saved one, untouched */
+  /** prompt drafts by key; absent = the saved one */
   prompts: Record<string, ProfilePrompt>;
-  /** the library's default prompt being edited; null is the saved one, untouched */
+  /** null = the saved one */
   libraryPrompt: PromptTemplate | null;
   /** the detail pane shows the library's default prompt rather than the selected endpoint */
   showLibraryPrompt: boolean;
@@ -126,8 +117,7 @@ export const ui = reactive<PageState>({
   tests: {},
 });
 
-/** The remembered tab, or the first one this kind has. Selecting a scripting endpoint while
- *  Voices was open must land somewhere real rather than on an empty panel. */
+/** The remembered tab, or overview when this kind lacks it. */
 export const tabOf = (key: string, kind: EndpointKind = "tts"): TabId => {
   const want = ui.tab[key] ?? "overview";
   return tabsFor(kind).some((t) => t.id === want) ? want : "overview";
@@ -135,9 +125,7 @@ export const tabOf = (key: string, kind: EndpointKind = "tts"): TabId => {
 export const filterOf = (key: string): ActivityFilter => (ui.activity[key] ??= newFilter());
 
 // ---------- connection drafts ----------
-// A connection edit is staged and applied on purpose. Typing a new base URL must not quietly
-// re-point a book that is mid-run at a different provider, so nothing here writes through until
-// `applyDraft` is called — and the draft survives leaving the page.
+// Nothing writes through until `applyDraft`, so a typed base URL can't re-point a running book.
 
 export function draftFor(u: UnifiedEndpoint): ConnectionDraft {
   return (ui.drafts[u.key] ??= {
@@ -152,11 +140,7 @@ export function draftFor(u: UnifiedEndpoint): ConnectionDraft {
   });
 }
 
-/**
- * Stage a preset on this endpoint's draft. The connection half goes into the fields the form edits;
- * the rest waits beside them until Save, which is what the page promises — nothing a preset fills
- * in reaches the endpoint, or the server behind it, before then. `fields` must be a copy.
- */
+/** Stage a preset on the draft; nothing reaches the endpoint before Save. `fields` must be a copy. */
 export function stagePreset(
   u: UnifiedEndpoint,
   label: string,
@@ -203,11 +187,8 @@ export function draftChanges(u: UnifiedEndpoint): (keyof ConnectionDraft)[] {
 export const draftDirty = (u: UnifiedEndpoint): boolean => draftChanges(u).length > 0;
 
 /**
- * Write the draft onto the configuration. Returns what had to be put back so the audio choice still
- * fits: a new base URL can speak another API (Fish Audio's formats and rates are not OpenAI's), and
- * a format or rate the new one lacks goes back to the provider's default here, in the same write,
- * rather than being left for the server to refuse the next line with. A staged preset's prices and
- * limits are written in the same go.
+ * Write the draft (and any staged preset) onto the configuration. A new base URL may not support
+ * the current format/rate, so those reset to the provider default in the same write; returns notes.
  */
 export function applyDraft(u: UnifiedEndpoint): string[] {
   const d = draftFor(u);
@@ -234,9 +215,8 @@ export function applyDraft(u: UnifiedEndpoint): string[] {
     }
     notes = r.notes;
   }
-  // Re-seed the draft from what was just written instead of deleting it. `draftFor` would rebuild
-  // it from the `u` snapshot this render still holds — the pre-save values — so the form would show
-  // the old text back and claim unsaved changes that had in fact just been saved.
+  // Re-seed rather than delete: `draftFor` would rebuild from this render's stale `u` snapshot
+  // and show the old values as unsaved changes.
   ui.drafts[u.key] = {
     name: d.name.trim(),
     model: d.model.trim(),
@@ -255,15 +235,13 @@ export function discardDraft(u: UnifiedEndpoint): void {
 }
 
 // ---------- prompt drafts ----------
-// A prompt is staged too, and saved with a button: a half-typed one is usually not a prompt at all
-// (the excerpt tag deleted on the way to moving it), and the write-behind would send it to a server
-// that refuses it, then read back the saved one over what was being typed. A draft exists only once
-// something is typed, so a prompt the server changes underneath an untouched editor shows through.
+// Staged and saved by button: a half-typed prompt is often invalid. A draft exists only once
+// something is typed, so a server-side change shows through an untouched editor.
 
 const sameTemplate = (a: PromptTemplate, b: PromptTemplate): boolean =>
   a.system === b.system && a.user === b.user;
 
-/** An endpoint's say over the prompt as saved, with the text and notes it has not got filled in. */
+/** The saved prompt, with unset fields filled in. */
 export const savedProfilePrompt = (p: Profile): ProfilePrompt => ({
   mode: p.prompt?.mode ?? "default",
   system: p.prompt?.system ?? "",
@@ -271,11 +249,10 @@ export const savedProfilePrompt = (p: Profile): ProfilePrompt => ({
   notes: p.prompt?.notes ?? "",
 });
 
-/** What the Prompt tab shows: the draft, or what is saved. */
+/** The draft, or what is saved. */
 export const profilePromptOf = (u: UnifiedEndpoint): ProfilePrompt | null =>
   u.profile ? (ui.prompts[u.key] ?? savedProfilePrompt(u.profile)) : null;
 
-/** Change part of an endpoint's prompt — its mode, texts or notes — starting a draft from the saved one. */
 export function editProfilePrompt(u: UnifiedEndpoint, change: Partial<ProfilePrompt>): void {
   const cur = profilePromptOf(u);
   if (cur) ui.prompts[u.key] = { ...cur, ...change };
@@ -292,7 +269,7 @@ export function discardProfilePrompt(u: UnifiedEndpoint): void {
   delete ui.prompts[u.key];
 }
 
-/** What the Default prompt panel shows: the draft, or what is saved (the built-in one for none). */
+/** The draft, or what is saved (the built-in one for none). */
 export const libraryPromptOf = (saved: PromptTemplate | null): PromptTemplate =>
   ui.libraryPrompt ?? libraryPrompt(saved);
 
@@ -303,9 +280,6 @@ export function editLibraryPrompt(saved: PromptTemplate | null, change: Partial<
 export const libraryPromptDirty = (saved: PromptTemplate | null): boolean =>
   !!ui.libraryPrompt && !sameTemplate(ui.libraryPrompt, libraryPrompt(saved));
 
-/**
- * What the prompt previews fill `{{excerpt}}` with: a short paragraph with a speaker in it, so the
- * preview reads like a request rather than a chapter-long wall. Mara is the sample cast's one name.
- */
+/** Fills `{{excerpt}}` in prompt previews. Mara is the sample cast's one name. */
 export const PROMPT_SAMPLE =
   "The lamps were already lit when Mara reached the bridge. “You’re late,” said the keeper, not looking up. She shook the rain from her hood. Late again, she thought. “The ferry was slow,” she said.";

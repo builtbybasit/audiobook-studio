@@ -1,10 +1,6 @@
-// Building an audiobook, and keeping it up to date afterwards.
-//
-// Three things are worth pinning down here, because the whole page rests on them: the plan is the
-// single source of what a build produces; a chapter that cannot be exported is never quietly
-// dropped; and an update or a retry that would have to decide something on your behalf asks
-// instead. The build itself is the server's (`tests/server/exports.test.ts`); the store tests here
-// build on a seeded demo library and read back what it made, the way the Audiobooks tab does.
+// Building an audiobook and keeping it up to date: the plan is the single source of what a build
+// produces, an unexportable chapter is never quietly dropped, and an update or retry that would
+// decide something for you asks instead. The build itself is `tests/server/exports.test.ts`'s.
 import { test, expect, beforeAll, beforeEach, describe } from "bun:test";
 import { useQueryCache } from "@pinia/colada";
 import { keys } from "@/queries/keys";
@@ -167,9 +163,8 @@ describe("what stands in the way", () => {
 
 // ---------- against the demo library ----------
 //
-// One demo library for the rest of the file, with the runs it starts with cancelled so that a
-// build finishing is the only thing a test waits for. Each build is named for its own test, so no
-// test's audiobook is the next version of another's.
+// One demo library for the rest of the file, its starting runs cancelled so a build finishing is
+// the only thing a test waits for. Each build is named for its test, so none is another's version.
 
 let named = 0;
 /** Settings for an audiobook no other test has built. */
@@ -198,10 +193,7 @@ async function open(bookId = "starforge") {
   useQueryCache().setQueryData(keys.exports(bookId), await libraryService().exports(bookId));
 }
 
-/**
- * Wait for the server to finish a build, and read the book's audiobooks back. The runs the demo
- * started with were cancelled, so the queue falling idle is this build finishing.
- */
+/** Wait for the server to finish a build (the queue falling idle) and read the audiobooks back. */
 async function settled(entry: ExportItem | null): Promise<ExportItem> {
   expect(entry).not.toBeNull();
   await demo.idle();
@@ -364,14 +356,10 @@ describe("staying up to date", () => {
 describe("update and retry ask before they decide", () => {
   beforeEach(() => open());
 
-  // Both are "this audiobook again". Neither may shrink the selection or accept clips the script has
-  // moved under on your behalf — when either would have to, the build goes to the Build tab and the
-  // same readiness review that guards a first build guards this one.
+  // Neither an update nor a retry may shrink the selection or accept moved-under clips for you: when
+  // either would have to, the build goes to the Build tab and its readiness review.
 
-  /**
-   * A build of `ids` that fell over, as the queue lists it: the audiobook row and the job that
-   * carried its settings. Nothing makes a demo build fail, so it is written here.
-   */
+  /** A failed build of `ids` as the queue lists it; nothing makes a demo build fail, so it is written. */
   function failedBuild(ids: number[], s: ExportSettings): ExportItem {
     const failed = {
       id: 9_000 + named,

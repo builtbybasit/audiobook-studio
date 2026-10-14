@@ -1,6 +1,3 @@
-// Deterministic pseudo-randomness. Same seed ⇒ same world on every reload, which is what lets the
-// fixtures be rebuilt from scratch whenever a scenario needs fresh data rather than a shared copy.
-
 /** A deterministic pseudo-random source; same seed ⇒ same world on every reload. */
 export type Rng = () => number;
 

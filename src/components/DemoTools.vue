@@ -1,13 +1,7 @@
 <script setup lang="ts">
-// The Demo chip in the header, and the drawer it opens (components/DemoDrawer.vue).
-//
-// Deliberately out of the way — a chip in the header rather than a control on any page, so the
-// workflow screens stay the workflow. It is also the way in and out of the demo, so it is there in
-// both modes and says which one the tab is in: lit and named "Demo mode" in the demo, with the
-// situation this tab put the demo into so it can be read with the drawer closed; plain on your own
-// library. The drawer's open state lives here, in the one component the shell mounts once, so it
-// survives every route change — and, when a situation or a reset loaded the page again with the
-// drawer open, it opens again on the new page.
+// The Demo chip in the header and its drawer (DemoDrawer.vue). It shows in both modes and is lit in
+// the demo. The drawer's open state lives here, in a component the shell mounts once, so it
+// survives route changes and reopens after a situation or reset reloads the page.
 import { useDemoStore } from "@/stores/demo";
 
 import { computed, ref } from "vue";

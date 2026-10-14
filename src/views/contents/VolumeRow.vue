@@ -1,11 +1,7 @@
 <script setup lang="ts">
-// One row per volume — the name, where it runs, the counts, how long it would take to listen to,
-// the file the export would write — and the range *is* the boundary: the start number carries ← →
-// to move it; the red ✕ at the end joins the volume with the one before, with Undo in the toast.
-//
-// A click on the row opens it to its chapters as numbers, titles blurred; a click on a blurred
-// title shows that one, the eye shows them all. Double-click the name to rename. Right-click the
-// row for its menu. On the keyboard: ↑ ↓ move between rows, Enter opens, Delete joins, F2 renames.
+// One row per volume. Its start number is the boundary (← → move it); ✕ joins with the volume
+// before. Titles stay blurred until asked for (no spoilers).
+// Keys: ↑ ↓ move between rows, Enter opens, Delete joins, F2 renames.
 import { computed, nextTick, ref } from "vue";
 import {
   ContextMenuContent,
@@ -52,8 +48,7 @@ function listening(n: number): string {
   const m = Math.round(n / 155);
   return m < 60 ? `${m} m` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")} m`;
 }
-// The export names a volume's file as `planOf` in src/lib/exports.ts does, the book's title as
-// the base; the Export page's file-name setting, when one is typed there, replaces the title.
+// Mirrors `planOf` in src/lib/exports.ts; the Export page's file-name setting replaces the title.
 const fileName = computed(
   () => `${safeName(p.book.value?.title ?? "audiobook")} - ${safeName(shortVolume(props.v.name))}`,
 );
@@ -73,7 +68,6 @@ function finishRename(value: string) {
   p.rename(props.v.first.id, value);
 }
 
-// ---- keyboard
 function onKey(e: KeyboardEvent) {
   if ((e.target as HTMLElement).tagName === "INPUT") return;
   const el = e.currentTarget as HTMLElement;
@@ -136,7 +130,6 @@ const whole = () => ({ name: props.v.name, all: props.v.all, chapters: props.v.a
           @dblclick.stop="startRename"
           >{{ v.name }}</span
         >
-        <!-- the range, whose start is the boundary -->
         <div class="flex items-center gap-1 font-mono text-[11px]">
           <span class="text-zinc-400">ch</span>
           <template v-if="v.startsHere">

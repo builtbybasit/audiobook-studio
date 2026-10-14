@@ -1,31 +1,7 @@
-// The scripting job: a chapter's prose in, an attributed script out, written only if nothing
-// newer got there first.
-//
-// The job reads the chapter twice. Once when it starts, to take the prose and the script revision
-// it is working from; and once inside the write, by the chapter's **uid**, to find where the
-// chapter is now and whether its script has moved. The number a chapter goes by can change while a
-// job runs — removing an earlier volume renumbers the book — and its script can change too, once
-// there is a route that edits one. The uid answers the first; `replaceScript`'s revision check
-// answers the second, and a result that would land on newer work is dropped with a note saying
-// so rather than written over it.
-//
-// The chapter's `scripting` status is the job's to keep honest: `queued` when the job is, `running`
-// while it runs, and afterwards whatever the chapter's script actually is — `done` if it has one,
-// `none` if it never did, and `failed` only when a run that was meant to give it one could not.
-//
-// Money follows the rule in `~/usage/budget`. A run is priced at its worst case before anything is
-// queued and refused whole if the book cannot afford it; each job holds its chapter's share while
-// it runs and asks again before every request it sends; and every request the provider reports is
-// priced into the ledger as it lands, releasing what that request held.
-//
-// The prompt is fixed when the run is queued, like the profile: the library's, the endpoint's and
-// the book's layers are resolved then (`resolvePrompt`) and kept on the run with the book's notes,
-// so an edit made while it waits reaches the next run and not this one. Its tags are filled in per
-// request, from the book, the chapter, its cast as it stands, the request's place in the chapter,
-// the prose before it and where the chapter before left off, and the library's line effects are
-// offered in it. What the model says beside its lines — the speakers' gender, other names and
-// description, and a recap — is kept with the script, and the line effects it named on a line go on
-// that line by id.
+// The scripting job: a chapter's prose in, an attributed script out. Finds the chapter by uid at
+// write time (volumes renumber) and writes against the revision it started from, so a result that
+// would land on newer work is dropped with a note. Money rules: `~/usage/budget`. The prompt is
+// resolved when queued (`resolvePrompt`); edits while it waits reach the next run.
 import type { Book, Job, Profile, PromptTemplate, ScriptingQueued, Segment } from "@/types";
 import { castNameFor } from "@/lib/cast";
 import { expressionNames, scriptedAnnotation } from "@/lib/expressions";
@@ -59,24 +35,21 @@ import { assertWithinBudget, budgetProblem } from "~/usage/budget";
 import { dispatch, type Dispatch } from "~/usage/dispatch";
 import { scriptReasoning } from "~/usage/ledger";
 
-/** The status a chapter reads as when no job is running on it: asked of its script, not remembered. */
+/** A chapter's scripting status when idle, derived from its script. */
 function settledScriptingStatus(
   db: Db | Tx,
   bookId: string,
   chapterId: number,
   outcome: "done" | "failed" | "cancelled",
 ): "none" | "done" | "failed" {
-  // a re-script that failed leaves the old script intact, and a chapter with a usable script must
-  // not read as failed — that is what would stop it being narrated or exported
+  // a failed re-script keeps the old script; reading as failed would block narration and export
   if (lineCount(db, bookId, chapterId)) return "done";
   return outcome === "failed" ? "failed" : "none";
 }
 
 /**
- * What the chapter's script marked as not the story, said in the job's log: how many lines of site
- * text and notes, and how many the detector wants a person to look at. Marked text is not read, so
- * a chapter with much of it gets a warning — a model marking story as site text is how a
- * paragraph would vanish from the audiobook with nothing saying so.
+ * Log how much of the script was marked site text or notes. Marked text is not read, so a lot of it
+ * gets a warning: a model marking story as site text would silently drop it from the audiobook.
  */
 function noteSiteText(
   ctx: JobContext,
@@ -101,7 +74,6 @@ function noteSiteText(
     );
 }
 
-/** The chapter as the job needs it: where it is, what it says, and which script it is replacing. */
 function readChapter(db: Db, bookId: string, chapterId: number) {
   const chapter = library.getChapter(db, bookId, chapterId);
   const uid = library.chapterUid(db, bookId, chapterId);
@@ -113,10 +85,8 @@ function readChapter(db: Db, bookId: string, chapterId: number) {
 }
 
 /**
- * What each chunk holds against the budget while it is unsettled: its worst case, at the dearest
- * rates any window or promotion on the card can reach (`ceilingRates`) with the whole output
- * ceiling, and the prompt sent with it (`tokenEstimate`). Nothing for a run with no profile, which
- * has no rates to price it by.
+ * Each chunk's budget hold: worst case at the dearest rates (`ceilingRates`) with the full output
+ * ceiling plus the prompt. Zero without a profile.
  */
 function holdsOf(
   chunks: readonly string[],
@@ -134,30 +104,22 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
       const { job, db, signal } = ctx;
       if (job.chapterId == null) throw new Error("A scripting job is for one chapter");
       const chapter = readChapter(db, job.bookId, job.chapterId);
-      // The model is told the number a reader knows the chapter by, not the id, which counts the
-      // cover and contents pages; a skipped chapter has none, and is told its id rather than nothing.
+      // reading number, not the id (which counts cover and contents); skipped chapters use the id
       const number = library.readingNumber(db, job.bookId, job.chapterId) ?? job.chapterId;
-      // The profile as it was when the run was queued, not as it has been edited since: a run
-      // keeps the chunking it was previewed and started with.
+      // the profile as queued, so the run keeps the chunking it was previewed with
       const queued = job.scriptRun;
       const chunks = chunksOf(chapter.text, queued?.profile);
-      // Where the requests go, with the profile's key read now rather than when it was queued, so a
-      // key saved after pressing Script is the one used. Null for a run that named no profile,
-      // which the provider refuses with a message saying so.
+      // the key is read now, so one saved after pressing Script is used
       const target = queued ? scriptTarget(db, queued.profile) : null;
       const speakers = readSpeakers(db, job.bookId);
       const cast = speakers.map((c) => c.name);
-      // what the prompt lists: the speakers this chapter is likely to need, not the whole book's
+      // the speakers this chapter likely needs, not the whole book's
       const listed = readChapterCast(db, job.bookId, job.chapterId, chapter.text);
-      // The prompt the run was queued with; a run queued before prompts could be edited is sent
-      // the built-in one, which is what it would have been sent then.
       const template = queued?.prompt ?? BUILT_IN_PROMPT;
       const book = library.getBook(db, job.bookId);
       const recap = library.previousRecap(db, job.bookId, job.chapterId);
       const expressions = expressionNames(readEndpoints(db));
-      // The line effects offered, and their ids by name as the model may write it: any case, and a
-      // name not offered — one it made up, or an effect renamed since — is dropped, as an unknown
-      // expression tag is.
+      // matched case-insensitively; unknown names are dropped, like unknown expression tags
       const lineEffects = lineEffectsOf(listEffects(db));
       const effectIds = new Map(lineEffects.map((e) => [e.name.trim().toLowerCase(), e.id]));
       const effectsOf = (names: readonly string[] = []): string[] => [
@@ -193,13 +155,11 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
           : {}),
       });
 
-      // Each chunk's share of the chapter's progress, so the bar counts across all of them and
-      // never runs backwards when a provider starts counting again for the next one.
+      // per-chunk shares, so the bar never runs backwards when the next chunk starts counting
       const share = chunks.map(() => 0);
       let lastPct = -1;
       const report = (): void => {
-        // a provider that keeps reporting after it was told to stop must not mark the chapter
-        // running again once settling has put it back
+        // a late report must not mark the chapter running again after settling
         if (signal.aborted) return;
         const pct = Math.round((share.reduce((a, b) => a + b, 0) / chunks.length) * 100);
         if (pct === lastPct) return;
@@ -208,10 +168,8 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
         const at = library.locateChapter(db, chapter.uid);
         if (at) library.setChapterScripting(db, at.bookId, at.id, "running", pct);
       };
-      // The run's live detail, one object that every write goes through, so a request settling
-      // from inside the provider and the worker counting it can never write over each other. It
-      // starts holding the whole chapter's worst case — again, on a restart that picks the job
-      // back up — and keeps what earlier attempts cost, which the ledger holds too.
+      // One object every write goes through, so the provider settling a request and the worker
+      // counting it can't overwrite each other. Starts holding the chapter's whole worst case.
       const holds = holdsOf(chunks, queued?.profile, queued?.prompt);
       const run: NonNullable<Job["scriptRun"]> | undefined = queued && {
         ...queued,
@@ -225,11 +183,8 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
       };
       counted();
       /**
-       * Chunk `i`'s money (`~/usage/dispatch`): its worst case held while its request is out, what
-       * it reports priced into the ledger against the profile as it is stored then — or the run's
-       * own copy if the profile has since been removed — and what it held given back, from the
-       * run's reservation too, once the request has ended however it ended. A run with no profile
-       * is the fake's, which has no rates and no endpoint to put the row against, and holds nothing.
+       * Chunk `i`'s money (`~/usage/dispatch`), priced against the stored profile or the run's copy
+       * if it was removed. No profile (the fake) holds nothing.
        */
       const dispatched = (i: number) =>
         run &&
@@ -246,7 +201,6 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
           hold: holds[i],
           gaveBack: (back) => void (run.reserved = Math.max(0, run.reserved - back)),
         });
-      /** One request the provider reported, settled and counted on the run. */
       const settle = (money: Dispatch<"scripting">, sent: SentScript): void => {
         if (!run) return;
         run.cost += money.sent(sent)?.cost ?? 0;
@@ -259,11 +213,8 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
         setScriptRun(db, job.id, run);
       };
       /**
-       * Why the next request may not go out, or null. It asks the book with everything this job
-       * still holds — what is in flight and what is still to send — against what the rest of the
-       * book has spent and holds, so that only answers when the world moved under a run that
-       * fitted; and it asks the profile's daily limit with the next request's own hold, since a
-       * long run is let spend across days.
+       * Why the next request may not go out, or null. The book check includes this job's holds, so
+       * it only trips when things changed under a run that fit; the daily limit checks this request.
        */
       const refusal = (): string | null =>
         budgetProblem(db, job.bookId, {
@@ -275,9 +226,8 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
         });
       let refused: string | null = null;
 
-      // Up to the profile's concurrency at once, the answers kept in the chapter's order. The
-      // first chunk that fails stops the others and fails the chapter: half a script is never
-      // written, and the attempt says which request it was.
+      // Up to the profile's concurrency, answers kept in order. The first failure fails the
+      // chapter: half a script is never written.
       const answers: ScriptAnswer[] = chunks.map(() => ({ lines: [] }));
       const stop = new AbortController();
       const onAbort = (): void => stop.abort(signal.reason);
@@ -285,8 +235,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
       let next = 0;
       const worker = async (): Promise<void> => {
         while (next < chunks.length && !stop.signal.aborted && refused == null) {
-          // A budget that no longer allows the next request stops the run here: nothing more goes
-          // out, the requests already out are let land and are paid for, and the job fails after.
+          // budget stop: in-flight requests land and are paid for, then the job fails
           refused = refusal();
           if (refused != null) return;
           const i = next++;
@@ -340,10 +289,8 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
       if (signal.aborted) throw signal.reason;
       if (refused != null) throw new Error(refused);
 
-      // A speaker the model named by another of their names is the cast member it meant
-      // (`castNameFor`), so "Hero" is read in Young Soldier's voice rather than added as a second
-      // character. But not a name the answer calls a disguise, though the cast once filed it as its
-      // wearer's other name: that one is a speaker of its own, for `learnCast` to make a persona.
+      // Map aliases to the cast member (`castNameFor`), except names this answer calls a disguise:
+      // those stay separate speakers for `learnCast` to make personas.
       const notes = answers.flatMap((a) => a.cast ?? []);
       const disguises = new Set(
         notes.filter((n) => n.personaOf || n.masked).map((n) => n.name.toLowerCase()),
@@ -354,8 +301,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
       }));
       const meant = (name: string) => castNameFor(name, known);
 
-      // Stitched in reading order and numbered afresh: a line belongs to the chunk it came back
-      // in, and the ids are the chapter's, 1 to n, as are the ids of the tags the model wrote.
+      // line and tag ids are renumbered 1..n across chunks
       let annotation = 0;
       const lines: Segment[] = answers
         .flatMap((a) => a.lines)
@@ -374,22 +320,18 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
             audio: { status: "none", endpoint: null, ms: 0, duration: 0 },
           };
         });
-      // where the chapter leaves off is where its last chunk that said so left off
       const leftOff =
         answers
           .map((a) => a.recap)
           .filter(Boolean)
           .at(-1) ?? null;
 
-      // The write: by uid, against the revision the job started from, all in one transaction —
-      // the script, the version it replaces, and the speakers it brought into the cast. A run
-      // that fails, is cancelled or is refused for landing on newer work never gets here, so a
-      // good script is never pushed into the history by an attempt that produced nothing.
+      // One transaction: script, history version, new speakers. A failed or refused run never
+      // gets here, so a good script is never pushed into history by an empty attempt.
       try {
         db.transaction((tx) => {
           const at = library.locateChapter(tx, chapter.uid);
           if (!at) throw notFound("The chapter was removed while it was being scripted");
-          // the detector's second opinion on what is site text, against the book as it stands
           const segs = checkSiteText(tx, at.bookId, at.id, lines);
           noteSiteText(ctx, segs, book);
           const previous = readScript(tx, at.bookId, at.id);
@@ -417,8 +359,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
             at.bookId,
             segs.map((s) => s.speaker),
           );
-          // after the new speakers are in, so what the model said of them has somewhere to go —
-          // and a note on "Hero" is a note on the member the model meant, as Hero's lines are
+          // after ensureSpeakers, so notes on new speakers have a row to land on
           const learnt = learnCast(
             tx,
             at.bookId,
@@ -429,7 +370,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
             })),
             new Set(added),
           );
-          // a recap belongs to the script it came with: one written without leaves none
+          // a script without a recap clears the old one
           library.setChapterRecap(tx, at.bookId, at.id, leftOff);
           library.setChapterScripting(tx, at.bookId, at.id, "done", 100);
           ctx.note("Script written", "info", {
@@ -450,9 +391,8 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
     },
 
     onSettled(ctx, status) {
-      // `done` wrote the chapter's status inside its own transaction. Anything else puts the
-      // chapter back to what its script says it is — read off the job's row, whose chapter number
-      // has followed any renumbering by cascade, rather than the number the job started with.
+      // `done` already wrote the status. Otherwise re-derive it, using the job row's chapter
+      // number (it follows renumbering by cascade).
       if (status === "done") return;
       const fresh = getJob(ctx.db, ctx.job.id);
       if (!fresh || fresh.chapterId == null) return;
@@ -469,17 +409,9 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
 }
 
 /**
- * Queue a scripting job for each chapter, as one run.
- *
- * Chapters skipped for the audiobook and chapters already being scripted are left out and said so,
- * rather than refused: a bulk press over a selection that includes one is a person's intent for
- * the rest. A book still in its contents review has nothing to script yet, and that is refused, as
- * is a profile this server does not have (404).
- *
- * So is a run the book cannot afford, whole: its worst case is checked against the budget before
- * any chapter is queued, and a run that does not fit queues nothing (409). A paused book refuses
- * every run, a free one included. The profile's daily limit refuses a run only when it cannot
- * cover even the first request; past that, the job stops at the request that would pass it.
+ * Queue one scripting job per chapter as one run. Excluded and busy chapters are skipped, not
+ * refused. The whole run's worst case must fit the budget or nothing is queued (409); a paused book
+ * refuses even free runs. The daily limit only refuses if it can't cover the first request.
  */
 export function enqueueScripting(
   db: Db,
@@ -491,11 +423,8 @@ export function enqueueScripting(
   const book = library.getBook(db, bookId);
   if (!book) throw notFound("No such book");
   if (book.importing) throw conflict("Finish the contents review before scripting this book");
-  // The profile is read once, here, and kept on every job of the run. The endpoints live on this
-  // server, so one the request names that it does not have is a mistake to say now, not a run of
-  // jobs that each fail for want of it. A request that names none is queued: what it is sent to
-  // decides — the server's own provider refuses it, saying to choose one, and a test's fake
-  // scripts it.
+  // Read once and kept on every job. An unknown profile is a 404 now; none at all is queued and
+  // left to the provider (the real one refuses, the test fake scripts).
   const chosen = profile ? readProfiles(db).find((p) => p.id === profile) : undefined;
   if (profile && !chosen)
     throw notFound(
@@ -514,16 +443,13 @@ export function enqueueScripting(
     else targets.push(id);
   }
 
-  // a run is named by the profile it goes to
   const via = chosen?.name ?? "no profile";
-  // The prompt is resolved once too, and kept with the notes it will fill in — the template the
-  // run was priced with is the one it sends, whatever is edited while it waits.
+  // resolved once, so the template it was priced with is the one it sends
   const prompt = chosen && {
     ...resolvePrompt({ library: readLibraryPrompt(db), profile: chosen.prompt, book: book.prompt }),
     notes: book.prompt?.notes ?? "",
   };
-  // What the endpoint's recent requests at its reasoning level spent thinking, which the estimate
-  // adds to the output it expects; the hold needs none of it, being the whole output ceiling.
+  // recent reasoning spend, added to the estimate only (the hold already uses the full ceiling)
   const reasoningPerInputToken = chosen ? scriptReasoning(db, chosen)?.perInputToken : undefined;
   const run: Job["scriptRun"] = chosen && {
     profile: chosen,
@@ -537,9 +463,7 @@ export function enqueueScripting(
     outputTokens: 0,
   };
 
-  // Each chapter's worst case, cut exactly as its job will cut it, and what it is expected to cost
-  // at today's rates for the reconciliation afterwards; and its first request's, which is what the
-  // profile's daily limit must cover for the run to start.
+  // Per chapter: worst case (chunked as the job will), expected cost, and the first request's hold.
   const priced = new Map(
     targets.map((id) => {
       if (!chosen) return [id, { reserve: 0, estimated: 0, first: 0 }] as const;
@@ -585,12 +509,11 @@ export function enqueueScripting(
         index: i + 1,
         total: targets.length,
       },
-      // in the same transaction as the row, so it cannot land after the worker has moved on
+      // same transaction as the row, so it can't land after the worker moved on
       ...(held ? { run: { scriptRun: held } } : {}),
       onCreated: (tx) => library.setChapterScripting(tx, bookId, id, "queued", 0),
     });
     jobs.push(job);
   });
-  // the chapters as they now stand, with the queued ones marked
   return { jobs, skipped, runId, chapters: library.listChapters(db, bookId) };
 }

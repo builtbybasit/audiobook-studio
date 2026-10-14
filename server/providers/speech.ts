@@ -1,20 +1,7 @@
-// The port a speech model is reached through.
-//
-// A narration job hands a provider one line — the words, who says them, how — and gets back audio
-// with a duration. That is the whole contract, the same shape of contract the scripting port
-// keeps: what model, what request and what key are the provider's business, and the job records
-// only what the provider says about itself — each request it sent included, through `sent`, which
-// the job prices into the ledger (`sent.ts`). A key, when there is one, is the endpoint's own,
-// read from the database at the moment of dispatch (`target.ts`), and never leaves the process.
-//
-// One implementation the server runs: the one that calls the endpoint a line's voice belongs to, in
-// whichever provider's shape its base URL speaks, and answers a simulated endpoint itself with a
-// tone (`endpointSpeech.ts`). The tests hand over the fake, which renders the same tone for every
-// line whatever its endpoint (`fakeSpeech.ts`).
-//
-// A line is asked for in the endpoint's format — WAV, MP3 or Opus — and the clip says which format
-// it really came back in, because that is what it is kept as and served as. The fake answers WAV
-// whatever it is asked for, and says so.
+// The port a speech model is reached through: one line in, audio with a duration out. Each request
+// sent is reported through `sent`, which the job prices into the ledger (`sent.ts`). The server
+// runs `endpointSpeech.ts`; tests use `fakeSpeech.ts`. A clip says the format it really came back
+// in, which is what it is kept and served as.
 import type {
   AudioEncoding,
   AudioFormat,
@@ -33,49 +20,35 @@ export interface SpeechInput {
   speaker: string;
   type: SegmentType;
   direction: string;
-  /**
-   * What a model that takes spoken-delivery instructions is told: the speaker's style and the
-   * line's direction together, as the clip records them. Empty when there is neither.
-   */
+  /** the speaker's style and the line's direction together; empty when there is neither */
   instructions: string;
-  /** `<endpointId>/<voiceId>` from the cast, or null when the speaker has no voice */
+  /** null when the speaker has no voice */
   voiceRef: VoiceRef | null;
-  /**
-   * The rate the endpoint asks every line for, in Hz, or null for the model's own. A provider
-   * answers at it or fails; the job reads the rate the file actually came back at either way.
-   */
+  /** Hz, or null for the model's own; the job reads the rate the file actually came back at */
   sampleRate: number | null;
   /**
-   * The format the endpoint asks every line for, and its bitrate: `encodingOf` the endpoint, WAV
-   * when the line has none. A real provider refuses a combination its API cannot be asked for,
-   * before any request (`encodingProblems`).
+   * `encodingOf` the endpoint, WAV when there is none. A real provider refuses a combination its
+   * API cannot take before any request (`encodingProblems`).
    */
   encoding: AudioEncoding;
   /**
-   * The endpoint the voice belongs to, and its key; null when the speaker has no voice or the
-   * voice names an endpoint that is no longer configured. The fake ignores it; a real provider
-   * fails the line, naming why, rather than sending it somewhere nobody chose.
+   * null when the speaker has no voice or its endpoint is gone. A real provider then fails the line
+   * rather than sending it somewhere nobody chose.
    */
   target: ProviderTarget | null;
-  /** aborted when the job is cancelled; a provider that is mid-request should stop */
   signal: AbortSignal;
   /** called once for every request that reached the wire, answered or not; see `sent.ts` */
   sent?: (request: SentSpeech) => void;
-  /**
-   * Called each time the endpoint refuses a request as rate limited, with how long the request
-   * will wait before trying again — so the job can hold its other lines for as long (`gate.ts`).
-   */
+  /** called on each rate-limit refusal with the wait, so the job can hold other lines (`gate.ts`) */
   rateLimited?: (waitMs: number) => void;
 }
 
 export interface RenderedClip {
-  /** the audio, ready to be written to a file */
   bytes: Uint8Array;
-  /** what `bytes` is, and so the extension it is kept under */
   format: AudioFormat;
-  /** the media type of `bytes`, `AUDIO_MIME[format]` */
+  /** `AUDIO_MIME[format]` */
   mime: string;
-  /** how long the audio plays, in seconds */
+  /** seconds */
   duration: number;
   /** how long the request took, in milliseconds */
   ms: number;
@@ -86,15 +59,12 @@ export interface RenderedClip {
 
 export type { BatchLimits };
 
-/** How one line of a batch ended: its clip, or why it has none. */
 export type BatchOutcome = { clip: RenderedClip } | { error: Error };
 
 /**
- * A batch whose answer stopped part-way — cut off, gone quiet, or ended without answering every
- * item — after the request itself was accepted. It is told apart from a refusal of the whole batch
- * because the job treats the two differently: a refusal has already been retried by `call`, so the
- * lines it leaves are failed; the lines a cut leaves were never retried at all, so they may go
- * again in a later batch (`server/narration/batch.ts`).
+ * A batch whose answer stopped part-way after it was accepted. Unlike a whole-batch refusal (already
+ * retried by `call`), its unanswered lines were never retried, so they may go again in a later
+ * batch (`server/narration/batch.ts`).
  */
 export class BatchCut extends ProviderError {
   constructor(message: string) {
@@ -103,36 +73,26 @@ export class BatchCut extends ProviderError {
   }
 }
 
-/**
- * Several lines for one endpoint in one request. Every item is a whole `SpeechInput` — its own
- * text, voice, instructions and `sent`, which the provider reports it through as if it had gone
- * alone — and they share the endpoint, and so the format and the rate, the target and the signal.
- */
+/** Several lines for one endpoint in one request; each item reports through its own `sent`. */
 export interface SpeechBatch {
   target: ProviderTarget;
   items: SpeechInput[];
-  /** the job's: a cancel closes the request, and the items not yet answered are not reported */
+  /** a cancel closes the request, and the items not yet answered are not reported */
   signal: AbortSignal;
-  /**
-   * Told once for each item as it is answered, in whatever order the server finishes them. A
-   * failure whose `ProviderError` is `retryable` may go differently in a later batch.
-   */
+  /** once per item, in whatever order the server finishes them */
   answered: (index: number, outcome: BatchOutcome) => void;
   /** as `SpeechInput.rateLimited`, for a refusal of the whole batch */
   rateLimited?: (waitMs: number) => void;
 }
 
 export interface SpeechProvider {
-  /** what the Queue page names, and the log */
   readonly name: string;
   speak(input: SpeechInput): Promise<RenderedClip>;
-  /** one small request to see the endpoint answers — the Test button; absent, it cannot be tested */
+  /** the Test button; absent, it cannot be tested */
   probe?(target: ProviderTarget, signal: AbortSignal): Promise<EndpointProbe>;
   /**
-   * Whether the endpoint takes lines in batches, and how many; null when it takes one at a time.
-   * Asked before a run sends to the endpoint, and cheap to ask again: a provider remembers the
-   * answer for a while — unless `fresh`, which asks the server again and keeps what it says now,
-   * for a limit raised on the server since. Absent, a provider never batches.
+   * How many lines the endpoint takes per batch; null for one at a time. Cached for a while;
+   * `fresh` asks the server again. Absent, a provider never batches.
    */
   batchLimits?(
     target: ProviderTarget,
@@ -140,11 +100,8 @@ export interface SpeechProvider {
     fresh?: boolean,
   ): Promise<BatchLimits | null>;
   /**
-   * Send a batch the endpoint said it takes. Resolves once every item has been `answered`; throws
-   * when the batch as a whole went wrong — refused after the endpoint's retries, or cut off part
-   * way, which is a `BatchCut` — and the items not yet answered are then the caller's to fail or
-   * send again, with what it threw. A cancel throws the signal's reason. Present exactly when
-   * `batchLimits` is.
+   * Resolves once every item is `answered`. Throws when the whole batch went wrong (refused, or a
+   * `BatchCut`); the unanswered items are then the caller's. Present exactly when `batchLimits` is.
    */
   speakBatch?(batch: SpeechBatch): Promise<void>;
 }

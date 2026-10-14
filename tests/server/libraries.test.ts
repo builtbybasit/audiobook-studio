@@ -1,14 +1,7 @@
-// Two libraries in one server: the real one under `/api`, the demo under `/demo/api`.
-//
-// Each is built by the same `openLibrary` the server boots with, over a private database and
-// folders of its own, and the two are reached through the same `serveLibraries` the listener
-// uses — so what is proved here is the routing a browser meets. What the demo makes stays in the
-// demo: its books, its clips and covers, whose urls only the demo answers; and its reset empties
-// it and seeds it again without the real library noticing. Both libraries are handed providers
-// whose `fetch` fails the test, so the demo's endpoints are shown to need no network. What the
-// seed holds — the browser's whole demo world — is `demoWorld.test.ts`'s to check; the runs here
-// are on a small book of the test's own at the demo's quickest speed, so they are quick. Only the
-// tests that change nothing share a server; every other one opens its own.
+// Two libraries in one server: the real one under `/api`, the demo under `/demo/api`, built by the
+// boot's `openLibrary` and reached through the listener's `serveLibraries`. What the demo makes
+// stays in the demo, its reset leaves the real library alone, and every provider's `fetch` fails
+// the test. Only the tests that change nothing share a server.
 import { beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -325,8 +318,7 @@ describe("resetting the demo", () => {
       books: world.books.map((b) => b.id),
     });
 
-    // row for row what a fresh demo holds, the queue's history as it began, and not a file left
-    // from before
+    // row for row what a fresh demo holds, and not a file left over
     expect(rowCounts(s.demo.db)).toEqual(fresh);
     expect(await s.shelf(DEMO_BASE)).toEqual(SEEDED_TITLES);
     expect(await s.jobIds(DEMO_BASE)).toEqual(history);

@@ -1,29 +1,9 @@
-// The budgets work is held to on the server: a book's cap, pause and script budget, and each
-// endpoint's daily limit.
-//
-// The rule is the browser's (`src/stores/README.md`, "Pricing and usage invariants"): work is
-// checked against what has been **spent plus what unfinished work already holds**, so two runs that
-// each fit on their own cannot both start and land past the cap together; and it is checked at the
-// **undiscounted** price with the whole output ceiling, because a run lasts long enough for a
-// promotion to end or an off-peak window to close inside it.
-//
-// One question, asked at two moments with the same function:
-//
-// - **Before anything is queued**, with the worst case of the whole run. A run that does not fit is
-//   refused whole and nothing is queued (409), in words that say what to change.
-// - **Before each request goes out**, by the job itself, with what it still holds and its own
-//   reservation left out of the book's total. That only fails when the world moved under a run that
-//   fitted: a request cost more than it reserved, the cap was lowered, or the book was paused. The
-//   job then stops, keeping what it already paid for, rather than spending past the cap.
-//
-// An endpoint's daily limit is asked about per request, not per run: a long run legitimately spans
-// days, so a run is refused at queue time only when the limit cannot cover even its first request
-// on that endpoint, and otherwise stops at the request that would pass it. Its "spent" is the
-// ledger's cost on that endpoint since local midnight, across every book; its "held" is what the
-// requests out at it right now hold — not what queued jobs hold, which would have a run that was
-// let queue stop itself at its first request. Only this process sends, so what is out is kept in
-// memory (`holdToday`, which each request's `dispatch` holds and gives back), and after a restart
-// nothing is.
+// Budgets: a book's cap, pause and script budget, and each endpoint's daily limit. Work is checked
+// against spent + held by unfinished work (so two runs can't jointly overshoot), at the
+// undiscounted worst case (a promotion can end mid-run). Asked before queueing (whole run) and by
+// the job before each request (its own reservation left out).
+// The daily limit is per request, since a run may span days; its "held" is only requests out now,
+// kept in memory (`holdToday`), as only this process sends.
 import type { EndpointKind } from "@/types";
 import { money } from "@/lib/pricing";
 import type { Db } from "~/db/client";
@@ -38,29 +18,23 @@ export interface EndpointRequest {
   cost: number;
 }
 
-/** What is being asked for: which budget it draws on, and its worst-case price in USD. */
+/** Which budget the work draws on, and its worst-case price in USD. */
 export interface BudgetAsk {
   kind: "scripting" | "narration" | "transcription";
   cost: number;
-  /** a running job asking about itself: its own reservation is left out of what others hold */
+  /** a running job asking about itself, whose own reservation is left out */
   jobId?: number;
   /** what the refusal calls the work, e.g. "this run" or "the next request" */
   what?: string;
-  /**
-   * The next request on each endpoint the work goes to, held to that endpoint's daily limit: the
-   * one about to go out, or before anything is queued the first one. Scripting goes to scripting
-   * profiles, narration to speech endpoints and transcription to transcription endpoints.
-   */
+  /** The next request on each endpoint, checked against its daily limit. */
   requests?: readonly EndpointRequest[];
   /** what the daily limit's refusal calls the request; `what` when not given */
   request?: string;
 }
 
 /**
- * Why `ask` may not go ahead, as one sentence a person can act on; null when it may. A paused
- * book refuses everything; a book with no cap and no script budget refuses nothing else, and
- * neither does an endpoint with no daily limit. `bookId` null is work no book asked for — a voice
- * sample, a clone — which only the endpoints' limits apply to.
+ * Why `ask` may not go ahead, as an actionable sentence; null when it may. `bookId` null (a voice
+ * sample, a clone) checks only the endpoints' daily limits.
  */
 export function budgetProblem(db: Db, bookId: string | null, ask: BudgetAsk): string | null {
   const book = bookId == null ? null : bookProblem(db, bookId, ask);
@@ -73,7 +47,6 @@ export function budgetProblem(db: Db, bookId: string | null, ask: BudgetAsk): st
   return null;
 }
 
-/** `budgetProblem`, thrown as a 409 for a route to answer with. */
 export function assertWithinBudget(db: Db, bookId: string | null, ask: BudgetAsk): void {
   const problem = budgetProblem(db, bookId, ask);
   if (problem) throw conflict(problem);
@@ -109,26 +82,24 @@ function bookProblem(db: Db, bookId: string, ask: BudgetAsk): string | null {
 
 // ---------- an endpoint's daily limit ----------
 
-/** Local midnight before `now`: where "today" starts, as the Endpoints page counts it. */
+/** Local midnight before `now`, as the Endpoints page counts "today". */
 export function startOfToday(now = Date.now()): number {
   const d = new Date(now);
   d.setHours(0, 0, 0, 0);
   return d.getTime();
 }
 
-/** What the requests out right now hold against each endpoint's daily limit, per database. */
+/** Held by requests out right now, per database, keyed `<kind>:<id>`. */
 const out = new WeakMap<Db, Map<string, number>>();
 const keyOf = (kind: EndpointKind, id: string) => `${kind}:${id}`;
 
-/** What the requests out at an endpoint right now hold against its daily limit. */
 export function heldToday(db: Db, kind: EndpointKind, id: string): number {
   return out.get(db)?.get(keyOf(kind, id)) ?? 0;
 }
 
 /**
- * Hold `amount` against an endpoint's daily limit while a request is out at it. The function given
- * back gives back `n` of it — all that is left when called with none — and never more than was
- * held, so it can be called as each part of the request is charged and again once it has ended.
+ * Hold `amount` against an endpoint's daily limit while a request is out. The returned release
+ * gives back `n` (default: all left), never more than held, so it can be called repeatedly.
  */
 export function holdToday(
   db: Db,
@@ -152,7 +123,6 @@ export function holdToday(
   };
 }
 
-/** An endpoint of `kind` as it is stored now, or undefined once it has been removed. */
 export function endpointOf(db: Db, kind: EndpointKind, id: string) {
   switch (kind) {
     case "tts":
@@ -164,7 +134,6 @@ export function endpointOf(db: Db, kind: EndpointKind, id: string) {
   }
 }
 
-/** Why `r` would take its endpoint past its daily limit, or null; see the header. */
 function dailyProblem(db: Db, kind: EndpointKind, r: EndpointRequest, what: string): string | null {
   const ep = endpointOf(db, kind, r.endpoint);
   const limit = ep?.spendLimit ?? null;

@@ -1,16 +1,6 @@
-// What an export *is*, decided from chapters and settings alone. Nothing here mutates, nothing here
-// reaches the store: the Export page previews a build with `planOf` and `reviewOf` before a single
-// job is queued, and the store builds exactly the plan the page showed.
-//
-// Two ideas hold the page together:
-//
-//  - **A plan is the whole deliverable.** One build makes one *export*, which is one or more files.
-//    Grouping decides how many; nothing else changes. So the file count, the names, the order, the
-//    duration and the size are all read off one structure and can never disagree with each other.
-//  - **Silence has one owner.** Gaps *inside* a chapter belong to the book's pacing (and the
-//    per-line overrides on top of it) — the same numbers the reader, the ledger and the player use.
-//    Export only owns the gap *between* two chapters, because that join does not exist until the
-//    chapters are joined into a file. `durationOf` is therefore the only place chapter time is added up.
+// What an export is, decided from chapters and settings alone (pure). The Export page previews
+// with `planOf` and `reviewOf`, and the store builds exactly that plan. Silence inside a chapter is
+// the book's pacing; export owns only the gap between chapters (`durationOf`).
 import { heardLines } from "@/lib/siteText";
 import { pauseAfter } from "@/lib/speech";
 import type {
@@ -40,7 +30,7 @@ export interface FormatOption {
   hint: string;
   /** chapter markers inside the file; MP3 has no equivalent every player reads */
   markers: boolean;
-  /** bytes per second per kbps, over the raw stream — container, cover art and tags */
+  /** size factor over the raw stream: container, cover art and tags */
   overhead: number;
 }
 
@@ -100,27 +90,24 @@ export const BITRATES = [32, 48, 64, 96, 128] as const;
 
 // ---------- names ----------
 
-/** Characters no file system agrees on, plus runs of space. Never touches the user's words. */
+/** Replaces characters no file system agrees on and collapses runs of space. */
 export const safeName = (s: string): string =>
   s
     .replace(/[\\/:*?"<>|]+/g, "-")
     .replace(/\s+/g, " ")
     .trim();
 
-/** "Vol. 2 · Down the Mountain" → "Vol. 2" — the part that belongs in a filename. */
+/** "Vol. 2 · Down the Mountain" → "Vol. 2" */
 export const shortVolume = (name: string): string => name.split("·")[0].trim();
 
 export const baseName = (s: ExportSettings): string =>
   safeName(s.filename || s.title || "audiobook").replace(/\.(m4b|mp3)$/i, "") || "audiobook";
 
-/** Zero-padded track number, wide enough for the whole set: 007 of 214, 07 of 18. */
+/** 007 of 214, 07 of 18. */
 export const trackNo = (n: number, total: number): string =>
   String(n).padStart(Math.max(2, String(total).length), "0");
 
-/**
- * What to call the whole deliverable. One file is named by itself; a set of files lives in a folder,
- * so the page can say "42 files in one folder" instead of listing forty-two paths.
- */
+/** One file is named by itself; a set of files by its folder. */
 export const setLabel = (s: ExportSettings, files: { name: string }[]): string =>
   files.length === 1 ? files[0].name : `${baseName(s)}/`;
 
@@ -128,11 +115,7 @@ export const setLabel = (s: ExportSettings, files: { name: string }[]): string =
 export const exportKey = (s: ExportSettings): string =>
   `${baseName(s).toLowerCase()}|${s.format}|${s.grouping}`;
 
-/**
- * What one file is called inside itself — the title a player lists it by, which the plan shows
- * and the build writes as the file's tag: the book's for a single file, the book's and its
- * volume's for a file per volume, the chapter's for a file per chapter.
- */
+/** The title tag a player lists a file by. */
 export function fileTitle(
   s: ExportSettings,
   volume: string | null,
@@ -143,7 +126,6 @@ export function fileTitle(
   return s.title;
 }
 
-/** One chapter marker as the player will list it. */
 export function markerTitle(
   c: Chapter,
   n: number,
@@ -158,11 +140,8 @@ export function markerTitle(
 }
 
 /**
- * What a build starts as. Two of these are opinions worth stating:
- *  - `useStale` is false, so building with clips the script has moved under is always a choice
- *    someone made rather than a default they inherited.
- *  - `normalize` is on, because a book read by several voices from several providers arrives at
- *    several different levels, and a listener notices that long before they notice the bitrate.
+ * `useStale` is off so building with stale clips is always a deliberate choice. `normalize` is on:
+ * voices from several providers arrive at different levels.
  */
 export const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
   filename: "",
@@ -187,20 +166,11 @@ export const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
 
 // ---------- the cover ----------
 
-/**
- * The images a cover can be. M4B and MP3 both carry a JPEG or a PNG and players read nothing else
- * reliably, so the server refuses anything else and the demo keeps the same rule rather than
- * promising to embed an image a real build would turn away.
- */
+/** Players read nothing else reliably in M4B or MP3. */
 export const COVER_TYPES = ["image/jpeg", "image/png"] as const;
-/** The largest cover the server keeps, in bytes. */
 export const COVER_MAX_BYTES = 10 * 1024 * 1024;
 
-/**
- * Why this file cannot be a cover, in the server's words, or null when it can. Asked before
- * anything is uploaded, so a PDF picked by mistake is turned away without a round trip — the
- * server still decides, from the bytes rather than the name.
- */
+/** A pre-upload check in the server's words; the server still decides, from the bytes. */
 export function coverRefusal(file: { type: string; size: number }): string | null {
   if (!(COVER_TYPES as readonly string[]).includes(file.type))
     return "A cover has to be a JPEG or PNG image";
@@ -225,9 +195,8 @@ export const sizeOf = (seconds: number, s: ExportSettings): number =>
   );
 
 /**
- * How long a run of chapters plays. Each chapter already carries its clips *and* the silence the
- * book's pacing stitches inside it (`store._retime`); stitching two chapters together adds one
- * chapter gap between them, and none after the last.
+ * A chapter's duration already includes its inner silence (`store._retime`); joining adds one
+ * chapter gap between each pair. The only place chapter time is added up.
  */
 export const durationOf = (chapters: Chapter[], chapterGap: number): number =>
   chapters.reduce((a, c) => a + c.duration, 0) + Math.max(0, chapters.length - 1) * chapterGap;
@@ -241,7 +210,10 @@ export interface PlanInput {
   settings: ExportSettings;
 }
 
-/** What pressing Build will produce: every file, in order, with its chapters. */
+/**
+ * What Build will produce: every file, in order, with its chapters. Count, names, duration and
+ * size all come off this one structure, so they cannot disagree.
+ */
 export function planOf({ chapters, volumes, settings }: PlanInput): ExportPlan {
   const s = settings;
   const ext = formatOf(s.format).ext;
@@ -294,7 +266,6 @@ export function planOf({ chapters, volumes, settings }: PlanInput): ExportPlan {
 
 // ---------- readiness ----------
 
-/** What one chapter contributes to a build, in the words the page uses for it. */
 export function readinessOf(c: Chapter): ChapterReadiness {
   if (c.excluded) return "skipped";
   if (c.narration === "running" || c.narration === "queued") return "running";
@@ -327,19 +298,14 @@ export const READINESS: Record<
   skipped: { label: "Skipped", short: "skipped", dot: "none", tone: "muted" },
 };
 
-/** Chapters that carry audio a build can actually use. */
 export const usable = (c: Chapter): boolean => {
   const r = readinessOf(c);
   return r === "ready" || r === "stale" || r === "partial";
 };
 
 /**
- * What a selection *claims*, of a book whose chapters are `chapters`. Exporting everything the book
- * can give is a standing intention — narrate another chapter and the audiobook is behind. Exporting
- * three chapters you picked is a finished decision, and the rest of the book is not missing from
- * it. A per-volume build claims the volumes it covers — whole, or it is a chosen handful.
- *
- * The page asks it of the selection it is about to send, and the server records it on the build.
+ * What a selection claims. "book" (or whole "volumes") falls behind when another chapter is
+ * narrated; a "chosen" handful is finished as picked.
  */
 export function scopeOf(
   chapters: readonly Chapter[],
@@ -356,10 +322,8 @@ export function scopeOf(
 }
 
 /**
- * Everything wrong with a selection, as a list of things to *do* rather than a list of complaints.
- * A blocker stops the build; a warning is worth saying and nothing more. Nothing is ever dropped
- * quietly: leaving a chapter out is one of the offered actions, and taking it removes it from the
- * selection, so what the list shows and what gets built are the same set.
+ * Everything wrong with a selection, as actions. A blocker stops the build. Nothing is dropped
+ * quietly: leaving a chapter out is an offered action that removes it from the selection.
  */
 export function reviewOf(chapters: Chapter[], settings: ExportSettings): ExportReview {
   const by = (r: ChapterReadiness) => chapters.filter((c) => readinessOf(c) === r).map((c) => c.id);
@@ -436,8 +400,7 @@ export function reviewOf(chapters: Chapter[], settings: ExportSettings): ExportR
 }
 
 // ---------- loudness ----------
-// The page offers a target and a switch; the build is what measures and levels, with ffmpeg's
-// two-pass EBU R128 over each file's audio. Nothing here guesses at a level before a build has read the audio.
+// The build measures and levels with ffmpeg's two-pass EBU R128; nothing here guesses a level.
 
 /** FNV-1a. Identifies a preview's timeline, so the player knows when it has changed. */
 export const hash = (s: string): number => {
@@ -455,13 +418,9 @@ export const LOUDNESS_TARGETS = [
 // ---------- what changed since a build ----------
 
 /**
- * A fingerprint of a chapter's *audio*, as it stands now. An export stores one per chapter; when
- * they stop matching, that chapter — and only that chapter — needs encoding again.
- *
- * It deliberately covers the stitched silence as well as the clips: a pause costs nothing and
- * invalidates no audio, but it does change the file, so an export built before it is out of date.
- * It covers the clips that are heard (`heardLines`), which are the clips a build puts in the file: a line
- * marked as site text leaves the file, and so leaves the fingerprint.
+ * A fingerprint of a chapter's audio; an export stores one per chapter and re-encodes only those
+ * that stop matching. Covers the heard clips (`heardLines`) and the silence between them, since a
+ * pause change invalidates no clip but does change the file.
  */
 export function chapterSignature(
   c: Chapter,
@@ -472,8 +431,7 @@ export function chapterSignature(
   const clips = heardLines(segments, book);
   let h = 0;
   let silence = 0;
-  // Each pause is folded in *where it falls*, not just added to a total: two pauses that swap
-  // places — 1s then 2s, 2s then 1s — leave the running time alone and still change the file.
+  // folded in where each pause falls: two pauses swapping places keep the total but change the file
   clips.forEach((s, i) => {
     const pause = Math.round(pauseAfter(s, clips[i + 1], pacing) * 100);
     silence += pause;
@@ -488,7 +446,7 @@ export function chapterSignature(
   return [c.narration, clips.length, Math.round(c.duration * 100), silence, h].join(":");
 }
 
-/** One fingerprint per chapter of `ids` the book has, so an export can tell when it is behind the book. */
+/** `chapterSignature` for each of `ids` the book has. */
 export function chapterStates(
   chapters: Chapter[],
   ids: number[],
@@ -504,7 +462,7 @@ export function chapterStates(
   return out;
 }
 
-/** Settings that change the bytes, so a rebuild is a different file rather than the same one. */
+/** Settings that change the bytes. */
 export const OUTPUT_KEYS = [
   "format",
   "grouping",
@@ -538,10 +496,8 @@ export const SETTING_LABEL: Record<string, string> = {
 };
 
 /**
- * The settings of a finished export, so the page can diff a form against it and an update can start
- * from it. A build records everything it ran with; entries from before that — the seeded ones —
- * are read back from the fields they kept, and a setting they never recorded stays `undefined`
- * rather than pretending to be the default.
+ * A finished export's settings. Seeded entries without `settings` are read from their own fields;
+ * a setting they never recorded stays `undefined` rather than posing as the default.
  */
 export function settingsOf(e: ExportItem): Partial<ExportSettings> {
   if (e.settings) return { ...e.settings };

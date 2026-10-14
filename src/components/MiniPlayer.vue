@@ -1,8 +1,6 @@
 <script setup lang="ts">
-// The player follows you off the page that started it. Reviewing a chapter means listening while
-// editing the script, the cast or the dictionary, so when you leave the view that owns the full
-// transport this bar keeps the controls (and the way back) in reach.
-// It hides on the page it came from, which has a better player of its own.
+// The player follows you off the page that started it, keeping the controls and the way back in
+// reach; it hides on that page, which has a better player of its own.
 import { computed } from "vue";
 import { useRoute } from "vue-router";
 import { usePlayer } from "@/composables/usePlayer";
@@ -18,9 +16,7 @@ import {
 const { p, toggle, stop, skip, next, prev, seek, cycleRate } = usePlayer();
 const route = useRoute();
 const home = computed(() => p.href?.split("?")[0] ?? null);
-// Only long-form playback follows you: a chapter or a finished file, once you have left the page it
-// came from. A three-second audition of one line needs no floating transport, and raising one on the
-// page that started it would just duplicate the player already on screen.
+// Only long-form playback (a chapter or a finished file) follows you, not a line audition.
 const show = computed(() => !!home.value && p.len > 0 && route.path !== home.value);
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 function scrub(e: MouseEvent) {

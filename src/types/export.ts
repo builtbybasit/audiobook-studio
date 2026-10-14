@@ -2,10 +2,8 @@
 // the book. A build makes one *export*, which is one or more files; grouping decides how many.
 export type ExportStatus = "building" | "done" | "failed" | "cancelled" | "replaced";
 
-/** The container the audiobook is written in. */
 export type ExportFormat = "m4b" | "mp3";
 
-/** How the selected chapters are cut into files. */
 export type ExportGrouping = "single" | "volume" | "chapter";
 
 /** Integrated loudness target, LUFS. */
@@ -18,10 +16,8 @@ export interface ExportVolume {
 }
 
 /**
- * What a selection *claimed*, so a finished export knows which chapters it is responsible for
- * keeping up with. A build of everything the book can give follows the book; three chapters picked
- * on purpose stay those three, and anything narrated elsewhere is offered separately rather than
- * folded in behind your back.
+ * The chapters an export keeps up with. `book` follows the book; `chosen` stays those chapters, and
+ * anything narrated elsewhere is offered separately, never folded in.
  */
 export type ExportScope = "book" | "volumes" | "chosen";
 
@@ -29,15 +25,13 @@ export type ExportScope = "book" | "volumes" | "chosen";
 export interface ExportTimelineEntry {
   id: number;
   title: string;
-  /** seconds, as rendered at build time — not as the chapter stands now */
+  /** seconds, as rendered at build time */
   duration: number;
 }
 
 /**
- * Everything one build needs. Gaps *inside* a chapter are deliberately absent: they belong to the
- * book's pacing and its per-line overrides, which the reader, the ledger, the chapter duration and
- * the player already share. `chapterGap` is the one piece of silence Export owns, because the join
- * between two chapters only exists once they are stitched into a file.
+ * Gaps inside a chapter are absent on purpose: they belong to the book's pacing. `chapterGap` is
+ * the one silence Export owns, since a chapter join only exists once stitched into a file.
  */
 export interface ExportSettings {
   filename: string;
@@ -48,9 +42,8 @@ export interface ExportSettings {
   year: number;
   description: string;
   /**
-   * The image written into the audiobook in place of the EPUB's own cover, or null for the EPUB's.
-   * With a server it is the url the image was uploaded to (`/api/books/:id/covers/…`, or `/demo/api/…` in the demo library); the demo
-   * has no server and holds the picked file as a data URL instead.
+   * The image written in place of the EPUB's cover, or null for the EPUB's: the uploaded url
+   * (`/api/books/:id/covers/…`, or `/demo/api/…`), or a data URL in the serverless demo.
    */
   cover: string | null;
   format: ExportFormat;
@@ -65,7 +58,7 @@ export interface ExportSettings {
   chapterGap: number;
   normalize: boolean;
   loudness: LoudnessTarget;
-  /** the user chose, explicitly, to build with clips the script has moved under */
+  /** the user explicitly chose to build with clips the script has moved under */
   useStale: boolean;
 }
 
@@ -76,7 +69,7 @@ export interface ExportFile {
   duration: number;
   /** MB */
   size: number;
-  /** chapter marks written inside this file; 0 when the file is one chapter, or the format has none */
+  /** chapter marks in this file; 0 when it is one chapter, or the format has none */
   markers: number;
   volume: ExportVolume | null;
 }
@@ -98,7 +91,6 @@ export interface ExportPlan {
   gaps: number;
 }
 
-/** What one chapter contributes to a build. */
 export type ChapterReadiness =
   | "ready"
   | "stale"
@@ -108,7 +100,6 @@ export type ChapterReadiness =
   | "running"
   | "skipped";
 
-/** Something wrong with the selection, and the ways out of it. */
 export interface ExportBlocker {
   kind: "empty" | "missing" | "failed" | "partial" | "running" | "stale";
   ids: number[];
@@ -161,18 +152,18 @@ export interface ExportItem {
   markers: number;
   createdAt: string;
   version: number;
-  /** which chapters this export claims; absent on entries built before it was recorded */
+  /** absent on entries built before it was recorded */
   scope?: ExportScope;
-  /** everything it was built with, so an update starts from it rather than from the defaults */
+  /** what it was built with, so an update starts from it rather than the defaults */
   settings?: ExportSettings;
-  /** the chapters as they played when it was built, so it can be heard as built */
+  /** the chapters as they played when built */
   timeline?: ExportTimelineEntry[];
   /** id of the export this one supersedes */
   replaces: number | null;
   status: ExportStatus;
   progress?: number;
   customCover?: boolean;
-  /** what each chapter's audio was when this was built — how "needs an update" is decided */
+  /** each chapter's audio when this was built; decides "needs an update" */
   state: Record<number, string>;
   /** clips that were already stale when this was built, accepted on purpose */
   stale?: number;
@@ -185,7 +176,7 @@ export interface ExportItem {
 export interface ExportUpdate {
   /** narrated since, inside this export's scope, and not in it */
   added: number[];
-  /** narrated, and outside what this export claims — offered separately, never folded in */
+  /** narrated, outside what this export claims; offered separately, never folded in */
   outside: number[];
   /** in the export, and the audio has changed since */
   changed: number[];

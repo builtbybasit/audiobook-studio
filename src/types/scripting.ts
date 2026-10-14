@@ -1,6 +1,5 @@
-// Scripting: the LLM side. A profile is one chat endpoint, the telemetry is what its requests in
-// the server's ledger say it has been through, and the estimate and the diff are what the Scripting
-// page shows before and after a run.
+// Scripting, the LLM side: a profile is one chat endpoint; its telemetry comes from the server's
+// ledger; the estimate and diff are what the Scripting page shows before and after a run.
 import type { Gender, SplitMode } from "@/types/common";
 import type { PricingConfig, RateEstimate } from "@/types/pricing";
 import type { ScriptedTag } from "@/types/expression";
@@ -15,9 +14,8 @@ export interface ScriptEndpointTelemetry {
   lastSuccess: number;
   history: { at: number; ms: number; ok: boolean }[];
   /**
-   * What the endpoint's recent requests at its current reasoning level spent thinking, as a share of
-   * their input tokens — how a run's estimate adds the thinking a reasoning model will bill as
-   * output. Absent until such a request reported its reasoning tokens.
+   * Recent reasoning tokens per input token at the current reasoning level, so an estimate can add
+   * the thinking billed as output. Absent until a request reported reasoning tokens.
    */
   reasoning?: { perInputToken: number; requests: number };
   lastError?: {
@@ -25,7 +23,7 @@ export interface ScriptEndpointTelemetry {
     message: string;
     body: string;
     at: number;
-    /** the chapter the request was for; null once the book or the chapter is gone */
+    /** null once the book or the chapter is gone */
     bookId: string | null;
     chapterId: number | null;
     model: string;
@@ -45,9 +43,8 @@ export interface PromptTemplate {
 }
 
 /**
- * A scripting endpoint's say over the prompt: its notes, which `{{endpoint.notes}}` places in
- * whichever prompt is sent, and a whole prompt of its own it may send instead of the library's.
- * `default` keeps the replacement's text without sending it, so switching back finds it again.
+ * An endpoint's notes (`{{endpoint.notes}}`) and a whole prompt it may send instead of the
+ * library's. `default` keeps the replacement's text unsent, so switching back finds it.
  */
 export interface ProfilePrompt extends PromptTemplate {
   mode: "default" | "replace";
@@ -65,7 +62,7 @@ export interface BookPrompt extends PromptTemplate {
 export interface PromptOrigin {
   /** whose template is the base */
   from: "built-in" | "library" | "endpoint" | "book";
-  /** a short hash of the template, tags unfilled — the same text always gives the same one */
+  /** a short hash of the template, tags unfilled */
   fingerprint: string;
 }
 
@@ -80,21 +77,16 @@ export interface RenderedPrompt {
   user: string;
 }
 
-/** An LLM provider used for scripting (splitting prose into attributed segments). */
+/** An LLM endpoint used for scripting (splitting prose into attributed segments). */
 export interface Profile {
   id: string;
   name: string;
   model: string;
-  /** USD per million input tokens — the base rate, before any schedule or promotion */
+  /** USD per million input tokens, before any schedule or promotion */
   inPrice: number;
-  /** USD per million output tokens — the base rate, before any schedule or promotion */
+  /** USD per million output tokens, before any schedule or promotion */
   outPrice: number;
-  /**
-   * Everything the two rates above cannot express: cached-input and cache-write rates, a
-   * peak/off-peak schedule with its timezone, and temporary promotions. Optional so a profile
-   * saved before it existed still loads; `ensurePricing` fills the defaults in on first use, and
-   * an endpoint with no advanced pricing has an empty schedule and no promotions.
-   */
+  /** Cache rates, schedule and promotions. `ensurePricing` fills defaults on first use. */
   pricing?: PricingConfig;
   baseUrl: string;
   enabled: boolean;
@@ -104,31 +96,25 @@ export interface Profile {
   maxOutputTokens: number;
   secPerChunk: number;
   needsKey: boolean;
-  /**
-   * Backend only, and only ever read: the server holds a key for this endpoint. The key itself
-   * never comes back from the server.
-   */
+  /** Read only: the server holds a key for this endpoint. The key itself never comes back. */
   hasKey?: boolean;
-  /**
-   * Backend only, and only ever sent: a key for the server to keep for this endpoint. Left out, a
-   * save keeps the one already kept; `""` forgets it.
-   */
+  /** Sent only: a key for the server to keep. Left out, a save keeps the key; `""` forgets it. */
   apiKey?: string;
-  // operational settings — see EndpointOps; optional so older saved profiles still load
+  // operational settings — see EndpointOps
   timeoutSec?: number;
   maxRetries?: number;
   cooldownSec?: number;
   spendLimit?: number | null;
   credentialId?: string | null;
   quotaGroup?: string | null;
-  /** how hard a reasoning model thinks; absent or null sends nothing and leaves it to the model */
+  /** absent or null sends nothing and leaves it to the model */
   reasoning?: ReasoningEffort | null;
-  /** this endpoint's say over the prompt; absent is `default` with no text */
+  /** absent is `default` with no text */
   prompt?: ProfilePrompt | null;
 }
 
 export interface ScriptSettings {
-  /** the profile runs go to, by id; null until one is picked, when the first usable one is used */
+  /** by id; null until one is picked, when the first usable one is used */
   profile: string | null;
 }
 
@@ -155,7 +141,7 @@ export interface ScriptEstimate {
   chars: number;
   chunks: number;
   seconds: number;
-  /** the conservative total: no cache savings, at the rates in force right now */
+  /** no cache savings, at the rates in force right now */
   cost: number;
   profile: Profile | undefined;
   inputTokens: number;
@@ -163,34 +149,28 @@ export interface ScriptEstimate {
   inputCost: number;
   outputCost: number;
   blockers: string[];
-  /** the same numbers priced: the alternatives, and what could move the figure before the run ends */
+  /** the alternatives, and what could move the figure before the run ends */
   rates: RateEstimate | null;
   /**
-   * What the book may still spend on scripting: the lower of its scripting budget and its overall
-   * cap, less what is spent and held. Infinity when neither is set; below zero when overspent;
-   * NaN while the book's spending has not been read, which blocks the run until it has.
+   * Scripting budget left: the lower of the script budget and the overall cap, less spent and held.
+   * Infinity when neither is set; NaN until the book's spending is read, which blocks the run.
    */
   remaining: number;
-  /** chapters whose text has not been read yet, so nothing above counts them: not ready to run */
+  /** chapters whose text has not been read yet, so nothing above counts them; blocks the run */
   reading: number;
 }
 
 // ---- trying a prompt on one chunk ----
 
-/**
- * One chunk of a chapter sent with a prompt that need not be saved yet, to see what comes back.
- * Nothing is written to the script; the request is real, priced into the book's ledger and held to
- * its budget like any other.
- */
+/** A real, priced request held to the budget, but nothing is written to the script. */
 export interface PromptTrialRequest {
-  /** the scripting endpoint to send it to, by its id */
   profile: string;
   chapterId: number;
-  /** which of the chapter's chunks, cut as the endpoint cuts it, 1-based; default 1 */
+  /** which chunk, cut as the endpoint cuts it, 1-based; default 1 */
   part?: number;
   /**
-   * Drafts in place of what is saved, each layer on its own; absent sends the saved one. `null`
-   * for `library` is the built-in prompt; `null` for the others is none.
+   * Drafts in place of each saved layer; absent sends the saved one. `null` is the built-in prompt
+   * for `library`, none for the others.
    */
   library?: PromptTemplate | null;
   profilePrompt?: ProfilePrompt | null;
@@ -203,7 +183,6 @@ export interface PromptTrialResult {
   prompt: RenderedPrompt;
   part: number;
   parts: number;
-  /** the excerpt that was sent */
   excerpt: string;
   /** the lines the model answered with, even when they fail the word check */
   lines: {
@@ -218,14 +197,14 @@ export interface PromptTrialResult {
   }[];
   /** the word-for-word check a run would hold them to */
   fidelity: { words: number; missing: number; added: number; examples: string[]; ok: boolean };
-  /** what the model said of the speakers, which a run would fill the cast in from */
+  /** what the model said of the speakers; a run fills the cast in from it */
   cast: { name: string; gender?: Gender; aliases?: readonly string[]; description?: string }[];
-  /** where the model said the excerpt leaves off, which a run keeps for the next chapter */
+  /** where the model said the excerpt leaves off; a run keeps it for the next chapter */
   recap?: string;
   ms: number;
   usage: { inputTokens: number; outputTokens: number; reasoningTokens: number | null } | null;
-  /** USD, as the ledger priced it; null when it could not be priced */
+  /** USD; null when it could not be priced */
   cost: number | null;
-  /** what went wrong when there are no lines to show: the provider refused, the answer was not a script… */
+  /** why there are no lines: the provider refused, the answer was not a script… */
   error?: string;
 }

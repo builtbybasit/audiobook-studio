@@ -5,15 +5,8 @@ import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
 
-// Endpoints — app-wide, every kind, one page.
-//
-// The app talks to three sorts of OpenAI-compatible server: chat models that turn prose into a
-// script, speech models that render a line, and speech-to-text models that hear a recording back as
-// words. The first two used to be configured in two different places,
-// each buried inside a book's stage, which made "what is running, what is broken, what am I
-// spending" unanswerable. This page is the answer: a compact overview, a searchable list of every
-// endpoint, and the selected one's detail behind the tabs the scripting editor already used. What
-// it shows of them is `useEndpointOverview`'s; what it does when something is pressed is here.
+// Endpoints: every scripting, speech and transcription endpoint, app-wide, on one page. What it
+// shows is `useEndpointOverview`'s; what it does when something is pressed is here.
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { TabsContent, TabsRoot } from "reka-ui";
@@ -87,7 +80,7 @@ const {
   attention,
 } = useEndpointOverview();
 
-/** Each kind in a word or two, where the full label does not fit: the filter and the add buttons. */
+/** Short labels for the filter and the add buttons. */
 const KIND_SHORT: Record<EndpointKind, string> = {
   scripting: "Scripting",
   tts: "TTS",
@@ -98,7 +91,6 @@ const KIND_FILTERS = [
   ...ENDPOINT_KINDS.map((k) => ({ value: k, label: KIND_SHORT[k] })),
 ];
 
-// ---------- selection ----------
 const detail = ref<HTMLElement | null>(null);
 async function reveal() {
   if (window.matchMedia("(max-width: 1023px)").matches) {
@@ -111,7 +103,6 @@ async function select(u: UnifiedEndpoint) {
   ui.showLibraryPrompt = false;
   await reveal();
 }
-/** The library's default prompt takes the detail pane, as an endpoint would. */
 async function openLibraryPrompt() {
   ui.showLibraryPrompt = true;
   await reveal();
@@ -131,12 +122,10 @@ const tab = computed<TabId>({
 const tabs = computed(() =>
   tabsFor(selected.value?.kind ?? "tts").map((t) => ({ value: t.id, label: t.label })),
 );
-/** A speech endpoint with no voices can't render anything, so the tab that fixes it says so. */
 const noVoices = computed(
   () => !!selected.value?.endpoint && !selected.value.endpoint.voices.length,
 );
 
-// ---------- actions ----------
 function toggleEnabled(u: UnifiedEndpoint, value: boolean) {
   const target = u.entry;
   target.enabled = value;
@@ -169,8 +158,7 @@ const testing = ref(false);
 async function runTest(u: UnifiedEndpoint) {
   testing.value = true;
   try {
-    // The server sends a real request to what it has saved. See `testSaved` for why a connection
-    // draft is not saved first.
+    // See `testSaved` for why a connection draft is not saved first.
     const result = await endpointsStore.testSaved(u.kind, u.id);
     ui.tests[u.key] = result;
     uiStore.toast(result.ok ? `${u.name} answered` : `${u.name} did not answer`, {
@@ -192,7 +180,7 @@ function remove(u: UnifiedEndpoint) {
   ui.selected = null;
 }
 
-/** Add a blank endpoint of this kind, answering its id. */
+/** Adds a blank endpoint of this kind and returns its id. */
 const ADD: Record<EndpointKind, () => string> = {
   scripting: () => endpointsStore.addScriptProfile(),
   tts: () => endpointsStore.addEndpoint().id,
@@ -207,10 +195,8 @@ function add(kind: EndpointKind) {
   ui.search = "";
 }
 
-// ---------- deep links ----------
-// A stage inside a book links here to fix one endpoint — `?endpoint=tts:ep1&tab=voices`. The page
-// keeps its selection in module state so it survives leaving the route, so a link just writes into
-// that state rather than becoming a second source of truth for it.
+// `?endpoint=tts:ep1&tab=voices` from a book's stage. The selection lives in module state so it
+// survives leaving the route; the link just writes into it.
 const route = useRoute();
 function applyQuery() {
   const key = route.query.endpoint;
@@ -226,10 +212,7 @@ function applyQuery() {
 onMounted(applyQuery);
 watch(() => [route.query.endpoint, route.query.tab], applyQuery);
 
-// ---------- settings file ----------
-// Endpoints, scripting profiles and script settings as JSON, never keys. It used to live in the
-// two per-book stages, which meant a library with no books had no way to move a configuration
-// between machines.
+// Settings file: endpoints, scripting profiles and script settings as JSON, never keys.
 function exportSettings() {
   const blob = new Blob([JSON.stringify(endpointsStore.exportSettings(), null, 2)], {
     type: "application/json",
@@ -287,7 +270,6 @@ function pickBucket(b: MetricBucket | null) {
 
 <template>
   <div class="mx-auto max-w-[1400px] space-y-4 p-4 sm:p-6">
-    <!-- header -->
     <div class="flex flex-wrap items-end justify-between gap-3">
       <div>
         <h1 class="text-2xl font-semibold">Endpoints</h1>
@@ -316,7 +298,6 @@ function pickBucket(b: MetricBucket | null) {
       </div>
     </div>
 
-    <!-- overview strip -->
     <dl class="grid grid-cols-2 gap-2 lg:grid-cols-4">
       <div class="card p-3">
         <dt class="label">Active requests</dt>
@@ -370,7 +351,6 @@ function pickBucket(b: MetricBucket | null) {
     </dl>
 
     <div class="grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
-      <!-- list -->
       <aside class="min-w-0 space-y-2">
         <div class="relative">
           <SearchIcon
@@ -383,7 +363,7 @@ function pickBucket(b: MetricBucket | null) {
             aria-label="Search endpoints by name, model or URL"
           />
         </div>
-        <!-- the default prompt: every scripting endpoint's, so it sits above them, not among them -->
+        <!-- every scripting endpoint's default prompt, so above them, not among them -->
         <button
           v-if="ui.kind === 'all' || ui.kind === 'scripting'"
           type="button"
@@ -445,7 +425,6 @@ function pickBucket(b: MetricBucket | null) {
         </p>
       </aside>
 
-      <!-- detail -->
       <section v-if="ui.showLibraryPrompt" ref="detail" class="min-w-0">
         <LibraryPromptPanel />
       </section>

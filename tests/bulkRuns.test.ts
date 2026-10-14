@@ -1,20 +1,7 @@
-// Bulk re-scripting and bulk re-narration over chapters that are already finished.
-//
-// Three properties hold this feature together in the browser, and they are what is tested here.
-// The runs themselves are the server's, and what a run does to a chapter is tested there
-// (`tests/server/`).
-//
-// **The selection is legible.** What a selection contains and what pressing the button would do to
-// it are one calculation, so the summary, the label and the estimate cannot disagree.
-//
-// **A scope means something.** "Retry failed clips" counts the failed clips and nothing else, and
-// the estimate counts that rather than every line in the chapter.
-//
-// **A run can be stopped and picked up again.** Cancelling asks for what has not finished and
-// nothing else; retrying a run's failures asks again for exactly those chapters, as one run, at the
-// narrowest scope that covers them.
-//
-// The book is the demo's `cliche`, read from a seeded demo library the way its pages read it.
+// Bulk re-scripting and re-narration of finished chapters, the browser's side: the summary, label
+// and estimate come from one calculation; a scope counts only what it touches; cancelling asks
+// for what has not finished, and a retry asks again for exactly the failed chapters, as one run.
+// Runs against the demo's `cliche`; what a run does to a chapter is tested in `tests/server/`.
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { useQueryCache } from "@pinia/colada";
 import { keys } from "@/queries/keys";
@@ -182,8 +169,8 @@ describe("a narration scope", () => {
     const kept = narrationStore.narrationRunPlan(BOOK, [ch.id], "all", true);
     expect(kept.pending).toBe(1);
     expect(kept.clips).toBe(segments(ch.id).length - 1);
-    // told otherwise, the line joins the run — and the plan still reports the retake, because the
-    // count is what the choice is about, not what it happened to leave behind
+    // told otherwise, the line joins the run, and the plan still reports the retake: the count is
+    // what the choice is about
     const replaced = narrationStore.narrationRunPlan(BOOK, [ch.id], "all", false);
     expect(replaced.pending).toBe(1);
     expect(replaced.clips).toBe(segments(ch.id).length);
@@ -195,8 +182,7 @@ describe("a narration scope", () => {
     const line = segments(ch.id).find((s) => s.audio.duration > 0)!;
     line.candidate = { ...line.audio, n: 2, at: Date.now() };
 
-    // "missing & changed" has no reason to touch a line whose clip is current, so there is nothing
-    // for the choice to decide there — and the plan does not claim it left anything alone
+    // "missing & changed" never touches a line whose clip is current, so the choice decides nothing
     for (const keep of [true, false]) {
       const fill = narrationStore.narrationRunPlan(BOOK, [ch.id], "fill", keep);
       expect(fill.pending).toBe(0);
@@ -210,9 +196,8 @@ describe("a narration scope", () => {
 
 // ---------- stopping and picking up ----------
 //
-// What the queue holds is installed as the poll would install it, and the service records what it
-// is asked for rather than queueing it: these are about which request the store sends, and the
-// server's own tests cover what it does with one.
+// The queue is installed as the poll would, and the service records what it is asked rather than
+// queueing it: these test which request the store sends.
 
 describe("a run can be stopped and picked up again", () => {
   type Ask =
@@ -259,10 +244,7 @@ describe("a run can be stopped and picked up again", () => {
     };
   }
   const bulk = (id: number, index: number, total: number) => ({ id, op: "Narrate", index, total });
-  /**
-   * Let a retry read what its blockers are worked out from, and then ask or refuse: a refusal is
-   * a toast even for a quiet run.
-   */
+  /** Let a retry read its blockers, then ask or refuse: a refusal is a toast even for a quiet run. */
   const retried = async () => {
     for (let i = 0; i < 100 && !asked.length && !toasts.length; i++) await flush();
   };
@@ -281,8 +263,7 @@ describe("a run can be stopped and picked up again", () => {
   test("a run whose replacements failed is retried at the failed scope, which the chapter's status cannot ask for", async () => {
     const ch = narratedChapter();
     const line = segments(ch.id).find((s) => s.audio.duration > 0)!;
-    // the replacement failed beside a clip that is still fine, so the chapter still reads as
-    // narrated and the failure is only on the clips
+    // the replacement failed beside a clip still fine, so the chapter reads as narrated
     line.candidate = { ...line.audio, status: "failed", duration: 0, n: 2 };
     const failed = job({ kind: "narration", chapterId: ch.id, status: "failed" });
     useQueryCache().setQueryData(keys.jobs, [failed]);
@@ -376,8 +357,7 @@ describe("a run can be stopped and picked up again", () => {
 
 // ---------- speech pricing ----------
 //
-// A speech rate goes on discount the same way a token rate does. What a clip is charged when it
-// lands is the server's; what a run is estimated at before it starts is worked out here.
+// What a run is estimated at is worked out here; what a clip is charged is the server's.
 
 describe("what a run is estimated at", () => {
   /** The speech endpoint every seeded voice routes to, with a rate card we control. */

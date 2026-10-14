@@ -1,5 +1,4 @@
 <script setup lang="ts">
-// One row of the shelf table.
 import { computed } from "vue";
 import type { Book } from "@/types";
 import { plural } from "@/lib/contents";

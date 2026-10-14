@@ -1,8 +1,6 @@
 <script setup lang="ts">
-// A dialogue or thought line's speaker pill, then a chip for each of its line effects. A linked
-// persona is the speaker — their own name and colour — with a mask, and says whose persona they are
-// on hover, unless the scripting model made the link (`masked`), which would spoil it. A chapter
-// has hundreds of these, so each is a lookup in maps the stores already keep.
+// A line's speaker pill and effect chips. A persona hides whose it is when the model made the link
+// (`masked`), to avoid spoilers. Hundreds per chapter, so only store-map lookups here.
 import { computed } from "vue";
 import { AudioLines as EffectIcon, VenetianMask as MaskIcon } from "@lucide/vue";
 import { personaOwner } from "@/lib/cast";
@@ -19,7 +17,7 @@ const persona = computed(() => {
   const owner = byName && personaOwner(c, byName);
   return owner && { of: owner.name, masked: !!c?.masked };
 });
-/** in the library's order, which is the order they run in; an id no effect has is passed over */
+/** library order is run order; unknown ids are skipped */
 const effects = computed(() =>
   props.s.effects?.length
     ? effectsStore.effects.filter((e) => props.s.effects!.includes(e.id))

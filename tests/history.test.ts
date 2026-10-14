@@ -1,12 +1,7 @@
-// Chapter script history: the versions a chapter's script has been through, and restoring one.
-//
-// The history is the server's — what makes an entry is tested against it in
-// `tests/server/scriptEdit.test.ts` — so what is tested here is the page's side of it. A comparison
-// says what really moved between two scripts. A restore keeps the audio that still belongs to the
-// restored lines, marks what no longer matches, and can be undone whole. An imported script file
-// is written the way a restore is, behind one Undo. They run against the demo library, whose first
-// chapter of The Cliché Cultivation World is scripted and narrated; a comparison needs no library,
-// and a test that puts the demo into a situation is handed it rebuilt, so only the rest reset it.
+// Chapter script history, the page's side: a comparison says what really moved, a restore keeps
+// the audio that still matches and can be undone whole, and an import is written like a restore.
+// What makes an entry is tested in `tests/server/scriptEdit.test.ts`. Runs against the demo
+// library; a test that puts the demo into a situation is handed it rebuilt.
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { useQueryCache } from "@pinia/colada";
 import { keys } from "@/queries/keys";
@@ -72,7 +67,7 @@ const inFlight = (chId: number): Job =>
     status: "running",
   }) as Job;
 
-/** Read the book, its cast and endpoints, and these chapters' scripts and histories, as a page would. */
+/** Read the book, its cast, endpoints, and these chapters' scripts and histories, as a page would. */
 async function open(...chIds: number[]) {
   const svc = libraryService();
   await Promise.all([libraryStore.loadBook("cliche"), endpointsStore.load()]);
@@ -97,8 +92,7 @@ beforeEach(() => {
   transferStore = useTransferStore();
   samplesStore = useSpeakerSamplesStore();
   uiStore = useUiStore();
-  // the real toast needs a DOM; this stub also keeps the last undo it was offered, which is how the
-  // tests below take back a restore or an import exactly as the toast's Undo button would
+  // the real toast needs a DOM; this stub keeps each undo, so tests can press the toast's Undo
   undos = [];
   uiStore.toast = (_msg, opts) => {
     if (opts?.undo) undos.push(opts.undo);
@@ -147,8 +141,8 @@ describe("comparing two scripts", () => {
   });
 
   test("a word keeps its place when only the punctuation after it changes", () => {
-    // "shut," and "shut;" are the same word differently punctuated; marking the whole clause as
-    // rewritten would hide that, so the word and its punctuation are compared separately
+    // "shut," and "shut;" are the same word differently punctuated, so the word and its punctuation
+    // are compared separately
     const runs = wordDiff(
       "The gate was shut, and the road beyond it empty.",
       "The gate stood shut; the road beyond lay empty.",
@@ -256,8 +250,7 @@ describe("restoring", () => {
     expect(historyStore.restore("cliche", 1, checkpoint.id)).toBe(true);
     expect(segments().some((s) => s.audio.status === "stale")).toBe(false);
     expect(libraryStore.chapter("cliche", 1)!.narration).toBe("done");
-    // the restore is one more entry; the version restored from is still there, and so is the
-    // script that was current a moment ago
+    // the restore is one more entry; the version restored from and the script just replaced remain
     await settled(1);
     expect(head().origin).toMatchObject({ kind: "restored", from: checkpoint.id });
     expect(versions().some((v) => v.id === checkpoint.id)).toBe(true);
@@ -304,8 +297,8 @@ describe("restoring", () => {
 
     const plan = historyStore.restorePlanOf("cliche", 1, version.id)!;
     expect(plan.comparison.counts.split).toBe(1);
-    // the first half's clip was rendered from the first half's words, so it finds its way back;
-    // the second half's clip went with the line the join swallowed and cannot
+    // the first half's clip was rendered from its words, so it comes back; the second half's went
+    // with the line the join swallowed
     expect(plan.kept).toBe(version.segments.length - 1);
     expect(plan.unrendered).toBe(1);
     historyStore.restore("cliche", 1, version.id);
@@ -314,9 +307,8 @@ describe("restoring", () => {
       version.segments.length - 1,
     );
     expect(segments().find((s) => s.text === firstText)!.audio.duration).toBeGreaterThan(0);
-    // one restored line has no clip of its own, so the chapter is part rendered — the same reading a
-    // cancelled run leaves, and the one the export turns into its "Partly narrated" blocker rather
-    // than a stale-audio warning somebody can wave through
+    // one restored line has no clip, so the chapter is part rendered: the export's "Partly narrated"
+    // blocker rather than a stale-audio warning
     expect(libraryStore.chapter("cliche", 1)!.narration).toBe("failed");
     expect(readinessOf(libraryStore.chapter("cliche", 1)!)).toBe("partial");
   });
@@ -359,9 +351,8 @@ describe("restoring", () => {
 });
 
 describe("importing a script file", () => {
-  // The server matches a file's chapters and answers with a plan; applying it is the store's. A plan
-  // is built here by hand from the chapter as it stands — what an export would carry, read back —
-  // so each test states only what its file says differently.
+  // The server matches a file's chapters and answers with a plan; applying it is the store's. Plans
+  // are built here from the chapter as it stands, so each test states only what its file changes.
   const NAME = "The Cliche.script.zip";
   function fileChapter(chId: number, edit?: (lines: Segment[]) => void): ImportChapter {
     const lines = segments(chId).map((s, i) => ({ ...scriptOnly(s), id: i + 1 }));
@@ -656,8 +647,7 @@ describe("importing a script file", () => {
 });
 
 describe("voice samples a script file carries", () => {
-  // Only the samples store is handed a server of its own, which answers from memory and writes
-  // down what it was asked; the book, its cast and its scripts are the demo library's.
+  // Only the samples store gets its own server, which answers from memory and logs what it was asked.
   const calls: string[] = [];
   let held: SpeakerSamples[] = [];
   /** what the next store says it put aside: the rows the same speakers already had */
@@ -845,8 +835,7 @@ describe("the book the history belongs to", () => {
     await libraryStore.removeVolume("cliche", first.id);
     const now = chId - gone;
     expect(scriptSignature(segments(now))).toBe(script);
-    // the history followed the script, and nothing was left behind under the old number for the
-    // chapter that now carries it to inherit
+    // the history followed the script, and nothing was left under the old number to inherit
     expect(versions(now).map((v) => v.origin)).toEqual([mark.origin]);
     expect(versions(chId)).toHaveLength(0);
   });

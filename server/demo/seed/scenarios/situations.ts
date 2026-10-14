@@ -1,13 +1,6 @@
-// What each Demo tools row does to the world.
-//
-// A situation is applied to a world that has just been restored to its seeded state, so every
-// function here can assume the book it is handed is the pristine one and say plainly what it
-// changes. That is what makes the rows repeatable: picking the same row twice, or picking three
-// others in between, gives the same situation every time.
-//
-// Nothing here starts a timer or touches a store. A situation mutates the entities the context
-// hands it and reports what it did; the caller owns the state, the queue and the clock — exactly
-// the split the simulators use.
+// What each Demo tools row does to the world. A situation is applied to a freshly seeded world, so
+// each can assume the pristine book; that makes rows repeatable. Situations only mutate what the
+// context hands them; the caller owns the state, queue and clock.
 import { money, promotionRunning } from "@/lib/pricing";
 import { clockLabel, localTimezone } from "@/lib/wallClock";
 import { isNarrated, isScripted } from "@/lib/scriptReview";
@@ -51,11 +44,7 @@ export interface HistoryRow {
   seconds: number;
   /** the bulk run this chapter belonged to, when it was one chapter of several */
   bulk?: { id: number; op: string; index: number; total: number; scope?: string };
-  /**
-   * What the run reported, oldest first, without timestamps — the caller dates these between the
-   * row's start and its finish. A failed row needs the reason here: the Queue's detail panel is
-   * where a failure is diagnosed, and a log that says only "Job queued" cannot be read.
-   */
+  /** oldest first, undated (the caller dates them); a failed row needs its reason here */
   activity?: {
     level?: "info" | "warning" | "error";
     message: string;
@@ -63,12 +52,7 @@ export interface HistoryRow {
   }[];
 }
 
-/**
- * A finished row in the queue, as an earlier session would have left it — including the activity
- * that explains it. A failed row whose log says only "Job queued" is not a failure anyone can
- * diagnose, so the run's own account is seeded with it and dated between the row's start and its
- * finish, in order.
- */
+/** A finished queue row with its activity log, dated in order between its start and finish. */
 export function historyJob(row: HistoryRow, id: number, now: number): Job {
   const started = now - row.minutesAgo * 60000;
   const finished = started + row.seconds * 1000;
@@ -108,11 +92,7 @@ export function historyJob(row: HistoryRow, id: number, now: number): Job {
   };
 }
 
-/**
- * Spending a situation declares rather than a request anybody made — "this book has already used
- * its scripting budget". An opening balance, so it carries no receipt and is marked as invented; it
- * counts against the cap all the same.
- */
+/** An opening balance: no receipt, marked invented, but it counts against the cap. */
 export const openingScriptSpend = (
   id: string,
   bookId: string,
@@ -139,11 +119,7 @@ export const openingScriptSpend = (
   simulated: true,
 });
 
-/**
- * The slice of the application a situation is allowed to reach for. Like `SimulatorContext`, it is
- * declared here rather than implied by a store handle: what a scenario can touch is readable at the
- * top of this file, and the store stays the only place reactive state is defined.
- */
+/** All a situation may touch. */
 export interface ScenarioContext {
   now(): number;
   /** the cast, dictionaries and endpoints a seeded clip has to agree with */
@@ -152,9 +128,9 @@ export interface ScenarioContext {
   chapters(bookId: string): Chapter[];
   cast(bookId: string): Character[];
   segmentsOf(bookId: string, chId: number): Segment[];
-  /** back to a chapter nothing has been run on: no script, no saved revision and no history */
+  /** no script, no saved revision, no history */
   clearScript(bookId: string, chId: number): void;
-  /** the versions a chapter's script has been through, as an earlier session would have left them */
+  /** a chapter's past script versions */
   seedHistory(
     bookId: string,
     chId: number,
@@ -239,10 +215,8 @@ export function applySituation(ctx: ScenarioContext, id: string, bookId: string)
 // ---------- a full shelf ----------
 
 /**
- * Eighteen more books, each left at one point in the pipeline. Their reviews are done — flagged
- * chapters skipped, the ones to look at kept — so the shelf reads them as books, not imports.
- * The chapter flags are set directly: these books are here to be found, filtered and ordered,
- * not to be scripted, and the seeded four remain the ones with real scripts and clips.
+ * Eighteen more books at points along the pipeline, reviews done, for finding, filtering and
+ * ordering. Chapter flags are set directly; only the seeded four have real scripts and clips.
  */
 function fullShelf(ctx: ScenarioContext): DemoResult {
   const counts: Record<string, number> = {};
@@ -337,10 +311,8 @@ function fullShelf(ctx: ScenarioContext): DemoResult {
 // ---------- expressions on a line ----------
 
 /**
- * Two dialogue lines in the first scripted chapter, their speakers cast on Fish's S2 model, which
- * ships with tags: one with a sigh before it and a softer delivery placed mid-line, both fine; the
- * next with a laugh whose anchor the text moved out from under, so it asks to be placed again. The
- * reader opens on the first.
+ * Two lines cast on Fish S2 (which takes tags): one with a sigh and a mid-line softer delivery,
+ * the next with a laugh whose anchor text moved, so it asks to be placed again.
  */
 function expressionsPlaced(ctx: ScenarioContext, bookId: string): DemoResult {
   const chapter = ctx.chapters(bookId).find(isScripted);
@@ -377,10 +349,7 @@ function expressionsPlaced(ctx: ScenarioContext, bookId: string): DemoResult {
   };
 }
 
-/**
- * The seeded web-novel chapter, as the seed has it: nothing to change, only to count, so the note
- * says what the reader will find rather than what was done.
- */
+/** The seeded web-novel chapter unchanged; the note only counts what the reader will find. */
 function siteText(ctx: ScenarioContext, bookId: string): DemoResult {
   const segs = ctx.segmentsOf(bookId, SITE_TEXT_CHAPTER);
   const count = (type: string) => segs.filter((s) => s.type === type).length;
@@ -395,7 +364,7 @@ function siteText(ctx: ScenarioContext, bookId: string): DemoResult {
 
 // ---------- importing an EPUB ----------
 
-/** A file just read, with nothing decided: the review opens on it exactly as the import left it. */
+/** An EPUB just read, nothing decided yet in its review. */
 function importReview(ctx: ScenarioContext, sampleId: string, bookId: string): DemoResult {
   ctx.importSample(sampleId, bookId);
   const chapters = ctx.chapters(bookId);
@@ -413,7 +382,7 @@ function importReview(ctx: ScenarioContext, sampleId: string, bookId: string): D
 
 // ---------- starting a book ----------
 
-/** A book as it stands the moment its EPUB finished importing: chapters, and nothing else. */
+/** A book just imported: chapters and nothing else. */
 function freshBook(ctx: ScenarioContext, bookId: string): DemoResult {
   const chapters = ctx.chapters(bookId);
   for (const c of chapters) {
@@ -425,7 +394,7 @@ function freshBook(ctx: ScenarioContext, bookId: string): DemoResult {
     delete c.rescript;
     ctx.clearScript(bookId, c.id);
   }
-  // a book nothing has been run on has no cast yet — every speaker is found by scripting it
+  // no cast yet: scripting finds every speaker
   const cast = ctx.cast(bookId);
   const narrator = cast.find((c) => c.name === "Narrator");
   cast.splice(0, cast.length, ...(narrator ? [narrator] : []));
@@ -466,8 +435,7 @@ function scriptingTrouble(ctx: ScenarioContext, bookId: string): DemoResult {
   const targets = chapters.filter((c) => c.id === 2 || c.id === 3);
   const profile = ctx.profiles().find((p) => p.enabled) ?? ctx.profiles()[0];
   const cooldown = profile.cooldownSec ?? 20;
-  // the scenario owns this book's queue: the sample history has its own failed row for one of these
-  // chapters, and two rows for one failure is a queue nobody can read
+  // replaces the sample history's rows, which would duplicate one of these failures
   ctx.clearJobs(bookId);
   const first = chapters[0];
   if (first)
@@ -492,8 +460,7 @@ function scriptingTrouble(ctx: ScenarioContext, bookId: string): DemoResult {
     c.scriptingProgress = 0;
     delete c.rescript;
     ctx.clearScript(bookId, c.id);
-    // the account the Queue's detail panel is read from: what was tried, what came back, why it
-    // ended where it did
+    // the account the Queue's detail panel shows
     ctx.addHistory({
       kind: "scripting",
       bookId,
@@ -566,8 +533,7 @@ function scriptingTrouble(ctx: ScenarioContext, bookId: string): DemoResult {
 function narrationTrouble(ctx: ScenarioContext, bookId: string): DemoResult {
   const chapters = ctx.chapters(bookId);
   const already = chapters.filter((c) => c.narration === "failed");
-  // the scenario owns this book's queue, so every failed row here carries the account that explains
-  // it rather than the sample history's bare one
+  // replaces the sample history's rows so each failure carries its own account
   ctx.clearJobs(bookId);
   const done = chapters.find((c) => c.narration === "done");
   if (done)
@@ -612,7 +578,7 @@ function narrationTrouble(ctx: ScenarioContext, bookId: string): DemoResult {
         },
       ],
     });
-  // the next scripted chapter that has never been narrated: a run that got part-way and stopped
+  // a never-narrated scripted chapter: a run that got part-way and stopped
   const partial = chapters.find((c) => isScripted(c) && c.narration === "none" && !c.excluded);
   let failedClips = 0;
   let endpointId = "";
@@ -703,7 +669,7 @@ function narrationTrouble(ctx: ScenarioContext, bookId: string): DemoResult {
 function missingVoices(ctx: ScenarioContext, bookId: string): DemoResult {
   const cast = ctx.cast(bookId);
   const narrator = cast.find((c) => c.name === "Narrator");
-  // with no Narrator voice there is nothing to fall back to, so an unvoiced speaker is unrouted
+  // no Narrator voice, so an unvoiced speaker has nothing to fall back to
   if (narrator) narrator.voice = null;
   const majors = cast.filter((c) => c.major && c.name !== "Narrator");
   const unset: string[] = narrator ? ["the Narrator"] : [];
@@ -733,7 +699,7 @@ function budgetSpent(ctx: ScenarioContext, bookId: string): DemoResult {
   const scripting = 0.42;
   ctx.addScriptUsage(bookId, profile.id, scripting);
   book.scriptBudget = scripting;
-  // a cap the last run went slightly past, which is how a cap is usually discovered
+  // the last run went slightly past it
   const spent = ctx.spent(bookId);
   const cap = Math.floor(spent * 100) / 100;
   book.budget = { cap, paused: false };
@@ -743,15 +709,13 @@ function budgetSpent(ctx: ScenarioContext, bookId: string): DemoResult {
 }
 
 // ---------- rates, cache and promotions ----------
-//
-// These rows change one endpoint's rate card and nothing else. They are cheap on purpose: the point
-// is what the pricing panel and the receipts *say* about a card, so the situation is the card.
+// These rows change one endpoint's rate card and nothing else.
 
 /** The endpoint the pricing rows work on: the one with cached pricing and a schedule. */
 const pricingEndpoint = (ctx: ScenarioContext): Profile | undefined =>
   ctx.profiles().find((p) => p.id === "openai") ?? ctx.profiles()[0];
 
-/** A window covering right now, in the browser's own zone so "it is off-peak" is visibly true. */
+/** A window covering right now, in the browser's own zone. */
 function windowAroundNow(ctx: ScenarioContext, label: string, percent: number): RateWindow {
   const d = new Date(ctx.now());
   const from = (d.getHours() * 60 + d.getMinutes() - 90 + 1440) % 1440;
@@ -762,10 +726,9 @@ function windowAroundNow(ctx: ScenarioContext, label: string, percent: number): 
 function offPeakNow(ctx: ScenarioContext): DemoResult {
   const p = pricingEndpoint(ctx);
   if (!p?.pricing) return { note: "" };
-  // the browser's own zone, so the window on screen really is the one covering this minute
   p.pricing.timezone = localTimezone();
   p.pricing.windows = [windowAroundNow(ctx, "Off-peak", 40)];
-  // nothing else may be moving the price, or the window is not what the page is demonstrating
+  // nothing else may move the price
   p.pricing.promotions = p.pricing.promotions.filter((x) => !promotionRunning(x, ctx.now()));
   const w = p.pricing.windows[0];
   return {
@@ -777,7 +740,7 @@ function promotionsLive(ctx: ScenarioContext): DemoResult {
   const p = pricingEndpoint(ctx);
   if (!p?.pricing) return { note: "" };
   const now = ctx.now();
-  // no schedule, so the promotion is unambiguously what moved the price
+  // no schedule, so only the promotion moves the price
   p.pricing.windows = [];
   p.pricing.promotions = [
     {
@@ -850,11 +813,8 @@ function cacheMix(ctx: ScenarioContext): DemoResult {
 }
 
 /**
- * A run that will still be going when the rates change under it.
- *
- * The run has to outlast the boundary for the row to demonstrate anything, so the endpoint is
- * re-tuned to make one: smaller chunks, so each chapter is several requests, and a slower request,
- * so four chapters take minutes rather than seconds. The window then closes a minute in.
+ * A run still going when the rates change under it: smaller chunks and slower requests so it
+ * takes minutes, and the window closes a minute in.
  */
 function rateBoundary(ctx: ScenarioContext): DemoResult {
   const p = pricingEndpoint(ctx);
@@ -875,9 +835,8 @@ function rateBoundary(ctx: ScenarioContext): DemoResult {
 }
 
 /**
- * A speech endpoint inside an off-peak window with a promotion on top, and one whose rate is
- * unknown so neither does anything. The same engine as the LLM rows: what differs is that the rate
- * is written in the endpoint's own billing unit, and there is one of it rather than four.
+ * A speech endpoint in an off-peak window with a promotion on top, and one with an unknown rate
+ * so neither applies. Rates are in the endpoint's own billing unit.
  */
 function speechDiscount(ctx: ScenarioContext): DemoResult {
   const zone = localTimezone();
@@ -916,20 +875,13 @@ function speechDiscount(ctx: ScenarioContext): DemoResult {
   };
 }
 
-/** The chapter this scenario uses: the one where all five seeded speakers have lines. */
+/** The chapter where all five seeded speakers have lines. */
 export const BILLING_CHAPTER = 2;
 
 /**
- * One chapter spread across every billing model at once.
- *
- * The point is the *comparison*: the same run produces requests billed on characters, on UTF-8
- * bytes, on two kinds of token and on nothing at all, and the estimate has to add four different
- * kinds of arithmetic into one figure without ever charging the same usage twice. The Narrator is
- * left on the free local model so "free" and "unknown" are both visible beside real prices.
- *
- * The Mandarin is not decoration: the pronunciation dictionary rewrites "outer sect" into Hanzi on
- * the way out, so the byte-billed speaker's bill is about three times what its character count
- * suggests — which is the whole reason byte billing is a model of its own.
+ * One chapter across every billing model (characters, UTF-8 bytes, two token kinds, free), so the
+ * estimate must add them without double charging. The dictionary rewrites "outer sect" into Hanzi,
+ * so the byte-billed bill is about three times its character count.
  */
 function billingModels(ctx: ScenarioContext, bookId: string): DemoResult {
   const by = (id: string) => ctx.world.endpoints.find((e) => e.id === id);
@@ -946,17 +898,14 @@ function billingModels(ctx: ScenarioContext, bookId: string): DemoResult {
     ep.enabled = true;
     ep.backoffUntil = 0;
   }
-  // One speaker per model, so a single chapter exercises all of them. The Narrator goes to the
-  // byte-billed endpoint on purpose: the narration is where "outer sect" appears, and that is the
-  // phrase the dictionary rewrites into Hanzi, so the divergence between characters and bytes
-  // lands on the endpoint that actually bills on bytes.
+  // One speaker per model. The Narrator says "outer sect", so it goes to the byte-billed endpoint.
   route("Narrator", "fish");
   route("Ji Ning", "openai");
   route("Xiao Lan", "gemini");
   route("Bai Feng", "local");
   route("Elder Mo", "proxy");
 
-  // the chapter is put back to unnarrated so the estimate is about work that has not happened
+  // unnarrated, so the estimate covers work not yet done
   const chapter = ctx.chapters(bookId).find((c) => c.id === BILLING_CHAPTER);
   if (chapter) {
     chapter.narration = "none";
@@ -980,14 +929,14 @@ function billingModels(ctx: ScenarioContext, bookId: string): DemoResult {
 
 // ---------- review and retakes ----------
 
-/** The state a book gets into while it is being listened to: edits, drift, flags, second takes. */
+/** A book mid-listen: edits, drift, flags, second takes. */
 function staleAndRetakes(ctx: ScenarioContext, bookId: string): DemoResult {
   const chapters = ctx.chapters(bookId);
   const narrated = chapters.filter(isNarrated);
   let edited = 0;
   let retakes = 0;
   let flagged = 0;
-  // a chapter edited after it was narrated: the clips no longer say what the script says
+  // edited after narration: the clips no longer match the script
   const second = narrated[1];
   if (second) {
     const segs = ctx.segmentsOf(bookId, second.id);
@@ -1017,7 +966,7 @@ function staleAndRetakes(ctx: ScenarioContext, bookId: string): DemoResult {
     if (edited) second.narration = "stale";
     ctx.retime(bookId, second.id);
   }
-  // and one being listened to: a take waiting to be compared, and one already rejected
+  // a take waiting to be compared, and one already rejected
   const third = narrated[2] ?? narrated[0];
   if (third) {
     const segs = ctx.segmentsOf(bookId, third.id);
@@ -1090,11 +1039,8 @@ function misAttributed(ctx: ScenarioContext, bookId: string): DemoResult {
 // ---------- re-doing chapters that are already finished ----------
 
 /**
- * One book holding every state a bulk run has to tell apart: chapters nothing has been run on,
- * chapters finished at both stages, a chapter somebody corrected by hand, one whose script moved
- * after it was narrated, one whose clips failed, and one line with a retake still waiting for a
- * verdict. The point of the row is the *selection*: what the shortcuts pick, what the summary says
- * the selection contains, and what the two run panels say pressing the button would do.
+ * Every chapter state a bulk run must tell apart: untouched, finished, hand-corrected, script moved
+ * after narration, failed clips, and a retake awaiting a verdict. The row is about the selection.
  */
 function bulkRework(ctx: ScenarioContext, bookId: string): DemoResult {
   const chapters = ctx.chapters(bookId);
@@ -1113,7 +1059,7 @@ function bulkRework(ctx: ScenarioContext, bookId: string): DemoResult {
       line.edited = true;
       corrections++;
     }
-    // corrections on narration lines too, so the count a re-script says it replaces covers both
+    // narration lines too, so the re-script's replace count covers both
     for (const line of segs.filter((x) => x.type === "narration").slice(0, 2)) {
       line.direction = "unhurried";
       line.edited = true;
@@ -1166,7 +1112,7 @@ function bulkRework(ctx: ScenarioContext, bookId: string): DemoResult {
       failedClips++;
     });
     if (failedClips) partly.narration = "failed";
-    // and one line being listened to: a second take beside the clip in the book
+    // a second take beside the clip in the book
     const judge = segs.find((x) => x.audio.status === "done" && x.audio.duration > 0);
     if (judge) {
       const first = { ...judge.audio };
@@ -1210,11 +1156,8 @@ function bulkRework(ctx: ScenarioContext, bookId: string): DemoResult {
 }
 
 /**
- * A bulk re-script that went wrong in both of the ways worth watching, and a bulk re-narration
- * whose replacements failed. The whole row exists to show what *survived*: two chapters kept
- * nothing and still read as scripted, because the script each run was replacing is still the
- * chapter's script; a cancelled chapter stopped the ones behind it without touching the ones in
- * front; and every clip whose replacement failed is still the clip in the book.
+ * Bulk re-runs that failed, to show what survives: chapters that kept nothing still have their old
+ * script, a cancel stops only the chapters behind it, and a failed replacement leaves the old clip.
  */
 function bulkRecovery(ctx: ScenarioContext, bookId: string): DemoResult {
   const chapters = ctx.chapters(bookId);
@@ -1343,12 +1286,8 @@ function bulkRecovery(ctx: ScenarioContext, bookId: string): DemoResult {
 // ---------- a chapter's script history ----------
 
 /**
- * One chapter with a past worth looking at: the model's first pass, the corrections a person made
- * to it, the checkpoint they saved before trying another model, and the re-script that followed.
- *
- * The clips were rendered from the corrected script, so the re-script leaves audio that no longer
- * matches it — which is what makes restoring the checkpoint worth watching: the clips come back to
- * the lines they belong to, including the one whose paragraph the new model cut in two.
+ * A chapter's history: first pass, hand corrections, a checkpoint, then a re-script. Clips match
+ * the corrected script, so restoring the checkpoint brings them back to their lines.
  */
 function chapterHistory(ctx: ScenarioContext, bookId: string): DemoResult {
   const chapters = ctx.chapters(bookId);
@@ -1365,15 +1304,13 @@ function chapterHistory(ctx: ScenarioContext, bookId: string): DemoResult {
   const secondPass = profiles.find((p) => p.id === "deepseek") ?? profiles[1] ?? firstPass;
   const minutes = (n: number): number => ctx.now() - n * 60000;
 
-  // the script the clips were rendered from — every version below is a variation on this one
+  // the script the clips were rendered from; every version below varies it
   const corrected = snapshotScript(live);
 
   // ---- the model's first pass, before anybody corrected it
   const initial = snapshotScript(live);
   let corrections = 0;
-  // An alias the first pass invented for the main character and the person renamed away, so the
-  // book's cast no longer has it: what previewing an old version has to be able to say, and what
-  // restoring one has to be able to put right.
+  // An alias the first pass invented and the person renamed away; the cast no longer has it.
   const alias = main?.aliases.find((a) => !cast.some((c) => c.name === a));
   const own = initial.find((s) => s.type === "dialogue" && s.speaker === main?.name);
   if (own && alias) {
@@ -1434,7 +1371,7 @@ function chapterHistory(ctx: ScenarioContext, bookId: string): DemoResult {
     if (s.audio.status === "done") s.audio.status = "stale";
     dropped++;
   }
-  // one paragraph the new model cut in two: the first half keeps the clip, the second has none
+  // a paragraph cut in two: the first half keeps the clip, the second has none
   const long = live.find(
     (s) => s.type === "narration" && s.audio.duration > 0 && s.text.length > 80,
   );
@@ -1521,7 +1458,7 @@ function chapterHistory(ctx: ScenarioContext, bookId: string): DemoResult {
 
 // ---------- export ----------
 
-/** The Export rows, which are the same preparations the Export page's own chip has always used. */
+/** The Export rows: the same preparations as the Export page's chip. */
 function exportSituation(ctx: ScenarioContext, id: string, bookId: string): DemoResult {
   const prep = exportDemoPrep(id);
   if (prep.freshen) freshenChapters(ctx.chapters(bookId), (chId) => ctx.segmentsOf(bookId, chId));

@@ -1,30 +1,13 @@
-// Does the server's demo show what the browser's demo shows?
-//
-// The browser's demo is `makeWorld()` spread into its stores; the server's is the same world
-// written into the demo library's database when it is first opened. So the browser's world is the
-// oracle: the demo is opened once, on a clock stopped at one instant, and everything it answers
-// over its API — books and chapters, prose, casts and dictionaries, scripts and clips, endpoints,
-// exports, the queue's history and what each book has spent — is compared with a world built at
-// that same instant, field for field, wherever the server stores the field.
-//
-// What is deliberately not compared, and why:
-//   - an endpoint's telemetry (`history`, `failures`, `rateLimits`, `backoffUntil`, `lastError`):
-//     what one browser session observed, which the server never stores;
-//   - an endpoint's `baseUrl`, its tags' `baseUrl` and `needsKey`: moved to `simulated://` on
-//     purpose, and checked for that instead;
-//   - a rendered clip's `url` and `sampleRate`: the world's clips have no file, the demo's are
-//     given where theirs will be made and the rate it will be made at, and are checked for that;
-//   - a book's `chapters` counts, which only the server's listing carries: checked against the
-//     world's chapters rather than skipped;
-//   - an export's `createdAt` past the day, which is all the server's export row answers with;
-//   - an endpoint's `credentialId: null` where it has no operational block: stored, it reads back
-//     absent (`rows/endpoints.ts`), which the page reads the same — the endpoint's own key slot;
-//   - a chapter's prose as the browser composes it on demand is compared, but not the
-//     `notice` marks between its parts, which a server's chapter never has.
-//
-// And the world itself, before any of it is written: every seed and every situation is built on a
-// fresh `makeWorld()` and changed in memory, so two worlds must share nothing, and every reference
-// in one — a voice, a volume, a speaker, an exported chapter — must point at something it holds.
+// Does the server's demo show what the browser's demo shows? `makeWorld()` is the oracle: the demo
+// is opened on a stopped clock and everything its API answers is compared, field for field, with a
+// world built at that instant. Not compared, and why:
+//   - endpoint telemetry (`history`, `failures`, …): one browser session's, never stored;
+//   - endpoint and tag `baseUrl`, `needsKey`: moved to `simulated://`, checked for that instead;
+//   - a clip's `url` and `sampleRate`: the world's clips have no file; checked for where theirs go;
+//   - an export's `createdAt` past the day, which is all the server's row stores;
+//   - `credentialId: null` with no operational block: reads back absent (`rows/endpoints.ts`);
+//   - `notice` marks between a chapter's parts, which a server's chapter never has.
+// And the world itself: two `makeWorld()`s share nothing, and every reference in one resolves.
 import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:test";
 import { existsSync, readdirSync } from "node:fs";
 

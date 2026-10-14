@@ -1,19 +1,9 @@
-// Does the schema actually hold the domain?
-//
-// The seeded world is the reference answer. It is the same data every screen in the app is built
-// against — books with volumes and notices, a cast, a pronunciation dictionary, six thousand script
-// lines with rendered clips, frozen speech receipts, retakes waiting for a verdict, endpoints with
-// off-peak schedules and running promotions, finished and failed exports — so a schema that can
-// take all of it and give it back unchanged is a schema that holds the domain, and one that cannot
-// is wrong in a way no hand-written fixture would have found.
-//
-// These assert **round-trip equality**, not field lists. A mapper that quietly turns an absent
-// `note` into a null one, or a take into something carrying `status`, fails here rather than in a
-// screen six months from now.
+// Does the schema hold the domain? The seeded world is the reference answer: a schema that takes
+// all of it and gives it back unchanged holds the domain. Tests assert round-trip equality, not
+// field lists, so a mapper that turns an absent `note` into null fails here.
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
 
-// The mock world reaches for `matchMedia` through the stores it shares types with; the frontend
-// suite stubs it the same way.
+// The mock world reaches for `matchMedia` through the stores it shares types with.
 Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
 
 import { sql } from "drizzle-orm";
@@ -61,8 +51,7 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-// One world for the file: it is only ever read, and building it for every test was a third of
-// the file's time. Each test still gets a database of its own.
+// One world for the file, only ever read: building it per test was a third of the file's time.
 beforeAll(() => {
   world = deepFreeze(makeWorld());
 });
@@ -134,8 +123,7 @@ describe("the script and its clips", () => {
     writeBooks();
     const written = writeScripts();
     expect(written).toBeGreaterThan(1000);
-    // Equality covers a rendered clip's frozen receipt (rates, why, units and basis) and a retake
-    // waiting for a verdict beside the clip rather than instead of it — so long as the world has both.
+    // Equality covers a clip's frozen receipt and a retake waiting beside it, if the world has both.
     const lines = Object.values(world.segments).flat();
     expect(lines.some((s) => s.audio.charge)).toBe(true);
     expect(lines.some((s) => s.candidate)).toBe(true);
@@ -509,8 +497,8 @@ describe("what follows a renumbered chapter, and what must not", () => {
 
     const gone = deleteVolume(db, bookId, volumeId).chapters;
 
-    // The ledger row was not rewritten — it never is — and it still names the right chapter,
-    // because what it stored was the chapter itself rather than the number it went by that day.
+    // The ledger row is never rewritten and still names the right chapter: it stores the chapter,
+    // not the number it went by.
     const [back] = readRequests(db);
     expect(back.chapterId).toBe(moved - gone);
     expect(back.cost).toBe(0.063);
@@ -600,8 +588,7 @@ describe("what a chapter owns, it owns", () => {
     const [line] = world.segments[`${bookId}:${chapterId}`];
     writeScript(db, bookId, chapterId, [line]);
 
-    // a second `current` clip for the same line is what the store's rule forbids, and the
-    // database refuses it rather than leaving two clips claiming to be the chapter's audio
+    // a second `current` clip for one line is refused by the database itself
     expect(() =>
       db.run(
         sql`INSERT INTO clips (book_id, chapter_id, segment_id, role, status, ms, duration)

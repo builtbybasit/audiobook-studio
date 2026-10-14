@@ -1,5 +1,4 @@
-// The whole mock world in one object: what `makeWorld()` builds and what the store spreads into
-// its state.
+// The whole mock world: what `makeWorld()` builds and the store spreads into its state.
 import type { Book, Chapter, Character, LexEntry } from "@/types/book";
 import type { Endpoint } from "@/types/endpoint";
 import type { ExportItem } from "@/types/export";
@@ -13,9 +12,8 @@ export interface World {
   segments: SegmentMap;
   endpoints: Endpoint[];
   /**
-   * The scripting endpoints. Part of the world rather than built fresh in the store, because their
-   * rate cards carry dates — a promotion that ends on Friday — and a `$reset()` that rebuilt them
-   * against a newer clock would hand back a world subtly different from the one it was restoring.
+   * Part of the world because their rate cards carry dates (a promotion ending Friday); a
+   * `$reset()` rebuilding them against a newer clock would hand back a different world.
    */
   profiles: Profile[];
   exports: ExportItem[];

@@ -1,10 +1,6 @@
-// Reading a script file back: what `planScriptImport` makes of an upload before anything is written.
-//
-// Every test imports a real EPUB into a private database, then hands the planner a zip built here
-// with the fingerprints of that book's own chapters — so what is checked is the reading, the
-// matching and the diffs, never a fixture that agrees with itself. The planner writes nothing (the
-// cast and dictionary's last test holds it to that), so the groups that only plan share one book;
-// a group that puts a speaker, a term or an endpoint in first shelves a fresh one for each test.
+// Reading a script file back: what `planScriptImport` makes of an upload before anything is
+// written. Zips carry the real imported book's chapter fingerprints, so nothing checks a fixture
+// against itself. The planner writes nothing, so groups that only plan share one book.
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import JSZip from "jszip";
 

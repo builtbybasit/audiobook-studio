@@ -1,7 +1,5 @@
-// Page state kept in the URL (`useQueryParam`): how each codec spells a value, and the two ways the
-// ref and the address can fall out of step — two keys written in one tick, where each `replace`
-// used to put back what the other took out, and a value emptied to where the key's absence means
-// something else, which must not read back as that something else.
+// `useQueryParam`: how each codec spells a value, two keys written in one tick must not undo each
+// other, and a value emptied to where the key's absence means something else must not read as that.
 import { describe, expect, test } from "bun:test";
 import { createApp, effectScope, nextTick } from "vue";
 import { createMemoryHistory, createRouter } from "vue-router";

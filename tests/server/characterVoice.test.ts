@@ -1,7 +1,6 @@
 // The book's Character voice: what a speaker with no voice of their own is read in, before the
-// Narrator's, and a linked persona's: their character's. The rule is `speakerVoice`, shared by the
-// narration job and the page; here it is checked on its own, then through the settings route and
-// a real run.
+// Narrator's (a linked persona: their character's). `speakerVoice` alone, then through the
+// settings route and a real run.
 import { describe, expect, test } from "bun:test";
 
 import type { Book, Character, CharacterVoice, Segment } from "@/types";

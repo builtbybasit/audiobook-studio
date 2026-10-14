@@ -1,15 +1,8 @@
-// A schema change that rebuilds a table, applied to a library that has books in it.
-//
-// SQLite cannot alter most of a table in place, so drizzle-kit writes such a change as a rebuild:
-// create the new table, copy the rows, drop the old one, rename. With foreign keys on, that drop
-// cascades — and drizzle runs migrations in a transaction, where SQLite ignores the
-// `PRAGMA foreign_keys=OFF` the generated SQL puts first. No migration in `drizzle/` rebuilds a
-// table yet; this writes the one the next schema change on `chapters` would, and runs it.
-//
-// And the migrations that rewrite rows rather than tables: a book's cover, once kept as a file
-// name, kept as the url it is served at; a label, once naming its chapter by id, naming none; a
-// book's switch for plain thoughts, kept as its choice of no thought effect; and a scripting
-// endpoint on the old sentence-end default, cut at a paragraph end.
+// A table-rebuilding migration applied to a library with books in it. drizzle runs migrations in a
+// transaction, where SQLite ignores the generated `PRAGMA foreign_keys=OFF`, so the rebuild's drop
+// would cascade. This writes the rebuild the next `chapters` change would, and runs it. Also the
+// row-rewriting migrations: cover file name to url, label chapter id to none, plain-thought switch
+// to no thought effect, sentence-end scripting cut to paragraph end.
 import { describe, expect, test } from "bun:test";
 import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -116,9 +109,8 @@ describe("a migration that rebuilds a table", () => {
 });
 
 /**
- * A database migrated up to just before `tag`, and the call that applies `tag` and the rest. The
- * migration and every one after it are held back: one is applied only if it is newer than the last
- * that was.
+ * A database migrated up to just before `tag`, and the call that applies `tag` and the rest (a
+ * migration applies only if newer than the last applied).
  */
 function migratedUpTo(tag: string): { db: Db; rest: () => void } {
   const dir = copyOfMigrations();

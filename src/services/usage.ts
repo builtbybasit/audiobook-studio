@@ -1,9 +1,5 @@
-// What has been spent, as the server's ledger records it.
-//
-// The same arrangement as `@/services/jobs`: one HTTP implementation, answering at this tab's API.
-// Every provider request a job sends is priced and appended to the server's ledger, so a book's
-// total, an endpoint's summary and its Activity list are all read from the same rows; nothing in the browser
-// prices a request of its own.
+// Spending, read from the server's ledger: every provider request a job sends is priced there, so
+// book totals, endpoint summaries and Activity all read the same rows. The browser prices nothing.
 import type { BookSpend, EndpointKind, RangeKey } from "@/types";
 import type { EndpointSummary, RequestFilter, RequestPage } from "@/services/endpoints";
 import { HttpClient, seg, type FetchLike } from "@/services/http";
@@ -14,8 +10,7 @@ export interface UsageService {
   bookSpend(bookId: string): Promise<BookSpend>;
   /** One endpoint's past in `range`, summed over every row; "today" counts from `today`. */
   summary(kind: EndpointKind, id: string, range: RangeKey, today: number): Promise<EndpointSummary>;
-  /** One page of an endpoint's settled requests matching `filter`, newest first; `before` is the
-   *  `next` of the page before it. */
+  /** Settled requests matching `filter`, newest first; `before` is the previous page's `next`. */
   requests(
     kind: EndpointKind,
     id: string,
@@ -66,12 +61,12 @@ export class HttpUsageService implements UsageService {
 
 let service: UsageService | null = null;
 
-/** The usage service: the one a test set, or the HTTP one for this tab's library. */
+/** The one a test set, or the HTTP one for this tab's library. */
 export function usageService(): UsageService {
   return (service ??= new HttpUsageService());
 }
 
-/** For tests and for wiring at startup. Set it before the jobs store is created. */
+/** For tests and startup wiring. Set it before the jobs store is created. */
 export function setUsageService(next: UsageService | null): void {
   service = next;
 }

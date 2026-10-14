@@ -1,18 +1,7 @@
-// Voice effects run on clips: the Pedalboard chains a line is given (`src/lib/effects.ts`) applied
-// to its audio, by `effects.py` under uv. A port, like the encoder: Pedalboard where this machine
-// has uv, today's ffmpeg thought effect (`thoughtEffect.ts`) where it does not, and a fake in tests
-// (`tests/support/effects.ts`).
-//
-// uv is asked for an exact Pedalboard, so the first run downloads it once and every run after that
-// starts from uv's cache, offline, the same plugins making the same sound.
-//
-// Each call is its own Python process: a preview or a landing clip pays uv's start-up (a tenth of
-// a second or so) and nothing stays running between them. A Re-apply of a whole book is one
-// `batch`, spread over a process per core, each taking its share of the clips as NDJSON and
-// answering a line per clip as it finishes.
-//
-// What comes out is always a 16-bit WAV at the clip's own rate, for the reasons the thought effect
-// gives; an MP3 or an Opus clip is decoded by ffmpeg inside `effects.py` before it is processed.
+// Voice effects: a line's Pedalboard chains run by `effects.py` under uv, one process per call
+// (~0.1 s start-up). Pedalboard is pinned, so after one download uv runs it offline and the sound
+// never changes. A Re-apply is one `batch` over a process per core. Output is 16-bit WAV at the
+// clip's rate. Without uv, the ffmpeg thought effect (`thoughtEffect.ts`) stands in.
 import { cpus } from "node:os";
 import { fileURLToPath } from "node:url";
 
@@ -22,17 +11,16 @@ export const SCRIPT = fileURLToPath(new URL("./effects.py", import.meta.url));
 export const PEDALBOARD = "pedalboard==0.9.26";
 
 export interface EffectJob {
-  /** the clip's file; its extension says its format */
+  /** its extension says its format */
   input: string;
-  /** where the processed WAV is written */
   output: string;
   chains: Step[][];
 }
 
 export interface EffectRunner {
-  /** Whether chains can run here (uv, and Pedalboard through it); asked once, then remembered. */
+  /** Whether uv and Pedalboard are here; asked once, then remembered. */
   available(): Promise<boolean>;
-  /** A clip through these chains in order, as 16-bit WAV bytes. Throws when it cannot. */
+  /** The chains in order; answers 16-bit WAV bytes. */
   render(
     bytes: Uint8Array,
     format: AudioFormat,
@@ -40,22 +28,20 @@ export interface EffectRunner {
     signal: AbortSignal,
   ): Promise<Uint8Array>;
   /**
-   * Files through their chains, spread over the runner's workers. `each` hears every job by its
-   * index as it ends, with null or why it failed; one failing never stops the rest. A cancel
-   * kills every worker and throws.
+   * `each` hears every job by index as it ends, with null or why it failed; one failing never
+   * stops the rest. A cancel kills every worker and throws.
    */
   batch(
     jobs: readonly EffectJob[],
     each: (i: number, error: string | null) => void,
     signal: AbortSignal,
   ): Promise<void>;
-  /** Pasted Pedalboard Python as a chain; throws with the parser's one-line reason. */
+  /** Pasted Pedalboard Python as a chain; throws the parser's one-line reason. */
   parse(code: string, signal: AbortSignal): Promise<Step[]>;
 }
 
 const lastLine = (text: string): string => text.trim().split("\n").at(-1)?.trim() ?? "";
 
-/** A child that a cancel kills. */
 function start(cmd: string[], stdin: Uint8Array, signal: AbortSignal) {
   const proc = Bun.spawn(cmd, { stdin, stdout: "pipe", stderr: "pipe" });
   const kill = (): void => proc.kill();
@@ -89,7 +75,7 @@ export function pedalboardRunner(
   ];
   const encode = (text: string): Uint8Array => new TextEncoder().encode(text);
 
-  /** One run to its end: stdout, or a throw with the script's last words. */
+  /** stdout, or a throw with the script's last stderr line. */
   const run = async (args: string[], stdin: Uint8Array, signal: AbortSignal) => {
     const proc = start(python(...args), stdin, signal);
     const [out, err, code] = await Promise.all([

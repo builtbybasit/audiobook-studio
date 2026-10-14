@@ -1,16 +1,6 @@
-// A line of the script as a script file holds it, and back. See docs/script-transfer.md.
-//
-// **Expression tags travel inside the words.** A line's annotations are UTF-16 offsets into its
-// text, and an offset is silently wrong after the first hand edit — which is exactly what a file
-// someone opens in an editor is for. So in the file a tag is a marker at its place: `{sigh}`, with
-// `{sigh!}` for one that is omitted, `{sigh?}` for one awaiting review and `{sigh~}` for one the
-// scripting model wrote (`markSuffix`, which the history's signature uses too). The name is the
-// tag's shared `id`, never a provider's token: each provider spells tags its own way, and the file
-// must not care which one rendered it. A pause is `{pause}` or `{long pause}`, as long as the book
-// makes it, or `{pause 1.5s}` with a length of its own (`markName`).
-//
-// Pure, and in `src/lib` rather than on the server, so the browser can read a chapter file with
-// the same scanner the server imports it with.
+// A script line as a script file holds it, and back. Tags are inline markers, not offsets (which
+// break on the first hand edit): `{sigh}`, `{sigh!}` omitted, `{sigh?}` awaiting review, `{sigh~}`
+// scripted, `{pause 1.5s}`. The name is the tag's shared `id`, never a provider's token.
 import type { ExpressionAnnotation, ExpressionTag, ScriptFileLine, Segment } from "@/types";
 import { NARRATOR } from "@/lib/cast";
 import { PAUSE_WORDS, pauseAnnotation, scriptedAnnotation } from "@/lib/expressions";
@@ -20,7 +10,6 @@ export const SCRIPT_FORMAT = "audiobook-studio/script";
 export const SCRIPT_CHAPTER_FORMAT = "audiobook-studio/script-chapter";
 export const SCRIPT_FORMAT_VERSION = 1;
 
-/** One marker read out of a line: the tag's shared id, where it sits in the plain text, and how. */
 export interface Mark {
   id: string;
   at: number;
@@ -29,7 +18,7 @@ export interface Mark {
   scripted?: boolean;
 }
 
-/** A line whose markers cannot be read; `at` is where in the marked text it went wrong. */
+/** `at` is where in the marked text it went wrong. */
 export class MarkerError extends Error {
   override readonly name = "MarkerError";
   constructor(
@@ -40,49 +29,31 @@ export class MarkerError extends Error {
   }
 }
 
-/**
- * A tag id is whatever the person who configured the tag typed, so the characters a marker is made
- * of are escaped inside it with a backslash: `{huh\?}` is the tag `huh?`, where `{huh?}` is the
- * tag `huh` awaiting review.
- */
+/** `{huh\?}` is the tag `huh?`; `{huh?}` is the tag `huh` awaiting review. */
 const escapeId = (id: string): string => id.replace(/[\\{}!?~]/g, "\\$&");
 
-/**
- * The suffixes a marker carries, `~!?`: written by the scripting model, omitted, awaiting review.
- * The history's signature of a line writes them the same way.
- */
+/** `~!?`: scripted, omitted, awaiting review. The history's line signature uses it too. */
 export const markSuffix = (a: {
   scripted?: boolean;
   omitted?: boolean;
   needsReview?: boolean;
 }): string => `${a.scripted ? "~" : ""}${a.omitted ? "!" : ""}${a.needsReview ? "?" : ""}`;
 
-/**
- * What a marker names: the tag's id, and for a pause with a length of its own, the length —
- * `pause 1.5s`. The history's signature of a line names them the same way.
- */
+/** The tag's id, or `pause 1.5s` for a pause with its own length. */
 export const markName = (a: Pick<ExpressionAnnotation, "id" | "kind" | "seconds">): string =>
   a.kind === "pause" && a.seconds != null ? `${a.id} ${a.seconds}s` : a.id;
-/** A pause's marker name read back: its word, and its own length when it has one. */
 const PAUSE_MARK = new RegExp(`^(${PAUSE_WORDS.join("|")})(?: (\\d+(?:\\.\\d+)?)s)?$`);
 
 /**
- * A marker that starts a word — at the start of the line, or after whitespace — is written with one
- * space after it, and the reader takes that space back: `{sigh} Don't move.` is how a person types
- * it, and reads as the line `Don't move.` with the tag before its first word. Glued to a word, as in
- * `move{sigh}.`, a marker takes no space. The same test on both sides keeps the round trip exact.
+ * A marker starting a word is written with one space after it, which the reader takes back
+ * (`{sigh} Don't move.`). The same test on both sides keeps the round trip exact.
  */
 const startsWord = (plain: string): boolean => plain === "" || /\s$/.test(plain);
 
-/**
- * `text` with its tags written in as markers, and any literal `{` doubled so it cannot be read as
- * one. Tags at the same position keep the order the line holds them in, because that order is part
- * of the line's signature.
- */
+/** Literal `{` is doubled. Tags at one position keep their order: it is part of the signature. */
 export function writeMarkers(text: string, expressions?: readonly ExpressionAnnotation[]): string {
   const marks = [...(expressions ?? [])]
     .map((a, i) => ({ a, i }))
-    // stable: position first, then the order the line had them in
     .sort((x, y) => x.a.at - y.a.at || x.i - y.i)
     .map(({ a }) => a);
   let out = "";
@@ -98,11 +69,8 @@ export function writeMarkers(text: string, expressions?: readonly ExpressionAnno
 }
 
 /**
- * The plain text of a marked line, and the markers it held with their positions in that text.
- *
- * A scanner rather than a strip-by-regex, so a doubled `{{` is a brace, a marker cannot swallow
- * the words after an unclosed one, and a line that does not parse is refused with where it broke
- * rather than imported with a tag's name read aloud.
+ * A scanner, not a regex strip, so `{{` is a brace and an unclosed marker is refused with where it
+ * broke rather than imported with a tag's name read aloud.
  */
 export function readMarkers(marked: string): { text: string; marks: Mark[] } {
   let text = "";
@@ -120,7 +88,6 @@ export function readMarkers(marked: string): { text: string; marks: Mark[] } {
       i += 2;
       continue;
     }
-    // the marker's body, each character marked by whether a backslash escaped it
     const body: { c: string; escaped: boolean }[] = [];
     let j = i + 1;
     for (; j < marked.length && marked[j] !== "}"; j++) {
@@ -134,7 +101,7 @@ export function readMarkers(marked: string): { text: string; marks: Mark[] } {
       throw new MarkerError("A tag marker is not closed — write a literal { as {{", i);
     const close = j;
     const mark: Mark = { id: "", at: text.length };
-    // `~!?` in the order the signature writes them; any one alone is fine too
+    // `~!?` in the order `markSuffix` writes them
     const last = (c: string): boolean => body.at(-1)?.c === c && !body.at(-1)!.escaped;
     if (last("?")) {
       mark.needsReview = true;
@@ -160,7 +127,7 @@ export function readMarkers(marked: string): { text: string; marks: Mark[] } {
   return { text, marks };
 }
 
-/** What a script file keeps of a line: the script, and nothing local to this install. */
+/** Nothing local to this install. */
 export function toFileLine(s: Segment): ScriptFileLine {
   const line: ScriptFileLine = {
     speaker: s.speaker,
@@ -180,16 +147,8 @@ export function toFileLine(s: Segment): ScriptFileLine {
 }
 
 /**
- * A file line as a segment of this install: `id`, no audio, and each marker turned back into an
- * annotation of the tag the speaking endpoint has by that id.
- *
- * A tag the endpoint does not offer is still kept — dropping it would lose a decision someone made
- * — but it arrives needing review, the way a change of model already leaves one, with its id for a
- * label until someone looks. A tag the scripting model wrote (`{sigh~}`) comes back as one: plain
- * words matched to a voice only when the line is sent, and left out quietly where the voice cannot
- * take them, as before it left. Throws `MarkerError` for a line whose markers do not parse. A line
- * of site text or a note is the Narrator's whoever the file names, as it is when a model or a
- * person marks one, so a hand-edited file cannot bring a speaker into the cast that reads nothing.
+ * A file line as a segment, with no audio. A tag the endpoint does not offer is kept but needs
+ * review. Site text and notes go to the Narrator whoever the file names. Throws `MarkerError`.
  */
 export function fromFileLine(
   line: ScriptFileLine,
@@ -222,7 +181,6 @@ export function fromFileLine(
         return a;
       }
       const tag = tags.find((t) => t.id === m.id);
-      // one the scripting model wrote stays its plain words, matched to a voice only when sent
       if (m.scripted) {
         const a = scriptedAnnotation({ label: tag?.label ?? m.id, at: m.at }, nextAnnotationId());
         if (m.omitted) a.omitted = true;
@@ -254,11 +212,7 @@ export function fromFileLine(
   return s;
 }
 
-/**
- * `chapters/0012-the-gate.json`: numbered so a folder lists in reading order, named so a person
- * can find the chapter they mean to edit. The number is the chapter's place in this export, not
- * an id — nothing matches on it.
- */
+/** `chapters/0012-the-gate.json`. The number is the place in this export; nothing matches on it. */
 export function chapterFileName(position: number, title: string): string {
   const slug = title
     .toLowerCase()

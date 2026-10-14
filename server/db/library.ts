@@ -1,9 +1,5 @@
-// Every read and write the library makes.
-//
-// The routes call these and nothing else: no route builds a query, and no query knows it is being
-// served over HTTP. An import writes a book, its volume, its chapters and their text in one
-// transaction, so a crash halfway through a nine-hundred-chapter file leaves no half-imported book
-// behind for the review to choke on.
+// Every read and write the library makes. An import writes a book, its volume, its chapters and
+// their text in one transaction, so a crash mid-file leaves no half-imported book.
 import { and, asc, count, desc, eq, inArray, lt, max, sql } from "drizzle-orm";
 
 import type {
@@ -49,7 +45,7 @@ import {
   volumeValues,
 } from "~/db/rows";
 
-/** SQLite takes its parameters one variable at a time, and a long web novel is thousands of rows. */
+/** Keeps an `IN (...)` under SQLite's parameter limit; a long web novel is thousands of rows. */
 const CHUNK = 200;
 const chunked = <T>(xs: readonly T[]): T[][] => {
   const out: T[][] = [];
@@ -57,13 +53,7 @@ const chunked = <T>(xs: readonly T[]): T[][] => {
   return out;
 };
 
-/**
- * How each book's chapters stand, counted in one pass.
- *
- * The shelf lists books without their chapters — a review's worth of rows per book is not a cheap
- * listing — and these are what let a card say "12 chapters, 3 scripted" before the book has been
- * opened. One query over the table, grouped, rather than one per book.
- */
+/** Each book's chapter counts in one grouped query, so a shelf card needs no chapter rows. */
 export function chapterCounts(db: Db | Tx, bookId?: string): Map<string, ChapterCounts> {
   const rows = db
     .select({
@@ -117,7 +107,7 @@ export function getBook(db: Db | Tx, id: string): Book | undefined {
   return toBook(row, vols, chapterCounts(db, id).get(id) ?? NO_CHAPTERS);
 }
 
-/** A book's pacing, the default when it has none of its own: one row's few columns, for a line. */
+/** A book's pacing, or the default when it has none of its own. */
 export function readPacing(db: Db | Tx, bookId: string): Pacing {
   const row = db
     .select({
@@ -151,12 +141,8 @@ export function listChapters(db: Db | Tx, bookId: string): Chapter[] {
 const NO_LINES: LineCounts = { total: 0, done: 0, generating: 0, failed: 0, skipped: 0 };
 
 /**
- * Each chapter's lines counted by the clip each one plays, in one pass over the book.
- *
- * A page that shows a chapter's figures — its line count in the picker, a running job's progress on
- * the Queue — reads these rather than the chapter's script, which it may never have opened. Only
- * the lines the book reads aloud are counted, since only they want a clip; the rest — `unspoken`,
- * the types `isSpoken` says no to — are `skipped`, counted apart so the page can say so.
+ * Each chapter's lines counted by the clip each one plays, in one pass over the book. `unspoken`
+ * lines want no clip, so they count as `skipped` rather than in the total.
  */
 function lineCounts(
   db: Db | Tx,
@@ -202,7 +188,7 @@ function lineCounts(
   );
 }
 
-/** One chapter of one book, by the number it goes by now: every read and write of one says this. */
+/** One chapter of one book, by the number it goes by now. */
 export const chapterAt = (bookId: string, id: number) =>
   and(eq(chapters.bookId, bookId), eq(chapters.id, id));
 
@@ -215,7 +201,6 @@ export function chapterExists(db: Db | Tx, bookId: string, id: number): boolean 
   return !!db.select({ id: chapters.id }).from(chapters).where(chapterAt(bookId, id)).get();
 }
 
-/** A book's chapter ids in book order, without the rest of each row. */
 export function chapterIds(db: Db | Tx, bookId: string): number[] {
   return db
     .select({ id: chapters.id })
@@ -226,18 +211,11 @@ export function chapterIds(db: Db | Tx, bookId: string): number[] {
     .map((c) => c.id);
 }
 
-/**
- * How a sentence a person reads names this chapter: "chapter 2" by its reading number
- * (`chapterNumbers`), never by its id, which counts the cover and contents pages too — or "a
- * skipped chapter" for one the audiobook leaves out, which has no number.
- */
+/** "chapter 2" by reading number, never by id (which counts cover and contents pages too). */
 export const chapterName = (db: Db | Tx, bookId: string, id: number): string =>
   nameOf(readingNumber(db, bookId, id));
 
-/**
- * The number a person reads a chapter by (`chapterNumbers`): its place among the chapters the
- * audiobook keeps. Undefined for a skipped chapter, and for one that is not in the book.
- */
+/** A chapter's place among the kept chapters (`chapterNumbers`); undefined when skipped or absent. */
 export function readingNumber(db: Db | Tx, bookId: string, id: number): number | undefined {
   const all = db
     .select({ id: chapters.id, excluded: chapters.excluded })
@@ -247,20 +225,18 @@ export function readingNumber(db: Db | Tx, bookId: string, id: number): number |
   return chapterNumbers(all.map((c) => ({ id: c.id, excluded: !!c.excluded }))).get(id);
 }
 
-/** "chapter 2", or "a skipped chapter" for one with no reading number. */
 export const nameOf = (n: number | undefined): string =>
   n == null ? "a skipped chapter" : `chapter ${n}`;
 
 /**
- * The identity a chapter keeps whatever number it goes by. A job reads it when it starts and finds
- * the chapter by it at every write (`locateChapter`), because removing an earlier volume
- * renumbers the book under a running job.
+ * The identity a chapter keeps whatever number it goes by. Jobs find their chapter by it at every
+ * write (`locateChapter`): removing an earlier volume renumbers the book under a running job.
  */
 export function chapterUid(db: Db | Tx, bookId: string, id: number): string | undefined {
   return db.select({ uid: chapters.uid }).from(chapters).where(chapterAt(bookId, id)).get()?.uid;
 }
 
-/** Where a chapter is now, by the identity that does not move; undefined once it has gone. */
+/** Where a chapter is now, by uid; undefined once it has gone. */
 export function locateChapter(
   db: Db | Tx,
   uid: string,
@@ -283,9 +259,8 @@ export function setChapterRecap(
 }
 
 /**
- * Where the chapter before this one in the audiobook left off: the recap of the nearest earlier
- * chapter that is not skipped, or "" when that one has none — an older chapter's recap would be
- * the wrong scene, so the search stops there.
+ * The recap of the nearest earlier kept chapter, or "" when that one has none: an older chapter's
+ * recap would be the wrong scene, so the search stops there.
  */
 export function previousRecap(db: Db | Tx, bookId: string, chapterId: number): string {
   const row = db
@@ -303,7 +278,6 @@ export function previousRecap(db: Db | Tx, bookId: string, chapterId: number): s
   return row?.recap ?? "";
 }
 
-/** A chapter's scripting status and how far along it is; the job keeps it, and a person's edit. */
 export function setChapterScripting(
   db: Db | Tx,
   bookId: string,
@@ -317,7 +291,6 @@ export function setChapterScripting(
     .run();
 }
 
-/** A chapter's narration status, and — when given — how far along it is and how long it plays. */
 export function setChapterNarration(
   db: Db | Tx,
   bookId: string,
@@ -336,7 +309,7 @@ export function setChapterNarration(
     .run();
 }
 
-/** How long a chapter plays, in seconds, leaving its status alone: a pacing change re-times it. */
+/** Seconds; leaves the status alone, for a pacing change that re-times the chapter. */
 export function setChapterDuration(
   db: Db | Tx,
   bookId: string,
@@ -355,10 +328,8 @@ export function getChapterBody(db: Db, bookId: string, chapterId: number): strin
 }
 
 /**
- * The chapters whose text names `name` as written — same case, a whole word or phrase, so
- * "Shadow" is not found in "shadow" or "Shadowfall" — in book order. SQL finds the chapters that
- * hold the letters at all and a Unicode-aware boundary check confirms them. Searched in the stored
- * Markdown, where a name split by emphasis ("*Lord* of Shadows") is not found.
+ * Chapters whose text names `name` as a whole word, same case, in book order. Searches the stored
+ * Markdown, so a name split by emphasis ("*Lord* of Shadows") is not found.
  */
 export function chaptersMentioning(db: Db, bookId: string, name: string): number[] {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -387,7 +358,7 @@ export function freeBookId(db: Db, base: string): string {
   for (let n = 2; ; n++) if (!taken.has(`${base}-${n}`)) return `${base}-${n}`;
 }
 
-/** Write a whole imported book. All of it, or none of it. */
+/** Write a whole imported book, in one transaction. */
 export function insertBook(
   db: Db | Tx,
   book: Book,
@@ -415,7 +386,6 @@ export function insertBook(
   });
 }
 
-/** Add one more volume to a book that is already in the library. */
 export function insertVolume(
   db: Db,
   bookId: string,
@@ -446,7 +416,6 @@ export function insertVolume(
   });
 }
 
-/** The highest chapter number in a book, or 0 when it has none. */
 export function lastChapterNumber(db: Db, bookId: string): number {
   return (
     db
@@ -457,7 +426,6 @@ export function lastChapterNumber(db: Db, bookId: string): number {
   );
 }
 
-/** The highest volume id in a book, or 0. */
 export function lastVolumeId(db: Db, bookId: string): number {
   return (
     db
@@ -469,11 +437,8 @@ export function lastVolumeId(db: Db, bookId: string): number {
 }
 
 /**
- * Skip chapters for the audiobook, or include them again.
- *
- * Nothing is deleted: a skipped chapter keeps its text, its number and its place. Including a
- * chapter that carries a note counts as having looked at it, so the suggestion stops asking —
- * the same rule `libraryStore.skipChapters` applies in the demo.
+ * Skip chapters for the audiobook, or include them again; a skipped chapter keeps its text and
+ * number. Including a chapter with a note marks it `kept`, so the suggestion stops asking.
  */
 export function setSkipped(db: Db, bookId: string, ids: readonly number[], skip: boolean): number {
   if (!ids.length) return 0;
@@ -522,7 +487,6 @@ export function setKept(db: Db, bookId: string, ids: readonly number[]): number 
   return changed;
 }
 
-/** One chapter's review decisions, stated outright: skipped or not, looked at or not. */
 export interface ReviewDecision {
   id: number;
   excluded?: boolean;
@@ -530,13 +494,9 @@ export interface ReviewDecision {
 }
 
 /**
- * Put chapters' review decisions to exactly these, whatever they are now.
- *
- * The undo primitive. `setSkipped` and `setKept` each apply a rule — including a noted chapter
- * counts as having looked at it — and a rule cannot be run backwards: an undone skip would come
- * back as `kept` rather than as the undecided chapter it was. So an Undo records what the chapters
- * were and puts that back, exactly, through this. A chapter not in the book is left out of the
- * count rather than refused, because an undo of a batch is a person's intent for the rest.
+ * Put chapters' review decisions to exactly these: the undo primitive. `setSkipped` applies a rule
+ * that cannot run backwards (an undone skip would come back `kept`). A chapter not in the book is
+ * skipped, not refused, so the rest of the batch still lands.
  */
 export function setDecisions(db: Db, bookId: string, decisions: readonly ReviewDecision[]): number {
   if (!decisions.length) return 0;
@@ -580,19 +540,10 @@ export function confirmImport(db: Db, bookId: string): void {
 }
 
 /**
- * Give a book's chapters the numbers 1..n in reading order, and put the volume ranges back.
- *
- * Chapter numbers are continuous across volumes and are the key everything downstream uses — the
- * script, the clips, the history, an export's chapter list — so a removal that left a gap, or left
- * `Volume.from`/`to` describing chapters that moved, would strand all of it.
- *
- * Only `chapters` is written here. Every table that keys on a chapter does so through a composite
- * foreign key declared `ON UPDATE CASCADE`, so renumbering carries the script and everything hanging
- * off it in the same statement. Moving them by hand would be a second definition of the same
- * relationship, and the one that fell behind would do so silently.
- *
- * Numbers are parked above the range first because `(book_id, id)` is the primary key: renumbering
- * in place collides the moment a chapter takes a number its neighbour has not vacated yet.
+ * Give a book's chapters the numbers 1..n in reading order, and put the volume ranges back. Only
+ * `chapters` is written: every table keyed on a chapter follows by `ON UPDATE CASCADE`. Numbers
+ * are parked above the range first because `(book_id, id)` is the primary key, and renumbering in
+ * place collides with a neighbour that has not moved yet.
  */
 function renumber(tx: Tx, bookId: string): void {
   const OFFSET = 1_000_000;
@@ -634,31 +585,23 @@ function renumber(tx: Tx, bookId: string): void {
   }
 }
 
-/** What taking a volume off left behind on disk, for the caller to remove once the rows are gone. */
-/**
- * The file names a clip row holds on disk: the file it plays and, when effects made that one, the
- * voice's own file beside it (`raw`). Whatever removes a clip's row removes both.
- */
+/** A clip row's files on disk: the one it plays and, when effects made it, the dry `raw` one. */
 export const clipFiles = (c: { url: string | null; raw: string | null }): string[] =>
   [c.url, c.raw].flatMap((u) => (u ? [u.split("/").at(-1)!] : []));
 
+/** What taking a volume off left behind on disk, for the caller to remove once the rows are gone. */
 export interface DeletedVolume {
-  /** how many chapters went */
   chapters: number;
-  /** the file names of every clip those chapters had rendered, under the book's audio directory */
+  /** file names under the book's audio directory */
   clips: string[];
-  /** audiobooks that were only those chapters, and are gone with them: their files, by export */
+  /** audiobooks that were only those chapters, and went with them */
   exports: { id: number; tokens: string[] }[];
 }
 
 /**
- * Take a volume off its book: its chapters and their text go, and the rest are renumbered.
- *
- * Everything keyed on a chapter follows by foreign key — the script, the clips, the history, an
- * audiobook's list of chapters — which is the demo's rule too: an export keeps the chapters it
- * still has, under their new numbers, and one left with none goes entirely. Two things do not
- * follow a key and are done here, in the same transaction: the book's live jobs get their duplicate
- * keys again (`rekeyActive`), and what the rows pointed at on disk is handed back to be removed.
+ * Take a volume off its book and renumber the rest; everything keyed on a chapter cascades. An
+ * export left with no chapters goes entirely. Live jobs' keys are rewritten here (`rekeyActive`),
+ * since they follow no foreign key.
  */
 export function deleteVolume(db: Db, bookId: string, volumeId: number): DeletedVolume {
   const out: DeletedVolume = { chapters: 0, clips: [], exports: [] };
@@ -681,7 +624,6 @@ export function deleteVolume(db: Db, bookId: string, volumeId: number): DeletedV
         .all())
         touched.add(e.id);
     }
-    // the chapter's text, script, clips, history and its place in an export all cascade from this
     for (const part of chunked(mine))
       tx.delete(chapters)
         .where(and(eq(chapters.bookId, bookId), inArray(chapters.id, part)))
@@ -713,7 +655,7 @@ export function deleteVolume(db: Db, bookId: string, volumeId: number): DeletedV
   return out;
 }
 
-/** Everything a book owns. The foreign keys cascade the rest. */
+/** The foreign keys cascade everything the book owns. */
 export function deleteBook(db: Db, bookId: string): void {
   db.delete(books).where(eq(books.id, bookId)).run();
 }
@@ -725,24 +667,20 @@ export interface BookSettings {
   budget?: { cap: number | null; paused: boolean } | null;
   scriptBudget?: number | null;
   pacing?: Pacing | null;
-  /** the book's notes for the scripter and its own prompt; `null` clears both */
   prompt?: BookPrompt | null;
-  /** read `note` lines aloud; `null` goes back to the default, which skips them */
+  /** read `note` lines aloud; `null` goes back to skipping them */
   readNotes?: boolean | null;
-  /** check each chapter by ear once it is narrated; `null` goes back to only when asked */
+  /** check each chapter by ear once narrated; `null` goes back to only when asked */
   checkByEar?: boolean | null;
-  /** the book's thought effect, an effect's id or "none"; `null` follows the library's */
+  /** an effect's id or "none"; `null` follows the library's */
   thoughts?: ThoughtChoice | null;
   /** the voice for speakers with none of their own; `null` goes back to the Narrator's */
   characterVoice?: CharacterVoice | null;
 }
 
 /**
- * Write the settings a request names, and nothing else.
- *
- * A budget and a pacing are each one value in several columns, and are written as one: the row reads
- * back a pacing only when both of its columns are set, so writing half of one would store a value
- * that reads as the default. A prompt is one value in four, the same way.
+ * Write the settings a request names, and nothing else. A budget, pacing or prompt spans several
+ * columns and is written whole: a half-written pacing would read back as the default.
  */
 export function setBookSettings(db: Db | Tx, bookId: string, s: BookSettings): void {
   const set: Partial<typeof books.$inferInsert> = {};
@@ -766,7 +704,6 @@ export function setBookSettings(db: Db | Tx, bookId: string, s: BookSettings): v
   db.update(books).set(set).where(eq(books.id, bookId)).run();
 }
 
-/** The image the book is shown with, a url of its own covers. */
 export function setBookCover(db: Db, bookId: string, url: string): void {
   db.update(books).set({ coverImage: url }).where(eq(books.id, bookId)).run();
 }
@@ -779,16 +716,10 @@ export function renameVolume(db: Db, bookId: string, volumeId: number, name: str
 }
 
 /**
- * Cut a book into these volumes: each `start` is the chapter a volume begins at and the name it
- * has, in reading order, the first at the book's first chapter (checked by the caller).
- *
- * Each start takes the first volume its chapters are in today that no earlier start has taken, so
- * a boundary that moves keeps both rows — their ids, the files they came from, whether they are
- * still in review — and takes the name given; a start whose chapters are all in volumes already
- * taken is a new row, cut from the volume its first chapter was in, which it takes its file and
- * review state from; a row left with no chapters goes. Chapter numbers do not move, since the
- * reading order is the same: only `volume_id` and `volume_index` are rewritten, and the ranges
- * put back.
+ * Cut a book into volumes at these starts (reading order; the caller checks the first is chapter 1).
+ * Each start reuses the first untaken volume its chapters are in, so a moved boundary keeps both
+ * rows; otherwise a new row copies its parent's file and review state. Empty rows go. Chapter
+ * numbers do not move.
  */
 export function setVolumes(db: Db, bookId: string, starts: readonly VolumeStart[]): void {
   db.transaction((tx) => {
@@ -807,8 +738,6 @@ export function setVolumes(db: Db, bookId: string, starts: readonly VolumeStart[
       const mine = rows.filter((c) => c.id >= start.chapter && c.id < end);
       if (!mine.length) return;
       const parent = byId.get(mine[0].volumeId)!;
-      // the first volume these chapters are in today that no earlier start has taken: a boundary
-      // that moved keeps both rows, a split inside one volume makes a new row for its second half
       let id = mine.map((c) => c.volumeId).find((v) => !kept.has(v));
       if (id == null) {
         id = ++nextId;
@@ -851,14 +780,7 @@ export function setVolumes(db: Db, bookId: string, starts: readonly VolumeStart[
   });
 }
 
-/**
- * Put a book's volumes in this order, and number its chapters to follow it.
- *
- * The same renumbering a removal does, without the removal: every chapter keeps its place within
- * its volume, and everything it owns follows its new number by the cascade, with the live jobs'
- * duplicate keys rewritten in the same transaction (`rekeyActive`). `order` is every volume of the
- * book, checked by the caller.
- */
+/** Put a book's volumes in this order (every volume, checked by the caller) and renumber. */
 export function reorderVolumes(db: Db, bookId: string, order: readonly number[]): void {
   db.transaction((tx) => {
     order.forEach((id, position) =>

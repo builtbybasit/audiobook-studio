@@ -1,6 +1,5 @@
-// Voice effects: named Pedalboard chains kept for the whole library (docs/audio.md, "Voice
-// effects"). A speaker can wear one on all of their lines, and a `thought` line gets a thought
-// effect after it, chosen speaker → book → library (`src/lib/effects.ts`).
+// Voice effects: named Pedalboard chains kept for the whole library. A speaker can wear one on all
+// their lines; `thought` lines get one chosen speaker → book → library (`src/lib/effects.ts`).
 
 /** One Pedalboard plugin and its keyword arguments; an off step is kept but not run. */
 export interface PluginStep {
@@ -29,26 +28,18 @@ export interface Effect {
   name: string;
   chain: Step[];
   /**
-   * When a line is heard through it, in one sentence for the scripting model ("words sent mind to
-   * mind"): an effect with one is offered to the model as a line effect (`Segment.effects`).
-   * Absent = never offered; it can still be worn by a speaker or put on a line by hand.
+   * One sentence for the scripting model ("words sent mind to mind"); with it, the effect is
+   * offered as a line effect (`Segment.effects`). Absent = only worn by a speaker or set by hand.
    */
   useWhen?: string;
 }
 
-/**
- * The thought effect chosen at one level — a speaker, a book, the library: an effect's id, or
- * `"none"` for no thought effect. Absent (null) on a speaker or a book = follow the next level.
- */
+/** An effect id, or `"none"`. Absent (null) on a speaker or book = follow the next level. */
 export type ThoughtChoice = string;
 
-/**
- * A speaker's two effect choices, named as their fields on `Character`: their effect on all their
- * lines, and their thought effect.
- */
+/** The two effect fields on `Character`. */
 export type EffectSlot = "effect" | "thoughts";
 
-/** One speaker's choices of one effect: as their effect, their thought effect, or both. */
 export interface SpeakerEffectUse {
   bookId: string;
   name: string;
@@ -57,10 +48,8 @@ export interface SpeakerEffectUse {
 }
 
 /**
- * A book's clips whose sound is not what their lines' effects now make (`GET …/effects/stale`):
- * `lines` of them, of which `unavailable` cannot be redone — made with effects before the voice's
- * own file was kept beside them. `ready` says whether effects can run on this server at all (uv
- * and Pedalboard found): without it a Re-apply can only fail, so the page says why instead.
+ * `GET …/effects/stale`: clips whose sound no longer matches their effects. `unavailable` ones have
+ * no raw file to redo from. `ready` is false without uv/Pedalboard, so Re-apply would fail.
  */
 export interface StaleSound {
   lines: number;
@@ -69,15 +58,13 @@ export interface StaleSound {
 }
 
 /**
- * Everywhere an effect is chosen, across every book (`GET /api/effects/:id/uses`), so a delete or
- * an edit can say whom it reaches before it does. A book that follows the library is reached
- * through `library`, and is not listed in `books`.
+ * `GET /api/effects/:id/uses`, so a delete or edit can say whom it reaches. A book that follows the
+ * library is reached through `library`, not listed in `books`.
  */
 export interface EffectUses {
-  /** the library's thought effect (settings `thoughts`) is it */
+  /** it is the library's thought effect */
   library: boolean;
   /** books whose own thought effect it is */
   books: { id: string; title: string }[];
-  /** characters choosing it as their effect, their thought effect, or both */
   speakers: (SpeakerEffectUse & { bookTitle: string })[];
 }

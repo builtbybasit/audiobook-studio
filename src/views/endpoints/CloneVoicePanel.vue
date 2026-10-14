@@ -3,18 +3,9 @@ import { useEndpointsStore } from "@/stores/endpoints";
 import { useUiStore } from "@/stores/ui";
 import { useSpeakerSamplesStore, type CloneFromSamples } from "@/stores/speakerSamples";
 
-// Cloning a voice, on a speech endpoint's Voices tab.
-//
-// A voice made from uploaded samples of someone speaking, kept by the provider as a private voice
-// on the account and added to this endpoint like any other: the provider makes it once, and it is
-// spoken by its id from then on. Only where the provider keeps one (its `cloning`): the samples go
-// to the provider through the server, with the saved key, and the server keeps them beside the
-// voice — so the voice can travel with a book's script to someone who has to make it again. A provider that takes a transcript of each sample is asked
-// for one beside it, kept with the sample for the same reason.
-//
-// What a pick may be is the provider's (`cloneForm.ts`): the picker offers its formats, a pick is
-// cut to the most it takes, and a file too large for it blocks the button with its name. The
-// server still decides by each file's first bytes, so a renamed file is refused there with its name.
+// Cloning a voice on a speech endpoint's Voices tab, where the provider supports it (`cloning`).
+// The server keeps the samples (and transcripts) beside the voice, so it can travel with a book's
+// script to someone who must make it again. Pick limits: `cloneForm.ts`.
 import { computed, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { keyInPlace } from "@/services/endpointSettings";
@@ -31,7 +22,6 @@ import SamplePicker from "@/views/endpoints/SamplePicker.vue";
 import type { Endpoint, SpeakerSamples } from "@/types";
 
 const props = defineProps<{ endpoint: Endpoint }>();
-/** A voice was made and added to the endpoint, with its samples kept on the server. */
 const emit = defineEmits<{ cloned: [] }>();
 const endpointsStore = useEndpointsStore();
 const uiStore = useUiStore();
@@ -43,14 +33,13 @@ const needsKeyFirst = computed(() => props.endpoint.needsKey && !keyInPlace(prop
 const cloning = computed(() => cloningOf(props.endpoint));
 const provider = computed(() => speechProviderOf(props.endpoint).label);
 const clonable = computed(() => !!cloning.value);
-// a provider that clones only for some of its models (Qwen) says which, where this one does not
+// a provider that clones only on some models (Qwen) names them
 const cloneModels = computed(() => cloneModelsFor(props.endpoint));
 const clone = reactive({
   title: "",
   samples: [] as SampleRow[],
   busy: false,
 });
-/** Why the picked samples cannot be sent, naming the file; null when nothing stops them. */
 const cloneProblem = computed(() =>
   cloning.value
     ? pickProblem(
@@ -77,10 +66,8 @@ const about = computed(
 );
 
 // ---------- cloning from samples a script file brought ----------
-// The Cast page and the import report link here with `?book=…&samples=…&speaker=…&was=…` when a
-// script file carried the samples of a private voice. The form is filled with them and nothing
-// more: the button is theirs to press. A voice made from them goes to the speaker only if the
-// speaker's voice is still `was` — see `afterClone`.
+// Linked with `?book=…&samples=…&speaker=…&was=…`; only fills the form. The voice goes to the
+// speaker only if their voice is still `was` (see `afterClone`).
 const from = ref<(CloneFromSamples & { sample: SpeakerSamples }) | null>(null);
 const query = (k: string): string => {
   const v = route.query[k];
@@ -105,13 +92,12 @@ async function prefill() {
   from.value = {
     bookId,
     sampleId,
-    // the server's row, never the address: a rename since the link was made moves the row with it
+    // from the server's row, not the address, so a rename since the link still matches
     speaker: sample.speaker,
     was: query("was") || null,
     sample,
   };
-  // the picker holds them to this provider like a pick by hand, since a script file may carry
-  // more samples than it takes; a transcript kept with a sample comes along with it
+  // held to this provider's limits like a hand pick: a script file may carry more than it takes
   Object.assign(clone, {
     title: sample.title,
     samples: files.map((file, i) => ({ file, transcript: sample.samples[i]?.transcript ?? "" })),
@@ -122,7 +108,7 @@ watch(
   () => void prefill(),
   { immediate: true },
 );
-/** Leave the link behind: the form empties, and the address stops asking for it again. */
+/** Empties the form and drops the link from the address. */
 function forgetLink() {
   const { book: _b, samples: _s, speaker: _p, was: _w, ...rest } = route.query;
   void router.replace({ query: rest });
@@ -190,7 +176,7 @@ async function makeVoice() {
           maxlength="100"
           placeholder="Narrator — Mara"
       /></label>
-      <!-- samples picked by hand are not the ones a link brought, so the voice is not theirs -->
+      <!-- a hand pick detaches the voice from the linked speaker -->
       <SamplePicker v-model="clone.samples" :cloning="cloning" @pick="from = null" />
       <p
         v-if="cloneProblem"

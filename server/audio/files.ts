@@ -1,28 +1,7 @@
-// Where rendered audio lives on disk, and how a clip's `url` finds it again.
-//
-// A clip row holds a url and nothing else about the file, so this module is the only place that
-// knows the layout: one directory per book, one file per render, named by a token that means
-// nothing. Not the chapter number and not the line, because both are addresses that move — a
-// renumbering must not move files, and a token that is never reused means the route can tell the
-// browser to cache a clip forever. The book id is in the path so that removing a book is removing
-// a directory, which is the whole of the cleanup story.
-//
-// The url is under the API base of the library that rendered the clip — `/api`, or `/demo/api` for
-// the demo — and it is stored with the clip, so a clip is only ever served by the library that
-// holds it.
-//
-// `path` is the one function that turns a request into a filesystem path, and it refuses anything
-// that is not exactly a book id and a token: there is no request that legitimately reads outside a
-// book's directory, so none is allowed to try.
-//
-// A clip is kept in the format it came back in, and its extension is the only record of which:
-// `.wav`, `.mp3` or `.opus` (`AUDIO_EXT`). The route serves each by its extension, and the export
-// decides by it whether a clip needs decoding before it can be stitched.
-//
-// Whatever reads a clip's bytes asks for them through `ready` rather than `path`, because a library
-// may hold clips whose files it has not written yet: the demo is seeded with thousands of narrated
-// lines and makes each one's file the first time something reads it (`audio/demoClips.ts`). The
-// real library makes nothing, so there `ready` is `path` — a file that is gone stays gone.
+// Rendered audio on disk: `<dir>/<bookId>/<token>.<ext>`, the only place that knows the layout.
+// The token is never reused (renumbering moves no files; clips cache forever), and the extension
+// is the only record of the format. `path` refuses anything but a book id and a token.
+// Readers go through `ready`, which makes a demo clip's file on first read (`audio/demoClips.ts`).
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -36,63 +15,45 @@ const BY_EXT = new Map(
   (Object.entries(AUDIO_EXT) as [AudioFormat, string][]).map(([format, ext]) => [ext, format]),
 );
 
-/** The format a clip's file name, path or url says it is in, or null when it names none kept here. */
+/** The format a clip's file name, path or url says it is in, or null. */
 export function formatOfFile(name: string): AudioFormat | null {
   const dot = name.lastIndexOf(".");
   return dot < 0 ? null : (BY_EXT.get(name.slice(dot + 1).toLowerCase()) ?? null);
 }
 
-/**
- * The file name a clip's url ends with: the name `heard` keeps a finding by and `remove` takes. It
- * says nothing about whether the url is one of this library's; `AudioFiles.find` does.
- */
+/** Does not check the url is this library's; `AudioFiles.find` does. */
 export const fileName = (url: string): string => url.slice(url.lastIndexOf("/") + 1);
 
-/**
- * The bytes the clip a url names should hold, for a library that can make a clip's file again from
- * its row; null when no clip names that url, or none this can make.
- */
+/** Remakes a clip's bytes from its row; null when no clip names that url. */
 export type MakeClip = (bookId: string, url: string) => Uint8Array | null;
 
 export interface AudioFiles {
-  /** the directory everything is under, for the boot log */
   readonly dir: string;
-  /** the library's API base its urls are under: `/api`, or `/demo/api` */
+  /** the API base urls are under: `/api`, or `/demo/api` */
   readonly base: string;
-  /** Keep one render, under its format's extension, and say where a browser can fetch it. */
   write(bookId: string, bytes: Uint8Array, format: AudioFormat): Promise<{ url: string }>;
-  /**
-   * A name no render has yet, for something that writes the file itself (the effect runner's
-   * batch): where to write it, and the url it will then be fetched at.
-   */
+  /** A new name, for a caller that writes the file itself (the effect runner's batch). */
   fresh(bookId: string, format: AudioFormat): Promise<{ path: string; url: string }>;
-  /** The file a request names, or null when the request names something that cannot be a file. */
+  /** null when the request names something that cannot be a file. */
   path(bookId: string, file: string): string | null;
-  /**
-   * `path`, for a caller about to read the file: one this library knows how to make and has not
-   * made yet is written first. What comes back may still name nothing — a name no clip holds, a
-   * file removed by hand — and the caller answers that as it answers a missing file.
-   */
+  /** `path`, after making a makeable file that is missing. The path may still name nothing. */
   ready(bookId: string, file: string): Promise<string | null>;
   /**
-   * The file on disk a clip url names, made first as `ready` would; undefined for anything else —
-   * another library's url, one in a book other than `bookId` when given, a name that cannot be a
-   * clip's, or a file that is not there.
+   * The file a clip url names, made as `ready` would; undefined for another library's url, a book
+   * other than `bookId`, a bad name, or a missing file.
    */
   find(url: string, bookId?: string): Promise<string | undefined>;
-  /** Some of a book's clips, by file name; one already gone is not an error. */
+  /** A file already gone is not an error. */
   remove(bookId: string, files: readonly string[]): Promise<void>;
-  /** Everything a book's clips left on disk; a book that left nothing is not an error. */
   removeBook(bookId: string): Promise<void>;
 }
 
 export function audioFiles(dir: string, base = "/api", make?: MakeClip): AudioFiles {
-  // One write per file however many ask for it at once: the player, a build and a second tab can
-  // all reach the same unmade clip together, and the later ones wait on the first.
+  // One write per file: concurrent readers of the same unmade clip wait on the first.
   const making = new Map<string, Promise<void>>();
   const urlOf = (bookId: string, file: string) => `${base}/audio/${bookId}/${file}`;
 
-  /** Write the clip at `path` unless it is there by now, under a name nothing reads until it is whole. */
+  /** Written under a temporary name, so nothing reads it until it is whole. */
   const makeAt = async (path: string, bookId: string, file: string): Promise<void> => {
     if (await Bun.file(path).exists()) return;
     const bytes = make?.(bookId, urlOf(bookId, file));

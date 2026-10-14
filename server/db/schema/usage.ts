@@ -1,19 +1,6 @@
-// What has been spent, and on what.
-//
-// **This table is append-only.** One row per request that settled — of either kind, successful or
-// not — with the receipt it was priced from, and nothing moves, re-prices or removes one
-// afterwards. Spending is derived from it, and so is every endpoint's account of its own work.
-//
-// That rule is the point of the table rather than a nicety about it. The store's history is
-// explicit: totalling the clip currently on each line meant a failed render cost nothing and
-// accepting a retake made the money spent on the displaced clip **disappear**, and reading the
-// activity list out of the running job made a request vanish the moment it finished. So
-// the record does not live on the artefact, because the artefact moves.
-//
-// The receipts — `priced` for tokens, `speech` for a rendered clip — are frozen documents and are
-// stored whole. Everything a total, a chart or a filter reads is a column beside them, so no
-// aggregate has to parse JSON and no query is tempted to recompute a cost from the endpoint's
-// current rate card.
+// What has been spent. `requests` is append-only: one row per settled request, never moved,
+// re-priced or removed, because the clips it paid for move. Receipts are frozen JSON; everything
+// a total or filter reads is a column beside them.
 import { index, integer, primaryKey, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 import type {
@@ -34,24 +21,14 @@ export const requests = sqliteTable(
     id: text("id").primaryKey(),
     endpointId: text("endpoint_id").notNull(),
     kind: text("kind").$type<EndpointKind>().notNull(),
-    /** null for a request that belongs to no book, such as a connection probe */
+    /** null for a request with no book, such as a connection probe */
     bookId: text("book_id").references(() => books.id, {
       onDelete: "set null",
       onUpdate: "cascade",
     }),
     /**
-     * The chapter the work was for — by identity, not by number.
-     *
-     * A chapter number is an address that moves: remove volume 1 and yesterday's chapter 2 is
-     * today's chapter 1. Storing the number here would leave the ledger with two ways to be wrong
-     * and no way to be right — rewrite it and an append-only record has been edited; leave it and
-     * the row silently attributes money to a different chapter. Referencing the chapter's own id
-     * settles it: the row never changes, and the number it displays is looked up when it is read.
-     *
-     * `set null` when the chapter is deleted, never cascade. The chapter is gone; what was spent on
-     * it is not, and it stays in every total. `label` is frozen at the time of the request and is
-     * what still names the work afterwards — the work, never the chapter, whose number would go
-     * stale in it for the same reason.
+     * By uid, not number: numbers move when volumes go, and this row is never rewritten. `set null`
+     * on delete, never cascade: the spend stays in every total, named by the frozen `label`.
      */
     chapterUid: text("chapter_uid").references(() => chapters.uid, {
       onDelete: "set null",
@@ -59,41 +36,30 @@ export const requests = sqliteTable(
     }),
     label: text("label").notNull(),
     status: text("status").$type<RequestStatus>().notNull(),
-    /** 1 = settled on the first try; >1 means it was retried */
     attempts: integer("attempts").notNull().default(1),
 
     queuedAt: integer("queued_at").notNull(),
     startedAt: integer("started_at"),
     finishedAt: integer("finished_at"),
-    /** ms spent waiting on our side, before dispatch */
+    /** ms waiting on our side, before dispatch */
     queueMs: real("queue_ms").notNull().default(0),
-    /** ms spent waiting on the provider, after dispatch */
+    /** ms waiting on the provider, after dispatch */
     responseMs: real("response_ms").notNull().default(0),
     waiting: text("waiting").$type<WaitReason>(),
     rateLimited: integer("rate_limited", { mode: "boolean" }),
 
     // ---- usage, as columns so a total is a sum ----
-    /**
-     * The **total** input, cached and cache-write tokens included: those two are slices of it,
-     * never additions to it, so the charge lines always add back up to what the provider reported.
-     */
+    /** total input; cached and cache-write tokens are slices of it, not additions */
     inputTokens: integer("input_tokens"),
     outputTokens: integer("output_tokens"),
-    /**
-     * Of `output_tokens`, spent reasoning before the answer, as the provider reported it. Null = not
-     * reported, which is not zero. What a run's estimate learns a reasoning model's thinking from.
-     */
+    /** of `output_tokens`; null = not reported (not zero). Feeds run estimates. */
     reasoningTokens: integer("reasoning_tokens"),
-    /** scripting: the reasoning level the request asked for; null = none, left to the model */
+    /** null = left to the model */
     reasoningEffort: text("reasoning_effort").$type<ReasoningEffort>(),
-    /** of `input_tokens`, served from the provider's cache. Null = not reported, which is not zero. */
+    /** of `input_tokens`; null = not reported (not zero) */
     cachedInput: integer("cached_input"),
     cacheWrite: integer("cache_write"),
-    /**
-     * The speech side. Four quantities that are never conversions of one another: a request is so
-     * many characters *and* so many UTF-8 bytes *and* so many text tokens, and only the one its
-     * endpoint bills in is charged. Null means nobody counted it.
-     */
+    /** speech: independent counts; only the billing unit's is charged. Null = not counted. */
     chars: integer("chars"),
     bytes: integer("bytes"),
     textTokens: integer("text_tokens"),
@@ -101,21 +67,12 @@ export const requests = sqliteTable(
     audioTokens: integer("audio_tokens"),
 
     // ---- the money ----
-    /** null when the endpoint's rate is unknown, which is never the same as free */
+    /** null = rate unknown, never the same as free */
     cost: real("cost"),
     costBasis: text("cost_basis").$type<CostBasis>().notNull(),
-    /**
-     * What the request held against the budgets while it was out — its undiscounted worst case —
-     * kept only on a row whose `cost` is null. A request the provider billed without saying for
-     * what still cost something, so every budget counts this in its place rather than nothing.
-     */
+    /** worst case held in flight, kept only when `cost` is null; budgets count it */
     held: real("held"),
-    /**
-     * The receipt, frozen when the request completed. A scripting request gets `priced` — tokens,
-     * with the cache split; a rendered clip gets `speech` — characters, bytes, audio seconds and
-     * the unit its endpoint bills by. Editing a rate or letting a promotion expire never touches
-     * one, which is why a view must read this rather than re-derive a past cost.
-     */
+    /** Frozen receipts (scripting / speech); read these, never re-derive a past cost. */
     priced: text("priced", { mode: "json" }).$type<PricedRequest>(),
     speech: text("speech", { mode: "json" }).$type<SpeechCharge>(),
 
@@ -124,22 +81,15 @@ export const requests = sqliteTable(
     simulated: integer("simulated", { mode: "boolean" }).notNull().default(true),
   },
   (t) => [
-    /** the Activity list: one endpoint's requests, newest first, inside a time range */
+    /** the Activity list */
     index("requests_endpoint_time").on(t.endpointId, t.finishedAt),
-    /** what a book has spent */
     index("requests_book").on(t.bookId, t.finishedAt),
     index("requests_chapter").on(t.chapterUid),
     index("requests_status").on(t.status),
   ],
 );
 
-/**
- * What a book had already spent before this ledger began.
- *
- * An opening balance, taken once, so that the two halves cannot overlap: nothing done to a clip
- * afterwards can change what was spent before any of it happened. A book with no row here has
- * spent nothing but what `requests` records.
- */
+/** A book's spend before this ledger began, taken once so it can't overlap `requests`. */
 export const openingSpend = sqliteTable(
   "opening_spend",
   {
@@ -152,28 +102,22 @@ export const openingSpend = sqliteTable(
 );
 
 /**
- * A charge a provider makes for a cloned voice the first time a line is spoken with it (MiniMax:
- * `cloning.fee.when === "first-use"`), waiting for that line.
- *
- * The fee is read off the provider's description when the voice is made and kept here, so a later
- * change to the description does not re-price a voice already made. The first billed request spoken
- * with the voice appends the fee to `requests` and removes this row, in one transaction, so it is
- * charged once. A voice never spoken with is never charged for, and its row stays: tied to the
- * voice by value, as `cloned_voices` is, because a save of the endpoints lays every voice row down
- * again.
+ * A clone fee charged on first use (MiniMax: `cloning.fee.when === "first-use"`). The first billed
+ * request with the voice moves it into `requests` in one transaction. Keyed by value, not FK:
+ * saving endpoints rewrites every voice row.
  */
 export const cloneFees = sqliteTable(
   "clone_fees",
   {
     endpointId: text("endpoint_id").notNull(),
     voiceId: text("voice_id").notNull(),
-    /** what the voice was called when it was made, for the ledger row's label */
+    /** the voice's name when made, for the ledger label */
     title: text("title").notNull(),
-    /** in US dollars; null when the provider prices it in credits */
+    /** null when priced in credits */
     usd: real("usd"),
     /** the fee in the provider's docs' words */
     said: text("said").notNull(),
-    /** epoch ms the voice was made */
+    /** epoch ms */
     madeAt: integer("made_at").notNull(),
   },
   (t) => [primaryKey({ columns: [t.endpointId, t.voiceId] })],

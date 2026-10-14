@@ -1,13 +1,6 @@
-// Checking narration by ear, the browser's half: asking for a check, the queue noticing one move,
-// and the flag it raises reading like the others.
-//
-// The check itself is the server's — what it hears, what it flags, what it leaves a person's flag
-// alone for — and is tested there (`tests/server/`). What is tested here is what the page does
-// with it: the run is asked for and reported the way a narration run is, a check that moves has
-// what it heard and the script it flagged read again, and a heard flag is listed with the rest.
-//
-// The services are fakes that answer only what each test asks of them, over a book put straight
-// into the library store: none of this needs the server's world.
+// Checking narration by ear, the page's half: the run is asked for and reported like a narration
+// run, a moved check re-reads what it heard and the script it flagged, and a heard flag is listed
+// with the rest. The check itself is tested in `tests/server/`; the services here are fakes.
 import { beforeEach, describe, expect, test } from "bun:test";
 import { useQuery } from "@pinia/colada";
 

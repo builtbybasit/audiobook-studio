@@ -1,13 +1,8 @@
-// An endpoint's daily limit: what it may be charged since local midnight, across every book.
-//
-// It is asked per request, not per run — a long run legitimately spans days — so a run is refused
-// before anything is queued only when the limit cannot cover even its first request, and otherwise
-// stops before the request that would pass it, keeping what already landed. "Spent" is the ledger
-// since midnight plus what requests out at the endpoint right now hold.
-//
-// The speech model is the fake, which reports each line as a priced request on an endpoint billing
-// $15 per million characters; a line's worst case is then exactly what it is charged, so a limit a
-// hair over the first line's figure lets exactly one line through.
+// An endpoint's daily limit: what it may be charged since local midnight, across every book. It is
+// asked per request (a run may span days): a run is refused up front only if its first request
+// cannot fit, and otherwise stops before the request that would pass it. "Spent" is the ledger
+// since midnight plus what requests out now hold. The fake bills $15 per million characters with
+// worst case equal to charge, so a limit a hair over one line lets exactly one through.
 import { describe, expect, test } from "bun:test";
 
 import type { Book, Endpoint, Job, Profile, RequestRecord, Segment } from "@/types";

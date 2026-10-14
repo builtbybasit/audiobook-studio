@@ -1,12 +1,6 @@
-// An endpoint's lines sent in batches (`docs/speech-batch-api.md`).
-//
-// The narration job hands this the lines going to an endpoint that said it takes batches, and the
-// few calls every line goes through whichever way it is sent (`LineRun`): a slot on the endpoint,
-// letting a line go out, sending, and landing what came back. The order inside each — the budget
-// before the line is committed, a line that cannot be sent landed as failed, the hold given back
-// as it lands — is the run's. What is decided here is only what a batch adds — which lines go
-// together, which part of which line an item is, and which lines go again when a batch did not
-// answer them.
+// An endpoint's lines sent in batches (`docs/speech-batch-api.md`). The per-line steps (`LineRun`)
+// and their order are the narration run's; this decides only which lines go together, which part
+// each item is, and which lines go again.
 import { joinedParts, type SplitPart } from "@/lib/split";
 import { ProviderError } from "~/providers/http";
 import {
@@ -18,54 +12,45 @@ import {
 } from "~/providers/speech";
 import { joinParts, PartFailed, type Outcome } from "~/narration/parts";
 
-/** A line committed to going out, as far as a batch needs to know it; `T` is the run's own line. */
+/** `T` is the run's own line. */
 export interface BatchLine<T> {
   t: T;
   /** where it is cut to fit, or null when it goes whole */
   cuts: SplitPart[] | null;
-  /** the whole line as the provider is sent it; an item is this with a part's text */
+  /** an item is this with a part's text */
   input: SpeechInput;
-  /** how many times it has been sent again in a later batch */
   tries: number;
 }
 
-/** What the run lends its batches: the calls a line goes through however it is sent. */
+/** The calls a line goes through however it is sent. */
 export interface LineRun<T, L extends BatchLine<T>> {
-  /** the run's stop: a cancel, or the first thing to go wrong beyond one line */
+  /** a cancel, or the first failure beyond one line */
   stop: AbortSignal;
-  /** a slot on the endpoint, waited for; the function it gives back leaves it */
+  /** resolves to the slot's release */
   acquire(endpoint: string | null): Promise<() => void>;
-  /** whether nothing more should go out: the run was stopped, or the budget no longer covers it */
+  /** stopped, or out of budget */
   halted(): boolean;
   /**
-   * Let a line go out, cut to `maxChars` when that is shorter than its endpoint's: the budget
-   * asked, the line committed. Null when it does not go — the run has halted (`halted` says so),
-   * the line has gone, or it cannot be sent at all and has been landed as failed.
+   * Budget asked, line committed, cut to `maxChars` if shorter than the endpoint's. Null when it
+   * does not go: halted, already gone, or landed as failed.
    */
   admit(t: T, maxChars?: number | null): Promise<L | null>;
-  /** send one line on its own, whole or in parts; a stop is thrown instead of an outcome */
+  /** one line on its own; a stop is thrown */
   speak(line: L): Promise<Outcome>;
-  /** send items to the endpoint as one batch, each `answered` as it comes back */
   speakBatch(
     endpoint: string,
     items: SpeechInput[],
     answered: (index: number, outcome: BatchOutcome) => void,
   ): Promise<void>;
-  /** write what came back where the line's slot is, and give back what it held */
+  /** writes the outcome and gives back what the line held */
   land(line: L, outcome: Outcome): Promise<void>;
 }
 
 /**
- * An endpoint's lines in batches: each batch takes one of the endpoint's slots, and is filled when
- * it has one, from the lines still waiting, in the chapter's order, up to what the endpoint said
- * it takes. A line longer than an item may be, or cut at a pause, goes as its parts, each its own
- * item, and is joined — with the pause's silence — when they have all come back. Each line lands on its own as its items are answered.
- *
- * A line goes into a later batch, up to the endpoint's retries, when another batch could go
- * differently and nothing has tried it yet: the server answered its item as failed and worth
- * another try, or the batch's answer was cut off before reaching it (`BatchCut`). A batch the
- * server refused whole is not sent again: `call` has already spent the endpoint's retries on that
- * very request, and sending its lines again would try each of them (1 + retries)² times.
+ * Each batch takes a slot and is filled in chapter order up to the endpoint's limits; a cut line
+ * goes as one item per part. A line is resent (up to the endpoint's retries) only after a
+ * retryable item failure or a `BatchCut`; a whole-batch refusal is not, since `call` already
+ * retried it and resending would make (1 + retries)² attempts.
  */
 export async function batchLines<T, L extends BatchLine<T>>(
   run: LineRun<T, L>,
@@ -73,14 +58,13 @@ export async function batchLines<T, L extends BatchLine<T>>(
   lines: readonly T[],
   limits: BatchLimits,
 ): Promise<void> {
-  /** a line still to go: not yet committed, or committed and sent again */
+  /** `line` is set once committed */
   type Waiting = { t: T; line?: L };
   const pending: Waiting[] = lines.map((t) => ({ t }));
   const order = new Map(lines.map((t, i) => [t, i]));
   const maxItems = limits.maxItems ?? Infinity;
   const maxChars = limits.maxInputChars ?? Infinity;
 
-  /** Take the next batch's lines, letting each go out; lines that cannot go are landed now. */
   const fill = async (): Promise<L[]> => {
     const batch: L[] = [];
     let items = 0;
@@ -93,7 +77,7 @@ export async function batchLines<T, L extends BatchLine<T>>(
         pending.shift();
         continue;
       }
-      // a line only goes into a batch it fits beside the others; the first always goes
+      // the first always goes
       const parts = line.cuts?.length ?? 1;
       const size = line.input.text.length;
       if (batch.length && (items + parts > maxItems || chars + size > maxChars)) {
@@ -101,7 +85,7 @@ export async function batchLines<T, L extends BatchLine<T>>(
         break;
       }
       pending.shift();
-      // more parts than a batch may carry: sent the way a line always was, one part at a time
+      // more parts than a batch may carry: sent alone
       if (parts > maxItems) await run.land(line, await run.speak(line));
       else {
         batch.push(line);
@@ -118,7 +102,7 @@ export async function batchLines<T, L extends BatchLine<T>>(
     for (const line of batch) {
       const texts =
         line.cuts && line.cuts.length > 1
-          ? // the whitespace a cut keeps so the parts rejoin is not the provider's to read
+          ? // the whitespace a cut keeps for rejoining is not the provider's to read
             line.cuts.map((c) => c.text.trim())
           : [line.input.text];
       texts.forEach((text, part) => {
@@ -129,10 +113,9 @@ export async function batchLines<T, L extends BatchLine<T>>(
     const parts = new Map(batch.map((l) => [l, [] as RenderedClip[]]));
     const settled = new Set<L>();
     const landing: Promise<void>[] = [];
-    /** lines to send again, back at the front of the line in the chapter's order */
+    /** back to the front, in chapter order */
     const again: L[] = [];
     const maxRetries = batch[0].input.target?.maxRetries ?? 0;
-    /** A line whose send failed: into a later batch when `retry` says one could go differently, else landed failed. */
     const failLine = (line: L, error: unknown, retry: boolean): void => {
       settled.add(line);
       if (retry && line.tries < maxRetries) {

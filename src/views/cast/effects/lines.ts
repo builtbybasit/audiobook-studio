@@ -1,9 +1,6 @@
 // The narrated lines an effects sheet tries effects on, and whom the book's thought effect reaches.
-//
-// They are read off the scripts store, which the cast page fills with every scripted chapter
-// (`useBookScripts`); this walks it once per subject and slot, not per row or per play, so a book of
-// ~900 chapters is one pass when the sheet opens or switches. Chapter numbers stay out of it: the
-// sheet shows a line's place among the subject's own lines, never where it falls in the book.
+// One pass over the scripts store per subject and slot, not per row (~900 chapters). A line is
+// placed among the subject's own lines, never by chapter.
 import { computed } from "vue";
 
 import { plural } from "@/lib/contents";
@@ -18,13 +15,10 @@ export interface TryLine {
   speaker: string;
   type: SegmentType;
   text: string;
-  /** the voice's own clip — the file beside one the effects made, when one was kept */
+  /** the voice's own clip, without effects */
   url: string;
   duration: number;
-  /**
-   * Made before effects were kept apart from the voice: the old effect is in the only file there
-   * is, so every effect tried plays on top of it.
-   */
+  /** the old effect is baked into the only file, so a tried effect plays on top of it */
   baked: boolean;
 }
 
@@ -66,11 +60,7 @@ export function useTryLines(bookId: () => string, of: () => LinesOf | null) {
   });
 }
 
-/**
- * Whom the book's thought effect reaches, in words: "3 speakers use it · 1 has their own" — of the
- * speakers with a thought line (`stats`, the Cast page's counts), those who follow the book and
- * those with a thought effect of their own. The book card and the book's sheet both say it.
- */
+/** Whom the book's thought effect reaches, in words: "3 speakers use it · 1 has their own". */
 export function thoughtReach(cast: Character[], stats: Record<string, CastStat>): string {
   let using = 0;
   let own = 0;

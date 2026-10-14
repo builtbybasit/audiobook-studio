@@ -1,11 +1,7 @@
-// Re-apply: a book's clips whose sound is not their line's any more, counted, and made again from
-// the voice's own files by the effect runner — swapped in clip by clip, the raw files kept, the
-// old processed files removed, a clip changed under the job left alone, and a clip that fails
-// noted without stopping the rest. And the raw files going with their clips.
-//
-// The runner is the fake (`tests/support/effects.ts`): it copies a WAV through, so every render is
-// a file the job can probe. Effects are put on Mara by writing her row, and clips are given the
-// state narration would leave them in by writing theirs.
+// Re-apply: clips whose sound no longer matches their line's effects, counted and remade from the
+// voice's raw files: swapped clip by clip, raw files kept, old processed files removed, a clip
+// changed mid-job left alone, a failure noted without stopping the rest. The effect runner is the
+// WAV-copying fake (`tests/support/effects.ts`).
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
@@ -94,7 +90,7 @@ describe("what has an old sound", () => {
     wear(api, id, null);
     expect(await stale(api, id)).toEqual({ lines: 2, unavailable: 0, ready: true });
 
-    // an ffmpeg thought clip from before raw files were kept cannot be undone
+    // an ffmpeg thought clip with no raw file cannot be undone
     setClip(api, b.audio.url!, { sound: "ffmpeg", raw: null });
     expect(await stale(api, id)).toEqual({ lines: 2, unavailable: 1, ready: true });
   });

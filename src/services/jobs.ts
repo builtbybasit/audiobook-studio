@@ -1,8 +1,4 @@
-// The seam the queue is read and driven through.
-//
-// The same arrangement as `@/services/library`: one HTTP implementation, asking the library this
-// tab is on (`API_BASE`) — yours, or the demo's — unless a test set another. The jobs store asks
-// `jobsService()`; no view knows which answered.
+// The seam the queue is read and driven through, as `@/services/library` is for books.
 import type {
   BuildQueued,
   CheckQueued,
@@ -17,30 +13,24 @@ import { HttpClient, seg, type FetchLike } from "@/services/http";
 import { API_BASE } from "@/services/mode";
 
 export interface JobsService {
-  /** Every job the server holds, oldest first. */
+  /** Oldest first. */
   list(): Promise<Job[]>;
-  /** Stop a job: a queued one never starts, a running one is told to stop. */
+  /** A queued job never starts; a running one is told to stop. */
   cancel(id: number): Promise<Job>;
-  /** Stop several jobs, in the order given. Returns the ids that were live and now stop. */
+  /** In the order given. Returns the ids that were live and now stop. */
   cancelMany(ids: number[]): Promise<number[]>;
   /** Move queued jobs ahead of the rest, in their own order. Returns the ids that moved. */
   runNext(ids: number[]): Promise<number[]>;
-  /** Take a finished job out of the history. */
   remove(id: number): Promise<void>;
   /** Clear the history; live jobs stay. Returns how many went. */
   clear(): Promise<number>;
-  /**
-   * Script these chapters of a book, as one run, cutting each into the requests `profile` allows —
-   * the scripting profile chosen on the page, which the server reads from the endpoints saved to it.
-   */
+  /** As one run, cut into the requests `profile` (the saved scripting endpoint) allows. */
   scriptChapters(bookId: string, ids: number[], profile?: string): Promise<ScriptingQueued>;
-  /** Narrate these chapters of a book, as one run, at the scope named. */
   narrateChapters(bookId: string, ids: number[], scope: NarrationScope): Promise<NarrationQueued>;
-  /** Hear these chapters' current clips on the first transcription endpoint switched on, as one run — with `again`, those already heard too. */
+  /** On the first enabled transcriber, as one run; `again` also re-hears clips already heard. */
   checkChapters(bookId: string, ids: number[], again?: boolean): Promise<CheckQueued>;
-  /** Render these lines of a chapter again, each beside the clip it may replace, as one job. */
+  /** Each line renders beside the clip it may replace, as one job. */
   retakeLines(bookId: string, chapterId: number, ids: number[]): Promise<RetakesQueued>;
-  /** Stitch these chapters of a book into one audiobook, as one job. */
   buildExport(
     bookId: string,
     ids: number[],
@@ -117,12 +107,8 @@ export class HttpJobsService implements JobsService {
 }
 
 /**
- * Where one built file of an export is downloaded from. `position` is the file's place in
- * `export.files`, which is what the route addresses: a name would have to survive a rename and
- * whatever a filesystem does to it, and the order is the audiobook's own.
- *
- * It is here rather than in a view so nothing hand-builds an API path; the browser follows it, so
- * it is a URL and not a request this client makes.
+ * `position` is the file's place in `export.files`: the order is the audiobook's own, while a name
+ * would have to survive renames and filesystems. A URL the browser follows, not a request.
  */
 export function exportFileUrl(bookId: string, exportId: number, position: number): string {
   return `${API_BASE}/books/${seg(bookId)}/exports/${exportId}/files/${position}`;
@@ -130,12 +116,12 @@ export function exportFileUrl(bookId: string, exportId: number, position: number
 
 let service: JobsService | null = null;
 
-/** The jobs service: the one a test set, or the HTTP one for this tab's library. */
+/** The one a test set, or the HTTP one for this tab's library. */
 export function jobsService(): JobsService {
   return (service ??= new HttpJobsService());
 }
 
-/** For tests and for wiring at startup. Set it before the jobs store is created. */
+/** For tests and startup wiring. Set it before the jobs store is created. */
 export function setJobsService(next: JobsService | null): void {
   service = next;
 }

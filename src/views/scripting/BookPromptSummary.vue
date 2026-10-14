@@ -1,8 +1,6 @@
 <script setup lang="ts">
-// The book's prompt as the Scripting page shows it: one line on what a run here would be sent, and
-// a link to the book's Overview, where the notes and the book's own prompt are edited with the room
-// an editor needs. Notes the prompt in use would drop are said here too, since this is where the
-// run that would drop them is started.
+// One line on the prompt a run here would send, with a link to the Overview where it is edited.
+// Also warns of dropped notes, since the run starts here.
 import { computed } from "vue";
 import { RouterLink } from "vue-router";
 import { ArrowRight as NextIcon, TriangleAlert as WarnIcon } from "@lucide/vue";

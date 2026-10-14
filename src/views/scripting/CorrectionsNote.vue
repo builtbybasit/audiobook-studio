@@ -1,21 +1,15 @@
 <script setup lang="ts">
-// What a re-script does to the corrections made by hand: it does not carry them. The new run's
-// script replaces the old one outright, and the old one — corrections and all — is kept in the
-// chapter's history, where Restore brings it back. The run settings and the reader's Re-script
-// popover both say so, with the count, so replacing a chapter somebody has worked on is never a
-// surprise.
+// Warns that a re-script drops hand corrections; the old script stays in history for Restore.
 import { plural } from "@/lib/contents";
 import { scriptsUnread } from "@/components/ReadFailure.vue";
 
 defineProps<{
   /** corrected lines in what would be re-scripted; null while their scripts are still being read */
   edits: number | null;
-  /** how many of those scripts could not be read, so the count never comes */
+  /** scripts that could not be read */
   unread?: number;
-  /** what the count is of, as the sentence names it */
   scope: "this selection" | "this chapter";
 }>();
-/** read the scripts that could not be, again */
 defineEmits<{ retry: [] }>();
 </script>
 

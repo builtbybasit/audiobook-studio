@@ -1,21 +1,6 @@
-// A Demo tools situation, applied on the server.
-//
-// A situation (`applySituation` in `server/demo/seed/scenarios/situations.ts`) is applied through a
-// `ScenarioContext`. Here that is a context over plain data: the seeded world, and beside it what a
-// situation reaches for that the world does not hold — the queue's history, the histories of
-// chapters' scripts, scripting a book had already paid for, and what the endpoints have been
-// through. Every method does what the browser's demo store did when the browser applied them, with
-// the browser's own helpers where the store had one, so a situation leaves the demo as it always
-// did (`tests/server/demoSituations.test.ts` applies every one; `demoWorld.test.ts` holds the
-// seeded world to `makeWorld()`, and `demoLive.test.ts` what is set going).
-//
-// The world as it is seeded, with no situation, is not still: a few runs are set going on it
-// (`startupRuns`), so the Queue, the job indicator and the endpoints' activity are alive the first
-// time anyone looks. A situation sets going only what it describes.
-//
-// Nothing is written here. What comes back is handed to the seed (`seed.ts`), which writes the rows
-// in one transaction, and to `startLive`, which makes real what is not a row: runs in flight,
-// builds, and the endpoints' recent trouble.
+// Applies a Demo tools situation (`applySituation`) through a `ScenarioContext` over plain data.
+// Writes nothing: `seed.ts` writes the rows and `startLive` starts what is not a row. With no
+// situation, `startupRuns` set a few runs going so the demo looks alive.
 import { chapterStates } from "@/lib/exports";
 import { seededHistory } from "@/lib/scriptHistory";
 import { key } from "@/lib/scriptReview";
@@ -36,14 +21,12 @@ import type { DemoResult, DemoScenario, Endpoint } from "@/types";
 import type { DemoLive, SpeechTelemetry } from "~/demo/live";
 import { openingOf, type DemoWorld } from "~/demo/world";
 
-/** The first id of the queue's history, as the browser's demo numbers its own. */
 const FIRST_JOB = 100;
 
-/** A world, seeded and with a situation applied, ready to be written and set going. */
 export interface Situated {
   demo: DemoWorld;
   live: DemoLive;
-  /** what the situation did, or null for the world as it is seeded */
+  /** null without a situation */
   result: DemoResult | null;
 }
 
@@ -61,12 +44,7 @@ const telemetryOf = ({
   ...(lastError ? { lastError } : {}),
 });
 
-/**
- * The seeded world at `now`, with `scenario` applied to it when there is one. Every date the world
- * and the situation take from the clock is `now`, so a cooldown or a closing rate window is as
- * fresh as the request that asked for it. Without a situation the world's startup runs are set
- * going, unless it is to be `still`.
- */
+/** The seeded world with `scenario` applied; dates are relative to `now`, so cooldowns are new. */
 export function situate(now: number, scenario?: DemoScenario, still = false): Situated {
   const world = makeWorld(now);
   let nextJob = FIRST_JOB;
@@ -91,13 +69,11 @@ export function situate(now: number, scenario?: DemoScenario, still = false): Si
         scenario.bookId,
       )
     : null;
-  // what every speech endpoint has been through, whether or not the situation touched it: the
-  // seeded world's endpoints have a history of their own
+  // every endpoint, touched or not: seeded ones have a history of their own
   live.speech = Object.fromEntries(world.endpoints.map((e) => [e.id, telemetryOf(e)]));
   return { demo, live, result };
 }
 
-/** `ScenarioContext` as the browser's demo store implemented it, over `demo` and `live`. */
 function contextOver(
   demo: DemoWorld,
   live: DemoLive,
@@ -136,7 +112,7 @@ function contextOver(
     clearExports: (bookId) => {
       world.exports = world.exports.filter((e) => e.bookId !== bookId);
     },
-    // the builds are started by `startLive`, against the book as it is written
+    // started by `startLive`, once the book is written
     seedBuilds: (bookId) => {
       live.builds.push(bookId);
     },

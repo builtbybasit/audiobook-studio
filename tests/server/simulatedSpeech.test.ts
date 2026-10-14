@@ -1,11 +1,6 @@
-// A simulated speech endpoint (`simulated://…`): answered by the server's own tone, through the
-// real provider, and never the network.
-//
-// Two parts. The provider on its own: the refusals a line still gets, the latency it waits and a
-// cancel cuts short, the share of lines it fails and how, and the questions it answers without a
-// request — batches, the Test button, its voices, a clone. And a whole narration through the real
-// API: an endpoint saved as simulated, its voices fetched, sampled, cast and narrated, with every
-// `fetch` the server was given failing the test if it is ever called.
+// A simulated speech endpoint (`simulated://…`): answered by the server's own tone through the real
+// provider, never the network. The provider alone, then a whole narration through the real API with
+// every `fetch` failing the test.
 import { describe, expect, test } from "bun:test";
 
 import type { Endpoint, Job, Segment } from "@/types";

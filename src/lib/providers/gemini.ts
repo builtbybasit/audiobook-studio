@@ -2,10 +2,7 @@
 // `generateContent` call on the model, answered as JSON.
 import { fixedPauses, type SpeechProviderShape } from "@/lib/providers/types";
 
-/**
- * A model id as the API's path takes it. Google names its models `models/gemini-…` in its own
- * listings, and an id pasted from one would otherwise make `/models/models/gemini-…`.
- */
+/** An id pasted as `models/gemini-…` would otherwise make `/models/models/gemini-…`. */
 export const geminiModelId = (model: string): string => model.trim().replace(/^models\//i, "");
 
 /** The previews before 3.8: no `responseFormat`, no `speechMetadata`, no inline tags, raw PCM back. */
@@ -18,11 +15,8 @@ export const gemini: SpeechProviderShape = {
   matches: (baseUrl) => /(^|\/\/)generativelanguage\.googleapis\.com(\/|:|$)/i.test(baseUrl),
   requestPath: (model) => `/models/${geminiModelId(model) || "<model>"}:generateContent`,
   /**
-   * Asked through `responseFormat` (3.8) — WAV only here. Its reference also lists MP3 and Ogg
-   * Opus, but only the WAV answer is documented in the speech guide, so that is the one offered
-   * until the others are tried. A rate may be named; Google's examples give 24 and 16 kHz (and 8,
-   * below what this app keeps speech at), with 24 kHz the default. The legacy 3.1 preview takes no
-   * format at all and answers raw 24 kHz PCM, which the server puts under a WAV header.
+   * `responseFormat` (3.8): only WAV is documented in the speech guide. The legacy previews answer
+   * raw 24 kHz PCM, which the server wraps in a WAV header.
    */
   formats: [
     {
@@ -34,12 +28,8 @@ export const gemini: SpeechProviderShape = {
       defaultBitrate: null,
     },
   ],
-  // The 3.8 guide: "Use angle-bracket inline tags only for point-in-time vocal events" — `<laugh>`,
-  // `<sigh>`, `<short pause>` — "and put delivery styles in speech_metadata.style", which is where
-  // the line's direction already goes. So a 3.8 model takes sounds inline and nothing else — in
-  // whatever words suit the sound, not a fixed list; the preset starts with Google's examples. Its
-  // speech guide names two pauses, `<short pause>` and `<long pause>`, with no length for either
-  // (https://ai.google.dev/gemini-api/docs/speech-generation).
+  // 3.8: angle-bracket tags for vocal events only, delivery in speech_metadata.style; two pauses
+  // with no length (https://ai.google.dev/gemini-api/docs/speech-generation)
   tags: (model) =>
     isLegacyGeminiSpeech(model)
       ? null
@@ -51,7 +41,6 @@ export const gemini: SpeechProviderShape = {
           hint: "Gemini 3.8 takes vocal sounds and pauses in angle brackets; delivery goes in the line's direction.",
           pause: fixedPauses("<short pause>", "<long pause>"),
         },
-  // Google bills the tokens of what it generated; a refused request generated nothing.
   billsFailures: false,
   cloning: null,
   models: [

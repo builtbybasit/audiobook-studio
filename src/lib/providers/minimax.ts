@@ -4,7 +4,7 @@ import { pauseSecs, type SpeechProviderShape } from "@/lib/providers/types";
 
 const RATES = [16000, 22050, 24000, 32000, 44100] as const;
 
-/** `<#x#>`, every model's pause, held to the range its reference allows */
+/** `<#x#>`, clamped to the documented 0.01–99.99 s */
 const pause = (s: number): string => `<#${pauseSecs(Math.min(Math.max(s, 0.01), 99.99))}#>`;
 
 export const minimax: SpeechProviderShape = {
@@ -13,9 +13,8 @@ export const minimax: SpeechProviderShape = {
   matches: (baseUrl) => /(^|\/\/)([a-z0-9-]+\.)*minimax\.(io|chat|cn)(\/|:|$)/i.test(baseUrl),
   requestPath: () => "/t2a_v2",
   /**
-   * `audio_setting`: a rate up to 44.1 kHz — it has no 48 — and for an MP3 a bitrate, in bits a
-   * second on the wire. Its Ogg Opus is left out until its rates are known. What this app asks for
-   * when no rate is set is 32 kHz, the rate MiniMax's own example uses.
+   * `audio_setting`: up to 44.1 kHz, MP3 bitrate in bps on the wire. Ogg Opus is left out until its
+   * rates are known. 32 kHz default, as MiniMax's own example uses.
    */
   formats: [
     {
@@ -35,10 +34,8 @@ export const minimax: SpeechProviderShape = {
       defaultBitrate: 128,
     },
   ],
-  // Its reference: pauses as `<#x#>` on every model; interjections — `(laughs)`, `(sighs)`,
-  // `(breath)` — "only supported when using speech-2.8-hd or speech-2.8-turbo". Both are sounds.
-  // A pause is "in seconds", "valid range: [0.01, 99.99], up to two decimal places", and "must be
-  // placed between speakable text segments" (https://platform.minimax.io/docs/api-reference/speech-t2a-http).
+  // pauses on every model, between speakable text only; interjections only on speech-2.8
+  // (https://platform.minimax.io/docs/api-reference/speech-t2a-http)
   tags: (model) =>
     /^speech-2\.8-/i.test(model.trim())
       ? {
@@ -59,22 +56,15 @@ export const minimax: SpeechProviderShape = {
           pause,
           pauseInside: true,
         },
-  // Its error codes are refusals to retry or fix; nothing in its docs says one is charged.
   billsFailures: false,
-  // https://platform.minimax.io/docs/api-reference/voice-cloning-clone and the guide beside it,
-  // https://platform.minimax.io/docs/guides/speech-voice-clone: one file, uploaded for
-  // `voice_clone`, in MP3, M4A or WAV, of 10 seconds to 5 minutes and up to 20 MB. The fee is on
-  // https://platform.minimax.io/docs/guides/pricing-paygo (rapid voice cloning), and the deletion
-  // of a voice left unused is the first line of the clone reference. `get_voice`
-  // (https://platform.minimax.io/docs/api-reference/voice-management-get) lists a cloned voice
-  // "only after first use", so a new one is not in "Fetch from server" until it has spoken.
+  // https://platform.minimax.io/docs/api-reference/voice-cloning-clone; fee on
+  // https://platform.minimax.io/docs/guides/pricing-paygo. `get_voice` lists a clone only after
+  // first use (https://platform.minimax.io/docs/api-reference/voice-management-get).
   cloning: {
     maxSamples: 1,
     maxSampleBytes: 20 * 1024 * 1024,
     formats: ["wav", "mp3", "m4a"],
-    // The clone reference's `text_validation` is not a transcript the voice is made with but a
-    // check: MiniMax transcribes the sample and refuses the clone (1043) when the two differ, so
-    // none is sent. `clone_prompt.prompt_text` belongs to a second, prompt clip this app does not send.
+    // `text_validation` is a check that refuses the clone (1043) on a mismatch, not a transcript
     transcript: "none",
     advice:
       "MiniMax makes a voice from one clip of 10 seconds to 5 minutes. " +

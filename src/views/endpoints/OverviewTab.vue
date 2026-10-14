@@ -1,15 +1,7 @@
 <script setup lang="ts">
-// How this endpoint has been behaving, over a range you choose.
-//
-// Two things are deliberately kept apart everywhere on this tab: the time a request spends waiting
-// for one of our own concurrency slots, and the time the provider takes to answer. They look the
-// same in a single "latency" number and they have completely different fixes.
-//
-// Success is also two numbers — right first time, and right in the end — because an endpoint that
-// only ever succeeds on its third attempt is not the same as a healthy one.
-//
-// A request whose provider reported no usage is counted apart, never as zero: throughput is over
-// the requests that did report, and when none did the tile says so and the chart plots requests.
+// How this endpoint has behaved over the chosen range. Our slot wait and the provider's time are
+// kept apart (different fixes); success is first-try and eventual. Unreported usage is counted
+// apart, never as zero.
 import { computed } from "vue";
 import { plural } from "@/lib/contents";
 import { UiHint, UiToggleGroup, UiTooltip } from "@/ui";
@@ -50,7 +42,7 @@ const METRIC_OPTS = [
   { value: "errors", label: "Errors" },
 ];
 
-/** null while loading *and* when the range is empty: an empty range has no averages to show */
+/** null while loading and when the range is empty */
 const t = computed(() => {
   const totals = props.series?.totals;
   return totals && totals.requests ? totals : null;
@@ -58,7 +50,6 @@ const t = computed(() => {
 const pct = (n: number, of: number): string => (of ? Math.round((n / of) * 100) + "%" : "—");
 const rangeLabel = computed(() => RANGES.find((r) => r.value === props.range)!.label);
 
-/** What the first tile measures, and what a provider that reported no usage left out. */
 const PRODUCED: Record<EndpointKind, { label: string; unreported: string }> = {
   scripting: { label: "Throughput", unreported: "token counts" },
   tts: { label: "Audio produced", unreported: "audio length" },

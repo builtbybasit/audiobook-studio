@@ -1,15 +1,7 @@
 <script setup lang="ts">
-// The per-book menu, the same on a cover and on a table row: where to go in the book, one more
-// volume, and Remove from library.
-//
-// The script travels as a file from here too: **Export script** downloads it, **Import script…**
-// opens the page that reads one in. When some speaker's voice keeps the recordings it was cloned from, Export asks first, on the item
-// itself: **Include voice samples**, unticked every time — recordings of a person are handed over
-// only when asked for, never because they were last time.
-//
-// Removing has no Undo — nothing puts a book back in the database — so the app's one rule for
-// danger (`src/stores/README.md`) has the item ask, with a second click on the item itself, and
-// say it cannot be undone. What it takes hangs off the item, where it can be read before the click.
+// The per-book menu, the same on a cover and on a table row.
+// Export asks about voice samples on the item itself, unticked every time: samples go out only
+// when asked for. Remove has no Undo, so it takes a second click and says what it takes.
 import { useLibraryStore } from "@/stores/library";
 
 import { computed, nextTick, ref, watch } from "vue";
@@ -44,10 +36,7 @@ const samples = ref<ScriptExportSamples | null>(null);
 /** Export is asking whether to include the samples: the item opened into its second step. */
 const exporting = ref(false);
 const withSamples = ref(false);
-/**
- * The item waits for the answer: clicked before it came, a plain download would skip the question
- * the samples are owed. A failed answer is no samples — the export still downloads, as it always did.
- */
+/** The item waits for this, so a click can't skip the samples question; a failure means none. */
 const checking = ref(false);
 watch(menu, async (open) => {
   exporting.value = false;
@@ -106,8 +95,8 @@ async function remove() {
     <PopoverTrigger :class="triggerClass" :aria-label="`More actions for ${book.title}`">
       <MenuIcon class="icon" />
     </PopoverTrigger>
-    <!-- mounted only while open: a closed PopoverContent left in a card that is then taken off the
-         shelf (a search narrowing it away, a remove) freezes the renderer on unmount -->
+    <!-- mounted only while open: a closed PopoverContent in a card that unmounts freezes the
+         renderer -->
     <PopoverPortal v-if="menu">
       <PopoverContent :align="align ?? 'start'" :side-offset="4" class="ui-popup w-56 p-1 text-xs">
         <button

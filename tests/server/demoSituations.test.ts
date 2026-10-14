@@ -1,13 +1,6 @@
-// The Demo tools situations, applied on the server (`server/demo/situations.ts`, `routes/demo.ts`).
-//
-// Every situation the drawer lists is put into the demo through `POST /demo/situations/:id`: it
-// has to apply to the seeded world without throwing, answer with its row, what it did and where to
-// look, and hand `startLive` the runs it describes and none of the demo's startup runs. What the
-// seeded world holds is `demoWorld.test.ts`'s to check, and what `startLive` makes of what it is
-// handed is `demoLive.test.ts`'s; here `startLive` is a stub that keeps what it is given, so
-// nothing runs under the situations. The demo library's own wiring of the two — a situation put in
-// through `openLibrary`'s routes, its `startLive` and all — is what the Demo drawer's store drives
-// (`demoStore.test.ts`).
+// The Demo tools situations, applied on the server (`server/demo/situations.ts`, `routes/demo.ts`):
+// each applies to the seeded world, answers with its row, and hands `startLive` (a stub here) the
+// runs it describes and none of the startup runs.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 
 import { DEMO_GROUPS, demoScenarios } from "~/demo/seed/scenarios/catalogue";

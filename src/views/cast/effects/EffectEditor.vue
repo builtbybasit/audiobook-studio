@@ -1,16 +1,8 @@
 <script setup lang="ts">
-// The sheet's second view: one effect taken apart. The header names it and says whether the
-// sheet's subject uses it; under it the sheet's line, drawn and heard through the effect as this
-// subject would hear it (`choice.effectsFor`) beside the line as the voice made it; then the steps
-// on the left and the selected one at full size on the right (`StepInspector`).
-//
-// An effect belongs to the whole library, so an edit here reaches everyone who uses it. When
-// that is anyone besides this subject the header says who ("Also on …") and offers a copy to
-// edit instead. Delete asks first, naming everyone who loses it.
-//
-// Under the name, its "Use when" sentence: filled in, the effect is offered to the scripting model
-// as a line effect, for every book. On a line effect's sheet (`self.view` "line") nothing is chosen,
-// so there is no Use, and no list to go back to.
+// The sheet's second view: one effect taken apart, its line heard as the subject would hear it
+// (`choice.effectsFor`). An effect is the library's, so an edit reaches everyone using it: the
+// header says who ("Also on …") and offers a copy. A "Use when" sentence offers it to the
+// scripting model as a line effect, for every book.
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { DialogTitle, PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
 import {
@@ -73,8 +65,7 @@ function setUseWhen(useWhen: string) {
 const lineSheet = computed(() => props.self.view === "line");
 
 // ---------- who else it reaches ----------
-// Read once: the editor is made afresh for each effect, and the subject's own choice, the one thing
-// this sheet changes, is left out of the line anyway.
+// Read once: the editor is remade per effect, and the subject's own choice is left out anyway.
 const uses = ref<EffectUses | null>(null);
 void effectsStore.usesOf(props.effectId).then((read) => (uses.value = read));
 const others = computed(() => (uses.value ? placesOf(uses.value, props.bookId, props.self) : []));

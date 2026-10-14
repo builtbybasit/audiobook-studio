@@ -1,9 +1,5 @@
-// Voice samples waiting with a speaker, on disk.
-//
-// Under the book's own audio directory, `<AUDIO_DIR>/<bookId>/samples/`, so removing the book —
-// which removes that directory whole — removes them with nothing else to remember. Each recording
-// is named by a hash of its bytes, as a cover and a kept clone recording are: the same file carried
-// twice is kept once, and a name that is a hash can never climb out of its directory.
+// Voice samples waiting with a speaker, under `<AUDIO_DIR>/<bookId>/samples/`, so removing the
+// book's directory removes them too. Named by a hash of their bytes, as kept clone recordings are.
 import { mkdir, rm, rmdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -12,15 +8,13 @@ import type { SampleFormat } from "~/providers/clone";
 import { isSampleFile, sampleFileName } from "~/voices/files";
 
 export interface SpeakerSampleFiles {
-  /** Keep one recording already sniffed as `format`, and say the name it is kept under. */
+  /** Answers the file name. */
   write(bookId: string, bytes: Uint8Array, format: SampleFormat): Promise<string>;
-  /** The path a request names, or null when it names something that cannot be a recording. */
+  /** null when `file` cannot be a recording. */
   path(bookId: string, file: string): string | null;
-  /** Remove these recordings of one book, and the directory once nothing is left in it. */
   remove(bookId: string, files: readonly string[]): Promise<void>;
 }
 
-/** Waiting recordings under `audioDir` — `AUDIO_DIR` in the server, a temporary one in a test. */
 export function speakerSampleFiles(audioDir: string): SpeakerSampleFiles {
   const dirOf = (bookId: string): string | null =>
     BOOK_ID.test(bookId) ? join(audioDir, bookId, "samples") : null;
@@ -41,7 +35,7 @@ export function speakerSampleFiles(audioDir: string): SpeakerSampleFiles {
       const at = dirOf(bookId);
       if (!at) return;
       await Promise.all(files.filter(isSampleFile).map((f) => rm(join(at, f), { force: true })));
-      // refused while anything is still in it, which is the point
+      // fails while anything is left, which is the point
       await rmdir(at).catch(() => {});
     },
   };

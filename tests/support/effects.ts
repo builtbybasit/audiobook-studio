@@ -1,8 +1,6 @@
-// A voice-effect runner for tests that are about something else: narration, Re-apply, the routes.
-// It runs no Python. A WAV clip comes back as it went in — what an empty chain would give — and an
-// MP3 or Opus clip as silence of the same length and rate, since decoding is the real runner's
-// job; either way the bytes are a WAV a test can probe. Every call is recorded, and the runner can
-// be told, at any point, to fail or to say it cannot run here.
+// A voice-effect runner that runs no Python, for tests about something else. WAV comes back as it
+// went in, MP3/Opus as WAV silence of the same length; calls are recorded, and it can be told to
+// fail or to report itself unavailable.
 import { readFile } from "node:fs/promises";
 
 import type { AudioFormat, Step } from "@/types";

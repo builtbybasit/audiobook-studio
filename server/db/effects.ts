@@ -1,9 +1,6 @@
-// Every read and write the library's voice effects make, and what a line's effects are read from.
-//
-// An effect is named by id from text columns that also hold "none" — a book's and a speaker's
-// thought effect, a speaker's own, the library's in `settings` — with no foreign key behind them,
-// so removing one resets those names here, in the same transaction, rather than leaving them
-// pointing at nothing.
+// Voice effects: their reads and writes, and what a line's effects are read from.
+// Effects are named by id from text columns with no foreign key (they also hold "none"), so
+// deleting one resets those names here, in the same transaction.
 import { and, asc, eq, gte, inArray, isNotNull, max, or, sql } from "drizzle-orm";
 
 import type { Effect, EffectUses, StaleSound } from "@/types";
@@ -12,11 +9,7 @@ import type { Db, Tx } from "~/db/client";
 import { books, characters, clips, effects, segments } from "~/db/schema";
 import { readThoughts, writeThoughts } from "~/db/settings";
 
-/**
- * The effect a library starts with as its thought effect: the ffmpeg chain narration used before
- * there were effects, in Pedalboard's terms. Migration 0031 lays it down in a library that was
- * already there, and the demo's seed in a demo put back the way it started.
- */
+/** A fresh library's thought effect; migration 0031 also lays it down in an existing library. */
 export const INNER_VOICE: Effect = {
   id: "inner-voice",
   name: "Inner voice",
@@ -34,7 +27,6 @@ export const INNER_VOICE: Effect = {
   ],
 };
 
-/** What a fresh library has: the Inner voice, and it as the thought effect. */
 export function seedEffects(db: Db | Tx): void {
   db.insert(effects)
     .values({ ...INNER_VOICE, position: 0 })
@@ -55,10 +47,9 @@ function toEffect({ useWhen, ...e }: Omit<Effect, "useWhen"> & { useWhen: string
   return useWhen != null ? { ...e, useWhen } : e;
 }
 
-/** What an effect is made of besides its id: what a create or an update writes, whole. */
 export type EffectBody = Omit<Effect, "id">;
 
-/** Every effect, in the order they are listed — also the order a line's own effects run in. */
+/** Listed order is also the order a line's own effects run in. */
 export function listEffects(db: Db | Tx): Effect[] {
   return db
     .select(columns)
@@ -74,10 +65,8 @@ export function getEffect(db: Db | Tx, id: string): Effect | undefined {
 }
 
 /**
- * A new effect, its id the slug it is given made free: `echo`, then `echo-2`, … "none" is never
- * one, since it is what a choice of no effect is written as. It goes right after the effect `after`
- * names, the ones below moving down one in the same transaction, or at the end of the list without
- * it — or when it names no effect, which the caller refuses first (`server/effects/ops.ts`).
+ * Id is the slug made free (`echo`, `echo-2`, …); never "none", which means no effect. Goes right
+ * after `after`, or at the end when `after` is absent or unknown.
  */
 export function createEffect(db: Db, slug: string, body: EffectBody, after?: string): Effect {
   return db.transaction((tx) => {
@@ -116,10 +105,7 @@ export function createEffect(db: Db, slug: string, body: EffectBody, after?: str
   });
 }
 
-/**
- * Replace an effect's name, chain and `useWhen` — a `useWhen` left out is cleared; its id stays.
- * Undefined when there is no such effect.
- */
+/** Replaces the whole body; a `useWhen` left out is cleared. */
 export function updateEffect(db: Db | Tx, id: string, body: EffectBody): Effect | undefined {
   const row = db
     .update(effects)
@@ -131,10 +117,8 @@ export function updateEffect(db: Db | Tx, id: string, body: EffectBody): Effect 
 }
 
 /**
- * Remove an effect, and every choice of it: a book's or a speaker's thought effect goes back to
- * following the next level, a speaker's own to none, the library's thought effect to none — not
- * to another effect nobody picked — and every line that has it as a line effect loses it, so a
- * later effect given the same id is not heard on them. False when there was no such effect.
+ * Also clears every choice of it (the library's thought effect goes to "none", not another effect)
+ * and strips it from line effects, so a later effect with the same id is not heard on them.
  */
 export function deleteEffect(db: Db, id: string): boolean {
   return db.transaction((tx) => {
@@ -145,7 +129,7 @@ export function deleteEffect(db: Db, id: string): boolean {
     tx.update(characters).set({ thoughts: null }).where(eq(characters.thoughts, id)).run();
     tx.update(characters).set({ effect: null }).where(eq(characters.effect, id)).run();
     if (wasLibrary) writeThoughts(tx, "none");
-    // the line's other effects kept in their order; none left is null, as an empty list is written
+    // none left is null, as an empty list is written
     tx.update(segments)
       .set({
         effects: sql`(SELECT CASE WHEN count(*) > 0 THEN json_group_array(value) END
@@ -157,11 +141,7 @@ export function deleteEffect(db: Db, id: string): boolean {
   });
 }
 
-/**
- * Everywhere an effect is chosen, across every book: the library's thought effect, the books that
- * choose it as their own, and the speakers that wear it or think in it. One query per table,
- * ordered by book title and then speaker name.
- */
+/** Everywhere an effect is chosen, across every book. */
 export function effectUses(db: Db | Tx, id: string): EffectUses {
   return {
     library: readThoughts(db) === id,
@@ -187,7 +167,7 @@ export function effectUses(db: Db | Tx, id: string): EffectUses {
   };
 }
 
-/** What a book's lines' effects are read from (`chainsFor`): narration and Re-apply read it once. */
+/** Input to `chainsFor`, read once per book. */
 export function effectContext(db: Db | Tx, bookId: string): EffectContext {
   const cast = db
     .select({
@@ -224,12 +204,11 @@ export function effectContext(db: Db | Tx, bookId: string): EffectContext {
 export interface StaleClip {
   chapterId: number;
   segmentId: number;
-  /** the file it plays */
   url: string;
   /** the voice's own file, when `url` is not it */
   raw: string | null;
   sound: string | null;
-  /** what its line is run through now, in order; none = the raw file is the clip */
+  /** what its line runs through now; empty = the raw file is the clip */
   effects: Effect[];
   /** `soundOf(effects)` */
   want: string | null;
@@ -240,11 +219,8 @@ export const cannotRedo = (c: Pick<StaleClip, "raw" | "sound">): boolean =>
   c.raw == null && c.sound != null;
 
 /**
- * Every finished clip in a book's current and retake slots whose sound is not its line's now. One
- * query over the book, and a line's effects worked out once per speaker, kind of line and set of
- * line effects rather than once per line, so a book of 900 chapters is one pass. (A persona's
- * character is fixed by its speaker, so the speaker keys that too.) Takes are history and are left as
- * they were made.
+ * Finished current/candidate clips whose sound is stale; takes are history and left alone.
+ * Effects are worked out once per (thought?, speaker, line effects), not per line, for scale.
  */
 export function staleClips(db: Db | Tx, bookId: string): StaleClip[] {
   const ctx = effectContext(db, bookId);
@@ -292,16 +268,14 @@ export function staleClips(db: Db | Tx, bookId: string): StaleClip[] {
   return out;
 }
 
-/** How many of a book's clips have an old sound, and how many of those cannot be redone. */
 export function staleSound(db: Db | Tx, bookId: string): Omit<StaleSound, "ready"> {
   const stale = staleClips(db, bookId);
   return { lines: stale.length, unavailable: stale.filter(cannotRedo).length };
 }
 
 /**
- * Put a re-applied file in place of the clip that played `was`, in whichever slot of the book's
- * still plays it, and say where that was — nothing when no slot does any more: the line was
- * narrated again, its retake kept, or its script written over while the file was made.
+ * Swaps a re-applied file into whichever slot still plays `was`. Empty when none does (the line was
+ * re-narrated or rescripted while the file was made).
  */
 export function swapClipFile(
   tx: Tx,

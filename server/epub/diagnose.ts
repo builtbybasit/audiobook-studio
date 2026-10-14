@@ -1,14 +1,5 @@
-// Why an EPUB could not be read, in the file's own terms.
-//
-// The parser can only report what stopped it — "could not be opened", "no readable chapters" —
-// which tells somebody holding a broken file nothing they can act on. EPUBCheck knows: it validates
-// the package against the spec and names the resource, the document and the line.
-//
-// It is run **only when the import has already failed or lost something**, never as a gate. Its own
-// measured agreement with the reference implementation is 95.9%, and plenty of real books are
-// technically non-conformant and read perfectly well — this project's own test fixtures among them.
-// Refusing a book because a validator disliked its metadata would turn a working import into a
-// support question. Explaining a failure it already had costs a person nothing.
+// Why an EPUB could not be read, via EPUBCheck (names the resource and line). Run only after an
+// import failed or lost something, never as a gate: many non-conformant books read fine.
 import { EpubCheck } from "@likecoin/epubcheck-ts";
 
 /** How many complaints are worth putting in front of somebody at once. */
@@ -30,11 +21,8 @@ function describe(m: Message): string {
 }
 
 /**
- * What is wrong with this file, as a sentence to show beside the refusal.
- *
- * Returns nothing when the validator has nothing to add — including when it throws, which it may
- * do on input too damaged to validate. A diagnosis is a courtesy on an error path, and an error
- * path is the worst place to introduce a second way to fail.
+ * What is wrong with this file, as a sentence to show beside the refusal. Undefined when the
+ * validator has nothing to add or throws: an error path must not gain a second way to fail.
  */
 export async function diagnose(bytes: ArrayBuffer): Promise<string | undefined> {
   let messages: Message[];

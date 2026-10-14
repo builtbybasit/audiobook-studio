@@ -1,8 +1,5 @@
-// Reads, as queries.
-//
-// The stores own state and every change to it; these composables are how a page asks for what
-// the stores hold, and how that state is read from the server and kept fresh. A store that
-// changes something a query reads invalidates it here, by key.
+// Reads, as queries. Stores own state and changes; these are how pages read it and how it is
+// fetched and kept fresh. A store invalidates what it changes here, by key.
 export { keys } from "@/queries/keys";
 export { invalidate } from "@/queries/invalidate";
 export { fetchBook, fetchShelf, useBook, useBooks, useShelf } from "@/queries/library";

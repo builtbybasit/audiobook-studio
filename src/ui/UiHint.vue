@@ -1,10 +1,6 @@
 <script setup lang="ts">
-// A "?" beside a label that opens one short explanation on click, on reka-ui's Popover.
-//
-// The page says what a control is in its label and, at most, one short line under it; anything
-// more — why it matters, what the server does with it, what the edge cases are — is a sentence
-// behind this mark rather than a paragraph in the way. `text` is that sentence; the default slot
-// holds it when it needs markup. `label` names what the hint is about, for the button's name.
+// A "?" beside a label that opens one short explanation on click (reka Popover), so the page keeps
+// to a label and one line. `text` or the default slot is the explanation; `label` names the button.
 import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
 import { CircleHelp as HelpIcon } from "@lucide/vue";
 

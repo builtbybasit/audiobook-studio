@@ -1,11 +1,6 @@
 <script setup lang="ts">
-// The library's default scripting prompt: what every scripting endpoint sends for every book, until
-// an endpoint replaces it (its Prompt tab), or a book brings its own (the book's Scripting page).
-// The built-in prompt until somebody edits it here, and again after Reset. An endpoint's notes and a
-// book's go where this says `{{endpoint.notes}}` and `{{book.notes}}`; a draft without a tag says
-// whose notes it would stop sending.
-//
-// Staged and saved with a button, like an endpoint's own prompt; see `state.ts` for why.
+// The library's default scripting prompt, unless an endpoint or a book replaces it; the built-in
+// one until edited, and again after Reset. Staged like an endpoint's prompt (see `state.ts`).
 import { computed } from "vue";
 import PromptEditor from "@/components/PromptEditor.vue";
 import { UiHint } from "@/ui";
@@ -40,18 +35,14 @@ const builtIn = computed(
   () => draft.value.system === BUILT_IN_PROMPT.system && draft.value.user === BUILT_IN_PROMPT.user,
 );
 
-/** Written here: a pair of braces in the template would end the interpolation it sits in. */
+/** Here, not in the template: the braces would end the interpolation. */
 const NOTES_TAG = "{{book.notes}}";
 const ENDPOINT_NOTES_TAG = "{{endpoint.notes}}";
 
-/** The endpoints that send a prompt of their own instead of this one. */
 const replacing = computed(() =>
   endpointsStore.profiles.filter((p) => p.prompt?.mode === "replace").map((p) => p.name),
 );
-/**
- * The endpoints that send this prompt and have notes it would not place: saved notes, since a
- * draft on an endpoint's tab is not sent by anything yet.
- */
+/** Endpoints sending this prompt whose saved notes it has no tag for. */
 const notesDropped = computed(() =>
   endpointsStore.profiles
     .filter(
@@ -62,7 +53,7 @@ const notesDropped = computed(() =>
     .map((p) => p.name),
 );
 
-/** Filled in for the first scripting endpoint, so `{{model}}` and its notes show something real. */
+/** Filled in for the first scripting endpoint, so `{{model}}` and notes show something real. */
 const preview = computed(() => {
   const p = endpointsStore.profiles[0];
   const vars = sampleVars(PROMPT_SAMPLE, {

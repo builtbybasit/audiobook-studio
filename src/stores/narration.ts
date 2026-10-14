@@ -45,11 +45,9 @@ import { toastFailure } from "@/stores/toastFailure";
 import { useUiStore } from "@/stores/ui";
 
 /**
- * Take the revision a one-line write moved a chapter's script to — but only when it is the very next
- * one after the revision this copy was read at. Further on, something else wrote the chapter in
- * between (a clip landed) that this copy has not read, and naming that revision would let the next
- * edit write over it; the chapter's next read brings both, and an edit before then is refused and
- * reads it.
+ * Adopt the revision a one-line write moved to, only when it is the very next one. Further on,
+ * another write (a clip landed) came in between that this copy has not read; naming it would let
+ * the next edit overwrite that.
  */
 function stepRevision(bookId: string, chId: number, revision: number): void {
   const scriptsStore = useScriptsStore();
@@ -60,11 +58,8 @@ function stepRevision(bookId: string, chId: number, revision: number): void {
 export const useNarrationStore = defineStore("narration", {
   getters: {
     /**
-     * Exactly what a line is sent as now (`@/lib/reading`): read in its speaker's voice as the cast
-     * and the endpoints stand, with the book's dictionary. The server takes the same reading as the
-     * line goes out, so the estimate, the editor's preview and the drift rule below say what the
-     * server sends — on the endpoint the voice names even when that endpoint no longer lists the
-     * voice, because that is where the server sends it (`endpoints.endpointOf`).
+     * Exactly what a line is sent as now (`@/lib/reading`), as the server reads it too: on the
+     * endpoint its voice names even when that endpoint no longer lists it (`endpoints.endpointOf`).
      */
     reading(): (bookId: string, s: Segment) => Reading {
       const castStore = useCastStore();
@@ -104,8 +99,8 @@ export const useNarrationStore = defineStore("narration", {
       return (bookId: string, ids: number[]) =>
         ids.flatMap((chId) =>
           scriptsStore.segmentsOf(bookId, chId).flatMap((s) =>
-            // an issue is always about one of the line's own expressions: a line with none has none,
-            // and rendering it — its text through the dictionary — is most of a long book's cost here
+            // issues are only about a line's own expressions; skipping lines with none saves
+            // most of a long book's cost here
             s.expressions?.length
               ? this.expressionRender(bookId, s).issues.map((issue) => ({
                   ...issue,
@@ -117,9 +112,8 @@ export const useNarrationStore = defineStore("narration", {
           ),
         );
     },
-    /** Everything a clip was rendered with that the script no longer says — empty means "still current".
-     *  One definition, so the ledger's amber line, a rejected retake and a finished render agree —
-     *  and the server's, `compareReading`, so a clip that lands is judged the same way. */
+    /** What a clip was rendered with that the script no longer says; empty means current. Must
+     *  agree with the server's `compareReading`. */
     clipDrift(): (bookId: string, s: Segment, a?: SegmentAudio) => string[] {
       const endpointsStore = useEndpointsStore();
 
@@ -127,13 +121,9 @@ export const useNarrationStore = defineStore("narration", {
         a.at ? compareReading(a, s, this.reading(bookId, s), endpointsStore.voiceLabel) : [];
     },
     /**
-     * The lines of one chapter the script has moved past: stale clips, plus — once the chapter has
-     * been narrated at all — the lines that were never rendered, because in a started chapter a gap
-     * is work left to do rather than a chapter nobody has begun.
-     *
-     * One definition, so "Re-narrate changed (N)" in the ledger, the reader's banner and the lexicon
-     * panel's re-narrate button all count the lines `renarrateStale` asks the server for. A panel
-     * with its own copy is one that promises N and renders something else.
+     * Lines the script has moved past: stale clips, plus unrendered lines once the chapter has
+     * been narrated at all. Every "re-narrate changed (N)" count reads this, matching what
+     * `renarrateStale` asks the server for.
      */
     changedSegments(): (bookId: string, chId: number) => Segment[] {
       const libraryStore = useLibraryStore();
@@ -142,7 +132,7 @@ export const useNarrationStore = defineStore("narration", {
       return (bookId, chId) => {
         const started = libraryStore.chapter(bookId, chId)?.narration !== "none";
         const book = libraryStore.bookById(bookId);
-        // a line the book does not read has no clip to be out of date, as `narrationTargets` has it
+        // a line the book does not read has no clip to be out of date (`narrationTargets`)
         return scriptsStore
           .segmentsOf(bookId, chId)
           .filter(
@@ -153,21 +143,10 @@ export const useNarrationStore = defineStore("narration", {
       };
     },
     /**
-     * Why this run cannot start, in the sentences the run strip shows and in the order worth
-     * fixing — or empty when it can: the Narrator's voice and the book's pause, then what the
-     * estimate says of this run, then the voices the cast routes to. `startRun` refuses on the
-     * same list, so a press the strip would refuse is refused wherever it comes from.
-     *
-     * In the store rather than in whichever panel has an estimate, and built on the estimate's
-     * `worstCase` — the figure the server reserves against the cap, from the same
-     * `@/lib/narrationCost` — because a budget figure worked out a second way is how a strip
-     * green-lights a run the server then refuses. Note the cap is compared against a per-endpoint
-     * sum of undiscounted prices, never a single max over the aggregate: two endpoints on different
-     * discounts do not add up the same way.
-     *
-     * It takes the estimate rather than working one out: the page already has it, and the strip
-     * re-renders on every progress tick while a run is in flight, so a second pass here would cost
-     * a reading of every line, several times a second, for a number already in hand.
+     * Why this run cannot start, in fix-it order; empty when it can. `startRun` refuses on the same
+     * list. Built on the estimate's `worstCase`, the figure the server reserves against the cap
+     * (`@/lib/narrationCost`): a per-endpoint sum of undiscounted prices, never one max over the
+     * total. Takes the estimate rather than recomputing it on every progress tick.
      */
     blockers(): (bookId: string, est: NarrationEstimate) => string[] {
       const castStore = useCastStore();
@@ -187,8 +166,7 @@ export const useNarrationStore = defineStore("narration", {
         const cap = book?.budget?.cap;
         if (est.segments && cap != null) {
           const cost = est.worstCase;
-          // the ledger's sums, or nothing while they have not been read — never a zero standing
-          // in for spending nobody has counted yet
+          // the ledger's sums, or nothing while unread: never a zero for uncounted spending
           const spent: number | undefined = jobsStore.spent(bookId);
           const held: number | undefined = jobsStore.reserved(bookId);
           if (spent == null || held == null)
@@ -214,12 +192,8 @@ export const useNarrationStore = defineStore("narration", {
       return (bookId, seg) => this.reading(bookId, seg).requests;
     },
     /**
-     * What a run leaves unread, said in words: "3 lines of site text and 2 notes are not read".
-     *
-     * `plan.skippedLines` is the count, from the plan the run is queued by; this names its kinds,
-     * reading the same chapters the plan looked into — the ones it runs and the ones it found
-     * nothing or only retakes in — by the same `isSpoken`, so the words add up to the plan's figure.
-     * Empty when nothing is left unread.
+     * Names the kinds behind `plan.skippedLines` ("3 lines of site text and 2 notes are not
+     * read"), reading the plan's chapters by the same `isSpoken`. Empty when nothing is skipped.
      */
     unreadNote(): (bookId: string, plan: RunPlan) => string {
       const libraryStore = useLibraryStore();
@@ -250,9 +224,8 @@ export const useNarrationStore = defineStore("narration", {
       };
     },
     /**
-     * What running this selection at this scope would do, chapter by chapter, with the reasons a
-     * selected chapter is left out. The picker's summary, the button's label and the estimate are
-     * all this one calculation, and the server queues a run by the same `narrationTargets`.
+     * What running this selection at this scope would do per chapter, with reasons for skipped
+     * chapters. The server queues by the same `narrationTargets`.
      */
     narrationRunPlan(): (
       bookId: string,
@@ -278,19 +251,10 @@ export const useNarrationStore = defineStore("narration", {
       };
     },
     /**
-     * What these lines would submit to each endpoint, and what that would cost at `at`.
-     *
-     * Every line goes to the endpoint that owns its speaker's voice, and a line past that endpoint's
-     * limit becomes several requests — so cost and load are per endpoint, and each card is priced in
-     * whatever unit it bills in. Lines with no route are counted in `unrouted` and priced by nobody.
-     *
-     * Each line is measured on its reading (`plannedSpeechUnits`), the measurement the server takes
-     * when the request actually goes out, so an estimate and the charge that follows it count the
-     * same thing: the words after the dictionary and the tags, with the instructions beside them.
-     *
-     * One grouping and one call into the pricing engine per endpoint, which the estimate reads every
-     * column of — the undiscounted figure the cap is checked against included, so the panel cannot
-     * quote a figure the cap does not honour.
+     * What these lines would submit to each endpoint and cost at `at`, in each endpoint's billing
+     * unit; unroutable lines go in `unrouted`. Each line is measured on its reading
+     * (`plannedSpeechUnits`), as the server measures the real request. Includes the undiscounted
+     * figure the cap is checked against.
      */
     _pricedByEndpoint(): (
       bookId: string,
@@ -339,12 +303,8 @@ export const useNarrationStore = defineStore("narration", {
         return { rows, unrouted };
       };
     },
-    // Cost and load are per endpoint: each segment goes to the endpoint that owns its speaker's voice,
-    // and a segment longer than that endpoint's limit becomes several requests.
-    //
-    // The estimate counts the lines the *chosen scope* would send, not every line in the chapter:
-    // "retry failed clips" over a finished book is a handful of requests, and saying otherwise is
-    // the difference between an estimate and a number.
+    // Counts only the lines the chosen scope would send: "retry failed" over a finished book is a
+    // handful of requests.
     estimate(): (
       bookId: string,
       ids: number[],
@@ -358,11 +318,7 @@ export const useNarrationStore = defineStore("narration", {
           keepPending,
         );
     },
-    /**
-     * What running `plan` would cost: `estimate` for a page that already has the plan in hand, so
-     * the picker, the strip and the panel read one plan and one estimate rather than each working
-     * out their own.
-     */
+    /** `estimate` from a plan already in hand, so every panel reads one plan and one estimate. */
     estimateOf(): (bookId: string, plan: RunPlan, keepPending?: boolean) => NarrationEstimate {
       const libraryStore = useLibraryStore();
       const scriptsStore = useScriptsStore();
@@ -370,9 +326,8 @@ export const useNarrationStore = defineStore("narration", {
       return (bookId, plan, keepPending = true) => {
         const scope = plan.scope ?? "all";
         const book = libraryStore.bookById(bookId);
-        // The plan decides which chapters are in the run and which are left out; the estimate prices
-        // what it chose. Re-deriving the eligibility cascade here is how the panel and the button
-        // start disagreeing about the same press.
+        // The plan decides the chapters; re-deriving eligibility here would let panel and button
+        // disagree about the same press.
         const lines: Segment[] = [];
         let chars = 0;
         let stale = 0;
@@ -389,10 +344,7 @@ export const useNarrationStore = defineStore("narration", {
             lines.push(seg);
           }
         }
-        // Each endpoint is priced on its own card, at the rates in force right now, in whatever
-        // unit it bills in — a per-request endpoint is charged per request, a per-minute one on the
-        // audio this run would produce. One instant for the whole estimate, so the rows agree with
-        // each other and with the total.
+        // One instant for the whole estimate, so the rows agree with each other and the total.
         const at = Date.now();
         const { rows: priceRows, unrouted } = this._pricedByEndpoint(bookId, lines, at);
         const rows = priceRows.map(({ row }) => row);
@@ -405,8 +357,7 @@ export const useNarrationStore = defineStore("narration", {
         let audioCost: number | null = null;
         for (const { row: e, priced } of priceRows) {
           const billing = billingOf(e.endpoint);
-          // every step that moved any of this endpoint's rates off its card, in order — resolved
-          // once for the endpoint rather than once per component
+          // every step that moved this endpoint's rates off its card, in order, resolved once
           const resolved = effectiveRates(
             speechRates(billing),
             speechPricing(e.endpoint).config,
@@ -421,7 +372,7 @@ export const useNarrationStore = defineStore("narration", {
           inputCost += priced.inputCost ?? 0;
           if (priced.audioCost != null) audioCost = (audioCost ?? 0) + priced.audioCost;
           withoutPromotions += priced.withoutPromotions ?? 0;
-          // the cap's own figure, taken here so the panel and the strip's blockers cannot disagree
+          // the cap's own figure, so the panel and the strip's blockers cannot disagree
           worstCase += Math.max(priced.cost ?? 0, priced.withoutPromotions ?? 0);
           for (const why of priced.cautions) cautions.add(why);
         }
@@ -500,9 +451,8 @@ export const useNarrationStore = defineStore("narration", {
       });
     },
     /**
-     * A pause at `at` in a line, as long as the book's short pause; its length is changed on its
-     * chip. It needs no tag set up: a voice with no pause tag hears it as silence. Returns the new
-     * pause's id, for the editor to open it.
+     * A pause at `at`, as long as the book's short pause. Needs no tag: a voice without a pause tag
+     * hears silence. Returns the new pause's id, for the editor to open it.
      */
     addPause(bookId: string, chId: number, segId: number, at: number): number | null {
       const scriptsStore = useScriptsStore();
@@ -546,8 +496,7 @@ export const useNarrationStore = defineStore("narration", {
       const s = scriptsStore.segmentsOf(bookId, chId).find((s) => s.id === segId);
       const a = s?.expressions?.find((a) => a.annotationId === annotationId);
       if (!s || !a) return;
-      // dragging a tag back where it already was is not an edit: it must not open a history entry,
-      // and it must not make a clip that still matches the script look stale
+      // dragging a tag back where it was is not an edit: no history entry, no stale clip
       if (
         patch &&
         (Object.keys(patch) as (keyof ExpressionAnnotation)[]).every((k) => a[k] === patch[k])
@@ -562,25 +511,12 @@ export const useNarrationStore = defineStore("narration", {
       uiStore.toast(patch ? "Expression updated" : "Expression removed", { undo });
     },
     // ---------- narration ----------
-    //
-    // Every run is the server's: it decides which lines a scope covers from the clips it holds,
-    // renders them and writes each as it lands, and the queue's poll (`useBookJobs`) reads the
-    // chapter's script again as they do. The budget is the server's to enforce too: it refuses a
-    // run that does not fit the book's cap, or any run on a paused book, with a 409 whose sentence
-    // the toast shows as it is, and stops a running job before a request the cap no longer allows.
-    // Nothing about a chapter changes here before the server answers — see `docs/backend.md`.
+    // Every run is the server's: it picks lines, renders, lands clips, and enforces the budget
+    // (409 with a sentence the toast shows). Nothing changes here before the server answers.
     /**
-     * Narrate (or re-narrate) the given chapters, as one run.
-     *
-     * `scope` is what the run was asked to do — fill the gaps and refresh what the script has moved
-     * past, retry only what failed, or render everything again. A line that already has a playable
-     * clip renders its replacement beside it, and the clip in the book keeps playing until the
-     * replacement lands. The server marks the chapters it queued and the response carries them as
-     * they now stand; a chapter it left out — skipped for the audiobook, not scripted, already being
-     * narrated, or with nothing in the scope — is said so in the toast. True when anything was
-     * queued.
-     *
-     * This checks nothing the run strip shows as a blocker: a retry goes through `startRun`.
+     * Narrate the given chapters as one run at `scope`. A line with a playable clip renders its
+     * replacement beside it. Chapters the server left out are named in the toast. True when
+     * anything was queued. Checks no blockers; use `startRun` for that.
      */
     async runNarration(
       bookId: string,
@@ -636,10 +572,9 @@ export const useNarrationStore = defineStore("narration", {
       }
     },
     /**
-     * Start a run the way the run strip would, refusing — and saying why — while it has any
-     * blocker (`blockers`). A retry from the Queue may be of a book no page has open, so what the
-     * blockers are worked out from is read first when it is not here: the chapters' scripts, the
-     * cast and the book's spending. True when anything was queued.
+     * Start a run as the run strip would, refusing with the reason while `blockers` has any. A
+     * Queue retry may be for a book no page has open, so its scripts, cast and spending are read
+     * first. True when anything was queued.
      */
     async startRun(
       bookId: string,
@@ -651,7 +586,7 @@ export const useNarrationStore = defineStore("narration", {
       const scriptsStore = useScriptsStore();
       const uiStore = useUiStore();
 
-      // a read that fails leaves its part unread, and the blockers below then say so
+      // a failed read leaves its part unread, and the blockers then say so
       const quietly = (read: Promise<unknown>) => read.catch(() => {});
       await Promise.all([
         ...ids
@@ -671,17 +606,13 @@ export const useNarrationStore = defineStore("narration", {
       }
       return this.runNarration(bookId, ids, opts);
     },
-    /**
-     * The lines the script has moved past, as the server counts them from the clips it holds: the
-     * "missing & changed" scope over one chapter.
-     */
+    /** The "missing & changed" scope over one chapter, as the server counts it. */
     renarrateStale(bookId: string, chId: number): void {
       void this.startRun(bookId, [chId], { scope: "fill" });
     },
     /**
-     * One line, asked for by hand. The server's smallest unit of work is a chapter at a scope: a
-     * failed line is re-rendered with the chapter's other failed lines, and a line that did not
-     * fail has nothing to retry.
+     * The server's smallest unit is a chapter at a scope: a failed line reruns with the chapter's
+     * other failed lines; a line that did not fail has nothing to retry.
      */
     retrySegment(bookId: string, chId: number, segId: number): void {
       const scriptsStore = useScriptsStore();
@@ -690,7 +621,7 @@ export const useNarrationStore = defineStore("narration", {
       if (s && segmentFailed(s)) void this.startRun(bookId, [chId], { scope: "failed" });
       else this._unavailable("Re-renders of one line");
     },
-    /** Every request in this chapter that failed, and only those — a replacement that failed too. */
+    /** Every failed request in this chapter, including failed replacements. */
     retryFailed(bookId: string, chId: number): void {
       void this.startRun(bookId, [chId], { scope: "failed" });
     },
@@ -705,14 +636,12 @@ export const useNarrationStore = defineStore("narration", {
       });
     },
     // ---------- audio review & retakes ----------
-    // A request can succeed and still sound wrong. The listener flags what is wrong, asks for another
-    // take, then plays the two against each other and keeps one; the loser stays in the take list.
-    // A retake renders into `segment.candidate`, never into `segment.audio`: the clip in the book keeps
-    // playing, timing the chapter and going into the export until the listener actually accepts the
-    // new one. Nothing about the book changes on the strength of a request that merely succeeded.
+    // A retake renders into `segment.candidate`, never `segment.audio`: the book's clip keeps
+    // playing, timing and exporting until the listener accepts the new one; the loser stays in the
+    // take list.
     /**
-     * Raise or replace a line's flag. It shows at once, and the server writes it to that line alone
-     * (`_writeFlag`) — a bulk flag too, one line at a time. Resolves once the server has answered.
+     * Raise or replace a line's flag. Shows at once; the server writes it to that line alone
+     * (`_writeFlag`), a bulk flag one line at a time. Resolves once answered.
      */
     flagSegment(
       bookId: string,
@@ -739,17 +668,9 @@ export const useNarrationStore = defineStore("narration", {
       return this._writeFlag(bookId, chId, segId, null, was);
     },
     /**
-     * Write one line's flag, and nothing else of its script.
-     *
-     * A flag changes nothing a version keeps and nothing a run renders, so it names no revision.
-     * Sent as the whole script, as an edit is, it named the revision it was read at, and a run
-     * landing clips in the chapter moves that on with every clip — so a flag raised while the
-     * chapter narrated was refused and lost. The answer carries the flag as written, which replaces
-     * the one shown; a refusal puts back what was there.
-     *
-     * It does move the revision on, though, so it takes its turn among the chapter's writes
-     * (`scripts._writeLine`): an edit already on its way goes first, and one made while the flag is
-     * out waits for it and names the revision it answers with.
+     * Write one line's flag only. It names no revision, so a run landing clips cannot refuse it;
+     * the answer replaces the flag shown, and a refusal restores the old one. It still moves the
+     * revision on, so it takes its turn among the chapter's writes (`scripts._writeLine`).
      */
     async _writeFlag(
       bookId: string,
@@ -763,7 +684,7 @@ export const useNarrationStore = defineStore("narration", {
       try {
         await scriptsStore._writeLine(bookId, chId, async () => {
           const answer = await libraryService().flagLine(bookId, chId, segId, flag);
-          // taken before the chapter's next write goes, so that one sends it and names its revision
+          // taken before the chapter's next write, so that one sends it and names its revision
           const s = line();
           if (s) {
             if (answer.flag) s.flag = answer.flag;
@@ -796,9 +717,8 @@ export const useNarrationStore = defineStore("narration", {
       );
     },
     /**
-     * The lines are queued on the server as one job, each to render beside the clip it may
-     * replace, and the queue's poll brings each candidate here when it lands. A line already
-     * waiting on a verdict is left out and said so. Resolves to how many lines were queued.
+     * Queue the lines as one server job, each rendering beside the clip it may replace. A line
+     * already awaiting a verdict is skipped and said so. Resolves to how many were queued.
      */
     async _retake(bookId: string, chId: number, ids: number[]): Promise<number> {
       const jobsStore = useJobsStore();
@@ -853,9 +773,8 @@ export const useNarrationStore = defineStore("narration", {
       void this._verdict(bookId, chId, segId, "reject");
     },
     /**
-     * The server swaps or discards the retake and answers with the line and the chapter as they now
-     * stand, which replace what is here. There is no Undo: the displaced clip is in the take list,
-     * where the comparison can be made again.
+     * The server swaps or discards the retake and answers with the line and chapter. No Undo: the
+     * displaced clip stays in the take list.
      */
     async _verdict(
       bookId: string,
@@ -887,8 +806,7 @@ export const useNarrationStore = defineStore("narration", {
           });
           return;
         }
-        // the kept clip may have gone out of date while the retake rendered — say so rather than
-        // silently calling it current, and let the script carry the mark
+        // the kept clip may have gone stale while the retake rendered: mark it rather than call it current
         const drift = i >= 0 ? this.clipDrift(bookId, segment) : [];
         if (drift.length && ["done", "stale"].includes(segment.audio.status)) {
           scriptsStore._markStale(bookId, chId, segment);

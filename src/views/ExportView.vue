@@ -5,20 +5,10 @@ import { useNarrationStore } from "@/stores/narration";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
 
-// Export: turn narrated chapters into an audiobook, and keep it up to date afterwards.
-//
-// Two tabs, because they are two jobs. **Build** is the selection on the left and everything the
-// build will be on the right; **Audiobooks** is what this book has already produced, what is in each
-// one, and whether it still matches the book. The tab label carries the count and a dot when
-// something needs an update, so the second job never has to be remembered.
-//
-// The selection is the contract: whatever is ticked on the left is exactly what goes in the files.
-// Chapters that cannot be exported can still be ticked — they are shown as problems with something
-// to do about them, and "leave them out" untick them, so nothing is ever dropped behind your back.
-//
-// That contract is why Update and Retry can land here too. When one of them would have had to trim
-// the selection or accept stale clips on your behalf, it stages the build instead: the form and the
-// ticks arrive filled in, and the same review asks the same questions before anything is built.
+// Export: build an audiobook from narrated chapters (Build), and keep built ones up to date
+// (Audiobooks). The selection is the contract: what is ticked is exactly what goes in the files, so
+// unexportable chapters stay ticked as problems, and Update/Retry stage a build here instead of
+// trimming the selection for you.
 import { computed, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { isNarrated, isScripted } from "@/lib/scriptReview";
@@ -45,22 +35,19 @@ const scriptsStore = useScriptsStore();
 const uiStore = useUiStore();
 const router = useRouter();
 const bookId = useBookId();
-// the router only reaches this view with a real book id
 const book = computed(() => libraryStore.bookById(bookId)!);
 const TABS = [
   { value: "build", label: "Build" },
   { value: "library", label: "Audiobooks" },
 ] as const;
 const tab = useQueryParam("tab", enumParam(["build", "library"], "build"));
-// the finished audiobooks, read from the server when the page opens
 useBookExports(bookId);
-// Every scripted chapter's lines: the review's flagged lines, retakes and pause overrides are read
-// from them, and so is what each finished audiobook says has changed since it was built.
+// the review and each audiobook's "changed since built" read every scripted chapter's lines
 const scripts = useBookScripts(bookId);
 
 const anyNarrated = computed(() => libraryStore.chaptersOf(bookId).some(isNarrated));
 const selected = ref<number[]>([]);
-/** Selected chapters whose script failed to read, and whether any selected one is still on its way. */
+/** Selected chapters whose script failed to read, and whether any is still on its way. */
 const unread = computed(() => selected.value.filter((id) => scripts.failed.value.includes(id)));
 const reading = computed(() =>
   selected.value.some((id) => {
@@ -79,7 +66,6 @@ const settings = reactive<ExportSettings>({ ...DEFAULT_EXPORT_SETTINGS });
 /** The finished export a staged build would become the next version of. */
 const updates = ref<number | null>(null);
 
-/** Opening a book fills the form from it and ticks everything that is ready to go. */
 function reset() {
   const b = book.value;
   Object.assign(settings, DEFAULT_EXPORT_SETTINGS, {
@@ -90,11 +76,9 @@ function reset() {
     filename: b.title,
     grouping: b.volumes.length > 1 ? "volume" : "single",
   });
-  // everything that has audio, stale and partly narrated included: a chapter left out on your
-  // behalf is exactly the omission this page is meant not to make. It opens as a decision — the
-  // review names it as a blocker — not as a silent gap. `usable` is the one definition of "carries
-  // audio a build can use", and the exports store reads the same one to decide whether a build
-  // covers the whole book, so ticking a narrower set quietly filed the build as a chosen subset.
+  // everything with audio, stale and partly narrated included: a chapter left out for you is the
+  // omission this page exists to prevent. `usable` is the same test the exports store uses to
+  // decide a build covers the whole book.
   selected.value = libraryStore
     .chaptersOf(bookId)
     .filter(usable)
@@ -102,8 +86,7 @@ function reset() {
   updates.value = null;
 }
 watch(() => bookId, reset, { immediate: true });
-// Update and Retry hand a build back here rather than answering for you. Take it whole — the ticks,
-// the settings it was built with, and which audiobook it is the next version of.
+// Update and Retry hand a build back here: take the ticks, the settings and the version it updates.
 watch(
   () => exportsStore._exportDraft,
   (d) => {
@@ -133,8 +116,7 @@ const needUpdate = computed(
 const building = computed(() => exportsHere.value.some((e) => e.status === "building"));
 const failedBuilds = computed(() => exportsHere.value.filter((e) => e.status === "failed").length);
 
-// ---- resolving problems. Each of these changes the selection or the settings and nothing else, so
-// what the chapter list shows stays exactly what will be built.
+// Resolving problems: each changes only the selection or settings, so the list stays what is built.
 function drop(ids: number[]) {
   const gone = new Set(ids);
   selected.value = selected.value.filter((id) => !gone.has(id));
@@ -160,16 +142,14 @@ function narrate(ids: number[]) {
     );
     return;
   }
-  // One run, and the plan decides what each chapter contributes. Splitting it on the chapter's
-  // *label* sent a chapter whose clips are fine but whose retake failed down the "everything" path,
-  // re-rendering lines that had already succeeded and displacing good clips; "missing & changed" is
-  // what this button is for — the lines with no usable clip and the ones the script has moved past.
+  // One run: the plan decides what each chapter contributes. Splitting on the chapter's label
+  // sent a chapter with a failed retake down the "everything" path and re-rendered good clips.
   void narrationStore.startRun(
     bookId,
     scripted.map((c) => c.id),
     { scope: "fill" },
   );
-  // say what was queued *and* what was not: a chapter left behind here is one the build still wants
+  // say what was not queued too: the build still wants it
   uiStore.toast(`Narrating ${plural(scripted.length, "chapter")}`, {
     kind: "info",
     description: unscripted.length

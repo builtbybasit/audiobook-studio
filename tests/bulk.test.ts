@@ -1,10 +1,7 @@
-// Bulk script corrections from the Search page: previewing changes nothing, applying touches exactly
-// the lines the preview counted, and one undo puts the batch back without stepping on later edits.
-// They run on the demo library's The Cliché Cultivation World, whose first chapter is narrated.
-//
-// What a batch does here is the store's; what the server keeps of the write it sends is
-// `tests/server/scriptEdit.test.ts`'s. So the write is recorded rather than sent, and the seeded
-// demo is opened once and never changed: every test reads the same book.
+// Bulk script corrections from the Search page: previewing changes nothing, applying touches the
+// lines the preview counted, and one undo puts the batch back without stepping on later edits.
+// Writes are recorded rather than sent (the server side is `tests/server/scriptEdit.test.ts`), so
+// the seeded demo is opened once and never changed.
 import { test, expect, beforeAll, beforeEach, afterEach, mock } from "bun:test";
 import { bulkOutcome, segmentFingerprint, directionOptions } from "@/lib/bulk";
 import { libraryService } from "@/services/library";
@@ -13,8 +10,7 @@ import { demoServer } from "./support/demoServer";
 import { testPinia, type TestPinia } from "./support/pinia";
 import { unwrittenEdits, type UnwrittenEdit, type UnwrittenFlag } from "./support/unwrittenEdits";
 
-// The batch undo is the store's own undo stack, and that stack lives on a toast. Swap the toast
-// library for a silent one so `revertEntry` can be exercised for real.
+// The batch undo lives on a toast; a silent toast library lets `revertEntry` run for real.
 let shown = 0;
 await mock.module("vue-toastflow", () => ({
   toast: {
@@ -167,8 +163,7 @@ test("undoing a batch writes every chapter it changed back as it was", async () 
   uiStore.revertEntry(res.entry as UndoEntry);
   await Promise.all([1, 5].map((chId) => scriptsStore._settled("cliche", chId)));
 
-  // undo is on the page at once, but it is only kept if it reaches the server: without these
-  // writes the next read of the book would hand the batch back
+  // undo shows at once but only holds once it reaches the server, or the next read brings the batch back
   const back = writes.slice(batch);
   expect(back.map((w) => w.chId).toSorted((a, b) => a - b)).toEqual([1, 5]);
   for (const [i, chId] of [1, 5].entries())
@@ -327,8 +322,7 @@ test("a clip finishing in the background does not invalidate an open preview, bu
   expect(scriptsStore.bulkPreview("cliche", targets, action).signature).not.toBe(first);
 });
 
-// A narration run moves the chapter's revision on with every clip, so a flag batch sent as the
-// script, naming the revision it read, was refused while the chapter narrated.
+// Narration moves the revision on with every clip, so a flag batch must not be sent as the script.
 test("a flag batch writes each line's flag alone and no script, and its undo takes them down the same way", async () => {
   const targets = all(5);
   const res = scriptsStore.applyBulk("cliche", targets, {

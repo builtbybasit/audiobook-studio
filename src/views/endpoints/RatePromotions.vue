@@ -1,13 +1,7 @@
 <script setup lang="ts">
-// Temporary price changes: "50% off this model until Friday".
-//
-// Three states, kept apart on screen because they mean different things: **running** (applying
-// now), **scheduled** (has a start date in the future, applying to nothing yet) and **ended** (kept
-// as history, applying to nothing ever again). An expired promotion is never deleted by the app —
-// it stops applying on its own, and the requests it priced keep the rates they were charged at.
-//
-// Promotions do not stack. Where two of them cover the same component, only the one that makes it
-// cheapest applies; the other is shown as outranked rather than silently ignored.
+// Temporary price changes ("50% off until Friday"), listed as running, scheduled and ended.
+// An expired promotion is never deleted, just stops applying. Promotions don't stack: per
+// component the cheapest applies and the other is shown as outranked.
 import { computed } from "vue";
 import { UiHint, UiNumber, UiSelect } from "@/ui";
 import { Plus as AddIcon, Trash2 as RemoveIcon, TriangleAlert as WarnIcon } from "@lucide/vue";
@@ -46,17 +40,13 @@ const props = defineProps<{
   base: RateSet;
   snapshot: PricingSnapshot;
   now: number;
-  /** the components this endpoint prices — the four token rates, or the one speech rate */
+  /** the token rates, or the one speech rate */
   components: RateComponent[];
-  /** the unit a speech rate is written in; absent on a token card */
+  /** absent on a token card */
   unit?: TtsBillingUnit;
 }>();
 
-/**
- * The scopes worth offering. A speech endpoint has one rate, so "whole model" and "speech rate" say
- * the same thing and only the first is shown — an option that cannot change the outcome is a
- * question nobody should have to answer.
- */
+/** With one rate, "whole model" and that rate are the same scope, so only the first is offered. */
 const SCOPES = computed<{ value: PromotionScope; label: string }[]>(() =>
   props.components.length < 2
     ? [{ value: "model", label: SCOPE_LABEL.model }]
@@ -66,7 +56,6 @@ const SCOPES = computed<{ value: PromotionScope; label: string }[]>(() =>
       ],
 );
 
-/** Running, scheduled and ended are three different things, so they are three different lists. */
 const groups = computed(() => [
   {
     title: "Running now",
@@ -85,12 +74,8 @@ const groups = computed(() => [
 const applied = (p: Promotion) => props.snapshot.applied.some((x) => x.id === p.id);
 const shadowed = (p: Promotion) => props.snapshot.shadowed.some((x) => x.id === p.id);
 
-/**
- * `<input type="date">` wants a yyyy-mm-dd, and the day it names is a day **where the endpoint is
- * billed** — the timezone the schedule, the "ends tomorrow" line and every other date on this page
- * are already read in. Reading it in the browser's zone instead moves a New York promotion's start
- * or end onto another calendar day when it is edited from Karachi.
- */
+/** The date input's day is in the endpoint's billing timezone, not the browser's, or an edit from
+ *  another zone shifts the promotion by a day. */
 const dateValue = (at: number | null): string =>
   at == null ? "" : calendarDay(at, props.config.timezone);
 
@@ -99,7 +84,7 @@ function setDate(p: Promotion, field: "from" | "until", text: string) {
     p[field] = null;
     return;
   }
-  // a start begins at midnight, an end runs to the last moment of the day it names
+  // a start begins at midnight, an end runs to the day's last moment
   const at =
     field === "from"
       ? startOfDay(text, props.config.timezone)
@@ -146,16 +131,9 @@ function toggleScope(p: Promotion, scope: PromotionScope) {
 }
 
 /**
- * What this promotion does to each component it covers, at today's rates.
- *
- * Priced through `effectiveRates` rather than re-derived: the owner's chain is base → scheduled →
- * promoted, so inside an active window the "from" is what the schedule already made the rate and
- * the percentage lands on *that* number. Working it off the card rate quoted a "from" this endpoint
- * is not charging and a "to" nobody would be billed — while the panel above it, reading the same
- * three steps, showed the right ones a few hundred pixels away.
- *
- * The promotion is resolved alone and with its dates dropped, so a scheduled or ended one still
- * says what it would do, and a running neighbour that outranks it does not hide it.
+ * What this promotion does to each component at today's rates. Goes through `effectiveRates`
+ * (base → scheduled → promoted) so the "from" is the scheduled rate, not the card rate. Resolved
+ * alone and undated, so a scheduled, ended or outranked one still shows its effect.
  */
 function preview(p: Promotion): string {
   const alone = effectiveRates(
@@ -166,8 +144,7 @@ function preview(p: Promotion): string {
   );
   const parts: string[] = [];
   for (const c of props.components) {
-    // `scopeActive`, not membership: a `speech`-scoped promotion reaches the two token rates of a
-    // token-billed endpoint, which is what the chip beside it already says it does
+    // `scopeActive`, not membership: a `speech` scope reaches a token-billed endpoint's token rates
     if (!scopeActive(p, c, props.components)) continue;
     const { scheduled, rate } = alone.components[c];
     if (scheduled == null) continue;

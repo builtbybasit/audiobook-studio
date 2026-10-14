@@ -1,5 +1,4 @@
-// A book's cast and pronunciation dictionary over HTTP. Every route is one call on
-// `server/cast/ops.ts`; the rules — and the lines a rename moves — are there.
+// A book's cast and pronunciation dictionary over HTTP; the rules are in `server/cast/ops.ts`.
 import { Hono } from "hono";
 import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
@@ -28,7 +27,7 @@ export function castRoutes(db: Db): Hono<PinoEnv> {
     c.json(ops.bookCast(db, c.req.valid("param").id) satisfies Cast),
   );
 
-  /** One speaker, written as stated: new or replaced. */
+  /** New or replaced. */
   app.put(
     "/:id/characters/:name",
     validate("param", NameParam),
@@ -63,13 +62,13 @@ export function castRoutes(db: Db): Hono<PinoEnv> {
     },
   );
 
-  /** Take a speaker off the cast; their lines go to the Narrator. */
+  /** Their lines go to the Narrator. */
   app.delete("/:id/characters/:name", validate("param", NameParam), (c) => {
     const { id, name } = c.req.valid("param");
     return c.json(ops.deleteCharacter(db, id, name) satisfies MovedLines);
   });
 
-  /** Put a speaker back on exactly these lines: what an Undo of a merge or a removal sends. */
+  /** What an Undo of a merge or a removal sends. */
   app.post(
     "/:id/characters/attribute",
     validate("param", BookParam),

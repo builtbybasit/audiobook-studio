@@ -56,7 +56,7 @@ describe("schedule boundaries", () => {
     expect(
       effectiveRates(card(), config({ windows: [a, b] }), at).components.input.rate,
     ).toBeCloseTo(0.8, 12);
-    // reordering is how precedence is changed, and it is the only thing that changes it
+    // reordering is the only thing that changes precedence
     expect(
       effectiveRates(card(), config({ windows: [b, a] }), at).components.input.rate,
     ).toBeCloseTo(0.1, 12);

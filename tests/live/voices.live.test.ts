@@ -1,6 +1,5 @@
 // The voice lister against the real Fish Audio, opt-in: `LIVE=1 bun test tests/live` with
-// `FISHAUDIO_TOKEN` and `FISHAUDIO_VOICE_ID` in `.env`. Listing spends nothing: it reads the
-// account's library, one page of the public catalogue, and the one voice the speech test uses.
+// `FISHAUDIO_TOKEN` and `FISHAUDIO_VOICE_ID` in `.env`. Listing spends nothing.
 import { describe, expect, test } from "bun:test";
 
 import type { ProviderTarget } from "~/providers/target";

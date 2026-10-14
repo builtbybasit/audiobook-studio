@@ -1,70 +1,46 @@
-// How many lines are out at one speech endpoint at once, and when none may go at all.
-//
-// The demo's dispatch rule, kept on the server: a line goes to the endpoint its speaker's voice
-// belongs to when that endpoint is enabled, is not cooling down after a rate limit, and has fewer
-// lines out than its `concurrency`. Otherwise it waits — a paused endpoint *holds* its work rather
-// than failing it, which is what separates Pause from Cancel — and the lines for one endpoint go
-// out in the order they asked, so a chapter still renders front to back on each endpoint.
-//
-// One gate for the whole process, not one per job, because the limit is the provider's: two runs
-// against the same key share its ceiling whether or not the queue ever runs them side by side. The
-// limits are read through a callback every time the gate looks, not handed over once, so a person
-// who raises the concurrency or pauses the endpoint mid-run changes what the next line does — the
-// Endpoints page says both apply live. The gate is told when the configuration is saved
-// (`changed`), and looks again on its own every so often while a paused endpoint holds work, so a
-// change that reached the table some other way is not missed for long.
-//
-// A rate limit is the endpoint's, not the request's: the request that met it waits and tries again
-// as it always has (`http.ts`), and the gate holds every other line for that endpoint until the
-// same moment (`rateLimited`), so the lines behind it do not walk into the same refusal one by
-// one. What the gate has seen — lines out and waiting, rate limits, the cooldown's end — is this
-// process's telemetry (`live`), which the Endpoints page reads; none of it is stored.
+// One process-wide gate on how many lines are out at each speech endpoint. A line waits while its
+// endpoint is paused (held, not failed), cooling down after a rate limit, or at its `concurrency`;
+// each endpoint's lines go out in the order they asked. Limits are read on every look, so a change
+// applies live. `live` is in-memory telemetry for the Endpoints page.
 import type { EndpointLive } from "@/types";
 
-/** What the gate reads about an endpoint each time it looks; undefined when it is not configured. */
+/** undefined when the endpoint is not configured. */
 export interface GateLimits {
   concurrency: number;
   enabled: boolean;
 }
 
-/** Why a line is not going out yet. */
 export type GateWait = "paused" | "cooldown" | "concurrency";
 
 export interface AcquireOptions {
-  /** the job's signal: a cancel takes the line out of the wait, rejecting with its reason */
+  /** a cancel takes the line out of the wait, rejecting with its reason */
   signal: AbortSignal;
-  /** told each time the reason this line is waiting changes, while it is first in line */
+  /** told when the head of the line's reason for waiting changes */
   waiting?(why: GateWait): void;
 }
 
 export interface SpeechGate {
   /**
-   * Wait until the endpoint will take one more line, and hold its slot: resolves to the release,
-   * which is safe to call more than once. `id` null is a line with no endpoint to go to, which goes
-   * one at a time and is never paused or cooled — the provider will refuse it anyway.
+   * Resolves to the slot's release, safe to call twice. `id` null (no endpoint) goes one at a time,
+   * never paused or cooled; the provider will refuse it anyway.
    */
   acquire(
     id: string | null,
     limits: () => GateLimits | undefined,
     options: AcquireOptions,
   ): Promise<() => void>;
-  /** A request to `id` was refused as rate limited and will wait `waitMs`; so does every other. */
+  /** Holds every line for `id` for `waitMs`. */
   rateLimited(id: string, waitMs: number): void;
-  /** The configuration was saved: look again at every endpoint something is waiting on. */
+  /** The configuration was saved: look again. */
   changed(): void;
-  /**
-   * Forget every rate limit and cooldown seen so far: the endpoints that met them have been
-   * replaced by ones that met none — the demo, seeded again. Lines out and waiting are untouched.
-   */
+  /** Forget rate limits and cooldowns (the demo was reseeded); lines out and waiting are kept. */
   forget(): void;
-  /** What this process has seen of each endpoint it has sent to; see the header. */
   live(): Record<string, EndpointLive>;
 }
 
-/** How often a gate with work held by a paused endpoint looks again without being told. */
+/** Polls while a paused endpoint holds work, for a change that bypassed `changed`. */
 export const PAUSED_POLL_MS = 1000;
 
-/** The key a line with no endpoint waits under. */
 const NOWHERE = "";
 
 interface Waiter {
@@ -72,13 +48,13 @@ interface Waiter {
   options: AcquireOptions;
   resolve(release: () => void): void;
   reject(reason: unknown): void;
-  /** the reason it was last told, so it is told only when that changes */
+  /** last reason told, so it is told only on a change */
   told: GateWait | null;
 }
 
 interface State extends EndpointLive {
   queue: Waiter[];
-  /** the timer that wakes this endpoint when its cooldown ends */
+  /** wakes the endpoint when its cooldown ends */
   timer: ReturnType<typeof setTimeout> | null;
 }
 
@@ -96,7 +72,7 @@ export function createSpeechGate(now: () => number = Date.now): SpeechGate {
   };
 
   function blockedBy(s: State, limits: GateLimits | undefined): GateWait | null {
-    // an endpoint that is not configured holds nothing: the provider refuses the line at once
+    // not configured: hold nothing, the provider refuses the line at once
     if (!limits) return s.active >= 1 ? "concurrency" : null;
     if (!limits.enabled) return "paused";
     if (s.backoffUntil > now()) return "cooldown";
@@ -105,10 +81,8 @@ export function createSpeechGate(now: () => number = Date.now): SpeechGate {
   }
 
   /**
-   * The head's limits, or undefined when reading them failed. The read is the caller's — a row
-   * from the endpoints table — and it runs inside whatever woke the gate: a release, a save, a
-   * timer. A throw there would land in someone else's hands, so a failed read counts as an
-   * endpoint that is not configured, and the line goes out to be refused by the provider.
+   * A failed read counts as not configured: it runs inside whatever woke the gate, where a throw
+   * would land in someone else's hands.
    */
   function limitsOf(w: Waiter): GateLimits | undefined {
     try {
@@ -122,8 +96,7 @@ export function createSpeechGate(now: () => number = Date.now): SpeechGate {
     if (s.timer) clearTimeout(s.timer);
     s.timer = null;
     const ms = Math.max(0, s.backoffUntil - now());
-    // Armed even when the end has just passed if a line is waiting: `pump` read the clock a moment
-    // ago and found the endpoint cooling, and a line left with no timer would wait for good.
+    // Armed even at 0 if a line waits: `pump` just saw it cooling; with no timer it would hang.
     if (ms === 0 && !s.queue.length) return;
     s.timer = setTimeout(() => {
       s.timer = null;
@@ -132,7 +105,6 @@ export function createSpeechGate(now: () => number = Date.now): SpeechGate {
     (s.timer as { unref?(): void }).unref?.();
   }
 
-  /** Let out every line the endpoint will now take, first come first served. */
   function pump(id: string): void {
     const s = states.get(id);
     if (!s) return;
@@ -162,7 +134,6 @@ export function createSpeechGate(now: () => number = Date.now): SpeechGate {
     watchPaused();
   }
 
-  /** Keep looking while something waits on a pause; stop once nothing does. */
   function watchPaused(): void {
     const held = [...states.values()].some((s) => s.queue[0]?.told === "paused");
     if (held && !poll) {
@@ -200,7 +171,7 @@ export function createSpeechGate(now: () => number = Date.now): SpeechGate {
           if (at < 0) return;
           s.queue.splice(at, 1);
           reject(signal.reason);
-          // the line behind it may be free to go, or may now be first and need telling why not
+          // the line behind may go now, or need telling why not
           pump(key);
         }
         signal.addEventListener("abort", onAbort, { once: true });
@@ -214,7 +185,7 @@ export function createSpeechGate(now: () => number = Date.now): SpeechGate {
       s.rateLimits++;
       s.backoffUntil = Math.max(s.backoffUntil, now() + Math.max(0, waitMs));
       wake(id, s);
-      // the line first in line is told at once that it now waits on the cooldown, not on a slot
+      // tell the head it now waits on the cooldown
       pump(id);
     },
 

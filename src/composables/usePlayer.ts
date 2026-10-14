@@ -1,29 +1,18 @@
-// The app's one audio player.
-//
-// A file is not the unit of playback here. A chapter is a *timeline*: clips with stitched silence
-// between them (`pauseAfter`), each clip rendered by whichever endpoint owns its speaker's voice. No
-// player library models that, so the queue, the gaps and the playhead are ours and the <audio>
-// element is only the sound source. Reactive media state comes from VueUse's `useMediaControls`,
-// which is already a dependency.
-//
-// It lives at module scope on purpose. Reviewing a book means listening while editing the script,
-// the cast or the dictionary, and a player owned by a view stops the moment you navigate away.
-//
-// A clip carries a `url` when a backend has audio to serve. The prototype has none, so a clip
-// without one is *timed* rather than heard: same timeline, same scrubber, same gaps, silent. That is
-// also the seam — give clips urls and the same code plays them.
+// The app's one audio player. A chapter is a timeline: clips with stitched silence (`pauseAfter`)
+// between them, from several endpoints. No player library models that, so the queue, gaps and
+// playhead are ours and <audio> is only the sound source. Module scope on purpose: playback must
+// survive navigation. A clip without a `url` is timed rather than heard: same timeline, silent.
 import { effectScope, reactive } from "vue";
 import { useMediaControls } from "@vueuse/core";
 
 /** One thing to play: a segment's clip, a take, a finished export. */
 export interface Clip {
-  /** stable within the queue — the ledger's `seg42`, a take's `seg42#2` */
+  /** stable within the queue: the ledger's `seg42`, a take's `seg42#2` */
   id: string;
-  /** seconds. What the timeline is drawn from, even when there is no file behind it. */
+  /** seconds; the timeline is drawn from it even with no file behind it */
   duration: number;
   /** silence stitched after this clip, seconds. Never rendered, never billed. */
   gap?: number;
-  /** real audio, when there is any */
   url?: string;
   /** shown in the mini player and on the OS lock screen */
   label?: string;
@@ -36,10 +25,10 @@ export interface Queue {
   clips: Clip[];
   title?: string;
   subtitle?: string;
-  /** Where the mini player takes you back to — and the mark of long-form playback: a queue with an
-   *  href follows you off the page, a bare audition (one clip, a few seconds) does not. */
+  /** Where the mini player links back to. A queue with an href follows you off the page; a bare
+   *  audition does not. */
   href?: string;
-  /** what to play when this one runs out — the next chapter, usually. Return null to stop. */
+  /** what to play when this one runs out (usually the next chapter); null to stop */
   next?: () => Queue | null;
 }
 
@@ -61,14 +50,13 @@ export interface PlayerState {
   title: string;
   subtitle: string;
   href: string | null;
-  /** the clip played over and over — checking one delivery — or null */
+  /** the clip played over and over, or null */
   repeat: string | null;
   /** stop when this queue runs out rather than going on into `next()` */
   stopAtEnd: boolean;
 }
 
 const TICK = 100;
-/** the speeds an audiobook is actually reviewed at */
 export const RATES = [1, 1.25, 1.5, 1.75, 2] as const;
 
 const p = reactive<PlayerState>({
@@ -89,12 +77,11 @@ const p = reactive<PlayerState>({
 
 const el = typeof Audio === "undefined" ? null : new Audio();
 if (el) el.preload = "auto";
-// One long-lived scope for the element's listeners: this player outlives every component that talks
-// to it, so there is deliberately nothing to dispose.
+// One long-lived scope for the element's listeners: the player outlives every component, so there
+// is nothing to dispose.
 const scope = effectScope(true);
 const media = scope.run(() => useMediaControls(el))!;
-// The second element is only ever a warm cache: the next clip's file is fetched while the current
-// one plays, so the handoff isn't a network round trip.
+// A warm cache only: the next clip's file loads while the current one plays.
 const ahead = typeof Audio === "undefined" ? null : new Audio();
 if (ahead) ahead.preload = "auto";
 
@@ -123,14 +110,14 @@ const indexAt = (pos: number) => {
   return e ? layout.indexOf(e) : -1;
 };
 
-/** Point the element at wherever the playhead is now. The only place `el.src` is ever set. */
+/** Point the element at the playhead. The only place `el.src` is set. */
 function sync(): void {
   const e = entryAt(p.pos);
   const clip = e && p.pos < e.end ? e.clip : null; // null = we are in the silence after a clip
   p.clipId = clip?.id ?? null;
   if (!el) return;
   if (!clip?.url) {
-    // silence, or a clip with no file — the tick is the clock and the element has nothing to do
+    // silence, or a clip with no file: the tick is the clock
     if (!el.paused) el.pause();
     p.loading = false;
     return;
@@ -149,7 +136,6 @@ function sync(): void {
   announce(clip);
 }
 
-/** fetch the next file while this one plays */
 function warm(i: number): void {
   const url = layout[i]?.clip.url;
   if (ahead && url && ahead.src !== url) ahead.src = url;
@@ -163,8 +149,8 @@ function tick(): void {
   const before = entryAt(p.pos);
   const inClip = before && p.pos < before.end;
   if (inClip && before.clip.url && el && !el.paused) {
-    // the element is the clock while a real file plays, so a throttled background tab can't desync
-    // the audio from the playhead. Its own duration wins over our metadata if the two disagree.
+    // the element is the clock while a file plays, so a throttled background tab can't desync.
+    // Its own duration wins over our metadata.
     p.pos = Math.min(before.start + media.currentTime.value, before.end);
     p.loading = media.waiting.value;
   } else {
@@ -176,7 +162,7 @@ function tick(): void {
     return sync();
   }
   if (p.pos >= p.len) return finish();
-  // crossing a boundary — into the next clip, or off the end of this one into its silence
+  // crossing a boundary: into the next clip, or into this one's trailing silence
   const after = entryAt(p.pos);
   const nowInClip = !!after && p.pos < after.end;
   if (after !== before || nowInClip !== !!inClip) sync();
@@ -216,8 +202,7 @@ function load(q: Queue, at = 0, autoplay = false): void {
 }
 
 // ---------- OS media keys and the lock screen ----------
-// An audiobook is reviewed with the window in the background as often as not, so hardware keys and
-// the lock-screen card matter. Both are free; neither exists without real audio behind them.
+// Reviews often run with the window in the background. Neither works without real audio.
 function announce(clip?: Clip | null): void {
   if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
   try {
@@ -246,7 +231,7 @@ if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
 
 // ---------- the API the views use ----------
 
-/** Play a timeline. Pressing the same queue again toggles, as every play button in the app expects. */
+/** Play a timeline. Pressing the same queue again toggles. */
 function playQueue(q: Queue, at?: number): void {
   if (p.id === q.id && at == null) {
     if (p.playing) return pause();
@@ -256,20 +241,17 @@ function playQueue(q: Queue, at?: number): void {
   load(q, at ?? 0, true);
 }
 
-/** Load a timeline and park the playhead in it without starting — scrubbing before pressing play. */
+/** Load a timeline and park the playhead without starting. */
 function cue(q: Queue, at = 0): void {
   load(q, at, false);
 }
 
-/** One clip, by id — the shape the ledger's per-row and the export list's buttons already use. */
+/** One clip, by id. */
 function play(id: string, len: number, url?: string): void {
   playQueue({ id, clips: [{ id, duration: len, url }], title: id });
 }
 
-/**
- * One file whose length is not known yet — a provider's own sample of a voice. Its length is read
- * off the file's metadata first, since the timeline is drawn from it. Pressing it again toggles.
- */
+/** A file of unknown length (a provider's voice sample), timed from its metadata. Toggles. */
 async function playFile(id: string, url: string, title = id): Promise<void> {
   const duration = p.id === id ? p.len : await fileDuration(url);
   playQueue({ id, clips: [{ id, duration, url }], title });
@@ -309,11 +291,11 @@ function stop(): void {
 /** seconds into the queue */
 function seekTo(sec: number): void {
   p.pos = Math.min(Math.max(0, sec), p.len);
-  // moving away from the repeated line by hand is leaving it
+  // seeking away from the repeated line ends the repeat
   if (p.repeat && entryAt(p.pos)?.clip.id !== p.repeat) p.repeat = null;
   sync();
 }
-/** 0…1 of the queue — what a click on the scrubber gives */
+/** 0…1 of the queue, as a scrubber click gives */
 function seek(frac: number): void {
   seekTo(frac * p.len);
 }
@@ -333,11 +315,7 @@ function prev(): void {
   const e = layout[i];
   seekTo(p.pos - e.start < 2 && i > 0 ? layout[i - 1].start : e.start);
 }
-/**
- * How far through one clip the playhead is, 0…1 — or null when that clip is not the one playing.
- * A view can ask about any clip it drew (a take, a candidate, a line of the chapter) without
- * knowing where in the queue it sits.
- */
+/** How far through one clip the playhead is, 0…1; null when that clip is not playing. */
 function clipProgress(id: string): number | null {
   const e = layout.find((x) => x.clip.id === id);
   if (!e || p.pos < e.start || p.pos > e.end) return null;
@@ -345,10 +323,8 @@ function clipProgress(id: string): number | null {
 }
 
 /**
- * The playhead as of this instant, for a view that follows words rather than lines. `p.pos` moves
- * on the tick, ten times a second, and VueUse's `currentTime` on the element's `timeupdate`, a few
- * times a second; a word is shorter than either. So while a file plays this reads the element's own
- * clock. Anywhere else — a timed clip, a gap, paused — there is no finer clock than `p.pos`.
+ * The playhead now, for word-level views: `p.pos` ticks 10×/s and `currentTime` a few times a
+ * second, both coarser than a word, so this reads the element's clock while a file plays.
  */
 function now(): number {
   const e = entryAt(p.pos);
@@ -356,7 +332,7 @@ function now(): number {
   return Math.min(e.start + el.currentTime, e.end);
 }
 
-/** Play one clip over and over — the one under the playhead, by id — or null to stop. */
+/** Play one clip over and over, by id, or null to stop. */
 function repeatClip(id: string | null): void {
   p.repeat = id;
 }
@@ -397,7 +373,7 @@ const api = {
   layout: () => layout,
 };
 
-/** Always the same player — there is only one pair of ears. */
+/** Always the same player. */
 export function usePlayer(): typeof api {
   return api;
 }

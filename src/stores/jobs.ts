@@ -1,10 +1,6 @@
 // Shared queue and accounting across books and stages. IDs are scoped to this Pinia instance.
-//
-// This store is the queue's side of the seam in `@/services/jobs`. The jobs are the server's and
-// nothing here edits them: `useBookJobs` in `@/queries` reads them, polls while anything is live,
-// and `jobs` is that read as the query cache holds it. A cancel, a remove or a clear is a request
-// that then invalidates it. A book's spending is read the same way (`useBookSpend`,
-// `useLibrarySpend`), and `spendOf` answers from whichever of those reads holds the book.
+// The jobs are the server's (`useBookJobs` reads and polls them); cancel, remove and clear are
+// requests that invalidate that read. Spending comes from `useBookSpend` or `useLibrarySpend`.
 import { useQueryCache } from "@pinia/colada";
 import { plural } from "@/lib/contents";
 import { usable } from "@/lib/exports";
@@ -31,7 +27,6 @@ const AVG_JOB: Record<JobKind, number> = {
   effects: 120,
 };
 
-/** The queue before it has been read. */
 const NO_JOBS: readonly Job[] = [];
 
 export const useJobsStore = defineStore("jobs", {
@@ -42,9 +37,8 @@ export const useJobsStore = defineStore("jobs", {
       return (useQueryCache().getQueryData<Job[]>(keys.jobs) ?? NO_JOBS) as Job[];
     },
     /**
-     * What a book has spent and holds, as the server's ledger last said: the book's own read
-     * (`useBookSpend`) when there is one, else the library's (`useLibrarySpend`). Undefined until
-     * one of them has read it — which is not the same as having spent nothing.
+     * The server's ledger for a book, from `useBookSpend` else `useLibrarySpend`. Undefined until
+     * read, which is not the same as nothing spent.
      */
     spendOf(): (bookId: string) => BookSpend | undefined {
       const queryCache = useQueryCache();
@@ -61,11 +55,7 @@ export const useJobsStore = defineStore("jobs", {
     activeJobs(): Job[] {
       return this.jobs.filter((j) => j.status === "running" || j.status === "queued");
     },
-    /**
-     * Each speech endpoint's busy slots, and the clips it has done and failed across the library,
-     * all as the server counts them (`useEndpointLive`): the gate counts every job's lines, and the
-     * clips are counted from what is stored, not from the chapters this browser has read.
-     */
+    /** Each speech endpoint's busy slots and done/failed clips across the library, as the server counts. */
     endpointLoad(): Record<string, EndpointLoad> {
       const endpointsStore = useEndpointsStore();
 
@@ -91,10 +81,7 @@ export const useJobsStore = defineStore("jobs", {
           .filter((j) => j.bulk?.id === runId)
           .sort((a, b) => (a.bulk!.index ?? 0) - (b.bulk!.index ?? 0));
     },
-    /**
-     * A job's label as a page shows it: the server's, which names no chapter, with the chapter's
-     * reading number put in (`jobLabel`) once its book's chapters are read.
-     */
+    /** The server's label (no chapter) with the chapter's reading number put in (`jobLabel`). */
     labelOf(): (j: Job) => string {
       const libraryStore = useLibraryStore();
       return (j) =>
@@ -106,11 +93,8 @@ export const useJobsStore = defineStore("jobs", {
     recentJobs(): Job[] {
       return [...this.jobs].reverse().slice(0, 12);
     },
-    // The four figures below are what every budget panel, gate and wait reason reads. They are the
-    // server's (`spendOf`, read from its ledger and its queue), because the server prices every
-    // request and holds every reservation, and a job carries no reservation of its own to add up.
-    // Each is undefined until the book's spending has been read: a page says it does not know yet
-    // rather than showing a budget with nothing spent.
+    // The four budget figures below are the server's (`spendOf`): it prices every request and
+    // holds every reservation. Undefined until the book's spending is read.
     scriptSpent(): (bookId: string) => number | undefined {
       return (bookId) => this.spendOf(bookId)?.scriptSpent;
     },
@@ -118,21 +102,15 @@ export const useJobsStore = defineStore("jobs", {
       return (bookId) => this.spendOf(bookId)?.scriptReserved;
     },
     /**
-     * Everything held against this book's cap by work that has not landed yet, of either stage.
-     * Two runs that each fit on their own must not both be allowed to start and overshoot together,
-     * so a reservation is what stops the second one rather than the first one's spending.
+     * Held against this book's cap by unlanded work of either stage, so two runs that each fit
+     * cannot both start and overshoot.
      */
     reserved(): (bookId: string) => number | undefined {
       return (bookId) => this.spendOf(bookId)?.reserved;
     },
     /**
-     * What this book has cost, of both stages.
-     *
-     * Read out of the server's append-only ledger, not off the clips the book is holding now.
-     * Totalling the current clip of each line lost every request that had been paid for and then
-     * superseded — a failed render, a rejected take, the recording a retake displaced — so
-     * accepting a retake made recorded spending *fall* and handed the budget back capacity it had
-     * really used.
+     * What this book has cost, from the server's append-only ledger, not the current clips:
+     * superseded requests (failed renders, rejected or displaced takes) were paid for too.
      */
     spent(): (bookId: string) => number | undefined {
       return (bookId) => this.spendOf(bookId)?.spent;
@@ -161,29 +139,20 @@ export const useJobsStore = defineStore("jobs", {
   },
   actions: {
     // ---------- the seam ----------
-    /**
-     * The queue changed on the server — something was queued, cancelled or cleared — so whoever
-     * is reading it reads it again. The poll notices from there what else has to follow.
-     */
+    /** The queue changed on the server, so whoever reads it reads again. */
     _changed(): Promise<void> {
       return invalidate({ key: keys.jobs });
     },
     // ---------- shared ----------
-    /**
-     * Stop the rest of a bulk run. Chapters it already finished keep their results — that is the
-     * whole point of cancelling one rather than undoing it — and chapters still to come never
-     * start, so nothing half-replaces anything.
-     */
+    /** Stop the rest of a bulk run. Finished chapters keep their results; the rest never start. */
     cancelRun(runId: number): number {
       const pending = this.runJobs(runId).filter((j) => !j.finishedAt);
       this.cancelJobs(pending.map((j) => j.id));
       return pending.length;
     },
     /**
-     * Try the chapters of one run that failed, and only those — as one run again, so the retry has
-     * a run of its own to watch and cancel rather than becoming N unrelated single-chapter runs.
-     * The scope is the narrowest one that covers the failure, so nothing that succeeded is redone.
-     * A retry is a run like any other, held to the blockers its page shows (`startRun`).
+     * Retry a run's failed chapters as one new run, at the narrowest scope covering the failure,
+     * held to the same blockers as any run (`startRun`).
      */
     retryRunFailures(runId: number): number {
       const narrationStore = useNarrationStore();
@@ -211,13 +180,9 @@ export const useJobsStore = defineStore("jobs", {
       return failed.length;
     },
     /**
-     * Hear these chapters' current clips, as one run: the server sends each to the first
-     * transcription endpoint switched on, and flags a line whose clip says something else. It
-     * leaves out a chapter with no clip to hear, one whose clips were all heard already, and one
-     * already being narrated or checked, and the toast says which. With no transcription endpoint
-     * switched on the server refuses the whole run, and its sentence is the toast. Chapters left
-     * out as already heard can be heard again from the toast (`again`: every clip, those already
-     * heard too). True when anything was queued.
+     * Check these chapters' clips by ear as one run: the server transcribes each with the first
+     * transcriber on and flags lines that differ. Skipped chapters are named in the toast, and
+     * already-heard ones can be heard `again` from it. True when anything was queued.
      */
     async checkChapters(
       bookId: string,
@@ -286,7 +251,7 @@ export const useJobsStore = defineStore("jobs", {
         // the cancel may have gone through even when the remove did not
         .finally(() => this._changed());
     },
-    /** Move queued jobs — one, or a whole run's — ahead of everything else waiting. */
+    /** Move queued jobs (one, or a whole run's) ahead of everything else waiting. */
     runNext(ids: number[]): void {
       if (!ids.length) return;
       void jobsService()
@@ -298,11 +263,8 @@ export const useJobsStore = defineStore("jobs", {
       this.cancelJobs([id]);
     },
     /**
-     * Stop these jobs, in one request however many — a run can be hundreds of chapters.
-     *
-     * The server's jobs, so the server stops them, and the queue and their chapters are read again
-     * after. Nothing is marked locally first — a cancel that failed to reach the server must not
-     * look like one that worked.
+     * Stop these jobs in one request (a run can be hundreds). Nothing is marked locally first: a
+     * cancel that never reached the server must not look like one that worked.
      */
     cancelJobs(ids: number[]): void {
       const live = ids.filter((id) => {
@@ -354,16 +316,15 @@ export const useJobsStore = defineStore("jobs", {
         case "scripting":
           void scriptingStore.startRun(job.bookId, [job.chapterId], { quiet: true });
           return;
-        // a check hears what the chapter holds now, and the server leaves out what was heard already
+        // a check hears what the chapter holds now; the server skips what was heard already
         case "check":
           void this.checkChapters(job.bookId, [job.chapterId], { quiet: true });
           return;
         case "narration": {
           const c = libraryStore.chapter(job.bookId, job.chapterId);
           if (!c) return;
-          // A retry renders what failed, never what already worked. A replacement that failed
-          // counts as a failure even though the chapter still reads as narrated — its own clip was
-          // never touched — so the failures are looked for on the clips, not on the chapter's status.
+          // A failed replacement leaves the chapter reading as narrated, so look for failures on
+          // the clips, not the chapter's status.
           const failed = scriptsStore.segmentsOf(job.bookId, c.id).some(segmentFailed);
           void narrationStore.startRun(job.bookId, [c.id], {
             scope: failed ? "failed" : "fill",
@@ -372,7 +333,7 @@ export const useJobsStore = defineStore("jobs", {
         }
       }
     },
-    /** Did a later run of the same stage finish this chapter's work? Then this failure is old news. */
+    /** Whether a later run of the same stage finished this chapter's work, making this failure old. */
     _supersededBy(job: Job): boolean {
       return this.jobs.some(
         (x) =>
@@ -397,27 +358,16 @@ export const useJobsStore = defineStore("jobs", {
       this.cancelJobs([...ids("queued"), ...ids("running")]);
     },
     /**
-     * The failed jobs "Retry all failed" would actually re-run — one per chapter, newest kept.
-     *
-     * Asked of the work and the queue, never of the chapter's label: a re-script that failed puts
-     * the chapter's status back to what it was, and a chapter whose *replacements* failed still
-     * reads as narrated because the book's own clips were never touched, so in both cases
-     * "did this chapter end up failed" cannot say whether this job's work is still missing. What can
-     * is the queue — the chapter must not already be busy, and a later run that already did the work
-     * makes this failure old news, so retrying past it would re-send requests the ledger has been
-     * charged for once already.
-     *
-     * The queue's "Retry failed (N)" button reads this list, so the count it offers and the work the
-     * button does are the same answer.
+     * The failed jobs "Retry failed (N)" would re-run, one per chapter. Judged from the queue, not
+     * the chapter's status (a failed re-script or failed replacements leave it looking fine): the
+     * chapter must not be busy, and a later run that did the work makes the failure old news.
      */
     retryableFailures(): Job[] {
       const libraryStore = useLibraryStore();
       const scriptsStore = useScriptsStore();
 
-      // One retry per chapter, and it must be the chapter's **most recent** failure: jobs are
-      // appended, so walking them oldest-first would let a stale failure that a later run already
-      // made good claim the chapter, be discarded by `_supersededBy`, and take the current failure
-      // with it — leaving a chapter with failed clips out of both the count and the retry.
+      // One retry per chapter, from its most recent failure: walking oldest-first would let a
+      // superseded failure claim the chapter and drop the current one.
       const seen = new Set<string>();
       const out: Job[] = [];
       for (const j of this.jobs
@@ -433,21 +383,20 @@ export const useJobsStore = defineStore("jobs", {
           scripting: () => !busy("scripting"),
           narration: () =>
             scriptsStore.segmentsOf(j.bookId, c.id).some(segmentFailed) && !busy("narration"),
-          // a chapter carries no check status of its own, so the queue says whether one is on it
+          // a chapter carries no check status, so the queue says whether one is on it
           check: () =>
             !busy("narration") &&
             !this.activeJobs.some(
               (x) => x.kind === "check" && x.bookId === j.bookId && x.chapterId === j.chapterId,
             ),
-          // filtered out above: a build is retried from its own row, by the settings it carried
+          // a build is retried from its own row, by the settings it carried
           export: () => false,
-          // a Re-apply is the whole book's, with no chapter, so it never gets this far
+          // a Re-apply is the whole book's, with no chapter
           effects: () => false,
         };
         if (still[j.kind]()) out.push(j);
       }
-      // scanned newest-first to pick the right job per chapter; handed back in queue order, so a
-      // retry of several chapters submits them the way they were originally run
+      // scanned newest-first; returned in queue order so a retry submits chapters as first run
       return out.reverse();
     },
     retryAllFailed(): void {

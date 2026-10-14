@@ -1,12 +1,7 @@
-// The Demo drawer's store over the demo library: the situations it lists, putting the demo into one
-// and back, and the speed (`src/stores/demo.ts`, `server/routes/demo.ts`).
-//
-// The store asks a seeded demo library in-process (`support/demoServer.ts`) and loads the page
-// again through a loader of the test's own, so what it would have loaded is recorded rather than
-// followed. The tab's `sessionStorage` is the suite's in-memory one; a store built again from a
-// fresh Pinia is the page after that load. One demo library serves the file: a test that puts it
-// into a situation or resets it seeds it again anyway, none reads the world it was left in, and the
-// speed — the one thing it keeps across a seed — is put back to 1× after each test.
+// The Demo drawer's store: the situations it lists, entering one and leaving, and the speed. Page
+// loads are recorded rather than followed; a store rebuilt from a fresh Pinia is the page after.
+// One demo library serves the file, and the speed (the one thing kept across a seed) is reset to
+// 1x after each test.
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 
 import { DEMO_GROUPS, demoScenarios } from "~/demo/seed/scenarios/catalogue";

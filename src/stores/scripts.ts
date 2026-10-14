@@ -6,7 +6,7 @@
 // wrote) is refused by the server, the way a stale job result is, and the server's script is read
 // back over the local one with a toast saying so. History is the server's too: a write answers
 // with the history it added to, and the history store installs it.
-import { toRaw } from "vue";
+import { computed, toRaw, type ComputedRef } from "vue";
 import { bulkInvalidates, bulkOutcome, scriptFingerprint, segmentFingerprint } from "@/lib/bulk";
 import { remapExpressions } from "@/lib/expressions";
 import { scriptSignature } from "@/lib/scriptHistory";
@@ -1102,15 +1102,64 @@ export const useScriptsStore = defineStore("scripts", {
      * taking a speaker off the cast has to ask.
      */
     lineCounts(bookId: string, chId: number | null = null, every = false): Record<string, number> {
-      const book = useLibraryStore().bookById(bookId);
       const counts: Record<string, number> = {};
-      const keys = chId
-        ? [key(bookId, chId)]
-        : Object.keys(this.segments).filter((k) => k.startsWith(bookId + ":"));
-      for (const k of keys)
-        for (const s of this.segments[k] ?? [])
-          if (every || isSpoken(s, book)) counts[s.speaker] = (counts[s.speaker] ?? 0) + 1;
+      const ids = chId
+        ? [chId]
+        : Object.keys(this.segments)
+            .filter((k) => k.startsWith(bookId + ":"))
+            .map((k) => Number(k.slice(bookId.length + 1)));
+      for (const id of ids) {
+        const tally = chapterTally(bookId, id);
+        if (every) for (const [name, n] of tally.every) counts[name] = (counts[name] ?? 0) + n;
+        else for (const [name, t] of tally.spoken) counts[name] = (counts[name] ?? 0) + t.lines;
+      }
       return counts;
     },
   },
 });
+
+/** One speaker's lines in a chapter, as they are read aloud (`isSpoken`). */
+export interface SpeakerTally {
+  lines: number;
+  thoughts: number;
+}
+/** A chapter's speakers counted: the lines each is given to say, and every line naming them. */
+export interface ChapterTally {
+  spoken: Map<string, SpeakerTally>;
+  every: Map<string, number>;
+}
+
+// Each chapter's count, kept until that chapter's script or the book's reading of notes changes.
+// The book-wide counts — the voice table's, the cast page's, the review inbox's — add these up
+// rather than read every line of a long book again whenever any one chapter changes. Keyed by the
+// raw store, as `pending` is, so a fresh store in a test does not read an old one's counts.
+// ponytail: one entry per chapter ever counted, never evicted; key by book if memory matters
+const tallies = new WeakMap<object, Map<string, ComputedRef<ChapterTally>>>();
+
+/** A chapter's speakers counted, worked out once per change to the chapter (`ChapterTally`). */
+export function chapterTally(bookId: string, chId: number): ChapterTally {
+  const scriptsStore = useScriptsStore();
+  let byChapter = tallies.get(toRaw(scriptsStore));
+  if (!byChapter) tallies.set(toRaw(scriptsStore), (byChapter = new Map()));
+  const k = key(bookId, chId);
+  let tally = byChapter.get(k);
+  if (!tally)
+    byChapter.set(
+      k,
+      (tally = computed(() => {
+        const book = useLibraryStore().bookById(bookId);
+        const spoken = new Map<string, SpeakerTally>();
+        const every = new Map<string, number>();
+        for (const s of scriptsStore.segments[k] ?? []) {
+          every.set(s.speaker, (every.get(s.speaker) ?? 0) + 1);
+          if (!isSpoken(s, book)) continue;
+          let t = spoken.get(s.speaker);
+          if (!t) spoken.set(s.speaker, (t = { lines: 0, thoughts: 0 }));
+          t.lines++;
+          if (s.type === "thought") t.thoughts++;
+        }
+        return { spoken, every };
+      })),
+    );
+  return tally.value;
+}

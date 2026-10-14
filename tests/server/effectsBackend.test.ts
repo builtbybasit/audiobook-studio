@@ -68,14 +68,7 @@ describe("the effects", () => {
     const api = testApi();
     const effects = await list(api);
     expect(effects.map((e) => [e.id, e.name])).toEqual([["inner-voice", "Inner voice"]]);
-    expect(effects[0].chain.map((s) => ("plugin" in s ? s.plugin : "mix"))).toEqual([
-      "HighpassFilter",
-      "LowpassFilter",
-      "PeakFilter",
-      "Compressor",
-      "Reverb",
-      "Gain",
-    ]);
+    expect(effects[0].chain.map((s) => ("plugin" in s ? s.plugin : "mix"))).toEqual(["Reverb"]);
     expect(await thoughts(api)).toBe("inner-voice");
   });
 

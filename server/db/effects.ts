@@ -9,21 +9,16 @@ import type { Db, Tx } from "~/db/client";
 import { books, characters, clips, effects, segments } from "~/db/schema";
 import { readThoughts, writeThoughts } from "~/db/settings";
 
-/** A fresh library's thought effect; migration 0031 also lays it down in an existing library. */
+/** A fresh library's thought effect, as migrations 0031 and 0036 lay it down. */
 export const INNER_VOICE: Effect = {
   id: "inner-voice",
   name: "Inner voice",
   chain: [
-    { plugin: "HighpassFilter", params: { cutoff_frequency_hz: 220 }, on: true },
-    { plugin: "LowpassFilter", params: { cutoff_frequency_hz: 6000 }, on: true },
-    { plugin: "PeakFilter", params: { cutoff_frequency_hz: 2500, gain_db: -4, q: 1 }, on: true },
-    { plugin: "Compressor", params: { threshold_db: -20, ratio: 3 }, on: true },
     {
       plugin: "Reverb",
-      params: { room_size: 0.12, damping: 0.5, wet_level: 0.18, dry_level: 0.9 },
+      params: { room_size: 0.55, damping: 0.48, wet_level: 0.62, dry_level: 0.74, width: 0.85 },
       on: true,
     },
-    { plugin: "Gain", params: { gain_db: -1 }, on: true },
   ],
 };
 

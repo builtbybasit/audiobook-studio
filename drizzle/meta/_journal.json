@@ -253,6 +253,13 @@
       "when": 1791895294278,
       "tag": "0035_scripting_cut_at_paragraph",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1791989827360,
+      "tag": "0036_inner_voice_reverb",
+      "breakpoints": true
     }
   ]
 }

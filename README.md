@@ -55,11 +55,11 @@ The **Demo** chip in the header opens a seeded library: four books at different 
 
 ## Run it
 
-Needs Node.js, pnpm, Bun ≥ 1.4 and ffmpeg.
+Needs Node.js, Bun ≥ 1.4 and ffmpeg.
 
 ```sh
-pnpm install
-pnpm dev        # API on :8787, web on :5173
+bun install
+bun run dev     # API on :8787, web on :5173
 ```
 
 No `.env` is required. [.env.example](.env.example) lists the defaults. A fresh library has no endpoints, so nothing is sent anywhere until you add one. Pick **Simulated (free)** to try the app offline, or a provider preset and paste its key. Keys stay on the server.
@@ -77,13 +77,13 @@ Everything lives in `data/`: `library.db`, clips, audiobooks and samples. The de
 
 ## Develop
 
-| Command                       | Does                                  |
-| ----------------------------- | ------------------------------------- |
-| `pnpm dev:server` / `dev:web` | Start one half                        |
-| `vp check`                    | Format, lint, type check              |
-| `pnpm test`                   | Bun tests                             |
-| `pnpm test:live`              | Live provider tests (needs `.env`)    |
-| `pnpm db:generate`            | Drizzle migration from schema changes |
-| `pnpm build`                  | Type check and build the frontend     |
+| Command                          | Does                                  |
+| -------------------------------- | ------------------------------------- |
+| `bun run dev:server` / `dev:web` | Start one half                        |
+| `vp check`                       | Format, lint, type check              |
+| `bun run test`                   | Bun tests                             |
+| `bun run test:live`              | Live provider tests (needs `.env`)    |
+| `bun run db:generate`            | Drizzle migration from schema changes |
+| `bun run build`                  | Type check and build the frontend     |
 
 Stack: Vue 3 + Pinia Colada + Vite+ in front of a Hono server on Bun, with SQLite through Drizzle.

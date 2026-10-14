@@ -249,8 +249,8 @@ onUnmounted(() => {
         <div class="text-lg font-medium">The server is not running</div>
         <p class="mt-1 text-sm text-zinc-500">
           Your books, scripts and audio are kept by the server, and nothing answered for it. Start
-          it with <code class="font-mono">pnpm dev</code>, which runs it beside this page, then try
-          again.
+          it with <code class="font-mono">bun run dev</code>, which runs it beside this page, then
+          try again.
         </p>
         <button class="btn-primary mt-4" @click="retry">
           <RetryIcon class="icon" /> Try again

@@ -25,7 +25,8 @@ import {
   type ChapterLines,
   type LibraryService,
   libraryService,
-  type MovedLines,
+  type MovedSpeakers,
+  type SpeakerLines,
 } from "@/services/library";
 import type {
   CastStat,
@@ -36,6 +37,7 @@ import type {
   LexEntry,
   MergeSuggestion,
   Pacing,
+  RevisedLines,
   RoutingIssue,
   Segment,
   SpeakerEffectUse,
@@ -52,6 +54,7 @@ interface CastState {
   characters: Record<string, Character[]>;
   lexicon: Record<string, LexEntry[]>;
 }
+const lineCount = (moved: RevisedLines[]) => moved.reduce((n, m) => n + m.ids.length, 0);
 /** Undo of a request-backed change; resolves once the server agrees. */
 type Undo = () => Promise<void>;
 /** Which half of the cast a write sends, and so which half its answer may install. */
@@ -493,29 +496,44 @@ export const useCastStore = defineStore("cast", {
       );
       return ok ?? false;
     },
-    /** Remove a speaker on the server, their lines going to the Narrator; null when refused. */
-    _delete(bookId: string, name: string): Promise<MovedLines | null> {
-      return this._write(bookId, "characters", "remove this speaker", async () => {
-        const result = await this._service().deleteCharacter(bookId, name);
-        this._moved(bookId, result, "Narrator");
-        return result;
+    /** Remove speakers on the server, their lines going to the Narrator; null when refused. */
+    _delete(bookId: string, names: string[]): Promise<MovedSpeakers | null> {
+      const failure = names.length === 1 ? "remove this speaker" : "remove these speakers";
+      return this._write(bookId, "characters", failure, async () => {
+        const r = await this._service().removeCharacters(bookId, names);
+        this._moved(
+          bookId,
+          r.characters,
+          r.speakers.map((s) => ({ moved: s.moved, to: NARRATOR })),
+        );
+        return r;
       });
     },
-    /** Put a speaker back as `c` on exactly these lines: the undo of a merge or removal. */
-    _attribute(bookId: string, c: Character, lines: ChapterLines[], failure: string) {
+    /** Put speakers back on exactly their lines: the undo of a merge or removal. */
+    _attribute(bookId: string, speakers: SpeakerLines[], failure: string) {
       return this._write(bookId, "characters", failure, async () => {
-        this._moved(bookId, await this._service().attribute(bookId, c, lines), c.name);
+        const r = await this._service().attribute(bookId, speakers);
+        this._moved(
+          bookId,
+          r.characters,
+          r.speakers.map((s) => ({ moved: s.moved, to: s.name })),
+        );
         return true;
       });
     },
-    /** Apply lines the server moved: the speaker on each, and each chapter's new revision. */
-    _moved(bookId: string, { characters, moved }: MovedLines, speaker: string): void {
+    /** Install the server's cast, then each move: the speaker on its lines, and the revisions. */
+    _moved(
+      bookId: string,
+      characters: Character[],
+      moves: { moved: RevisedLines[]; to: string }[],
+    ): void {
       const scriptsStore = useScriptsStore();
 
       this._answered(bookId, { characters });
       // an unread chapter has nothing to move and reads its revision with its script
-      for (const { chapterId, ids, revision } of moved)
-        scriptsStore._applyLines(bookId, chapterId, ids, { speaker }, revision);
+      for (const { moved, to } of moves)
+        for (const { chapterId, ids, revision } of moved)
+          scriptsStore._applyLines(bookId, chapterId, ids, { speaker: to }, revision);
     },
     /** Add speakers this chapter uses that the cast lacks. Returns their names for an undo. */
     _absorbCast(bookId: string, chId: number): string[] {
@@ -545,7 +563,11 @@ export const useCastStore = defineStore("cast", {
         (c) => !dropping.includes(c),
       );
       // no line names them, so removing them on the server moves nothing
-      for (const c of dropping) void this._delete(bookId, c.name);
+      if (dropping.length)
+        void this._delete(
+          bookId,
+          dropping.map((c) => c.name),
+        );
     },
     /** Chapter length is the sum of what is actually rendered, plus the silence stitched between. */
     _retime(bookId: string, chId: number): void {
@@ -740,7 +762,8 @@ export const useCastStore = defineStore("cast", {
     /** Rename on the server and here. Resolves to the undo (a rename back), or null. */
     async _rename(bookId: string, from: string, to: string): Promise<Undo | null> {
       const ok = await this._write(bookId, "characters", "rename this speaker", async () => {
-        this._moved(bookId, await this._service().renameCharacter(bookId, from, to), to);
+        const r = await this._service().renameCharacter(bookId, from, to);
+        this._moved(bookId, r.characters, [{ moved: r.moved, to }]);
         return true;
       });
       if (!ok) return null;
@@ -748,67 +771,58 @@ export const useCastStore = defineStore("cast", {
         await this._rename(bookId, to, from);
       };
     },
-    async mergeCharacter(bookId: string, from: string, into: string): Promise<void> {
-      const uiStore = useUiStore();
-
-      if (from === into) return;
-      const merged = await this._merge(bookId, from, into);
-      if (merged)
-        uiStore.toast(
-          `Merged “${from}” into ${into} · ${merged.lines} line${merged.lines === 1 ? "" : "s"} moved`,
-          { undo: merged.undo },
-        );
+    mergeCharacter(bookId: string, from: string, into: string): Promise<void> {
+      return this.mergeMany(bookId, [{ from, into }]);
     },
     /**
-     * Merge on the server and here. Resolves to lines moved and an undo that puts the speaker back
-     * on exactly those lines: merged aliases cannot be told apart, so the undo is recorded.
+     * Fold each `from` into its `into` with one request, under one toast. Its Undo puts each
+     * speaker back on exactly the lines that moved, since merged aliases cannot be told apart.
+     * Self-merges and names the cast lacks are skipped; a refusal merges no one.
      */
-    async _merge(
-      bookId: string,
-      from: string,
-      into: string,
-    ): Promise<{ lines: number; undo: Undo } | null> {
-      const src = this.characters[bookId]?.find((c) => c.name === from);
-      const dst = this.characters[bookId]?.find((c) => c.name === into);
-      if (!src || !dst) return null;
-      const was = { src: clone(src), dst: clone(dst) };
-      const result = await this._write(bookId, "characters", "merge these speakers", async () => {
-        const r = await this._service().mergeCharacter(bookId, from, into);
-        this._moved(bookId, r, into);
-        return r;
-      });
-      if (!result) return null;
-      return {
-        lines: result.moved.reduce((n, m) => n + m.ids.length, 0),
-        undo: async () => {
-          // the speaker as they were on the moved lines, and the other's aliases as they were
-          if (!(await this._attribute(bookId, was.src, result.moved, "undo the merge"))) return;
-          const now = this.characters[bookId]?.find((c) => c.name === into);
-          if (now) {
-            now.aliases = was.dst.aliases;
-            await this._push(bookId, into);
-          }
-        },
-      };
-    },
-    async mergeMany(bookId: string, names: string[], into: string): Promise<void> {
+    async mergeMany(bookId: string, merges: { from: string; into: string }[]): Promise<void> {
       const uiStore = useUiStore();
 
-      const merged: { lines: number; undo: Undo }[] = [];
-      for (const name of names)
-        if (name !== into) {
-          const m = await this._merge(bookId, name, into);
-          if (m) merged.push(m);
-        }
-      if (merged.length)
-        uiStore.toast(
-          `Merged ${merged.length} speaker${merged.length === 1 ? "" : "s"} into ${into}`,
-          {
-            undo: async () => {
-              for (const m of [...merged].reverse()) await m.undo();
-            },
-          },
+      const cast = this.characters[bookId] ?? [];
+      const has = (name: string) => cast.some((c) => c.name === name);
+      merges = merges
+        .filter((m) => m.from !== m.into && has(m.from) && has(m.into))
+        .map(({ from, into }) => ({ from, into }));
+      if (!merges.length) return;
+      const was = new Map(cast.map((c) => [c.name, clone(c)]));
+      const result = await this._write(bookId, "characters", "merge these speakers", async () => {
+        const r = await this._service().mergeCharacters(bookId, merges);
+        this._moved(
+          bookId,
+          r.characters,
+          r.speakers.map((s, i) => ({ moved: s.moved, to: merges[i].into })),
         );
+        return r;
+      });
+      if (!result) return;
+      const n = result.speakers.reduce((sum, s) => sum + lineCount(s.moved), 0);
+      const froms = new Set(merges.map((m) => m.from));
+      const intos = new Set(merges.map((m) => m.into));
+      const what =
+        merges.length === 1
+          ? `“${merges[0].from}” into ${merges[0].into}`
+          : `${merges.length} speakers${intos.size === 1 ? ` into ${merges[0].into}` : ""}`;
+      uiStore.toast(`Merged ${what} · ${n} line${n === 1 ? "" : "s"} moved`, {
+        undo: async () => {
+          // the last merge first; then those that stayed get their aliases as they were
+          const back: SpeakerLines[] = result.speakers
+            .map((s) => ({ character: was.get(s.name)!, lines: s.moved }))
+            .reverse();
+          for (const into of intos) {
+            const now = this.characters[bookId]?.find((c) => c.name === into);
+            if (now && !froms.has(into))
+              back.push({
+                character: { ...clone(now), aliases: was.get(into)!.aliases },
+                lines: [],
+              });
+          }
+          await this._attribute(bookId, back, "undo the merge");
+        },
+      });
     },
     /** A speaker typed in by hand: not "new" in the review sense, and starts as main cast. False
      *  when the name is taken (offer a merge). With `personaOf` they join as that character's
@@ -835,7 +849,7 @@ export const useCastStore = defineStore("cast", {
           undo: () => {
             this.characters[bookId] = (this.characters[bookId] ?? []).filter((x) => x !== c);
             // no lines were attributed, so taking them off again moves nothing
-            void this._delete(bookId, name);
+            void this._delete(bookId, [name]);
           },
         },
       );
@@ -943,50 +957,44 @@ export const useCastStore = defineStore("cast", {
       return this.removeMany(bookId, [name]);
     },
     /**
-     * Remove speakers (lines go to the Narrator) under one toast and Undo. One request each; the
-     * first refusal is said and ends the run, and Undo restores those removed before it. The
-     * Narrator and unknown names are skipped.
+     * Remove speakers with one request (lines go to the Narrator) under one toast and Undo. The
+     * Narrator and unknown names are skipped; a refusal removes no one.
      */
     async removeMany(bookId: string, names: Iterable<string>): Promise<void> {
       const uiStore = useUiStore();
 
-      const removed: { name: string; lines: number; undo: Undo }[] = [];
-      for (const name of new Set(names)) {
-        // the cast as it stands now: each removal installs the server's
-        if (name === "Narrator" || !this.characters[bookId]?.some((c) => c.name === name)) continue;
-        const r = await this._remove(bookId, name);
-        if (!r) break;
-        removed.push({ name, ...r });
-      }
-      if (!removed.length) return;
-      const n = removed.reduce((sum, r) => sum + r.lines, 0);
-      const who = removed.length === 1 ? `“${removed[0].name}”` : `${removed.length} speakers`;
+      const cast = this.characters[bookId] ?? [];
+      const gone = [...new Set(names)].filter(
+        (name) => name !== NARRATOR && cast.some((c) => c.name === name),
+      );
+      if (!gone.length) return;
+      const was = new Map(cast.map((c) => [c.name, clone(c)]));
+      // the server unlinks their personas; the Undo links back those still unlinked
+      const personas = cast.filter(
+        (p) => p.personaOf && gone.includes(p.personaOf) && !gone.includes(p.name),
+      );
+      const result = await this._delete(bookId, gone);
+      if (!result) return;
+      const n = result.speakers.reduce((sum, s) => sum + lineCount(s.moved), 0);
+      const who = gone.length === 1 ? `“${gone[0]}”` : `${gone.length} speakers`;
       uiStore.toast(`Removed ${who} · ${n} line${n === 1 ? "" : "s"} now read by the Narrator`, {
         undo: async () => {
-          for (const r of [...removed].reverse()) await r.undo();
+          const back: SpeakerLines[] = result.speakers.map((s) => ({
+            character: was.get(s.name)!,
+            lines: s.moved,
+          }));
+          for (const p of personas) {
+            const now = this.characters[bookId]?.find((c) => c.name === p.name);
+            if (now && !now.personaOf)
+              back.push({ character: { ...clone(now), personaOf: p.personaOf }, lines: [] });
+          }
+          await this._attribute(
+            bookId,
+            back,
+            gone.length === 1 ? "put this speaker back" : "put these speakers back",
+          );
         },
       });
-    },
-    /** Remove on the server and here. Resolves to lines now the Narrator's and an exact undo. */
-    async _remove(bookId: string, name: string): Promise<{ lines: number; undo: Undo } | null> {
-      const c = this.characters[bookId]?.find((x) => x.name === name);
-      if (!c) return null;
-      const was = clone(c);
-      // the server unlinks their personas; the Undo links back those still unlinked
-      const personas = (this.characters[bookId] ?? [])
-        .filter((p) => p.personaOf === name && p.name !== name)
-        .map((p) => p.name);
-      const result = await this._delete(bookId, name);
-      if (!result) return null;
-      return {
-        lines: result.moved.reduce((sum, m) => sum + m.ids.length, 0),
-        undo: async () => {
-          if (!(await this._attribute(bookId, was, result.moved, "put this speaker back"))) return;
-          for (const p of personas)
-            if (!this.characters[bookId]?.find((x) => x.name === p)?.personaOf)
-              void this._patchSpeaker(bookId, p, { personaOf: name });
-        },
-      };
     },
     autoAssignPlan(bookId: string): AutoVoiceAssignment[] {
       const endpointsStore = useEndpointsStore();

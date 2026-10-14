@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
 
-import type { Cast, LexiconSaved, MovedLines } from "@/types";
+import type { Cast, LexiconSaved, MovedLines, MovedSpeakers } from "@/types";
 import type { Db } from "~/db/client";
 import * as ops from "~/cast/ops";
 import { BookParam } from "~/lib/http";
@@ -12,8 +12,14 @@ import { validate } from "~/lib/validate";
 
 const NameParam = v.object({ id: v.string(), name: v.pipe(v.string(), v.nonEmpty()) });
 const Rename = v.object({ to: v.pipe(v.string(), v.trim(), v.nonEmpty("must not be empty")) });
-const Merge = v.object({ into: v.pipe(v.string(), v.nonEmpty("must name a speaker")) });
-const Attribute = v.object({ character: CharacterSchema, lines: v.array(ChapterLinesSchema) });
+const Name = v.pipe(v.string(), v.nonEmpty("must name a speaker"));
+const Merge = v.object({
+  merges: v.pipe(v.array(v.object({ from: Name, into: Name })), v.minLength(1)),
+});
+const Remove = v.object({ names: v.pipe(v.array(Name), v.minLength(1)) });
+const Attribute = v.object({
+  speakers: v.array(v.object({ character: CharacterSchema, lines: v.array(ChapterLinesSchema) })),
+});
 const Lexicon = v.object({
   entries: v.array(LexEntrySchema),
   /** the lines an earlier change staled, which an Undo asks to have back */
@@ -50,35 +56,38 @@ export function castRoutes(db: Db): Hono<PinoEnv> {
     },
   );
 
+  app.post("/:id/characters/merge", validate("param", BookParam), validate("json", Merge), (c) => {
+    const { merges } = c.req.valid("json");
+    const result = ops.mergeCharacters(db, c.req.valid("param").id, merges);
+    c.var.logger.info({ speakers: merges.length }, "speakers merged");
+    return c.json(result satisfies MovedSpeakers);
+  });
+
   app.post(
-    "/:id/characters/:name/merge",
-    validate("param", NameParam),
-    validate("json", Merge),
+    "/:id/characters/remove",
+    validate("param", BookParam),
+    validate("json", Remove),
     (c) => {
-      const { id, name } = c.req.valid("param");
-      const result = ops.mergeCharacter(db, id, name, c.req.valid("json").into);
-      c.var.logger.info({ from: name, chapters: result.moved.length }, "speaker merged");
-      return c.json(result satisfies MovedLines);
+      const { names } = c.req.valid("json");
+      const result = ops.removeCharacters(db, c.req.valid("param").id, names);
+      c.var.logger.info({ speakers: names.length }, "speakers removed");
+      return c.json(result satisfies MovedSpeakers);
     },
   );
-
-  /** Their lines go to the Narrator. */
-  app.delete("/:id/characters/:name", validate("param", NameParam), (c) => {
-    const { id, name } = c.req.valid("param");
-    return c.json(ops.deleteCharacter(db, id, name) satisfies MovedLines);
-  });
 
   /** What an Undo of a merge or a removal sends. */
   app.post(
     "/:id/characters/attribute",
     validate("param", BookParam),
     validate("json", Attribute),
-    (c) => {
-      const { character, lines } = c.req.valid("json");
-      return c.json(
-        ops.attribute(db, c.req.valid("param").id, character, lines) satisfies MovedLines,
-      );
-    },
+    (c) =>
+      c.json(
+        ops.attribute(
+          db,
+          c.req.valid("param").id,
+          c.req.valid("json").speakers,
+        ) satisfies MovedSpeakers,
+      ),
   );
 
   app.put("/:id/lexicon", validate("param", BookParam), validate("json", Lexicon), (c) => {

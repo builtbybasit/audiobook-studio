@@ -2,7 +2,15 @@
 // speaker into another, and an undo puts exactly the lines that moved back.
 import { describe, expect, test } from "bun:test";
 
-import type { Cast, Character, ImportedBook, LexEntry, MovedLines, Segment } from "@/types";
+import type {
+  Cast,
+  Character,
+  ImportedBook,
+  LexEntry,
+  MovedLines,
+  MovedSpeakers,
+  Segment,
+} from "@/types";
 import { readScript, scriptRevision } from "~/db/script";
 import { epubFile, story } from "../support/epub";
 import { jsonBody, testApi, type TestApi } from "../support/server";
@@ -47,6 +55,15 @@ const castOf = async (api: TestApi, id: string) =>
 const names = (cs: Character[]) => cs.map((c) => c.name);
 const speakersOf = (segs: Segment[]) => [...new Set(segs.map((s) => s.speaker))];
 const put = (body: unknown): RequestInit => ({ ...jsonBody(body), method: "PUT" });
+const merge = (api: TestApi, id: string, merges: { from: string; into: string }[]) =>
+  api.request<MovedSpeakers>(`/api/books/${id}/characters/merge`, jsonBody({ merges }));
+const remove = (api: TestApi, id: string, ...names: string[]) =>
+  api.request<MovedSpeakers>(`/api/books/${id}/characters/remove`, jsonBody({ names }));
+const restore = (
+  api: TestApi,
+  id: string,
+  speakers: { character: Character; lines: unknown[] }[],
+) => api.request<MovedSpeakers>(`/api/books/${id}/characters/attribute`, jsonBody({ speakers }));
 
 describe("the cast a scripting job leaves behind", () => {
   test("every speaker the script names is in the cast, the Narrator as main cast and the rest new", async () => {
@@ -149,27 +166,37 @@ describe("renaming and merging", () => {
 
   test("a merge folds the name and its aliases into the speaker that stays", async () => {
     const { api, id } = await scripted();
-    const { body } = await api.request<MovedLines>(
-      `/api/books/${id}/characters/Tobin/merge`,
-      jsonBody({ into: "Mara" }),
-    );
+    const { body } = await merge(api, id, [{ from: "Tobin", into: "Mara" }]);
     expect(names(body.characters)).toEqual(["Narrator", "Mara"]);
     expect(body.characters[1].aliases).toEqual(["Tobin"]);
     expect(speakersOf(readScript(api.db, id, 1))).toEqual(["Narrator", "Mara"]);
-    expect(body.moved).toHaveLength(2);
+    expect(body.speakers.map((s) => [s.name, s.moved.length])).toEqual([["Tobin", 2]]);
   });
 
-  test("removing a speaker hands their lines to the Narrator, who cannot be removed", async () => {
+  test("removing speakers hands their lines to the Narrator, who cannot be removed", async () => {
     const { api, id } = await scripted();
-    const { body } = await api.request<MovedLines>(`/api/books/${id}/characters/Tobin`, {
-      method: "DELETE",
-    });
-    expect(names(body.characters)).toEqual(["Narrator", "Mara"]);
-    expect(speakersOf(readScript(api.db, id, 1))).toEqual(["Narrator", "Mara"]);
-    const narrator = await api.request<Failure>(`/api/books/${id}/characters/Narrator`, {
-      method: "DELETE",
-    });
-    expect(narrator.status).toBe(409);
+    const { body } = await remove(api, id, "Tobin", "Mara");
+    expect(names(body.characters)).toEqual(["Narrator"]);
+    expect(speakersOf(readScript(api.db, id, 1))).toEqual(["Narrator"]);
+    expect(body.speakers.map((s) => s.name)).toEqual(["Tobin", "Mara"]);
+    expect((await remove(api, id, "Narrator")).status).toBe(409);
+  });
+
+  test.each([
+    ["a removal", (api: TestApi, id: string) => remove(api, id, "Tobin", "Nobody")],
+    [
+      "a merge",
+      (api: TestApi, id: string) =>
+        merge(api, id, [
+          { from: "Tobin", into: "Mara" },
+          { from: "Mara", into: "Nobody" },
+        ]),
+    ],
+  ])("%s that names someone the cast lacks changes no one", async (_, send) => {
+    const { api, id } = await scripted();
+    expect((await send(api, id)).status).toBe(404);
+    expect(names((await castOf(api, id)).characters)).toEqual(["Narrator", "Mara", "Tobin"]);
+    expect(speakersOf(readScript(api.db, id, 1))).toEqual(["Narrator", "Mara", "Tobin"]);
   });
 
   test("the Narrator is neither renamed nor merged away, though anyone can be merged into them", async () => {
@@ -180,18 +207,12 @@ describe("renaming and merging", () => {
     );
     expect(renamed.status).toBe(409);
     expect(renamed.body.error.message).toContain("Narrator");
-    const merged = await api.request<Failure>(
-      `/api/books/${id}/characters/Narrator/merge`,
-      jsonBody({ into: "Mara" }),
-    );
+    const merged = await merge(api, id, [{ from: "Narrator", into: "Mara" }]);
     expect(merged.status).toBe(409);
-    expect(merged.body.error.detail).toContain("into the Narrator");
+    expect((merged.body as unknown as Failure).error.detail).toContain("into the Narrator");
     expect(names((await castOf(api, id)).characters)).toEqual(["Narrator", "Mara", "Tobin"]);
     expect(speakersOf(readScript(api.db, id, 1))).toEqual(["Narrator", "Mara", "Tobin"]);
-    const into = await api.request<MovedLines>(
-      `/api/books/${id}/characters/Tobin/merge`,
-      jsonBody({ into: "Narrator" }),
-    );
+    const into = await merge(api, id, [{ from: "Tobin", into: "Narrator" }]);
     expect(into.status).toBe(200);
     expect(names(into.body.characters)).toEqual(["Narrator", "Mara"]);
   });
@@ -199,24 +220,19 @@ describe("renaming and merging", () => {
   test("an undo puts exactly the lines that moved back, and the speaker with them", async () => {
     const { api, id } = await scripted();
     const tobin = (await castOf(api, id)).characters[2];
-    const { body: merged } = await api.request<MovedLines>(
-      `/api/books/${id}/characters/Tobin/merge`,
-      jsonBody({ into: "Mara" }),
-    );
+    const { body } = await merge(api, id, [{ from: "Tobin", into: "Mara" }]);
+    const merged = body.speakers[0].moved;
     // the lines Mara always had stay hers, because the undo names only the lines that moved
-    const { body: restored } = await api.request<MovedLines>(
-      `/api/books/${id}/characters/attribute`,
-      jsonBody({
-        character: tobin,
-        lines: merged.moved.map(({ chapterId, ids }) => ({ chapterId, ids })),
-      }),
-    );
+    const { body: restored } = await restore(api, id, [
+      { character: tobin, lines: merged.map(({ chapterId, ids }) => ({ chapterId, ids })) },
+    ]);
     expect(names(restored.characters)).toEqual(["Narrator", "Mara", "Tobin"]);
-    expect(restored.moved.map((m) => m.ids)).toEqual(merged.moved.map((m) => m.ids));
-    expect(restored.moved.map((m) => m.revision)).toEqual(merged.moved.map((m) => m.revision + 1));
+    const back = restored.speakers[0].moved;
+    expect(back.map((m) => m.ids)).toEqual(merged.map((m) => m.ids));
+    expect(back.map((m) => m.revision)).toEqual(merged.map((m) => m.revision + 1));
     const lines = readScript(api.db, id, 1);
     expect(lines.filter((s) => s.speaker === "Tobin").map((s) => s.id)).toEqual(
-      merged.moved.find((m) => m.chapterId === 1)!.ids,
+      merged.find((m) => m.chapterId === 1)!.ids,
     );
   });
 
@@ -295,56 +311,49 @@ describe("personas", () => {
     await persona(api, id, "The Mask", "Mara");
     await api.request(`/api/books/${id}/characters/Mara/rename`, jsonBody({ to: "Mara Voss" }));
     expect(await personaOf(api, id)).toEqual({ "The Mask": "Mara Voss" });
-    await api.request(`/api/books/${id}/characters/${encodeURIComponent("Mara Voss")}`, {
-      method: "DELETE",
-    });
+    await remove(api, id, "Mara Voss");
     expect(await personaOf(api, id)).toEqual({});
   });
 
   test("follow their character into a merge, unless the speaker that stays is a persona", async () => {
     const { api, id } = await scripted();
     await persona(api, id, "The Mask", "Tobin");
-    await api.request(`/api/books/${id}/characters/Tobin/merge`, jsonBody({ into: "Mara" }));
+    await merge(api, id, [{ from: "Tobin", into: "Mara" }]);
     expect(await personaOf(api, id)).toEqual({ "The Mask": "Mara" });
 
     // Mara folded into a persona of hers: the stay is a speaker in their own right, and her other
     // personas are now theirs
     await persona(api, id, "Ghost", "Mara");
-    await api.request(`/api/books/${id}/characters/Mara/merge`, jsonBody({ into: "The Mask" }));
+    await merge(api, id, [{ from: "Mara", into: "The Mask" }]);
     expect(await personaOf(api, id)).toEqual({ Ghost: "The Mask" });
 
     // folded into a persona: their personas are unlinked rather than chained
     const again = await scripted();
     await persona(again.api, again.id, "The Mask", "Mara");
     await persona(again.api, again.id, "Ghost", "Tobin");
-    await again.api.request(
-      `/api/books/${again.id}/characters/Tobin/merge`,
-      jsonBody({ into: "The Mask" }),
-    );
+    await merge(again.api, again.id, [{ from: "Tobin", into: "The Mask" }]);
     expect(await personaOf(again.api, again.id)).toEqual({ "The Mask": "Mara" });
   });
 
   test("an undo puts a persona back linked, unless the character is gone", async () => {
     const { api, id } = await scripted();
     await persona(api, id, "The Mask", "Mara");
-    const mask = (await castOf(api, id)).characters.find((c) => c.name === "The Mask")!;
-    const back = () =>
-      api.request<MovedLines>(
-        `/api/books/${id}/characters/attribute`,
-        jsonBody({ character: mask, lines: [] }),
-      );
-    await api.request(`/api/books/${id}/characters/${encodeURIComponent("The Mask")}`, {
-      method: "DELETE",
-    });
-    expect((await back()).status).toBe(200);
+    const { characters } = await castOf(api, id);
+    const [mara, mask] = ["Mara", "The Mask"].map((n) => characters.find((c) => c.name === n)!);
+    await remove(api, id, "The Mask");
+    expect((await restore(api, id, [{ character: mask, lines: [] }])).status).toBe(200);
     expect(await personaOf(api, id)).toEqual({ "The Mask": "Mara" });
 
-    await api.request(`/api/books/${id}/characters/${encodeURIComponent("The Mask")}`, {
-      method: "DELETE",
-    });
-    await api.request(`/api/books/${id}/characters/Mara`, { method: "DELETE" });
-    expect((await back()).status).toBe(200);
+    await remove(api, id, "The Mask", "Mara");
+    expect((await restore(api, id, [{ character: mask, lines: [] }])).status).toBe(200);
     expect(await personaOf(api, id)).toEqual({});
+    // put back together, the persona comes back linked whichever is named first
+    await remove(api, id, "The Mask");
+    await restore(api, id, [
+      { character: mask, lines: [] },
+      { character: mara, lines: [] },
+    ]);
+    expect(await personaOf(api, id)).toEqual({ "The Mask": "Mara" });
   });
 });
 

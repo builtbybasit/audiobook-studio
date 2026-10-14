@@ -8,13 +8,14 @@ import type {
   LexEntry,
   LexiconSaved,
   MovedLines,
+  MovedSpeakers,
   RevisedLines,
   SegmentAudio,
 } from "@/types";
 import { NARRATOR, personaRefusal } from "@/lib/cast";
 import { pronunciationMoved } from "@/lib/reading";
 import { speak } from "@/lib/speech";
-import type { Db } from "~/db/client";
+import type { Db, Tx } from "~/db/client";
 import * as cast from "~/db/cast";
 import * as library from "~/db/library";
 import { discardSpeakerSamples, moveSpeakerSamples } from "~/db/speakerSamples";
@@ -29,7 +30,7 @@ export function bookCast(db: Db, bookId: string): Cast {
   return { characters: cast.readCast(db, bookId), lexicon: cast.readLexicon(db, bookId) };
 }
 
-function requireCharacter(db: Db, bookId: string, name: string): Character {
+function requireCharacter(db: Db | Tx, bookId: string, name: string): Character {
   const c = cast.getCharacter(db, bookId, name);
   if (!c) throw notFound(`“${name}” is not in this book’s cast`);
   return c;
@@ -78,72 +79,95 @@ export function renameCharacter(db: Db, bookId: string, from: string, to: string
 }
 
 /**
- * Fold `from` into `into`: lines move and `from` with its aliases becomes aliases. Personas of
- * `from` move to `into`, or are unlinked when `into` is a persona or the Narrator (no chains).
+ * Fold each `from` into its `into`, in order and all or nothing: lines move and `from` with its
+ * aliases becomes aliases. Personas of `from` move to `into`, or are unlinked when `into` is a
+ * persona or the Narrator (no chains).
  */
-export function mergeCharacter(db: Db, bookId: string, from: string, into: string): MovedLines {
+export function mergeCharacters(
+  db: Db,
+  bookId: string,
+  merges: readonly { from: string; into: string }[],
+): MovedSpeakers {
   requireBook(db, bookId);
+  return db.transaction((tx) => {
+    const speakers = merges.map(({ from, into }) => ({
+      name: from,
+      moved: mergeOne(tx, bookId, from, into),
+    }));
+    return { characters: cast.readCast(tx, bookId), speakers };
+  });
+}
+
+function mergeOne(tx: Tx, bookId: string, from: string, into: string): RevisedLines[] {
   if (from === NARRATOR)
     throw conflict(
       "The Narrator cannot be merged into another speaker",
       "Merge the other speaker into the Narrator instead.",
     );
-  const src = requireCharacter(db, bookId, from);
-  const dst = requireCharacter(db, bookId, into);
+  const src = requireCharacter(tx, bookId, from);
+  const dst = requireCharacter(tx, bookId, into);
   if (from === into) throw badRequest("A speaker cannot be merged into themselves");
   // `into` was a persona of `from`: it can't be a persona of itself
   const personaOf = dst.personaOf === from ? undefined : dst.personaOf;
-  return db.transaction((tx) => {
-    cast.upsertCharacter(tx, bookId, {
-      ...dst,
-      aliases: [...new Set([...dst.aliases, from, ...src.aliases])],
-      personaOf,
-    });
-    moveSpeakerSamples(tx, bookId, from, into);
-    cast.deleteCharacterRow(tx, bookId, from);
-    cast.relinkPersonas(tx, bookId, from, personaOf || into === NARRATOR ? null : into);
-    const moved = reattribute(tx, bookId, from, into);
-    return { characters: cast.readCast(tx, bookId), moved };
+  cast.upsertCharacter(tx, bookId, {
+    ...dst,
+    aliases: [...new Set([...dst.aliases, from, ...src.aliases])],
+    personaOf,
   });
+  moveSpeakerSamples(tx, bookId, from, into);
+  cast.deleteCharacterRow(tx, bookId, from);
+  cast.relinkPersonas(tx, bookId, from, personaOf || into === NARRATOR ? null : into);
+  return reattribute(tx, bookId, from, into);
 }
 
-/** Remove a speaker; their lines go to the Narrator and their personas are unlinked. */
-export function deleteCharacter(db: Db, bookId: string, name: string): MovedLines {
+/** Remove speakers, all or nothing; their lines go to the Narrator and their personas are unlinked. */
+export function removeCharacters(db: Db, bookId: string, names: readonly string[]): MovedSpeakers {
   requireBook(db, bookId);
-  if (name === NARRATOR) throw conflict("The Narrator cannot be removed");
-  requireCharacter(db, bookId, name);
+  if (names.includes(NARRATOR)) throw conflict("The Narrator cannot be removed");
   return db.transaction((tx) => {
     cast.ensureSpeakers(tx, bookId, [NARRATOR]);
-    discardSpeakerSamples(tx, bookId, name, NARRATOR);
-    cast.deleteCharacterRow(tx, bookId, name);
-    cast.relinkPersonas(tx, bookId, name, null);
-    const moved = reattribute(tx, bookId, name, NARRATOR);
-    return { characters: cast.readCast(tx, bookId), moved };
+    const speakers = [...new Set(names)].map((name) => {
+      requireCharacter(tx, bookId, name);
+      discardSpeakerSamples(tx, bookId, name, NARRATOR);
+      cast.deleteCharacterRow(tx, bookId, name);
+      cast.relinkPersonas(tx, bookId, name, null);
+      return { name, moved: reattribute(tx, bookId, name, NARRATOR) };
+    });
+    return { characters: cast.readCast(tx, bookId), speakers };
   });
 }
 
-/** The Undo of a merge or removal: put the speaker back on exactly these lines, as stated. */
+/**
+ * The Undo of a merge or removal: put each speaker back on exactly their lines, as stated. Links
+ * are checked once all are back, so a persona and its character can return together; a link or
+ * effect no longer allowed is dropped rather than refusing the Undo.
+ */
 export function attribute(
   db: Db,
   bookId: string,
-  character: Character,
-  lines: readonly ChapterLines[],
-): MovedLines {
+  restore: readonly { character: Character; lines: readonly ChapterLines[] }[],
+): MovedSpeakers {
   requireBook(db, bookId);
-  // drop an effect removed since or a persona link no longer allowed, rather than refuse the Undo
   const known = (id?: string) => (id && isEffectChoice(db, id) ? id : undefined);
-  const others = cast.readCast(db, bookId).filter((c) => c.name !== character.name);
-  const of = character.personaOf;
-  character = {
-    ...character,
-    effect: known(character.effect),
-    thoughts: known(character.thoughts),
-    personaOf: of && !personaRefusal(character.name, of, others) ? of : undefined,
-  };
   return db.transaction((tx) => {
-    cast.upsertCharacter(tx, bookId, character);
-    const moved = attributeLines(tx, bookId, lines, character.name);
-    return { characters: cast.readCast(tx, bookId), moved };
+    const speakers = restore.map(({ character: c, lines }) => {
+      cast.upsertCharacter(tx, bookId, {
+        ...c,
+        effect: known(c.effect),
+        thoughts: known(c.thoughts),
+      });
+      return { name: c.name, moved: attributeLines(tx, bookId, lines, c.name) };
+    });
+    const now = cast.readCast(tx, bookId);
+    for (const { character: c } of restore) {
+      const others = now.filter((x) => x.name !== c.name);
+      if (c.personaOf && personaRefusal(c.name, c.personaOf, others))
+        cast.upsertCharacter(tx, bookId, {
+          ...now.find((x) => x.name === c.name)!,
+          personaOf: undefined,
+        });
+    }
+    return { characters: cast.readCast(tx, bookId), speakers };
   });
 }
 

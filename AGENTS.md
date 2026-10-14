@@ -25,3 +25,20 @@ release. Add a tool name to select part of the graph. For example, run
 - [ ] If setup, runtime, or package-manager behavior looks wrong, run `vp env doctor` and include its output when asking for help.
 
 <!--VITE PLUS END-->
+
+# Conventions
+
+## Tests
+
+- Extend or replace the tests a change touches before adding new ones. Changed behaviour → change its test; removed behaviour → remove its test in the same change.
+- Add a test only for a failure the suite cannot already catch. If you can't name the assertion that would break, don't write it. Use `test.each` instead of copies.
+- Never put an assertion behind an `if`. Assert the rule, not the fixture (no exact seeded counts, toast strings or unpromised array orders).
+- Smallest fixture: `story(n)` and `line()` from `tests/support/epub.ts`. Use `voicedBook` / `narratedBook` instead of local import-script-narrate helpers.
+- Server tests use `testApi()`, store tests `backendServer()`. Open `demoServer()` only when the test reads the seeded world.
+- No paid or network calls: keep the fake providers. Replace real waits with gated providers or fake timers. Shared setup lives in `tests/support`.
+
+## UI
+
+- Toasts only through `uiStore.toast(msg, { kind, description, undo, action, timeout })` or `uiStore.toastLoading(promise, …)`.
+- Icons: Lucide from `@lucide/vue`, aliased to the job they do (`RotateCcw as RetryIcon`), sized with `icon` / `icon-sm` / `icon-lg`.
+- Form controls are the reka-ui wrappers in `src/ui/`. Every numeric field is `UiNumber`.

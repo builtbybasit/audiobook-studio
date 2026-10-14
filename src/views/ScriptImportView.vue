@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Importing a script file into this book. See docs/script-transfer.md#import.
+// Importing a script file into this book.
 //
 // The server reads the file, matches its chapters to this book's by their source words and
 // answers with a plan; nothing is written until **Apply** is pressed. The page reads top to bottom

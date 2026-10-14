@@ -8,7 +8,7 @@
 // only when asked for, never because they were last time.
 //
 // Removing has no Undo — nothing puts a book back in the database — so the app's one rule for
-// danger (`src/stores/README.md`) has the item ask, with a second click on the item itself, and
+// danger has the item ask, with a second click on the item itself, and
 // say it cannot be undone. What it takes hangs off the item, where it can be read before the click.
 import { useLibraryStore } from "@/stores/library";
 

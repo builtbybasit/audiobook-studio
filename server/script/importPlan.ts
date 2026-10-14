@@ -1,5 +1,4 @@
 // What importing a script file into a book would do, worked out without writing anything.
-// See docs/script-transfer.md#import.
 //
 // **Read, match and show first.** A script file is someone's paid scripting runs and an afternoon
 // of corrections; the book it lands in has its own. So this answers with a plan — which chapters

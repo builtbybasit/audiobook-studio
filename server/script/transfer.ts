@@ -1,5 +1,5 @@
 // A book's script written out as a file to keep, send, edit or carry to a newer EPUB of the same
-// book. See docs/script-transfer.md#the-file-and-the-export; reading one back is `importPlan.ts`.
+// book. Reading one back is `importPlan.ts`.
 import JSZip from "jszip";
 
 import type {

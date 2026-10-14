@@ -4,7 +4,7 @@
 // voice they cannot use — unless the export carried the recordings it was made from. Those arrive
 // with no voice to belong to: no provider has made one from them here yet. So they are kept
 // against the **speaker**, the one thing both books agree on, until the Voices tab clones them (and
-// slice 2's store takes them over) or the person discards them. See docs/script-transfer.md.
+// slice 2's store takes them over) or the person discards them.
 //
 // **Keyed to the character by value, with the cascade doing the bookkeeping.** A speaker renamed on
 // the Cast page carries the recordings with it, as it carries the lines; a speaker removed, or a

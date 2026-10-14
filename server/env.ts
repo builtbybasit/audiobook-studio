@@ -54,7 +54,7 @@ const Env = v.object({
   ),
   /**
    * Hard ceiling on an uploaded script file, in megabytes. Apart from the EPUB's because a script
-   * can carry voice samples (docs/script-transfer.md, slice 3), and audio barely compresses: a
+   * can carry voice samples, and audio barely compresses: a
    * few voices' recordings are hundreds of megabytes whatever the zip does. A script without them
    * is text, and nowhere near either limit.
    */

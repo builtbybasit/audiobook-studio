@@ -1,5 +1,5 @@
 // A book's script as a file: written out for someone to keep or send, and read back into another
-// copy of the same book. See docs/script-transfer.md.
+// copy of the same book.
 import { create as disposition } from "content-disposition";
 import { Hono } from "hono";
 import type { Env as PinoEnv } from "hono-pino";

@@ -1,5 +1,5 @@
 // One voice's folder in a script file — `voices/<slug>/`, its recordings and their `samples.json` —
-// judged whole: usable, or refused saying why. See docs/script-transfer.md, slice 3.
+// judged whole: usable, or refused saying why.
 //
 // **Held to the clone route's own limits.** These recordings exist to be cloned from, and the clone
 // route refuses more than it takes (`server/routes/endpoints.ts`); a folder it would refuse is one

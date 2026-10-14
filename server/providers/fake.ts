@@ -1,9 +1,9 @@
 // A scripting provider that reads the prose and never the network.
 //
-// It exists so the real queue, the real storage and the real routes can be exercised end to end —
-// the requirement in `docs/demo.md` — without a request leaving the machine. It is deterministic
-// on its input, so a test can say what it will produce, and it is honest about what it is: every
-// line it attributes comes from punctuation, not understanding.
+// It exists so the real queue, the real storage and the real routes can be exercised end to end
+// without a request leaving the machine. It is deterministic on its input, so a test can say what
+// it will produce, and it is honest about what it is: every line it attributes comes from
+// punctuation, not understanding.
 //
 // The rules are simple on purpose. A paragraph is narration. A quoted span inside it is dialogue,
 // and the speaker is whoever the paragraph names beside a speech verb — "…," said Mara — or

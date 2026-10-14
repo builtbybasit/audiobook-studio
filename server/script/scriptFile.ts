@@ -1,5 +1,4 @@
-// A script file read into its parts, and refused when it cannot be one. See
-// docs/script-transfer.md#import.
+// A script file read into its parts, and refused when it cannot be one.
 //
 // Two callers read a file this way: the import plan (`importPlan.ts`), which matches what it finds
 // against a book and writes nothing, and the voice samples' route (`~/speakerSamples/store`), which

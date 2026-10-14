@@ -1,6 +1,6 @@
 // Demo or backend, chosen once when the page loads.
 //
-// The rule this file exists to enforce is in `docs/demo.md`: the two modes are selected at the
+// The rule this file exists to enforce: the two modes are selected at the
 // service boundary, and neither ever silently becomes the other. A backend that is down is an
 // error the person sees — not a quiet slide into seeded books that look real, priced at rates
 // nobody is being charged.

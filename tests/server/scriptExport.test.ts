@@ -1,6 +1,5 @@
 // A book's script written out as `<book>.script.zip`: which chapter a script belongs to is told by
 // the words of its source, and the file holds the script and nothing local to this install.
-// See docs/script-transfer.md#the-file-and-the-export.
 import { describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import JSZip from "jszip";

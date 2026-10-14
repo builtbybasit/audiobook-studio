@@ -52,8 +52,7 @@ const items = computed(() =>
     .sort((a, b) => (b.status === "building" ? 1 : 0) - (a.status === "building" ? 1 : 0)),
 );
 /**
- * Deleting an audiobook: nothing puts one back, so the button asks with a second click — the rule
- * in `src/stores/README.md`.
+ * Deleting an audiobook: nothing puts one back, so the button asks with a second click.
  */
 const confirming = ref<number | null>(null);
 const deleteTitle = "Delete this audiobook. This cannot be undone.";

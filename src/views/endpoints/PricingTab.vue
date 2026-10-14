@@ -17,8 +17,7 @@ import { useLibraryStore } from "@/stores/library";
 // disclosures that stay shut on an endpoint that has neither, which is most of them.
 //
 // The page says what a number is in its label and at most one short line beside it; the why — what
-// the server does with it, what it never does — is a sentence behind a "?" mark, and the full rules
-// are docs/pricing.md.
+// the server does with it, what it never does — is a sentence behind a "?" mark.
 import { computed } from "vue";
 import { useNow } from "@vueuse/core";
 

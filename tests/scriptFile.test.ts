@@ -1,6 +1,5 @@
 // A line as a script file holds it: expression tags written into the words as markers and read
 // back to the same annotations, and a chapter that comes back with the signature it left with.
-// See docs/script-transfer.md#the-file-and-the-export.
 import { describe, expect, test } from "bun:test";
 
 import type { ExpressionAnnotation, ExpressionTag, Segment } from "@/types";

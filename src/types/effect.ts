@@ -1,5 +1,5 @@
-// Voice effects: named Pedalboard chains kept for the whole library (docs/audio.md, "Voice
-// effects"). A speaker can wear one on all of their lines, and a `thought` line gets a thought
+// Voice effects: named Pedalboard chains kept for the whole library.
+// A speaker can wear one on all of their lines, and a `thought` line gets a thought
 // effect after it, chosen speaker → book → library (`src/lib/effects.ts`).
 
 /** One Pedalboard plugin and its keyword arguments; an off step is kept but not run. */

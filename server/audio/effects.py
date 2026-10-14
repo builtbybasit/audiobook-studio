@@ -1,4 +1,4 @@
-# Voice effects run on a clip: Pedalboard chains (docs/audio.md, "Voice effects"). `effects.ts`
+# Voice effects run on a clip: Pedalboard chains. `effects.ts`
 # starts it as `uv run -q --no-project --with pedalboard==… python -I effects.py <mode>`, so the
 # server needs no Python environment of its own, only uv.
 #

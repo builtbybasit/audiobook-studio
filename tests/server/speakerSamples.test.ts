@@ -1,6 +1,5 @@
 // Voice samples waiting with a speaker: what an applied import keeps from a script file, and how
 // they are served, discarded, restored and — a day after a discard — removed.
-// See docs/script-transfer.md, slice 3.
 import { beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";

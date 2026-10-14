@@ -1,5 +1,4 @@
-// Voice samples that came in a script file and wait with a speaker. See docs/script-transfer.md,
-// "Slice 3".
+// Voice samples that came in a script file and wait with a speaker.
 //
 // A script file can carry the samples a private voice was cloned from. Nothing here can speak
 // with them — the voice lives on someone else's account — so they wait with the speaker until

@@ -15,7 +15,7 @@
 // **One secret is in here: `endpoints.api_key`**, the key a real provider is called with. It is
 // write-only over HTTP — a save may set or clear it, a read only says whether there is one — and it
 // is read at the moment of a request, never copied onto a job. `credentials` is still a registry of
-// names, which account a key belongs to; see `docs/backend.md`.
+// names, which account a key belongs to.
 import { index, integer, primaryKey, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 import type {

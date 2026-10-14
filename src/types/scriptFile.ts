@@ -1,5 +1,5 @@
 // A book's script as it leaves the install, and the plan an import answers with before it writes
-// anything. See docs/script-transfer.md.
+// anything.
 //
 // **Nothing here is local to one install.** No segment ids, no annotation ids, no `VoiceRef`: an
 // endpoint id means nothing on another machine, so a voice travels as a hint the importing side

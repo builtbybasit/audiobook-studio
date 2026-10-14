@@ -139,7 +139,7 @@ export function volumeTarget(db: Db, bookId: string): Book {
  * Read an EPUB that would not parse for the reason a person can act on.
  *
  * The parser says what stopped it; EPUBCheck says what is wrong with the file. It runs only here,
- * on a failure, never as a gate — see `docs/backend.md`.
+ * on a failure, never as a gate.
  */
 async function refused(bytes: ArrayBuffer, e: EpubParseError, log?: ImportLog): Promise<never> {
   const why = await diagnose(bytes);

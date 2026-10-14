@@ -568,7 +568,7 @@ export const useNarrationStore = defineStore("narration", {
     // chapter's script again as they do. The budget is the server's to enforce too: it refuses a
     // run that does not fit the book's cap, or any run on a paused book, with a 409 whose sentence
     // the toast shows as it is, and stops a running job before a request the cap no longer allows.
-    // Nothing about a chapter changes here before the server answers — see `docs/backend.md`.
+    // Nothing about a chapter changes here before the server answers.
     /**
      * Narrate (or re-narrate) the given chapters, as one run.
      *

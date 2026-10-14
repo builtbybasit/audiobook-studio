@@ -6,7 +6,7 @@
 //
 // One thing the library genuinely cannot do, rather than quietly pretends to: **a removal has no
 // Undo.** Nothing puts a book back in the database, and there is no route that would. So a removal
-// follows the other half of the danger rule in `src/stores/README.md` — it asks first, in the
+// follows the other half of the danger rule — it asks first, in the
 // control that starts it — and the toast says it cannot be undone rather than offering a button
 // that would lie.
 //
@@ -817,8 +817,8 @@ export const useLibraryStore = defineStore("library", {
     // Remove a volume (wrong EPUB added): its chapters, segments, jobs and exports go; the remaining
     // chapters are renumbered so numbering stays continuous. Removing the last volume removes the novel.
     //
-    // Nothing puts a volume back in the database, so this cannot be undone — see the rule in
-    // `src/stores/README.md`. The control that starts it asks first, and the toast says so.
+    // Nothing puts a volume back in the database, so this cannot be undone.
+    // The control that starts it asks first, and the toast says so.
     async removeVolume(bookId: string, volId: number): Promise<"book" | "volume" | null> {
       const uiStore = useUiStore();
 

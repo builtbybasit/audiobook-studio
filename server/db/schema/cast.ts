@@ -2,7 +2,7 @@
 //
 // Both belong to the **book**, not to a chapter and not to a script version: restoring an old
 // script must not roll the cast back with it, which is why neither of these is inside
-// `script_versions`. See the script-history invariants in `src/stores/README.md`.
+// `script_versions`.
 import { index, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 import type { Gender, VoiceRef } from "@/types";

@@ -1,7 +1,7 @@
 // The budgets work is held to on the server: a book's cap, pause and script budget, and each
 // endpoint's daily limit.
 //
-// The rule is the browser's (`src/stores/README.md`, "Pricing and usage invariants"): work is
+// The rule is the browser's: work is
 // checked against what has been **spent plus what unfinished work already holds**, so two runs that
 // each fit on their own cannot both start and land past the cap together; and it is checked at the
 // **undiscounted** price with the whole output ceiling, because a run lasts long enough for a

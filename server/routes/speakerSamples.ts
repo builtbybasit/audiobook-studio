@@ -1,5 +1,5 @@
 // Voice samples waiting with a book's speakers, over HTTP: kept when an import is applied, listed,
-// served, discarded and restored. See docs/script-transfer.md, slice 3, and `speakerSamples/store`.
+// served, discarded and restored. See `speakerSamples/store`.
 import { Hono } from "hono";
 import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";

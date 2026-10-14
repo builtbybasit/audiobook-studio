@@ -1,4 +1,4 @@
-// A book's script as a file: reading one in, and applying what it says. See docs/script-transfer.md.
+// A book's script as a file: reading one in, and applying what it says.
 //
 // The server reads the file and answers with a plan — the chapters it matched by their source
 // words, the ones it refused, and how the file's cast, dictionary and voices differ from the

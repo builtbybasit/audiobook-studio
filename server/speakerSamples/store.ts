@@ -1,5 +1,5 @@
 // Voice samples waiting with a speaker: kept from a script file, read, discarded, restored and, a
-// day after a discard, removed. See docs/script-transfer.md, slice 3.
+// day after a discard, removed.
 //
 // **Stored when the import is applied, never when it is planned.** The plan route writes nothing;
 // the page, once the person applies, sends the same file back with the speakers whose recordings

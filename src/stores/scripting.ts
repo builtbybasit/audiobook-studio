@@ -247,7 +247,7 @@ export const useScriptingStore = defineStore("scripting", {
      * the chapter holds. The budget is the server's to enforce: it prices the run against the
      * book's cap and script budget before queuing anything, refuses one that does not fit with a
      * 409 whose sentence the toast below shows as it is, and stops a running job before a request
-     * the budget no longer allows — see `docs/backend.md`.
+     * the budget no longer allows.
      *
      * Nothing about a chapter changes here. The server marks the chapters it queued, the response
      * carries them as they now stand, and the queue's poll (`useBookJobs`) brings the script, the

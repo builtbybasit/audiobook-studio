@@ -35,20 +35,17 @@ export default defineConfig({
               paths: [
                 {
                   name: "drizzle-orm",
-                  message:
-                    'Queries live in server/db/*.ts (docs/backend.md, "The shape of it"): add a function there and call it.',
+                  message: "Queries live in server/db/*.ts: add a function there and call it.",
                 },
                 {
                   name: "~/db/schema",
-                  message:
-                    'Queries live in server/db/*.ts (docs/backend.md, "The shape of it"): add a function there and call it.',
+                  message: "Queries live in server/db/*.ts: add a function there and call it.",
                 },
               ],
               patterns: [
                 {
                   group: ["drizzle-orm/*", "~/db/schema/*"],
-                  message:
-                    'Queries live in server/db/*.ts (docs/backend.md, "The shape of it"): add a function there and call it.',
+                  message: "Queries live in server/db/*.ts: add a function there and call it.",
                 },
               ],
             },

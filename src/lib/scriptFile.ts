@@ -1,4 +1,4 @@
-// A line of the script as a script file holds it, and back. See docs/script-transfer.md.
+// A line of the script as a script file holds it, and back.
 //
 // **Expression tags travel inside the words.** A line's annotations are UTF-16 offsets into its
 // text, and an offset is silently wrong after the first hand edit — which is exactly what a file

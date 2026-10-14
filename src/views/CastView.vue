@@ -311,7 +311,7 @@ const duplicate = computed(
         ><span class="text-xs text-zinc-400">{{ suggestions.length }}</span>
         <button
           class="ml-auto text-xs text-violet-500 hover:underline"
-          @click="suggestions.forEach((s) => castStore.mergeCharacter(bookId, s.from, s.into))"
+          @click="castStore.mergeMany(bookId, suggestions)"
         >
           accept all
         </button>

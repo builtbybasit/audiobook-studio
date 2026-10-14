@@ -26,7 +26,10 @@ const castOpts = computed(() =>
 const intoOpts = computed(() => castOpts.value.filter((o) => !props.selected.has(o.value)));
 
 function mergeInto(into: string | number | null) {
-  void castStore.mergeMany(props.bookId, [...props.selected], String(into));
+  void castStore.mergeMany(
+    props.bookId,
+    [...props.selected].map((from) => ({ from, into: String(into) })),
+  );
   emit("clear");
 }
 function remove() {

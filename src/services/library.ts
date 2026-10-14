@@ -23,6 +23,7 @@ import type {
   LexEntry,
   LexiconSaved,
   MovedLines,
+  MovedSpeakers,
   Pacing,
   PromptTrialRequest,
   PromptTrialResult,
@@ -48,8 +49,15 @@ export type {
   ImportedBook,
   StartedOver,
   MovedLines,
+  MovedSpeakers,
   StoredSamples,
 } from "@/types";
+
+/** A speaker as they were, and the lines to put them back on. */
+export interface SpeakerLines {
+  character: Character;
+  lines: ChapterLines[];
+}
 
 /**
  * A book's settings. A key left out is left alone; `null` clears it (`pacing`: the built-in gaps).
@@ -185,12 +193,12 @@ export interface LibraryService {
   putCharacter(bookId: string, character: Character): Promise<Character[]>;
   /** Every line that names them moves with it. */
   renameCharacter(bookId: string, from: string, to: string): Promise<MovedLines>;
-  /** The lines move and the name becomes an alias. */
-  mergeCharacter(bookId: string, from: string, into: string): Promise<MovedLines>;
-  /** Their lines go to the Narrator. */
-  deleteCharacter(bookId: string, name: string): Promise<MovedLines>;
-  /** Put a speaker back on exactly these lines, and back in the cast: what an Undo sends. */
-  attribute(bookId: string, character: Character, lines: ChapterLines[]): Promise<MovedLines>;
+  /** In order, all or nothing: each `from`'s lines move to its `into` and the name becomes an alias. */
+  mergeCharacters(bookId: string, merges: { from: string; into: string }[]): Promise<MovedSpeakers>;
+  /** All or nothing; their lines go to the Narrator. */
+  removeCharacters(bookId: string, names: string[]): Promise<MovedSpeakers>;
+  /** Put speakers back on exactly these lines, and back in the cast: what an Undo sends. */
+  attribute(bookId: string, speakers: SpeakerLines[]): Promise<MovedSpeakers>;
   /**
    * Replaced whole; clips reading an old pronunciation go stale. `restore` (an Undo) names lines an
    * earlier change staled; those that read this pronunciation again go back to done.
@@ -452,20 +460,23 @@ export class HttpLibraryService implements LibraryService {
     });
   }
 
-  mergeCharacter(bookId: string, from: string, into: string): Promise<MovedLines> {
-    return this.http.post<MovedLines>(`/books/${seg(bookId)}/characters/${seg(from)}/merge`, {
-      into,
-    });
+  mergeCharacters(
+    bookId: string,
+    merges: { from: string; into: string }[],
+  ): Promise<MovedSpeakers> {
+    return this.http.post<MovedSpeakers>(`/books/${seg(bookId)}/characters/merge`, { merges });
   }
 
-  deleteCharacter(bookId: string, name: string): Promise<MovedLines> {
-    return this.http.delete<MovedLines>(`/books/${seg(bookId)}/characters/${seg(name)}`);
+  removeCharacters(bookId: string, names: string[]): Promise<MovedSpeakers> {
+    return this.http.post<MovedSpeakers>(`/books/${seg(bookId)}/characters/remove`, { names });
   }
 
-  attribute(bookId: string, character: Character, lines: ChapterLines[]): Promise<MovedLines> {
-    return this.http.post<MovedLines>(`/books/${seg(bookId)}/characters/attribute`, {
-      character,
-      lines: lines.map(({ chapterId, ids }) => ({ chapterId, ids })),
+  attribute(bookId: string, speakers: SpeakerLines[]): Promise<MovedSpeakers> {
+    return this.http.post<MovedSpeakers>(`/books/${seg(bookId)}/characters/attribute`, {
+      speakers: speakers.map(({ character, lines }) => ({
+        character,
+        lines: lines.map(({ chapterId, ids }) => ({ chapterId, ids })),
+      })),
     });
   }
 

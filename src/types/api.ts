@@ -66,10 +66,16 @@ export interface BookUpdated extends ImportedBook {
   stale: RevisedLines[];
 }
 
-/** Lines that changed hands on a rename, merge or removal, and the cast after it. */
+/** Lines that changed hands on a rename, and the cast after it. */
 export interface MovedLines {
   characters: Character[];
   moved: RevisedLines[];
+}
+
+/** The cast after a merge, removal or its Undo, and each named speaker's lines that moved. */
+export interface MovedSpeakers {
+  characters: Character[];
+  speakers: { name: string; moved: RevisedLines[] }[];
 }
 
 /**

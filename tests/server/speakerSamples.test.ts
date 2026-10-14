@@ -6,7 +6,7 @@ import { join } from "node:path";
 import JSZip from "jszip";
 
 import type { Book, Character, ScriptFileSpeaker, SpeakerSamples } from "@/types";
-import { deleteCharacter, mergeCharacter, renameCharacter } from "~/cast/ops";
+import { mergeCharacters, removeCharacters, renameCharacter } from "~/cast/ops";
 import { upsertCharacter } from "~/db/cast";
 import { speakerSamples } from "~/db/schema";
 import { GRACE_MS } from "~/db/voiceSamples";
@@ -229,10 +229,10 @@ describe("where they belong", () => {
 
   test("a merge moves them to the speaker merged into; a removal discards them, files and all", async () => {
     await store(await both(), ["Vex", "Ines"]);
-    mergeCharacter(api.db, id, "Vex", "Ines");
+    mergeCharacters(api.db, id, [{ from: "Vex", into: "Ines" }]);
     expect((await list()).map((s) => s.speaker)).toEqual(["Ines", "Ines"]);
 
-    deleteCharacter(api.db, id, "Ines");
+    removeCharacters(api.db, id, ["Ines"]);
     expect(await list()).toEqual([]);
     // hidden, not cascaded away: the rows stay for the purge, which removes their files with them
     const rows = api.db.select().from(speakerSamples).all();

@@ -9,3 +9,8 @@ export function minuteDuration(seconds: number): string {
   const whole = Math.max(0, Math.round(seconds));
   return `${Math.floor(whole / 60)}m ${String(whole % 60).padStart(2, "0")}s`;
 }
+
+/** A rough length for an estimate: "~40s" under a minute, else "~3 min". */
+export function aboutDuration(seconds: number): string {
+  return seconds < 60 ? `~${Math.ceil(seconds)}s` : `~${Math.ceil(seconds / 60)} min`;
+}

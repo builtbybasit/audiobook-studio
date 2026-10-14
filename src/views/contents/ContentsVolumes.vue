@@ -1,7 +1,5 @@
 <script setup lang="ts">
-// The "Volumes" tab: the bar stays pinned at the top as the map — click a segment to jump to its
-// row, drag a handle to move a boundary — with the tools that cut the whole book at once on the
-// same band, and one row per volume scrolling beneath.
+// The "Volumes" tab: the bar and the cutting tools pinned on top, one row per volume beneath.
 import { ref } from "vue";
 import VolumeTools from "@/views/contents/VolumeTools.vue";
 import VolumeStrip from "@/views/contents/VolumeStrip.vue";

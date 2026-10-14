@@ -1,10 +1,5 @@
-// What a refusal is, before it is an HTTP response.
-//
-// A domain operation says *what* went wrong — no such book, a volume already waiting in the review,
-// a script that changed under a job — and nothing else. Turning that into a status code and a JSON
-// body happens once, in `app.onError`, so a rule can be thrown from a route, a job or a test and
-// mean the same thing in each. The `code` is stable and machine-readable; the `message` is meant to
-// be shown as it stands; `detail` is the longer explanation a panel can expand to.
+// Domain refusals, turned into HTTP once, in `app.onError`, so a route, a job or a test can throw
+// them. `code` is stable, `message` is shown as is, `detail` is the expandable explanation.
 import type { ApiErrorCode } from "@/types";
 
 export type ErrorCode = ApiErrorCode;
@@ -20,18 +15,17 @@ const CODES: Record<ErrorStatus, ErrorCode> = {
   415: "unsupported_media",
   416: "range_not_satisfiable",
   500: "internal",
-  // A provider this server asked on the page's behalf refused or failed. Not this server's fault,
-  // and not the request's either; the message says which provider and what it answered.
+  // a provider refused or failed; the message names it and what it answered
   502: "upstream",
-  // What was asked needs a tool this machine does not have (uv, for voice effects).
+  // a tool this machine lacks (uv, for voice effects)
   503: "unavailable",
 };
 
-/** The code for a status this API did not choose itself: any other 4xx is the request's fault. */
+/** For a status this API didn't choose itself: any other 4xx is the request's fault. */
 export const codeFor = (status: number): ErrorCode =>
   CODES[status as ErrorStatus] ?? (status >= 400 && status < 500 ? "bad_request" : "internal");
 
-/** What a failure looks like on the wire. One shape for every error the API returns. */
+/** The one error shape the API returns. */
 export interface ApiError {
   error: { code: ErrorCode; message: string; detail?: string };
 }
@@ -66,7 +60,6 @@ export const notFound = (message: string, detail?: string): AppError =>
 export const conflict = (message: string, detail?: string): AppError =>
   new AppError(409, message, detail);
 
-/** Fail this request with a message the UI can show as it stands. */
 export function fail(status: ErrorStatus, message: string, detail?: string): never {
   throw new AppError(status, message, detail);
 }

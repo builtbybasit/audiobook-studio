@@ -1,10 +1,6 @@
-// A book's settings and its volumes' names and order, written on the server.
-//
-// Until these routes the budget, the pacing and a volume's name and place were the browser's alone,
-// and the next read of the book put the stored ones back over them. Each test here writes through
-// the route and reads the book again, because a read is what a reload does. The reorder is the same
-// renumbering a removal makes, so it is held to the same account: everything a chapter owns — its
-// text, its script, a job queued on it — answers to its new number and not to its old one.
+// A book's settings and its volumes' names and order, written on the server. Each test writes
+// through the route and reads the book again, as a reload does. A reorder renumbers like a removal:
+// a chapter's text, script and queued job answer to its new number.
 import { describe, expect, test } from "bun:test";
 
 import type { Book, Chapter } from "@/types";

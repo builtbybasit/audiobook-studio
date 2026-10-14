@@ -1,18 +1,7 @@
-// Local wall-clock time, in somebody else's timezone.
-//
-// A rate schedule is written in the endpoint's own timezone — "cheaper 22:00–06:00 in Asia/Tokyo" —
-// so deciding which rate is in force means knowing what day and what minute it is *there*, not here.
-// That is the whole subject of this file, and it knows nothing about rates: the pricing rules read
-// the clock, the clock never reads a rate card.
-//
-// `TZDate` from `@date-fns/tz` is a `Date` whose getters answer in a named zone, and whose
-// constructor takes wall-clock components in that zone and finds the instant they name, daylight
-// saving included. It is silent about a zone it does not know — every getter comes back `NaN` —
-// so the one thing this file still asks `Intl` for is whether a zone name is real, and everything
-// below falls back to UTC when it is not.
+// Wall-clock time in an endpoint's own timezone, for rate schedules. `TZDate` returns `NaN` for an
+// unknown zone, so `Intl` checks the name and everything falls back to UTC.
 import { TZDate } from "@date-fns/tz";
 
-/** The browser's own timezone, and "UTC" where it cannot be asked. */
 export const localTimezone = (): string => {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
@@ -49,11 +38,10 @@ export function timezoneValid(timezone: string): boolean {
   return ok;
 }
 
-/** The instant `at`, read in `timezone` — or in UTC when the zone is not one the runtime knows. */
 const zoned = (at: number, timezone: string): TZDate =>
   new TZDate(at, timezoneValid(timezone) ? timezone : "UTC");
 
-/** Day of week and minutes past midnight at `at`, read in `timezone`. Falls back to UTC. */
+/** Day of week and minutes past midnight. */
 export function localClock(
   at: number,
   timezone: string,
@@ -71,13 +59,8 @@ export function localClock(
 }
 
 /**
- * The instant a wall-clock time in `timezone` corresponds to.
- *
- * A promotion's start and end are *dates*, not instants — "until Friday" means the end of Friday
- * where the endpoint is billed, not where the operator happens to be sitting. Reading them with the
- * browser's own timezone moves a New York promotion by a day when it is edited from Karachi, and
- * every other part of this page already displays them in `config.timezone`. A day past the end of
- * the month rolls over, as it does for `Date`.
+ * A promotion's dates are read in the endpoint's zone, not the browser's ("until Friday" is Friday
+ * where it is billed). A day past month end rolls over, as for `Date`.
  */
 export function zonedTime(
   timezone: string,
@@ -95,7 +78,7 @@ export function zonedTime(
 
 const pad = (n: number, width = 2): string => String(n).padStart(width, "0");
 
-/** `1758067200000` → `2026-09-17`, as the date input wants it, in the endpoint's timezone. */
+/** `1758067200000` → `2026-09-17`, as the date input wants it. */
 export function calendarDay(at: number, timezone: string): string {
   const d = zoned(at, timezone);
   return `${pad(d.getFullYear(), 4)}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -103,21 +86,19 @@ export function calendarDay(at: number, timezone: string): string {
 
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
-/** `2026-09-17` → the first instant of that day in `timezone`; null when it isn't a date. */
 export function startOfDay(text: string, timezone: string): number | null {
   const m = DATE.exec(text.trim());
   if (!m) return null;
   return zonedTime(timezone, Number(m[1]), Number(m[2]), Number(m[3]), 0, 0, 0, 0);
 }
 
-/** `2026-09-17` → the last instant of that day in `timezone`; null when it isn't a date. */
 export function endOfDay(text: string, timezone: string): number | null {
   const m = DATE.exec(text.trim());
   if (!m) return null;
   return zonedTime(timezone, Number(m[1]), Number(m[2]), Number(m[3]), 23, 59, 59, 999);
 }
 
-/** `n` days on from the calendar day `at` falls on, in `timezone`, at the end of that day. */
+/** The end of the day `days` after the one `at` falls on. */
 export function endOfDayAfter(at: number, timezone: string, days: number): number {
   const d = zoned(at, timezone);
   return zonedTime(

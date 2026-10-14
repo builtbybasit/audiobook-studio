@@ -1,10 +1,6 @@
-// What the Voices tab holds a pick of voice samples to before it is sent, per provider.
-//
-// A sample is any audio of the one person speaking, recorded or downloaded, and each provider that
-// clones says what it makes a voice from (`cloning`): how many files, how large, which formats.
-// The server refuses anything outside that with the file's name; the page holds the same limits up
-// front so a pick is fixed before it is sent. Fish takes up to twenty in five formats; the others
-// are written as a provider that takes one small WAV or MP3, the far end of what cloning looks like.
+// What the Voices tab holds a pick of clone samples to, per provider (`cloning`): file count, size,
+// formats. The server refuses the same with the file's name; the page checks up front. Fish takes
+// up to twenty in five formats; `ONE` is the far end, one small WAV or MP3.
 import { beforeEach, describe, expect, test } from "bun:test";
 import { testPinia } from "./support/pinia";
 

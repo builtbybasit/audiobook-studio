@@ -1,9 +1,7 @@
 // The command-line scripting provider against the real Codex and Claude Code, opt-in:
-// `LIVE=1 bun test tests/live`. Each runs with the tool's own login — the user's subscription —
-// so it is one excerpt and one Test button each. A tool not on PATH is skipped.
-//
-// The models and reasoning levels are the presets' unless `CLI_CODEX_MODEL` or `CLI_CLAUDE_MODEL`
-// names another model.
+// `LIVE=1 bun test tests/live`. Each runs on the tool's own login (the user's subscription), so one
+// excerpt each; a tool not on PATH is skipped. `CLI_CODEX_MODEL` / `CLI_CLAUDE_MODEL` override
+// the presets' models.
 import { describe, expect, test } from "bun:test";
 
 import { CLAUDE_CODE, CODEX, type CliShape } from "@/lib/providers/cli";

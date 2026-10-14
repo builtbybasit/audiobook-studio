@@ -1,10 +1,7 @@
-// Narration through an endpoint that takes lines in batches (`docs/speech-batch-api.md`): the
-// waiting lines gathered in the chapter's order up to what the endpoint takes, each batch in one
-// of its slots, every line landing on its own however the answers are ordered, a long line sent as
-// its parts, and a line the server fumbled — or a batch it dropped — sent again in a later batch.
-//
-// The provider is the tone-rendering fake in its batch mode, which answers a batch's items last
-// first so nothing here passes by assuming the order they were sent in.
+// Narration through a batch endpoint (`docs/speech-batch-api.md`): waiting lines gathered in order
+// up to the batch size, each line landing on its own, a long line sent as parts, and a fumbled or
+// dropped line resent in a later batch. The fake answers a batch last item first, so nothing
+// passes by assuming order.
 import { describe, expect, test } from "bun:test";
 
 import type { Endpoint, ExpressionTag, Job, Segment } from "@/types";

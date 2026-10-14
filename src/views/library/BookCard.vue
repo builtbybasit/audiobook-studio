@@ -1,8 +1,6 @@
 <script setup lang="ts">
-// One book on the shelf. The cover opens the overview; under it, the one next thing to do, how far
-// along the book is in one bar — the counts behind it appear on hover and not otherwise — what is
-// running or broken, and the audiobook built from it with what has changed since. The numbers sit outside the button, so a screen reader hears them as
-// text rather than as part of "Open …".
+// One book on the shelf. The numbers sit outside the cover's button, so a screen reader hears
+// them as text rather than as part of "Open …".
 import { computed, ref } from "vue";
 import { plural } from "@/lib/contents";
 import { hours, TONE } from "@/views/library/shared";
@@ -55,11 +53,7 @@ const sentence = computed(() => {
   return parts.join(" · ");
 });
 
-/**
- * What the bar is made of, shown while the pointer or the focus is on it and not otherwise. Built
- * in the card rather than from a portal: a closed popover left inside a card that a search then
- * narrows away has frozen the renderer before (see BookMenu).
- */
+/** What the bar is made of, on hover or focus. In the card, not a portal: see BookMenu. */
 const hover = ref(false);
 const details = computed(() => {
   const x = f.value;

@@ -1,10 +1,5 @@
-// Every read and write a chapter's script history makes.
-//
-// The rule is the store's, applied here to rows: **the working script is preserved before
-// anything replaces it**, labelled by whatever produced it, and never twice. `planCapture` in
-// `@/lib/scriptHistory` decides what an operation adds; this file reads what the chapter holds,
-// hands it to that rule, and writes the answer — always inside the transaction that writes the
-// script, so a version and the script it preceded cannot disagree about which came first.
+// A chapter's script history as rows. `planCapture` in `@/lib/scriptHistory` decides what an
+// operation adds; this file writes it, always inside the transaction that writes the script.
 import { and, asc, eq } from "drizzle-orm";
 
 import type { ChapterHistory, HistoryHead, ScriptVersion, Segment, VersionOrigin } from "@/types";
@@ -15,10 +10,7 @@ import { scriptVersionValues, toChapterHistory } from "~/db/rows";
 
 const emptyHead = (): HistoryHead => ({ at: 0, origin: { kind: "scripted" } });
 
-/**
- * A chapter's history as the client reads it, plus the one thing the server keeps for itself:
- * which version the open editing session preserved when it began, if it added one.
- */
+/** The client's history plus the version the open editing session preserved, if any. */
 interface StoredHistory extends ChapterHistory {
   sessionVersion: number | null;
 }
@@ -39,16 +31,12 @@ function readStored(db: Db | Tx, bookId: string, chapterId: number): StoredHisto
   return { ...toChapterHistory(head, versions), sessionVersion: head.sessionVersion ?? null };
 }
 
-/** A chapter's history, or an empty one for a chapter nothing has happened to yet. */
 export function readHistory(db: Db | Tx, bookId: string, chapterId: number): ChapterHistory {
   const { sessionVersion: _, ...history } = readStored(db, bookId, chapterId);
   return history;
 }
 
-/**
- * Where the working script now stands. `sessionVersion` is the version the open session's first
- * edit preserved, and null for every head that is not an open session with a version of its own.
- */
+/** `sessionVersion`: the version the open session's first edit preserved, else null. */
 function writeHead(
   tx: Tx,
   bookId: string,
@@ -90,10 +78,7 @@ function deleteVersionRow(tx: Tx, bookId: string, chapterId: number, id: number)
     .run();
 }
 
-/**
- * Preserve `current` before `origin` replaces it with `next`. Returns the id of the entry added,
- * or null when the rule added none.
- */
+/** Preserve `current` before `origin` replaces it with `next`; the id added, or null. */
 export function capture(
   tx: Tx,
   bookId: string,
@@ -106,8 +91,7 @@ export function capture(
   const h = readHistory(tx, bookId, chapterId);
   const { added, head, nextId } = planCapture(h, current, origin, next, now);
   if (added) insertVersion(tx, bookId, chapterId, added);
-  // an edit that preserved a version opens a session that version belongs to; anything else
-  // closes whatever session there was
+  // an edit that preserved a version opens a session on it; anything else closes the session
   writeHead(
     tx,
     bookId,
@@ -120,20 +104,10 @@ export function capture(
 }
 
 /**
- * One line of the script changed by hand: `next` is about to replace `current`.
- *
- * The first edit after a quiet spell preserves the script and opens a session; every edit less
- * than `SESSION_IDLE_MS` after the last joins it and is counted into the same entry. A session
- * that comes back to exactly where it began — the edits were undone, one by one — leaves no entry:
- * the version its first edit added is dropped again and the head goes back to what it said before,
- * which is what that version recorded. The list must never claim an edit happened that no longer
- * exists.
- *
- * Only that version is the session's to drop. The head remembers which one it was
- * (`session_version`), because the newest version is not always it: a checkpoint saved after the
- * session opened is newer, and a session that then comes back to the checkpoint's script leaves
- * the checkpoint where it is. A session whose first edit preserved nothing — the script it
- * replaced was already the newest entry — has nothing to drop either.
+ * A hand edit. Edits within `SESSION_IDLE_MS` of each other join one session and one entry. A
+ * session that returns to where it began drops the version its first edit added, so the list
+ * never claims an edit that no longer exists. Only `session_version` is droppable: a checkpoint
+ * saved mid-session is newer but is not the session's.
  */
 export function noteEdit(
   tx: Tx,
@@ -172,11 +146,7 @@ export function noteEdit(
   );
 }
 
-/**
- * Name the script as it stands and keep a copy of it. The script itself does not change: a
- * checkpoint is a place to come back to, and the name goes on the state the script is in, so the
- * entry still says how it got there.
- */
+/** Name the script as it stands and keep a copy; the script itself does not change. */
 export function checkpoint(
   tx: Tx,
   bookId: string,
@@ -203,13 +173,11 @@ export function checkpoint(
 }
 
 /**
- * Forget one version. Version numbers are never reused, so the ones after it keep theirs. When the
- * version was the checkpoint the head still names, the head goes back to how the script came to be
- * before it was named — what an Undo of a checkpoint asks for. A checkpoint saved over a checkpoint
- * does not record what it was saved over (`was`), because the answer is the earlier checkpoint
- * itself: the head goes back to the newest checkpoint still in the list, or to "scripted" when
- * there is none left.
+ * Version numbers are never reused. Dropping the checkpoint the head names reverts the head to
+ * `was`, or (checkpoint over checkpoint, which keeps no `was`) the newest remaining checkpoint,
+ * else "scripted".
  */
+
 export function dropVersion(
   tx: Tx,
   bookId: string,

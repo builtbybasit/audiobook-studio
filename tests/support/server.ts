@@ -1,5 +1,4 @@
-// A server to test against: the real routes, the real schema, the real queue, a database that
-// lives in memory and goes away with the test.
+// A server to test against: the real routes, schema and queue over an in-memory database.
 import { Database } from "bun:sqlite";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -55,9 +54,9 @@ export interface TestApi {
   gate: SpeechGate;
   /** `fetch` for a client, answered by this app without a network */
   fetch: FetchLike;
-  /** every line this API wrote, for the tests that are about the logging itself */
+  /** every line this API logged */
   logs: Record<string, unknown>[];
-  /** Call the API the way the browser will. Returns the parsed body and the status. */
+  /** Call the API the way the browser will. */
   request<T = unknown>(path: string, init?: RequestInit): Promise<{ status: number; body: T }>;
   /** POST an EPUB through the real multipart path. */
   import<T = unknown>(
@@ -74,9 +73,7 @@ export interface TestApiOptions {
   /** where the Voices tab's lists come from; the real lister, over the network, by default */
   voices?: VoiceLister;
   /**
-   * What renders the Voices tab's samples. The server's own default is the real provider, over the
-   * network; here it is one that fails the test saying none was given, so no test pays for a
-   * request it forgot to fake.
+   * Renders Voice tab samples; by default one that fails the test, so no test pays for a request.
    */
   samples?: SpeechProvider;
   /** what makes a voice from recordings; like `samples`, one that fails the test by default */
@@ -101,13 +98,11 @@ export interface TestApiOptions {
   thoughtEffect?: ThoughtEffect;
 }
 
-/** A directory of its own for one test's clips, so no two suites can read each other's files. */
+/** Per-test directories, so no two suites read each other's files. */
 export const tempAudioDir = (): string => mkdtempSync(join(tmpdir(), "audiobook-audio-"));
 
-/** The same, for the audiobooks a build writes. */
 export const tempExportDir = (): string => mkdtempSync(join(tmpdir(), "audiobook-built-"));
 
-/** The same, for the recordings a cloned voice was made from. */
 export const tempVoiceDir = (): string => mkdtempSync(join(tmpdir(), "audiobook-voices-"));
 
 /** Both halves of building a file, wherever this test keeps them. */
@@ -121,11 +116,7 @@ export const testExports = (options: TestApiOptions = {}): ExportPorts => ({
 });
 
 /**
- * A logger that keeps its lines instead of printing them.
- *
- * A suite that prints a line per request is a suite nobody reads the output of, and the output is
- * where a failure explains itself. Collected rather than dropped, so a test can assert on what was
- * logged — and on what was not, which is how the redaction rule is checked.
+ * A logger that keeps its lines instead of printing them, so a test can assert on what was logged.
  */
 export function collectingLogger(): { log: Logger; lines: Record<string, unknown>[] } {
   const lines: Record<string, unknown>[] = [];
@@ -137,11 +128,10 @@ export function collectingLogger(): { log: Logger; lines: Record<string, unknown
   return { log, lines };
 }
 
-/** The error a test meets when it reaches a real provider it was never given a fake for. */
 const noFake = (what: string): Error =>
   new Error(`this test gave no ${what}, and will not reach a real provider without one`);
 
-/** Stands in for `samples` when a test gives none: see `TestApiOptions.samples`. */
+/** Stands in for `samples` when a test gives none. */
 const noSamples: SpeechProvider = {
   name: "No samples provider (test)",
   speak: () => Promise.reject(noFake("samples provider")),
@@ -158,7 +148,7 @@ const noTranscription: TranscriptionProvider = {
   transcribe: () => Promise.reject(noFake("transcription provider")),
 };
 
-/** A database migrated once per file, copied for each test that asks — migrating is 25 ms a time. */
+/** Migrated once per file and copied per test: migrating is 25 ms a time. */
 let migrated: Uint8Array | undefined;
 
 export function testDb(): Db {
@@ -254,9 +244,8 @@ export const jsonBody = (body: unknown): RequestInit => ({
 });
 
 /**
- * A speech endpoint as the Endpoints page saves one: free, two lines at a time, every line whole,
- * one voice (`studio/ash`), and no history. `over` is what a test is about — a price, a
- * concurrency, a format — so it reads at the call site.
+ * A free speech endpoint: two lines at a time, lines whole, one voice (`studio/ash`). `over` is
+ * what the test is about, so it reads at the call site.
  */
 export const speechEndpoint = (over: Partial<Endpoint> = {}): Endpoint => ({
   id: "studio",
@@ -279,7 +268,7 @@ export const speechEndpoint = (over: Partial<Endpoint> = {}): Endpoint => ({
   ...over,
 });
 
-/** Save these as the library's speech endpoints, as the Endpoints page does, replacing any. */
+/** Save these as the library's speech endpoints, replacing any. */
 export const saveEndpoints = (api: TestApi, endpoints: Endpoint[]) =>
   api.request("/api/endpoints", {
     ...jsonBody({ endpoints, profiles: [], credentials: [] }),
@@ -292,7 +281,7 @@ export async function scriptChapters(api: TestApi, id: string, ids: number[]): P
   await api.runner.idle();
 }
 
-/** Narrate these chapters and wait for the runner to finish; the jobs the request queued. */
+/** Narrate these chapters and wait for the runner to finish; returns the queued jobs. */
 export async function narrateChapters(api: TestApi, id: string, ids: number[]): Promise<Job[]> {
   const { body } = await api.request<{ jobs: Job[] }>(
     `/api/books/${id}/chapters/narrate`,
@@ -302,7 +291,7 @@ export async function narrateChapters(api: TestApi, id: string, ids: number[]): 
   return body.jobs;
 }
 
-/** Import an EPUB and shelve it; the book. Fails here, saying why, if the import was refused. */
+/** Import an EPUB and shelve it. Throws, saying why, if the import was refused. */
 async function shelved(api: TestApi, input: EpubInput): Promise<Book> {
   const { status, body } = await api.import<{ book: Book }>(await epubFile(input));
   if (status !== 201)
@@ -322,10 +311,7 @@ export interface VoicedBookOptions {
   chapters?: string[];
 }
 
-/**
- * A book ready to narrate: imported, shelved, every chapter scripted, and every speaker the script
- * found cast. Nothing is narrated; the book's id.
- */
+/** Imported, shelved, scripted, and every speaker cast; nothing narrated. Returns the book's id. */
 export async function voicedBook(
   api: TestApi,
   { endpoints, paragraphs, voiceOf, chapters = ["One"] }: VoicedBookOptions,
@@ -346,7 +332,7 @@ export async function voicedBook(
 }
 
 export interface NarratedBookOptions {
-  /** one chapter per pair, its title and its one paragraph — `line(title)` from `./epub` */
+  /** one chapter per pair, its title and its one paragraph (`line(title)` from `./epub`) */
   chapters: [title: string, line: string][];
   /** the chapters to narrate; every one by default. Every chapter is scripted either way. */
   ids?: number[];
@@ -355,9 +341,8 @@ export interface NarratedBookOptions {
 }
 
 /**
- * A book narrated, ready to build: imported, shelved, every chapter scripted, and `ids` narrated
- * by the speech the API was given. A chapter is one paragraph, a few seconds of audio: what a build
- * costs is the length of what it reads, and under ffmpeg nearly all of it.
+ * Imported, shelved, scripted, and `ids` narrated. One paragraph a chapter keeps it to a few
+ * seconds of audio: a build costs the length of what it reads.
  */
 export async function narratedBook(
   api: TestApi,
@@ -374,12 +359,9 @@ export async function narratedBook(
 }
 
 /**
- * A scripting provider a test holds the door on.
- *
- * `started` resolves once a job is inside the provider, and nothing comes out until `release` is
- * called — so a test can act on a run that is genuinely in flight (cancel it, edit under it,
- * renumber its book) without a timer to race. Cancelling while it waits rejects the way a real
- * request would.
+ * A scripting provider a test holds the door on: `started` resolves once a job is inside, nothing
+ * comes out until `release`, so a test can act on a run genuinely in flight. Abort rejects as a
+ * real request would.
  */
 export function gatedProvider(
   answer: ScriptedLine[] = [{ type: "narration", speaker: "Narrator", text: "Rain fell." }],
@@ -409,13 +391,7 @@ export function gatedProvider(
   };
 }
 
-/**
- * A speech provider a test holds the door on: `gatedProvider` for lines.
- *
- * `started` resolves once the run is inside the provider with its first line, and nothing comes
- * out until `release` is called — every line after the first answers at once, so a released run
- * finishes. Cancelling while it waits rejects the way a real request would.
- */
+/** `gatedProvider` for speech: only the first line waits for `release`; the rest answer at once. */
 export function gatedSpeechProvider(answer: Partial<RenderedClip> = {}): {
   provider: SpeechProvider;
   started: Promise<SpeechInput>;

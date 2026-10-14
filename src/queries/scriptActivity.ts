@@ -1,12 +1,6 @@
-// Every scripting profile's past, for the Scripting page: its latest settled requests, which the
-// health dots, the latency history, the last error, the cooldown and the estimate's observed cache
-// rate and reasoning share are read off (by `@/lib/scriptActivity`), and its last seven days summed
-// by the server over every request, which the "all books · 7 days" figures are. A run of a long book
-// sends thousands of requests, so a total is never worked out from the latest rows.
-//
-// Both are the server's ledger, filed under `keys.endpointRequests` as the Endpoints page's reads
-// are, so they are invalidated the same way: the queue's poll invalidates it whenever a job moves,
-// and a scripting job moves as each of its requests settles.
+// Every scripting profile's past, for the Scripting page: latest settled requests (read by
+// `@/lib/scriptActivity` for health, latency, cooldown, cache rate, reasoning share) and seven-day
+// totals summed by the server. Under `keys.endpointRequests`, so the queue's poll invalidates it.
 import { useQueryCache } from "@pinia/colada";
 
 import type { MetricTotals, RequestRecord } from "@/types";
@@ -18,14 +12,13 @@ import {
 } from "@/queries/endpointHistory";
 import { useEndpointsStore } from "@/stores/endpoints";
 
-/** A scripting profile as the ledger names it: the same `scripting:<id>` the Endpoints page keys by. */
+/** The ledger's name for a profile: the same `scripting:<id>` the Endpoints page keys by. */
 const keyOf = (profileId: string): string => `scripting:${profileId}`;
 
-/** The scripting profiles the store holds, in the store's order. */
 const profileRefs = (): EndpointRef[] =>
   useEndpointsStore().profiles.map((p) => ({ key: keyOf(p.id), id: p.id, kind: "scripting" }));
 
-/** Each scripting profile's settled requests, newest first; `rowsOf` a profile nothing has read yet is none. */
+/** Each scripting profile's settled requests, newest first; none for an unread profile. */
 export function useScriptActivity() {
   const query = useEndpointHistory(profileRefs);
   return {
@@ -34,10 +27,7 @@ export function useScriptActivity() {
   };
 }
 
-/**
- * Each scripting profile's last seven days, summed by the server over every request in them;
- * `totalsOf` a profile nothing has read yet is null, which is not the same as nothing sent.
- */
+/** Each profile's server-summed last seven days; null when unread, which is not nothing sent. */
 export function useScriptTotals() {
   // the summary also says what was spent since this midnight, which nothing here reads
   const midnight = new Date().setHours(0, 0, 0, 0);
@@ -49,10 +39,7 @@ export function useScriptTotals() {
   };
 }
 
-/**
- * One profile's settled requests right now, for a store that needs them synchronously: whatever the
- * query cache already holds for the profiles the store lists. None when nothing has read them yet.
- */
+/** One profile's cached settled requests, for synchronous store callers; none when unread. */
 export function scriptActivityNow(profileId: string): RequestRecord[] {
   const all = useQueryCache().getQueryData<Record<string, RequestRecord[]>>(
     endpointHistoryKey(profileRefs()),

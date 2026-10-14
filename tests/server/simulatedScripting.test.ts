@@ -1,8 +1,5 @@
-// A scripting profile set to `simulated://`, run through the provider a real server runs with.
-//
-// What the profile promises is that nothing leaves the machine and nothing is billed, while the
-// run still goes through the real queue, the real ledger and the real script store. So the chat
-// provider here is handed a `fetch` that fails the test, and the run has to finish anyway.
+// A scripting profile set to `simulated://`, through the real provider, queue, ledger and script
+// store; its `fetch` fails the test, so nothing leaves the machine and the run still finishes.
 import { describe, expect, test } from "bun:test";
 
 import type { Book, Job, Profile, Segment } from "@/types";

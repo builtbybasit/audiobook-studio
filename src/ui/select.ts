@@ -4,16 +4,11 @@ import type { UiOption } from "@/ui/types";
 /** Reka forbids `''` as an item value, so the select files it under this key instead. */
 const EMPTY = "__empty__";
 
-/** The key a select files a value under: the item value reka is given. */
 export const optionKey = (v: string | number | null): string => (v === "" ? EMPTY : String(v));
 
 /**
- * The label a closed select shows for `value`, and whether the value is one none of the options
- * has. A value with no option — an endpoint since removed, a setting from an older file — is never
- * shown as itself: an id reads like a real choice, so the page would claim one that is not on
- * offer. The select shows its placeholder instead, marked as missing.
- *
- * Matched by key, the way the open list matches it, so `128` finds the option `"128"`.
+ * The label a closed select shows for `value`. A value no option has (a removed endpoint) shows
+ * the placeholder marked missing, never the raw id. Matched by key, so `128` finds `"128"`.
  */
 export function selectLabel(
   value: string | number | null | undefined,

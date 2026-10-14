@@ -1,13 +1,5 @@
-// The queue: one job per chapter of work, whatever kind it is.
-//
-// `reserved` is a column rather than a field inside the run detail because it is **summed across
-// unfinished jobs** to answer "what is this book's budget already committed to". The store's rule
-// is that two runs which each fit the remaining cap must not both start and overshoot together, so
-// the figure a gate reads has to be a cheap aggregate over rows, not a JSON parse per job.
-//
-// The rest of the run detail is four mutually exclusive shapes — a scripting run, a narration run,
-// a build, a check by ear — and it is read whole, by the one page that opens a job up. That is a document, so it is
-// stored as one.
+// The queue: one job per chapter of work. `reserved` is a column because the budget gate sums it
+// across unfinished jobs; the run detail is read whole, so it is JSON.
 import {
   foreignKey,
   index,
@@ -30,16 +22,7 @@ export const jobs = sqliteTable(
     bookId: text("book_id")
       .notNull()
       .references(() => books.id, { onDelete: "cascade", onUpdate: "cascade" }),
-    /**
-     * The chapter this job is for, or null for a job about the whole book, such as a build.
-     *
-     * A real reference rather than a loose number, because a job is *live state*: it follows the
-     * chapter when a removed volume renumbers the book, and it ends with the chapter when the
-     * chapter goes. A queued narration of chapter 2 that became chapter 1 underneath it would
-     * otherwise run on the wrong chapter, and a job for a chapter that no longer exists is one the
-     * Queue can neither open nor retry. What was *spent* on that work is not lost with it: the
-     * ledger keeps its own record, which is the one that is not allowed to move.
-     */
+    /** null for a whole-book job; an FK: a job follows renumbering and dies with its chapter */
     chapterId: integer("chapter_id"),
     label: text("label").notNull(),
     status: text("status").$type<JobStatus>().notNull(),
@@ -52,55 +35,38 @@ export const jobs = sqliteTable(
     /** raised by "Run next"; the claim takes the highest first, then the oldest (`claimNext`) */
     priority: integer("priority").notNull().default(0),
 
-    /**
-     * The bulk run this job belongs to. Every chapter asked for in one press shares an id, which is
-     * what makes "cancel the rest of this run" and "retry this run's failures" possible without the
-     * queue guessing.
-     */
+    /** shared by every job from one press, for "cancel the rest" and "retry failures" */
     bulkId: integer("bulk_id"),
-    /** what was asked for, in the words the button used */
+    /** in the words the button used */
     bulkOp: text("bulk_op"),
     bulkIndex: integer("bulk_index"),
     bulkTotal: integer("bulk_total"),
     /** the narration scope, or the scripting run's preservation setting */
     bulkScope: text("bulk_scope"),
 
-    /**
-     * What this job is holding against the book's cap while it runs, at **undiscounted** rates.
-     *
-     * Released when the job finishes rather than clip by clip, so the reservation only ever errs
-     * towards holding too much back.
-     */
+    /** Held against the book's cap at undiscounted rates; released when the job finishes. */
     reserved: real("reserved").notNull().default(0),
-    /** what this run was estimated to cost when it was planned, for the reconciliation afterwards */
+    /** the planned cost estimate, for reconciliation */
     estimated: real("estimated"),
 
-    /** the live detail the Queue page opens up, and everything a retry needs to run it again */
+    /** the Queue page's detail, and everything a retry needs */
     run: text("run", { mode: "json" }).$type<
       Pick<Job, "scriptRun" | "narrationRun" | "exportRun" | "checkRun">
     >(),
 
-    /** events the job reported beyond the ones it keeps */
     droppedEvents: integer("dropped_events").notNull().default(0),
 
     /**
-     * `kind:book:chapter` while the job is queued or running, null once it has finished.
-     *
-     * The unique index below is the duplicate-request rule: the same work cannot be queued twice,
-     * and it is the database that says so rather than a check a second request could slip past.
-     * NULLs are distinct to SQLite, so finished jobs never collide.
+     * `kind:book:chapter` while queued or running, null after. Its unique index stops the same
+     * work being queued twice; NULLs are distinct, so finished jobs never collide.
      */
     activeKey: text("active_key"),
-    /**
-     * how many of this job's starts the process died during; a restart that finds it running starts
-     * it again, and a clean stop gives its start back (`handBack`)
-     */
+    /** starts the process died during; a clean stop gives its start back (`handBack`) */
     attempts: integer("attempts").notNull().default(0),
   },
   (t) => [
     uniqueIndex("jobs_active_key").on(t.activeKey),
-    // `chapter_id` is nullable, and a foreign key with a null in it is satisfied by definition —
-    // which is exactly what a whole-book job needs.
+    // A null `chapter_id` satisfies the FK, as a whole-book job needs.
     foreignKey({
       columns: [t.bookId, t.chapterId],
       foreignColumns: [chapters.bookId, chapters.id],
@@ -111,18 +77,12 @@ export const jobs = sqliteTable(
     index("jobs_book").on(t.bookId, t.id),
     index("jobs_status").on(t.status),
     index("jobs_bulk").on(t.bulkId, t.bulkIndex),
-    /** the budget gate's question: what are this book's unfinished jobs holding */
+    /** the budget gate's sum */
     index("jobs_reserved").on(t.bookId, t.status),
   ],
 );
 
-/**
- * One thing that happened while a job ran.
- *
- * A separate table because it is append-only and unbounded — a build of a 214-chapter serial logs
- * per file — and because `dropped_events` on the job is how a trimmed log stays honest about what
- * it no longer has.
- */
+/** A job's log: append-only and unbounded; `jobs.dropped_events` counts what was trimmed. */
 export const jobEvents = sqliteTable(
   "job_events",
   {

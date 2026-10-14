@@ -1,5 +1,4 @@
-// A voice's gender as the Voices tab shows it: the words the pickers offer, and the icon beside a
-// voice in the list and in Fish's public search.
+// A voice's gender as the Voices tab shows it: picker words and list icons.
 import type { Component } from "vue";
 import { Dot as NeutralIcon, Mars as MaleIcon, Venus as FemaleIcon } from "@lucide/vue";
 import { GENDER } from "@/lib/scriptReview";

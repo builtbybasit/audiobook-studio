@@ -1,11 +1,5 @@
-// What a dropped EPUB turns out to contain. Nothing parses a file in this prototype, so an import
-// is one of these samples: a title, an author, its volumes, and for each chapter the title and —
-// where the chapter is not story — the note the review shows for it.
-//
-// Every situation the review has to survive is here: a clean book, a long serial with updates
-// scattered through it, notices between volumes, one announcement repeated a dozen times, titles
-// that only look like notices, chapters that mix a note with story, and a file of nothing but
-// notices with titles too long for a row.
+// The demo's EPUB import samples: volumes, chapter titles, and the note on each non-story chapter.
+// Together they cover every case the contents review must handle.
 import type { DemoNoticeKind } from "@/types";
 import { noticeTitle } from "~/demo/seed/fixtures/notices";
 
@@ -15,9 +9,8 @@ export interface ChapterSpec {
   kind?: DemoNoticeKind;
   /** for `mixed`: where the note sits */
   at?: "start" | "end";
-  /** picks the notice's title and body variant, so repeats read as related, not identical */
+  /** picks the notice's title and body variant, so repeats differ */
   variant?: number;
-  /** override the word count the sample would otherwise pick */
   words?: number;
 }
 
@@ -74,7 +67,7 @@ const notice = (kind: DemoNoticeKind, variant = 0, title?: string): ChapterSpec 
   variant,
 });
 
-/** `count` story chapters with `notes` dropped in at the given positions (1-based, in the volume). */
+/** `count` story chapters with `notes` dropped in at 1-based positions in the volume. */
 function serial(
   count: number,
   notes: Record<number, ChapterSpec>,

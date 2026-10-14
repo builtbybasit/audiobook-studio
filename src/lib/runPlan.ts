@@ -1,12 +1,6 @@
-// What a bulk run over several chapters would actually do, worked out without touching anything.
-//
-// Completed chapters have always been allowed into a run; what was missing was a straight answer to
-// "what is in this selection, and what will pressing the button do to it". Both stages ask that
-// question here, so the picker's summary, the estimate, the button's own label and the work the
-// store queues are one calculation rather than four that agree by luck.
-//
-// Nothing here mutates and nothing here reaches a store: the chapters and segments arrive as
-// arguments, and the costs a stage knows how to price arrive as callbacks.
+// What a bulk run over several chapters would do, worked out without touching anything (pure).
+// The picker's summary, the estimate, the button's label and the work the store queues all come
+// from this one calculation.
 import { isScripted } from "@/lib/scriptReview";
 import { isSpoken } from "@/lib/siteText";
 import type {
@@ -23,7 +17,6 @@ import type {
   SelectionSummary,
 } from "@/types";
 
-/** Why a chapter is not in the run, as the panels say it. */
 export const RUN_SKIP_TEXT: Record<RunSkipReason, string> = {
   running: "already running or queued",
   unscripted: "not scripted yet",
@@ -37,7 +30,7 @@ const plural = (n: number, one: string, many = one + "s"): string => `${n} ${n =
 
 // ---------- what a selection contains ----------
 
-/** How one chapter reads at a stage. The picker's dots, counts and shortcuts all use this. */
+/** The picker's dots, counts and shortcuts all use this. */
 export function chapterState(c: Chapter, stage: "scripting" | "narration"): ChapterState {
   if (c.excluded) return "excluded";
   const status = stage === "scripting" ? c.scripting : c.narration;
@@ -54,10 +47,7 @@ const DONE_WORD: Record<"scripting" | "narration", string> = {
   narration: "already narrated",
 };
 
-/**
- * What the current selection contains, as one sentence:
- * “8 chapters selected: 3 new, 5 already scripted.”
- */
+/** “8 chapters selected: 3 new, 5 already scripted.” */
 export function selectionSummary(
   chapters: Chapter[],
   stage: "scripting" | "narration",
@@ -90,17 +80,13 @@ export function selectionSummary(
 // ---------- which clips a narration scope actually runs ----------
 
 /**
- * Does this line still carry a failed request? Asked of the work and never of the chapter's label:
- * a replacement that failed leaves the chapter reading as narrated, because the clip in the book was
- * never touched, so the failure is only visible on the line. Every retry path asks this one function
- * — the scope filter below, the plan's `retrying` count, `retryJob`, `retryFailed` and
- * `retryAllFailed` — because a second spelling is how one of them starts retrying a different set
- * from the one the button counted.
+ * Asked of the line, not the chapter: a failed retake leaves the chapter reading as narrated. Every
+ * retry path uses this one function so none retries a different set than the button counted.
  */
 export const segmentFailed = (s: Segment): boolean =>
   s.audio.status === "failed" || s.candidate?.status === "failed";
 
-/** One definition of "is this line in scope", shared by the estimate, the plan and the run. */
+/** Shared by the estimate, the plan and the run. */
 function inScope(s: Segment, scope: NarrationScope): boolean {
   if (scope === "all") return true;
   if (scope === "failed") return segmentFailed(s);
@@ -108,26 +94,21 @@ function inScope(s: Segment, scope: NarrationScope): boolean {
 }
 
 export interface NarrationTargets {
-  /** the lines this run will render */
   run: Segment[];
   /**
-   * Lines this scope would render that have a retake waiting for a verdict. They are the ones the
-   * "keep retakes" choice is actually about, so they are reported whichever way it is set: left out
-   * of `run` when `keepPending`, and in it — the retake displaced — when it is off. A line the
-   * scope would not have touched is not listed here, because nothing was decided about it.
+   * In-scope lines with a retake awaiting a verdict, listed either way: left out of `run` when
+   * `keepPending`, else in it (the retake displaced).
    */
   pending: Segment[];
-  /** lines whose clip or retake is already rendering — this run does not touch them */
+  /** already rendering; this run does not touch them */
   inFlight: number;
-  /** lines the book does not read aloud (`isSpoken`), which no scope renders */
+  /** lines the book does not read aloud (`isSpoken`) */
   skipped: number;
 }
 
 /**
- * The lines one chapter contributes to a run. A line already rendering is never queued twice, and a
- * retake waiting for a verdict is left where it is unless the run was explicitly told to replace it
- * — a pending comparison is the listener's, not a bulk run's to delete. A line the book does not
- * read is never a target, at any scope: it has no clip to want.
+ * The lines one chapter contributes to a run. Never queues a line twice, and leaves a pending
+ * retake alone unless told to replace it: that comparison is the listener's, not a bulk run's.
  */
 export function narrationTargets(
   segs: Segment[],
@@ -164,13 +145,8 @@ export function narrationTargets(
 }
 
 /**
- * What a chapter's narration status is, read off its clips. One definition, so a run that
- * finished, a run that was cancelled and a run that had nothing to do all leave the chapter saying
- * the same thing about the same clips. Only meaningful once nothing is in flight.
- *
- * Only the lines the book reads are asked: a line of site text wants no clip, so it is no gap, and
- * a clip it kept from before it was marked makes nothing narrated. A chapter whose every line is
- * one the book does not read has nothing missing, and reads as done.
+ * A chapter's narration status, read off its spoken lines' clips; every run end writes this. Only
+ * meaningful once nothing is in flight. A chapter with no spoken lines reads as done.
  */
 export function chapterNarration(
   all: Segment[],
@@ -180,11 +156,8 @@ export function chapterNarration(
   const segs = all.filter((s) => isSpoken(s, book));
   if (!segs.length) return "done";
   if (segs.every((s) => s.audio.status === "none")) return "none";
-  // A chapter that is *part* rendered reads as `failed`, and deliberately so: a line with no clip is
-  // a gap in the audiobook, and `readinessOf` turns this exact reading into the export's "Partly
-  // narrated" blocker — "building now would leave gaps where those lines should be". Calling it
-  // `stale` instead would demote that hard blocker to a soft warning the build can be told to
-  // ignore, and ship a file with holes in it.
+  // part rendered is `failed`, not `stale`: `readinessOf` makes it the export's hard "Partly
+  // narrated" blocker, where `stale` could be overridden and ship a file with holes
   if (segs.some((s) => !["done", "stale"].includes(s.audio.status))) return "failed";
   return segs.some((s) => s.audio.status === "stale") ? "stale" : "done";
 }
@@ -226,14 +199,8 @@ const skip = (c: Chapter, reason: RunSkipReason): RunSkip => ({
 });
 
 /**
- * What re-scripting this selection would do. A chapter that already has a script is a replacement,
- * one that failed without leaving one is a retry, and one that has never been scripted is new work.
- *
- * Whether there is a script to replace is asked of the chapter's status (`hasScript`, which the
- * store answers with `isScripted`), not of the lines the browser happens to hold: a chapter no page
- * has read is not one without a script. The status can be trusted for it because a re-script that
- * fails puts it back, leaving the old script exactly where it was. The run reads the same answer off this plan, which is what keeps the button's wording, the queue row's
- * wording and the decision to snapshot `_previous` from being three separate readings.
+ * What re-scripting this selection would do. `hasScript` asks the chapter's status, not the lines
+ * the browser holds: a chapter no page has loaded still has its script.
  */
 export function scriptingPlan(
   chapters: Chapter[],
@@ -271,15 +238,14 @@ export function scriptingPlan(
 
 export interface NarrationPlanOptions {
   segmentsOf: (chId: number) => Segment[];
-  /** how many endpoint requests one line becomes, after expressions and the endpoint's limit */
+  /** after expressions and the endpoint's limit */
   requestsOf: (s: Segment) => number;
   /** leave lines whose retake is waiting for a verdict out of the run */
   keepPending: boolean;
-  /** whose `readNotes` decides which lines are read aloud (`isSpoken`) */
+  /** `readNotes` decides which lines are read aloud (`isSpoken`) */
   book: Pick<Book, "readNotes"> | undefined;
 }
 
-/** What narrating this selection at this scope would do, line by line. */
 export function narrationPlan(
   chapters: Chapter[],
   scope: NarrationScope,
@@ -301,12 +267,8 @@ export function narrationPlan(
     }
     const segs = opts.segmentsOf(c.id);
     const { run, pending, skipped } = narrationTargets(segs, scope, opts.keepPending, opts.book);
-    // counted for every chapter the run looked into, so the page can say how many lines it will
-    // not read rather than let them vanish from the count
     plan.skippedLines += skipped;
-    // nothing to run and something waiting to be judged: the retakes are the reason, so say so —
-    // and they are still retakes this selection is waiting on, so they count towards the total the
-    // estimate panel and the run's toast both quote. `tally` adds the surviving chapters' own.
+    // pending retakes still count towards the total; `tally` adds the surviving chapters' own
     if (!run.length) {
       plan.pending += pending.length;
       plan.skipped.push(skip(c, pending.length ? "pending" : "nothing"));
@@ -334,10 +296,7 @@ const VERBS: Record<"scripting" | "narration", Record<RunContribution, string>> 
   narration: { new: "Narrate", replace: "Re-narrate", retry: "Retry" },
 };
 
-/**
- * What the run button says, so the label is the operation rather than a generic "Run": a selection
- * that does both names both — “Script 3 · re-script 5”.
- */
+/** The run button's label: “Script 3 · re-script 5”. */
 export function runActionLabel(plan: RunPlan): string {
   const verbs = VERBS[plan.stage];
   const parts: string[] = [];
@@ -351,10 +310,6 @@ export function runActionLabel(plan: RunPlan): string {
     : label;
 }
 
-/**
- * The run in one line, said in the terms the user chose it in: how many chapters do which kind of
- * work, how much of it actually runs, and what is being kept while it does.
- */
 export function runSummary(plan: RunPlan): string[] {
   const verbs = VERBS[plan.stage];
   const out: string[] = [];
@@ -368,7 +323,7 @@ export function runSummary(plan: RunPlan): string[] {
   return out;
 }
 
-/** The skipped chapters, grouped by reason, in the order the reasons are worth reading. */
+/** The skipped chapters, grouped by reason. */
 export function skipNotes(plan: RunPlan): { reason: RunSkipReason; text: string; ids: number[] }[] {
   const order: RunSkipReason[] = [
     "running",
@@ -385,7 +340,7 @@ export function skipNotes(plan: RunPlan): { reason: RunSkipReason; text: string;
     .map((reason) => ({ reason, text: RUN_SKIP_TEXT[reason], ids: by.get(reason)! }));
 }
 
-/** “2 chapters left out: 1 already running, 1 skipped from the audiobook.” Empty when none are. */
+/** “2 chapters left out: 1 already running, 1 skipped from the audiobook.” */
 export function skipSummary(plan: RunPlan): string {
   if (!plan.skipped.length) return "";
   const notes = skipNotes(plan)

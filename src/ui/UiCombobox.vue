@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Searchable picker (reka Combobox) for long lists such as the cast. Options as in UiSelect.
 // `action` mode: shows a placeholder, emits `pick` and resets — for "merge into…" style controls.
-// `custom` mode: free text is allowed — Enter or blur commits whatever was typed when it matches no option.
+// `custom` mode: Enter or blur commits typed text that matches no option.
 import { computed, ref } from "vue";
 import {
   ComboboxAnchor,
@@ -25,9 +25,8 @@ const props = withDefaults(
     modelValue?: string | number | null;
     options?: UiOption[];
     placeholder?: string;
-    /** the box is a command launcher: picking emits `pick` and clears, rather than binding a value */
+    /** picking emits `pick` and clears, rather than binding a value */
     action?: boolean;
-    /** allow a value typed by hand that isn't in `options` */
     custom?: boolean;
     size?: "xs" | "sm";
     block?: boolean;
@@ -78,7 +77,7 @@ function onKey(e: KeyboardEvent) {
     return;
   }
   if (e.key === "Enter") {
-    // reka commits the highlighted item; if nothing is highlighted, take the first match (or the typed text)
+    // nothing highlighted: take the first match (or the typed text)
     const highlighted = document.querySelector("[role=listbox] [data-highlighted]");
     if (highlighted && open.value) return;
     const first = groups.value[0]?.[1]?.[0];

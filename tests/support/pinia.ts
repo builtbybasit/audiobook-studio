@@ -1,11 +1,5 @@
-// A Pinia to test stores against, with the query cache the app installs.
-//
-// Reads are queries (`src/queries/`), and the query cache is a Pinia store of its own that the
-// `PiniaColada` plugin installs on an app. A store that invalidates a query — the jobs store after
-// a cancel, the library store after a renumbering — reaches for that cache, so a test of one needs
-// the plugin installed the way `main.ts` installs it. An app is created and never mounted: nothing
-// here needs a DOM, and `runWithContext` is what gives `useQuery` and `useQueryCache` the injection
-// context they resolve their defaults through.
+// A Pinia for store tests, with the `PiniaColada` query cache installed as `main.ts` does (stores
+// invalidate queries through it). The app is never mounted; `runWithContext` supplies injection.
 import { createApp, effectScope, type App, type EffectScope } from "vue";
 import { createPinia, setActivePinia, type Pinia } from "pinia";
 import { PiniaColada } from "@pinia/colada";

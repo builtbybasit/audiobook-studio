@@ -1,7 +1,6 @@
 <script setup lang="ts">
-// A panel that slides over the page from one edge, on reka-ui's Dialog: a job's details from the
-// right, a chapter's text from the bottom on a phone. The overlay and the focus handling are
-// UiDialog's; the size along the edge (`max-w-2xl`, `h-[88dvh]`) is the caller's `class`.
+// A panel that slides in from one edge, on reka-ui's Dialog with UiDialog's overlay and focus
+// handling. The size along the edge is the caller's `class`.
 import { DialogContent, DialogOverlay, DialogPortal, DialogRoot } from "reka-ui";
 import { OVERLAY } from "@/ui/dialog";
 

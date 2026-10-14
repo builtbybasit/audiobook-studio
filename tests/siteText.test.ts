@@ -1,12 +1,6 @@
-// Site text: what a chapter carries that is not the story, and what of it is read aloud.
-//
-// The detector only ever suggests, so a miss costs a person a click; a false alarm costs more, a
-// story line with a badge on it that says it is a website's. So the story sentences below matter as
-// much as the boilerplate: each is the kind of line a novel says freely — a letter read at a table,
-// a council's vote, a note under a door — and none of them may trip a signal.
-//
-// The simulated scripter is held to the same rules, because it is what a demo re-script shows: it
-// marks what the detector sees and still hands back every word it was sent.
+// Site text: what a chapter carries that is not the story. The detector only suggests, and a false
+// alarm on a story line costs more than a miss, so the story sentences below matter as much as the
+// boilerplate. The simulated scripter is held to the same rules.
 import { describe, expect, test } from "bun:test";
 
 import { isSpoken, siteTextSignals } from "@/lib/siteText";
@@ -205,8 +199,8 @@ describe("the demo's web-novel chapter", () => {
       ["watermark", "narration"],
       ["narration", "watermark"],
     ]);
-    // and they are exactly what the detector makes of the chapter, reason and all — the demo shows
-    // no suggestion the real one would not give (repeats aside, which need the other chapters)
+    // exactly what the detector makes of the chapter, reason and all (repeats aside, which need the
+    // other chapters)
     const bare = script.map(({ siteCheck: _seeded, ...s }) => s);
     expect(siteChecks(bare, () => 0).map((s) => s.siteCheck)).toEqual(
       script.map((s) => s.siteCheck),

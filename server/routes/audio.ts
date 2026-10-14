@@ -1,10 +1,5 @@
-// Rendered clips over HTTP: the file a clip's `url` names, and nothing else.
-//
-// The route trusts `AudioFiles.ready` to decide what a request may read, and answers a request it
-// refuses with the same 404 a missing file gets — a caller learns that there is no such clip, not
-// which of the two reasons applies. A token is never reused, so what is served under a url never
-// changes and the browser is told it may keep it. A clip is served as the format its extension
-// says it is in — WAV, MP3, or Opus in Ogg, which is what an audio element plays it as.
+// Rendered clips over HTTP. `AudioFiles.ready` decides what may be read; a refusal is the same 404
+// as a missing file. A token is never reused, so a clip may be cached forever.
 import { Hono } from "hono";
 import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
@@ -24,8 +19,7 @@ export function audioRoutes(files: AudioFiles): Hono<PinoEnv> {
     const { bookId, file } = c.req.valid("param");
     const format = formatOfFile(file);
     if (!format) throw notFound("No such audio file");
-    // `ready`, not `path`: a demo clip nobody has played yet is made now, before it is looked for.
-    // A part at a time when the player asks for one, which is how it seeks; see `fileResponse`.
+    // `ready`, not `path`: an unplayed demo clip is made now. Range requests: see `fileResponse`.
     return serveFile(c, await files.ready(bookId, file), AUDIO_MIME[format], {
       missing: "No such audio file",
     });

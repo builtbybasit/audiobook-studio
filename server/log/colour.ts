@@ -1,17 +1,7 @@
-// ANSI, and when not to use it.
-//
-// Small and local rather than a dependency: what this needs is eight escape codes and one honest
-// answer about whether the thing being written to is a terminal. A log that paints colour into a
-// file somebody is grepping has made the file worse.
+// ANSI colours, and whether to use them.
 const ESC = "\u001B[";
 
-/**
- * Whether to colour at all.
- *
- * `NO_COLOR` is the convention every tool honours — its presence, at any value, means no. `FORCE_COLOR`
- * is the other direction, for a CI that renders ANSI but is not a TTY. Otherwise: colour when
- * stdout is a terminal and a person is looking at it.
- */
+/** `NO_COLOR` (any value) means no; `FORCE_COLOR` yes (a CI that renders ANSI); else a TTY. */
 export function colourWanted(env: Record<string, string | undefined>, tty: boolean): boolean {
   if (env.NO_COLOR != null && env.NO_COLOR !== "") return false;
   if (env.FORCE_COLOR != null && env.FORCE_COLOR !== "0") return true;
@@ -24,7 +14,6 @@ const code =
   (s: string): string =>
     `${ESC}${open}m${s}${ESC}${close}m`;
 
-/** The palette, and the one that paints nothing. */
 export interface Palette {
   dim: (s: string) => string;
   bold: (s: string) => string;
@@ -69,6 +58,6 @@ export const COLOUR: Palette = {
   onRed: (s) => `${ESC}41m${ESC}97m${s}${ESC}0m`,
 };
 
-/** Characters wide, ignoring anything the terminal will not draw. */
+/** Width ignoring escape codes. */
 export const visibleWidth = (s: string): number =>
   s.replace(new RegExp(`${ESC.replace("[", "\\[")}[0-9;]*m`, "g"), "").length;

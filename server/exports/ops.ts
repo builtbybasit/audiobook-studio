@@ -1,5 +1,4 @@
-// What the finished audiobooks do, as operations: listing them, forgetting one, and handing one
-// over to be downloaded. Building one is a job, and lives in `server/jobs/export.ts`.
+// Operations on finished audiobooks. Building one is a job: `server/jobs/export.ts`.
 import type { ExportItem } from "@/types";
 import type { Db } from "~/db/client";
 import * as exports from "~/db/exports";
@@ -13,7 +12,7 @@ export function bookExports(db: Db, bookId: string): ExportItem[] {
   return exports.listExports(db, bookId);
 }
 
-/** The export, which must belong to this book: a path that names another book's export is a 404. */
+/** Another book's export is a 404. */
 export function bookExport(db: Db, bookId: string, id: number): ExportItem {
   requireBook(db, bookId);
   const e = exports.getExport(db, id);
@@ -21,13 +20,7 @@ export function bookExport(db: Db, bookId: string, id: number): ExportItem {
   return e;
 }
 
-/**
- * Forget an export, and take its files off the disk with it.
- *
- * A build in progress is refused rather than deleted: the job would go on writing into a row that
- * is no longer there. Cancelling it from the Queue is what removes one of those, and that path
- * clears up after itself.
- */
+/** Refuses a build in progress (its job would write into a missing row); cancel it instead. */
 export function removeExport(db: Db, bookId: string, id: number, files?: AudiobookFiles): void {
   const e = bookExport(db, bookId, id);
   if (e.status === "building")
@@ -37,20 +30,13 @@ export function removeExport(db: Db, bookId: string, id: number, files?: Audiobo
     );
   const tokens = exports.exportFileTokens(db, id);
   exports.deleteExport(db, id);
-  // Nothing is waiting on the disk, and a response that did would be slower for no one's benefit.
   inBackground(files?.remove(bookId, tokens), "could not remove an audiobook's files", {
     book: bookId,
     export: id,
   });
 }
 
-/**
- * One file of a finished audiobook, as something to send.
- *
- * The file is addressed through the export that owns it rather than by its name on disk, so a
- * download is a claim about a book and a version that the row has to agree with — there is no
- * path a request can build to a file this book did not produce.
- */
+/** Addressed through its export row, so no request can reach a file this book did not produce. */
 export function exportFile(
   db: Db,
   bookId: string,
@@ -61,8 +47,7 @@ export function exportFile(
   const e = bookExport(db, bookId, id);
   const file = e.files[position];
   if (!file) throw notFound("No such file in this audiobook");
-  // A superseded version is still a finished audiobook and stays on disk until it is forgotten,
-  // so it can still be saved; only one that was never written cannot.
+  // a superseded version stays on disk until forgotten, so it can still be downloaded
   if (e.status !== "done" && e.status !== "replaced")
     throw conflict(
       `${e.filename} has not been built`,

@@ -1,12 +1,6 @@
-// Narration through the queue: a clip on disk for every line, written one line at a time, in the
-// slot the store's rule says — in place for a line with no clip, beside the old clip for a line
-// that has one — with the chapter's status asked of its clips and the revision moved with every
-// clip that lands.
-//
-// Every test drives the real runner against the real routes with a speech model that renders a
-// tone and never the network. Where a run has to be genuinely in flight — to be cancelled, edited
-// under or stopped — the provider is `gatedSpeechProvider`, which holds the door until the test
-// says so, so nothing here waits on a timer except the one fire-and-forget the removal makes.
+// Narration through the queue: a clip per line, written one at a time in the slot `queuedSlot`
+// (server/narration/chapter.ts) picks, the chapter's status read off its clips, and the revision
+// moved with every clip. `gatedSpeechProvider` holds an in-flight run until the test opens it.
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -42,8 +36,7 @@ interface Failure {
   error: { code: string; message: string; detail?: string };
 }
 
-// Short on purpose: every line is a clip written to disk and a revision moved, so a chapter of
-// fifty lines made each narration here cost half a second and bought nothing a dozen do not.
+// Short on purpose: every line is a clip on disk and a revision moved.
 const dialogue = () => [
   "“We are short again,” said Mara.",
   "“Then we count it twice,” said Tobin.",
@@ -83,10 +76,7 @@ const edit = (api: TestApi, id: string, body: unknown, ch = 1) =>
     method: "PUT",
   });
 
-/**
- * A provider that fails the lines `match` picks out, once each, as a 503 its retries did not get
- * past, and renders everything else.
- */
+/** Fails the lines `match` picks, once each, as a 503 past its retries; renders the rest. */
 function failingOnce(match: (text: string) => boolean): SpeechProvider {
   const inner = fakeSpeechProvider();
   const failed = new Set<string>();
@@ -105,10 +95,8 @@ function failingOnce(match: (text: string) => boolean): SpeechProvider {
 }
 
 /**
- * A provider whose second render of any line is ten seconds longer than its first, so a retake
- * that is kept can be heard in the chapter's length and one that is dropped cannot; and which,
- * when told to, fails that second render instead, so a retake can go wrong where the first take
- * did not.
+ * A provider whose second render of a line is ten seconds longer, so a kept retake shows in the
+ * chapter's length; with `failing`, that second render fails instead.
  */
 function retaking({ failing }: { failing?: (text: string) => boolean } = {}): SpeechProvider {
   const inner = fakeSpeechProvider();
@@ -231,7 +219,7 @@ describe("what a scope renders", () => {
     expect(nothing.body.jobs).toEqual([]);
     expect(nothing.body.skipped).toEqual([{ id: 1, why: "nothing" }]);
     const before = await scriptOf(api, id);
-    // a rename marks the clips of the lines it moves stale, as the cast store does
+    // a rename marks the clips of the lines it moves stale
     await api.request(`/api/books/${id}/characters/Mara/rename`, jsonBody({ to: "Marla" }));
     const stale = (await scriptOf(api, id)).segments.filter((s) => s.audio.status === "stale");
     expect(stale.length).toBe(1);

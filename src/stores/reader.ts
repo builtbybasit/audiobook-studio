@@ -1,9 +1,5 @@
-// Reader preferences: typography + whether the cast rail is shown. Persisted per browser.
-//
-// `useStorage` is the whole persistence story: it reads the saved block over the defaults, writes
-// on every change, survives a blocked storage API by keeping the defaults in memory, and follows a
-// change made in another tab. The store is a setup store so its fields can be the saved object's
-// own, and `reader.size = 18` in a view is the write that persists.
+// Reader preferences: typography + whether the cast rail is shown, persisted per browser by
+// `useStorage`. A setup store, so `reader.size = 18` persists.
 import { useStorage } from "@vueuse/core";
 import { defineStore } from "pinia";
 import { computed, toRefs } from "vue";

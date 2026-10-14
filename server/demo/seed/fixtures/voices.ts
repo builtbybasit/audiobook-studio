@@ -1,9 +1,7 @@
-// The voice lists each of the demo's endpoints exposes. Every consumer copies the entries it takes,
-// so these arrays are never mutated.
+// The voice lists each demo endpoint exposes. Consumers copy entries; never mutated.
 import type { Gender, Voice } from "@/types";
 
-// Voices belong to an endpoint (each TTS server exposes its own list). A character stores a voice
-// *ref* — `<endpointId>/<voiceId>` — so narration knows which endpoint must render that speaker.
+// A character stores a voice ref, `<endpointId>/<voiceId>`, naming the endpoint that renders it.
 const g = (id: string, gender: Gender, label?: string): Voice => ({
   id,
   gender,
@@ -42,8 +40,7 @@ export const AZURE_VOICES: Voice[] = [
   g("shimmer", "f"),
 ];
 
-/** Fish Audio voices as this endpoint already holds them — a voice *is* a `reference_id`, so the
- *  ids are the 32-character ids of the models in the account's voice library. */
+/** A Fish voice id is a `reference_id`: a 32-character model id from the voice library. */
 export const FISH_VOICES: Voice[] = [
   g("fish0000000000000000000000000001", "m", "Narrator · warm baritone"),
   g("fish0000000000000000000000000002", "m", "Young swordsman"),

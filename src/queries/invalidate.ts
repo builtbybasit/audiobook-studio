@@ -1,10 +1,5 @@
-// Invalidate queries without a refetch's failure becoming an unhandled rejection.
-//
-// `invalidateQueries` refetches what it invalidated and rejects if any of those reads fails. That
-// is right for a caller that wants to know, and wrong for the callers here: a book was renumbered
-// or removed, and a query still open on a chapter number that no longer exists *should* fail —
-// its page has already been told, through the query's own error state. Nothing else needs to hear
-// about it.
+// Invalidate without a failed refetch becoming an unhandled rejection: after a renumber or removal,
+// a query on a chapter number that no longer exists should fail, and its page already shows that.
 import { useQueryCache, type UseQueryEntryFilter } from "@pinia/colada";
 
 export async function invalidate(

@@ -1,12 +1,6 @@
-// Script edits answered as the server would answer them, and left unwritten.
-//
-// A store test that edits a chapter's script checks what the edit left on the page and what the
-// store asked to write; with the write answered here rather than sent, the seeded demo is never
-// changed, so it can be opened once and every test reads the same book. What that trades away is
-// the server's side of the write — the revision check, the history entry it keeps, a clip left
-// stale — which these tests no longer reach. That path is covered where it lives:
-// `tests/jobsBackend.test.ts` ("editing a script with a server answering") sends the store's writes
-// to a real server, and `tests/server/scriptEdit.test.ts` holds what the server keeps of one.
+// Script edits answered as the server would, and left unwritten, so the seeded demo opens once and
+// every test reads the same book. The server's side of an edit is covered by
+// `tests/jobsBackend.test.ts` and `tests/server/scriptEdit.test.ts`.
 import {
   libraryService,
   setLibraryService,
@@ -31,12 +25,9 @@ export interface UnwrittenFlag {
 }
 
 /**
- * Answer the page's script edits without writing them. Call it after `demoServer()`: it wraps the
- * library service that set, so every other request still reaches the demo. An edit is accepted at
- * the next revision, with the chapter's history as the demo holds it, and recorded in `writes`; a
- * line's flag is accepted as sent, at the revision after the last one answered, and recorded in
- * `flags` — clear both in a `beforeEach`. With `lexicon`, a dictionary change is accepted as sent
- * too, with nothing staled or restored.
+ * Call after `demoServer()`; other requests still reach the demo. Edits are accepted at the next
+ * revision and recorded in `writes`, flags as sent in `flags` (clear both in `beforeEach`). With
+ * `lexicon`, dictionary changes are accepted too, staling nothing.
  */
 export function unwrittenEdits(opts: { lexicon?: boolean } = {}): {
   writes: UnwrittenEdit[];
@@ -45,7 +36,7 @@ export function unwrittenEdits(opts: { lexicon?: boolean } = {}): {
   const writes: UnwrittenEdit[] = [];
   const flags: UnwrittenFlag[] = [];
   const real = libraryService();
-  /** the revision last answered for each chapter, as the server would have moved it */
+  /** the revision last answered per chapter */
   const revisions = new Map<string, number>();
   const fake: Partial<LibraryService> = {
     editScript: async (bookId, chId, edit) => {

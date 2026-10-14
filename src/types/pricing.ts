@@ -1,23 +1,10 @@
-// What an LLM endpoint charges, and what one request actually cost.
-//
-// Three different things are kept apart here on purpose, because conflating them is how a cost
-// display starts lying:
-//
-//   configuration — the rate card: base rates, an optional peak/off-peak schedule, promotions
-//   usage         — what the provider said came back, normalized from its own payload shape
-//   a priced request — usage × the rates in force at one explicit instant, frozen forever after
-//
-// Nothing here is per-book or per-run. A `PricedRequest` is a receipt: once written it is never
-// recalculated, so editing a rate today cannot move yesterday's spending.
+// What an endpoint charges (the rate card), what the provider reported (usage), and what one
+// request cost (a receipt: usage × the rates at one instant, never recalculated, so editing a rate
+// today cannot move yesterday's spending).
 
 /**
- * Everything an endpoint can be charged for.
- *
- * The first four are the LLM side and are always USD per 1M tokens. `speech` is the single rate a
- * text-to-speech endpoint has, and its unit is whatever that endpoint bills in — characters,
- * tokens, audio minutes or requests — which is why the unit travels beside the rate everywhere it
- * is shown. A card prices one side or the other; the components of the side it does not price are
- * `null` throughout, and no window or promotion can invent one.
+ * The first four are LLM rates, USD per 1M tokens. `speech` is a TTS endpoint's single rate, in
+ * whatever unit it bills. Components of the side a card does not price stay `null`.
  */
 export type RateComponent =
   | "input"
@@ -29,18 +16,9 @@ export type RateComponent =
   | "audioTokens";
 
 /**
- * How a TTS provider bills — the **billing model**, not a presentation choice.
- *
- * Each one measures a different thing, and the whole point of keeping them apart is that those
- * things are never interchangeable: a line of Mandarin is 12 characters, 36 UTF-8 bytes and some
- * number of text tokens nobody can work out from either figure.
- *
- *   chars         one rate per 1M **billable characters** — Unicode code points, not `String.length`
- *   bytes         one rate per 1M **UTF-8 bytes** — what Fish Audio actually meters
- *   tokens        one rate per 1M **input text tokens**, with no separate charge for the audio
- *   audio-tokens  two rates: input text tokens **and** output audio tokens, priced separately
- *   minute        one rate per minute of audio returned
- *   request       a flat fee per call, whatever it carried
+ * How a TTS provider bills. The units are never interchangeable: `chars` is Unicode code points
+ * (not `String.length`), `bytes` is UTF-8 (what Fish Audio meters), `audio-tokens` prices input
+ * text tokens and output audio tokens separately.
  */
 export type TtsBillingUnit = "chars" | "bytes" | "tokens" | "audio-tokens" | "minute" | "request";
 
@@ -53,49 +31,29 @@ export interface ParkedRates {
 export interface TtsBilling {
   unit: TtsBillingUnit;
   /**
-   * The rate for `unit`: USD per 1M chars / 1M bytes / 1M input text tokens / per audio minute /
-   * per request. On `audio-tokens` this is the **input text token** rate and `audioRate` carries
-   * the other half.
-   *
-   * `null` = not known, which is never `0`. A local endpoint you host yourself is `0`; a provider
-   * whose price list you have not typed in yet is `null`, and the difference is the difference
-   * between "free" and "we cannot tell you what this cost".
+   * USD per 1M of `unit`, per audio minute, or per request. On `audio-tokens` this is the input
+   * text token rate. `null` = not known, which is not `0` (free, e.g. a self-hosted endpoint).
    */
   rate: number | null;
   /** `audio-tokens` only: USD per 1M **output audio tokens**. `null` = not known. */
   audioRate?: number | null;
   /**
-   * `audio-tokens` only: how many audio tokens one second of returned audio is billed as.
-   *
-   * Audio tokens cannot be derived from the text — a text-token approximation is simply a
-   * different quantity — so an estimate has to go through the audio's expected **duration** and a
-   * documented tokens-per-second figure. That figure is a per-model assumption, so it is editable
-   * here rather than buried in the arithmetic, and every estimate that leans on it says so.
+   * `audio-tokens` only: audio tokens billed per second of audio. Audio tokens can't be derived
+   * from text, so estimates go through expected duration; this per-model assumption is editable.
    */
   audioTokensPerSecond?: number;
-  /**
-   * Whether the voice instructions sent beside the line (a character's style, a line's direction)
-   * are billed as part of the submitted content. Most providers that take an `instructions`
-   * parameter meter it; some ignore it. Default `true` — see `measureSpeech`.
-   */
+  /** Whether voice instructions sent with a line are billed. Default `true` (`measureSpeech`). */
   billsInstructions?: boolean;
   /**
-   * Rates entered under a **different** billing model, kept rather than discarded.
-   *
-   * Switching model must never reinterpret a per-character rate as a per-token one, so the rate
-   * fields are cleared on a switch instead of carried across — and parked here, so switching back
-   * restores what was configured rather than making the operator type it again.
+   * Rates entered under another billing model. A switch clears the rate fields (a per-character
+   * rate must never be read as a per-token one) and parks them here for switching back.
    */
   parked?: Partial<Record<TtsBillingUnit, ParkedRates>>;
 }
 
 /**
- * One complete rate card.
- *
- * Every entry is nullable and `null` always means the same thing: **this endpoint does not price
- * this separately**. For `cachedInput` and `cacheWrite` that means "charged at the ordinary input
- * rate" — not "free", which is `0`. For the token components on a speech card, and for `speech` on
- * an LLM card, it means the component does not apply at all.
+ * `null` means "not priced separately": for `cachedInput`/`cacheWrite` that is the ordinary input
+ * rate (not free, which is `0`); for the other side's components it means they don't apply.
  */
 export interface RateSet {
   input: number | null;
@@ -111,11 +69,8 @@ export interface RateSet {
 }
 
 /**
- * A recurring time window with its own rates — an off-peak discount, a peak surcharge.
- *
- * `from` and `to` are minutes past local midnight in the configuration's timezone. `to <= from`
- * means the window runs past midnight; `days` then names the day the window *starts* on, so a
- * Friday 22:00–02:00 window covers Friday night and the first two hours of Saturday.
+ * A recurring window with its own rates. `from`/`to` are minutes past local midnight; `to <= from`
+ * runs past midnight, and `days` names the day the window starts on.
  */
 export interface RateWindow {
   id: string;
@@ -131,20 +86,12 @@ export interface RateWindow {
 }
 
 /**
- * What a promotion is allowed to touch. `model` means every component this endpoint prices.
- *
- * `speech` means **the speech side as a whole** — the single rate of a per-character endpoint and
- * both halves of a token-billed one — so a promotion written before an endpoint moved to token
- * billing still discounts what it was meant to. `textTokens` and `audioTokens` target one half.
+ * `model` means every component this endpoint prices. `speech` means the whole speech side (both
+ * halves of a token-billed one), so it survives a switch to token billing.
  */
 export type PromotionScope = RateComponent | "model";
 
-/**
- * A temporary price change with a start and an end — "50% off this model until Friday".
- *
- * An expired promotion is kept, not deleted: it stops applying the moment its end date passes, and
- * the requests it priced keep the rates they were priced at.
- */
+/** A temporary price change. An expired one is kept; the requests it priced keep their rates. */
 export interface Promotion {
   id: string;
   label: string;
@@ -157,22 +104,18 @@ export interface Promotion {
   percent?: number;
   /** explicit replacement rates — these ignore the schedule for the components they name */
   rates?: Partial<RateSet>;
-  /** free text kept with the promotion so an expired one still explains itself */
   note?: string;
 }
 
-/**
- * The advanced half of an endpoint's pricing. The two base rates stay on the profile itself
- * (`inPrice` / `outPrice`) so nothing that already reads them has to change; everything here is
- * what those two could not express.
- */
+/** Advanced pricing; the base rates stay on the profile (`inPrice` / `outPrice`). */
 export interface PricingConfig {
-  /** USD per 1M cached input tokens; null = no separate rate, charged as ordinary input.
-   *  Meaningless on a speech endpoint, where it stays null and is not offered. */
+  /**
+   * USD per 1M cached input tokens; null = charged as ordinary input. Unused on speech endpoints.
+   */
   cachedInput: number | null;
-  /** USD per 1M cache-write tokens; null = not billed separately, charged as ordinary input */
+  /** USD per 1M cache-write tokens; null = charged as ordinary input */
   cacheWrite: number | null;
-  /** IANA timezone the windows below are read in — a schedule without one is unreadable */
+  /** IANA timezone the windows are read in */
   timezone: string;
   windows: RateWindow[];
   promotions: Promotion[];
@@ -192,7 +135,6 @@ export interface EffectiveComponent {
   why: string[];
 }
 
-/** When the effective rates change next, and what changes. */
 export interface PricingChange {
   at: number;
   label: string;
@@ -215,7 +157,6 @@ export interface PricingSnapshot {
 
 // ---------- usage ----------
 
-/** The provider payload shapes the prototype knows how to read. */
 export type UsageFormat = "openai" | "anthropic" | "plain" | "internal";
 
 export type UsageProblemCode =
@@ -224,32 +165,24 @@ export type UsageProblemCode =
   | "output-missing"
   | "cache-exceeds-input"
   | "negative"
-  /** the provider returned no usage block at all — the charge rests on what we counted */
+  /** no usage block at all; the charge rests on what we counted */
   | "usage-not-reported"
   /** this endpoint bills on a quantity the provider did not report */
   | "billed-unit-missing"
-  /** audio tokens were worked out from the audio's duration and the configured conversion */
+  /** worked out from the audio's duration and the configured conversion */
   | "audio-tokens-estimated";
 
 export interface UsageProblem {
   code: UsageProblemCode;
-  /** one sentence, in the words the request detail shows */
   message: string;
   /** true when the counts had to be adjusted to stay self-consistent */
   repaired?: boolean;
 }
 
 /**
- * Normalized token usage for one request. **`inputTokens` is the total**, cached and cache-write
- * tokens included — they are parts of it, never additions to it. Charging is therefore
- *
- *     (inputTokens − cachedInput − cacheWrite) at the input rate
- *   +  cachedInput                             at the cached rate
- *   +  cacheWrite                              at the cache-write rate
- *   +  outputTokens                            at the output rate
- *
- * so no token is ever charged twice. `cachedInput: null` means the provider did not say — which is
- * different from `0`, meaning it said none were cached.
+ * **`inputTokens` is the total**: cached and cache-write tokens are parts of it, so the input rate
+ * applies to `inputTokens − cachedInput − cacheWrite`. `cachedInput: null` = the provider did not
+ * say; `0` = it said none.
  */
 export interface TokenUsage {
   inputTokens: number;
@@ -276,27 +209,22 @@ export interface CostLine {
   note?: string;
 }
 
-/**
- * Where a cost figure came from. `calculated` and `provider-reported` are deliberately separate:
- * one is our arithmetic on configured rates, the other is the provider's own number.
- */
+/** `calculated`: our arithmetic on configured rates; `provider-reported`: the provider's number. */
 export type CostBasis = "calculated" | "provider-reported" | "estimated" | "unknown";
 
 /** One request's receipt. Written once, never recalculated. */
 export interface PricedRequest {
   /** the instant the rates were read at */
   at: number;
-  /** which instant that is, in words — the rule a future provider integration would adapt */
+  /** which instant that is, in words */
   rule: string;
   lines: CostLine[];
   /** what `basis` says this is: the calculated figure, or the provider's own */
   total: number | null;
   /** always our own arithmetic, even when the provider reported a different number */
   calculated: number | null;
-  /** what the provider said it charged, when it said anything */
   reported: number | null;
   basis: CostBasis;
-  /** what is not known about this figure, in sentences */
   unknowns: string[];
   usage: TokenUsage;
   /** the rates this request was charged at, frozen */
@@ -306,27 +234,18 @@ export interface PricedRequest {
 // ---------- what a speech request actually submitted, and what came back ----------
 
 /**
- * The four quantities a speech provider can meter, kept apart on purpose.
- *
- * They are **not** conversions of one another and nothing here ever treats them as such: a line is
- * so many characters *and* so many UTF-8 bytes *and* so many text tokens, and only the one its
- * endpoint bills in is ever charged. Whichever model is in force, the other three are still
- * recorded — that is what makes it possible to change an endpoint's billing model and see what the
- * same traffic would have cost, without ever charging the same usage twice.
- *
- * `chars` is Unicode code points, not `String.length`: a JavaScript string counts an emoji as two
- * and a provider does not.
+ * Every quantity a speech provider can meter; not conversions of one another. Only the billing
+ * unit is charged, but all are recorded so a billing-model change can be compared.
  */
 export interface BillableUnits {
-  /** billable characters — Unicode code points of everything submitted */
+  /** Unicode code points of everything submitted (a JS string counts an emoji as two) */
   chars: number;
-  /** UTF-8 bytes of the same content */
   bytes: number;
-  /** input text tokens; `null` when nothing has counted them */
+  /** `null` when nothing has counted them */
   textTokens: number | null;
-  /** generated audio, seconds. Silence stitched in locally is not generated and is never here. */
+  /** generated audio only; silence stitched in locally is never here */
   audioSeconds: number;
-  /** output audio tokens; `null` when the provider did not report them and none were estimated */
+  /** `null` when the provider did not report them and none were estimated */
   audioTokens: number | null;
   /** how many calls the line became against the endpoint's per-request limit */
   requests: number;
@@ -334,16 +253,11 @@ export interface BillableUnits {
   instructionChars: number;
 }
 
-/** The speech payload shapes the prototype knows how to read. */
 export type SpeechUsageFormat = "gemini" | "fish" | "plain" | "internal" | "none";
 
 /**
- * Usage a speech provider reported for one completed request, normalized.
- *
- * Every field is independently nullable and `null` means **the provider did not say** — never
- * zero. A provider that returns no usage block at all (OpenAI's speech endpoint does not) leaves
- * every field null, and the charge is then worked out from what we measured on the way out and
- * labelled an estimate rather than presented as a reported fact.
+ * `null` = the provider did not say, never zero. With no usage block at all (OpenAI speech), the
+ * charge comes from what we measured and is labelled an estimate.
  */
 export interface SpeechUsage {
   chars: number | null;
@@ -357,51 +271,35 @@ export interface SpeechUsage {
   reportedCost?: number | null;
 }
 
-/** Where one charged quantity's number came from. */
 export type QuantitySource = "reported" | "measured" | "estimated";
 
-/** One component of a speech charge: what was counted, at what rate, and why that rate. */
 export interface SpeechChargeLine {
   component: RateComponent;
-  /** how much was charged for, in this component's own unit */
+  /** in this component's own unit */
   quantity: number;
   source: QuantitySource;
   /** the rate in force at the instant this was charged; `null` = not known */
   rate: number | null;
-  /** the card rate, so the receipt can show what moved and by how much */
+  /** the card rate */
   base: number | null;
   /** one short phrase per step that moved the rate off the card, in order */
   why: string[];
   amount: number | null;
-  /** why these units are on this line rather than another */
   note?: string;
 }
 
 /**
- * One rendered clip's receipt.
- *
- * Speech has no cache and no prompt/completion split, so a `PricedRequest` would be four-fifths
- * nulls and a `TokenUsage` full of zeros would be a lie. What a speech request is charged on is
- * what it submitted and what came back — characters, UTF-8 bytes, text tokens, audio seconds,
- * audio tokens, and how many requests a split line became — so all of that is recorded, beside the
- * rates in force when it landed and why those rates.
- *
- * `lines` is the whole charge: one line for a per-character endpoint, two for a token-billed one.
- * There is no second copy of the rate anywhere on this object, because two copies is how a receipt
- * starts disagreeing with itself.
- *
- * Written once, never recalculated: a bulk run renders hundreds of these and every one is kept.
+ * One rendered clip's receipt. `lines` is the whole charge (one line, or two when token-billed);
+ * the rate lives only there so the receipt can't disagree with itself. Never recalculated.
  */
 export interface SpeechCharge {
   at: number;
   rule: string;
-  /** the billing model in force when this landed, frozen — a later change cannot rewrite it */
+  /** the billing model in force when this landed */
   unit: TtsBillingUnit;
-  /** the audio-token assumption this was charged under, when it was charged on audio tokens */
   audioTokensPerSecond?: number;
-  /** everything that was measured, whether or not this model bills for it */
+  /** everything measured, whether or not this model bills for it */
   units: BillableUnits;
-  /** what the provider itself said, when it said anything */
   reported: SpeechUsage | null;
   lines: SpeechChargeLine[];
   amount: number | null;
@@ -409,82 +307,61 @@ export interface SpeechCharge {
   unknowns: string[];
 }
 
-/**
- * One charged line, ready to render, whatever it was charged for.
- *
- * The Activity list shows the same table for both kinds of endpoint, and the two kinds measure
- * different things — tokens against characters or audio minutes. This is the shape they meet in, so
- * there is one table rather than two.
- */
+/** One charged line ready to render, shared by LLM and speech receipts in the Activity table. */
 export interface ChargeLine {
   label: string;
-  /** what was charged for, with its unit spelled out: "8,000 tokens", "1,240 characters" */
+  /** with its unit: "8,000 tokens", "1,240 characters" */
   quantity: string;
-  /** the rate with its unit: "$0.15 / 1M tokens", "$12.00 per 1M characters" */
+  /** with its unit: "$0.15 / 1M tokens" */
   rate: string;
   amount: number | null;
-  /** what moved the rate off the card, in order */
   why: string[];
   note?: string;
 }
 
 // ---------- estimates ----------
 
-/**
- * What a run would cost before it is sent, when cache usage cannot be known. The headline figure
- * assumes **no** cache savings; anything cheaper is offered beside it and labelled.
- */
+/** A pre-send estimate. The headline `cost` assumes no cache savings. */
 export interface RateEstimate {
   inputTokens: number;
   outputTokens: number;
   inputCost: number;
   outputCost: number;
-  /** the conservative total: every input token at the ordinary rate */
+  /** every input token at the ordinary rate */
   cost: number;
   /** the same work if cached input ran at a recently observed hit rate; null when neither applies */
   withObservedCache: { hitRate: number; cost: number; samples: number } | null;
   /**
-   * The ceiling: every promotion expired, the dearest schedule window in force (`ceilingRates` — a
-   * window can raise a rate, as a peak hour does), and every input token at the dearest rate any
-   * input token can be charged at on this card — cached and cache-write tokens are
-   * slices of the input and are not always cheaper than it. This is what a budget must survive, and
-   * what a reservation is taken at.
+   * The ceiling a budget and a reservation use: promotions expired, the dearest window
+   * (`ceilingRates`), and every input token at the dearest input-side rate (cache rates can be
+   * dearer than input).
    */
   withoutPromotions: number;
-  /** what could move this figure between now and the last request, in sentences */
   cautions: string[];
 }
 
 /**
- * What a speech run would cost before anything is sent.
- *
- * The two halves are kept apart because on a token-billed endpoint they are worked out completely
- * differently — the input side from the text that will be submitted, the audio side from the
- * audio's expected duration and the endpoint's tokens-per-second assumption — and adding them up
- * without showing the split is how "why is this $19?" becomes unanswerable.
+ * Input and audio halves stay apart: on a token-billed endpoint the audio half comes from expected
+ * duration × tokens-per-second, not the text.
  */
 export interface SpeechEstimate {
-  /** the input-text half: characters, bytes, text tokens or the flat per-request fee */
+  /** characters, bytes, text tokens or the flat per-request fee */
   inputCost: number | null;
-  /** the output-audio half: audio minutes or audio tokens. `null` when this model has none. */
+  /** audio minutes or audio tokens; `null` when this model has none */
   audioCost: number | null;
-  /** `inputCost + audioCost`; null when a rate this model needs is not known */
+  /** null when a rate this model needs is not known */
   cost: number | null;
-  /** the same run with every discount gone — what a budget is checked against */
+  /** every discount gone; what a budget is checked against */
   withoutPromotions: number | null;
   units: BillableUnits;
-  /** what could move this figure before the last clip lands, in sentences */
   cautions: string[];
 }
 
 // ---------- a book's spending ----------
 
-/**
- * What a book has spent and what its unfinished work is holding, in USD — `GET
- * /api/books/:id/spend`, summed on the server from the ledger and the queue.
- */
+/** `GET /api/books/:id/spend`, in USD, summed on the server from the ledger and the queue. */
 export interface BookSpend {
-  /** everything: both kinds of request, plus the opening balance */
+  /** both kinds of request, plus the opening balance */
   spent: number;
   scriptSpent: number;
   speechSpent: number;
@@ -492,7 +369,7 @@ export interface BookSpend {
   opening: number;
   /** held by unfinished jobs of either kind, at undiscounted rates */
   reserved: number;
-  /** of `reserved`, held by scripting jobs — what the script budget is checked against */
+  /** of `reserved`, held by scripting jobs; what the script budget is checked against */
   scriptReserved: number;
   /** settled requests whose cost is not known, so `spent` is a floor */
   unpriced: number;

@@ -1,12 +1,5 @@
-// Making a voice from recordings: `POST /api/endpoints/voices/clone`, and keeping the recordings
-// it was made from under `/api/endpoints/:id/voices/:voice/samples`.
-//
-// Four parts. What counts as a recording, read from a file's first bytes. The route, with a cloner
-// that answers from memory: what it refuses before anything leaves — no recordings, no name,
-// something that is not a recording — what it hands the cloner, and what it logs. And the real
-// cloner, against a `fetch` that answers from memory: the multipart request Fish Audio's docs give,
-// that it goes out once whatever fails, and how Fish's refusals reach the page. And the recordings
-// kept after a clone: byte for byte, and gone with the voice they made.
+// Cloning a voice: `POST /api/endpoints/voices/clone`, and keeping the recordings it was made from
+// under `/api/endpoints/:id/voices/:voice/samples`.
 import { describe, expect, test } from "bun:test";
 import { readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -120,7 +113,7 @@ describe("the clone route", () => {
     );
     expect(status).toBe(201);
     expect(asked[0].samples.map((s) => s.transcript)).toEqual(["Come in.", undefined]);
-    // a form from before transcripts, with no `transcripts` field at all, is as good as none
+    // a form with no `transcripts` field at all is as good as none
     await postClone(api, cloneForm(cloneFields(), [sampleFile("c.wav")]));
     expect(asked[1].samples[0].transcript).toBeUndefined();
     // one that runs on is refused by the file's name
@@ -363,8 +356,8 @@ describe("a failure to clone, through the route", () => {
     expect(JSON.stringify(key.api.logs)).not.toContain("sk-fish");
   });
 
-  // A clone is sent once whatever fails (see server/providers/clone.ts): these would bring a
-  // retry for a line of speech, and here each is said at once, as Fish's fault.
+  // A clone is sent once whatever fails (see server/providers/clone.ts); each of these is reported
+  // at once, as Fish's fault.
   test.each<[string, () => Response | Promise<Response>, string]>([
     ["a rate limit", () => new Response("slow down", { status: 429 }), "Fish Audio answered 429"],
     ["a 408", () => new Response("timeout", { status: 408 }), "Fish Audio answered 408"],

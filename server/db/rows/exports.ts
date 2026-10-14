@@ -1,10 +1,6 @@
 // Finished audiobooks, between rows and the shapes the Export page reads.
-//
-// `ExportItem` carries two per-chapter maps — `state`, the signature of the audio each chapter was
-// built from, and `timeline`, the duration each chapter had at build time. They are one table here,
-// `export_chapters`, because they are two facts about the same thing. `files` carries which
-// chapters landed in each output file, so the file index is stored on the chapter row and the file
-// list is rebuilt from it.
+// `ExportItem`'s per-chapter `state` and `timeline` maps share one table, `export_chapters`, which
+// also stores each chapter's file index; the file list is rebuilt from it.
 import type { ExportFile, ExportItem, ExportTimelineEntry } from "@/types";
 import type { exportChapters, exportFiles, exportItems } from "~/db/schema";
 
@@ -67,9 +63,7 @@ export function toExportItem(
   if (row.stale != null) e.stale = row.stale;
   if (row.error != null) e.error = row.error;
   if (row.jobId != null) e.jobId = row.jobId;
-  // The chapters as they played when it was built. Absent on an export made before the timeline
-  // was recorded — which is why a missing duration is null and not zero: inventing a timeline of
-  // silent chapters would be worse than having none.
+  // no recorded durations means no timeline, not a timeline of silent chapters
   if (ordered.some((c) => c.duration != null)) {
     const timeline: ExportTimelineEntry[] = ordered.map((c) => ({
       id: c.chapterId,
@@ -131,7 +125,7 @@ export const exportFileValues = (
   volume: f.volume,
 });
 
-/** One row per chapter of the export, carrying its build-time duration and its audio signature. */
+/** One row per chapter: its build-time duration and audio signature. */
 export function exportChapterValues(e: ExportItem): (typeof exportChapters.$inferInsert)[] {
   const fileOf = new Map<number, number>();
   e.files.forEach((f, i) => {

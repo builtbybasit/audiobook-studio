@@ -1,8 +1,5 @@
 // A book's say over the scripting prompt: its notes and its own prompt, as the store saves them,
-// as the run estimate prices them, and as the chapter's history names a run that used them.
-//
-// None of it needs the seeded demo: the stores talk to a server of this file's own, holding one
-// short book, the way a backend tab talks to `/api`.
+// the estimate prices them, and the chapter's history names a run that used them.
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
 
 import { BUILT_IN_PROMPT } from "@/lib/prompt";

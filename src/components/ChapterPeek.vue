@@ -1,10 +1,7 @@
 <script setup lang="ts">
-// A peek at one chapter of a picker: its opening text, its size, and the switch that skips it.
-// One serves the whole list — a popover per row was most of a long book's components — so it is
-// anchored to the peek button that opened it, and the list moves it to another row by changing
-// `anchor` and `chapter` while it stays open. A click on any `[data-peek]` button is that move, not
-// a click outside. Escape, or the same peek clicked again, hands focus back to the button; a click
-// elsewhere leaves focus where it went.
+// A peek at one picker chapter: opening text, size, and the skip switch. One serves the whole list
+// (a popover per row was most of a long book's components); the list moves it by changing `anchor`
+// and `chapter`, and a click on any `[data-peek]` is that move, not a click outside.
 import { computed } from "vue";
 import { PopoverContent, PopoverPortal, PopoverRoot } from "reka-ui";
 import { useChapterText } from "@/queries";
@@ -14,8 +11,7 @@ const props = defineProps<{ bookId: string; chapter?: Chapter; anchor?: HTMLElem
 const open = defineModel<boolean>("open", { required: true });
 const emit = defineEmits<{ skip: [Chapter, boolean] }>();
 
-// the peeked chapter's prose, read when it is peeked at: a chapter no page has read yet would
-// otherwise show an empty peek, which reads as an empty chapter
+// read on peek: an unread chapter would otherwise show empty, which reads as an empty chapter
 const { text, isPending } = useChapterText(
   () => props.bookId,
   () => (open.value ? props.chapter?.id : null),

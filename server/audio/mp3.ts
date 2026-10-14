@@ -1,28 +1,14 @@
-// An MP3 read as the frames it is made of, so a line sent in parts can be put back together.
-//
-// An MP3 file is a run of self-contained frames, each with a four-byte header saying how long it
-// is. That makes joining two of them a matter of laying one run of frames after the other, with no
-// decoding. The rest of a file has to go, though: an ID3 tag at the start or end would sit in the
-// middle of the joined audio, and a Xing, Info or VBRI frame — a silent first frame an encoder
-// writes to say how many frames follow — would tell a player the joined file is as long as its
-// first part. So the join keeps audio frames only, from every part, the first one included. What
-// comes out is a plain frame stream with no header of its own, which is how Fish Audio sends MP3
-// in the first place, and a player times it by counting or by its constant bitrate.
-//
-// The same walk is how long an MP3 plays: frames × samples per frame ÷ rate. `music-metadata` reads
-// a constant-bitrate MP3's length off the file size and a rounded frame size instead, which drifts
-// by a frame every few minutes; counting is exact, and cheap for a line.
-//
-// Only Layer III is read: it is what "MP3" means, and what every speech API sends. A torn last
-// frame — a stream cut short — is left out rather than counted.
+// MP3 as frames, so parts of a line join without decoding. The join keeps audio frames only: an
+// ID3 tag would land mid-file, and a Xing/Info/VBRI frame would give the first part's length.
+// Duration is counted from frames (`music-metadata` estimates CBR from file size and drifts).
+// Layer III only; a torn last frame is dropped.
 
-/** One MP3 file as its audio frames: where each is, and what they all are. */
 export interface Mp3Frames {
   sampleRate: number;
   channels: number;
   /** each audio frame's byte span; the Xing, Info or VBRI frame and any tag are not among them */
   frames: { start: number; end: number }[];
-  /** audio samples per channel, which is what a duration is counted from */
+  /** audio samples per channel */
   samples: number;
 }
 
@@ -40,7 +26,6 @@ const KBPS_V1 = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 32
 const KBPS_V2 = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160];
 const RATES_V1 = [44100, 48000, 32000];
 
-/** The frame header at `at`, or null when there is not one there. */
 function header(b: Uint8Array, at: number): FrameHeader | null {
   if (at + 4 > b.byteLength || b[at] !== 0xff || (b[at + 1] & 0xe0) !== 0xe0) return null;
   const version = (b[at + 1] >> 3) & 3; // 0 = MPEG-2.5, 1 = reserved, 2 = MPEG-2, 3 = MPEG-1
@@ -68,13 +53,13 @@ function header(b: Uint8Array, at: number): FrameHeader | null {
 const ascii = (b: Uint8Array, at: number, n: number): string =>
   String.fromCharCode(...b.subarray(at, at + n));
 
-/** Whether the frame at `at` is an encoder's Xing, Info or VBRI frame rather than audio. */
+/** An encoder's Xing, Info or VBRI frame rather than audio. */
 function isInfoFrame(b: Uint8Array, at: number, h: FrameHeader): boolean {
   const tag = ascii(b, h.infoAt, 4);
   return tag === "Xing" || tag === "Info" || ascii(b, at + 36, 4) === "VBRI";
 }
 
-/** Past every ID3v2 tag at `at`: ten bytes, a syncsafe size, and ten more when it has a footer. */
+/** ID3v2: ten bytes, a syncsafe size, and ten more when it has a footer. */
 function skipId3v2(b: Uint8Array, at: number): number {
   while (at + 10 <= b.byteLength && ascii(b, at, 3) === "ID3") {
     const size =
@@ -87,10 +72,7 @@ function skipId3v2(b: Uint8Array, at: number): number {
   return at;
 }
 
-/**
- * Where the next frame starts at or after `at`: the first header followed by another header or by
- * the end of the file, so a stray 0xFF in some junk is not taken for one. -1 when there is none.
- */
+/** The next header followed by another header or EOF, so a stray 0xFF is not taken; -1 for none. */
 function resync(b: Uint8Array, at: number): number {
   for (let i = at; i + 4 <= b.byteLength; i++) {
     const h = header(b, i);
@@ -99,10 +81,7 @@ function resync(b: Uint8Array, at: number): number {
   return -1;
 }
 
-/**
- * The audio frames of an MP3. Throws, saying why, when it has none — an answer that is not an MP3
- * is not a clip — or when its frames change rate or channels part-way, which no player follows.
- */
+/** Throws when there are no frames, or when rate or channels change part-way. */
 export function mp3Frames(b: Uint8Array): Mp3Frames {
   let at = skipId3v2(b, 0);
   const frames: Mp3Frames["frames"] = [];
@@ -137,9 +116,8 @@ export function mp3Frames(b: Uint8Array): Mp3Frames {
 }
 
 /**
- * `seconds` of silence as MP3 frames like the one at `at` in `b`: its header without padding or a
- * CRC, and side information and main data all zero, which every decoder plays as silence. The
- * length is whole frames, the nearest to `seconds`.
+ * Silence as whole frames like the one at `at`: its header without padding or CRC, and all-zero
+ * side information and main data, which every decoder plays as silence.
  */
 function silentFrames(b: Uint8Array, at: number, seconds: number): Uint8Array {
   const head = b.slice(at, at + 4);
@@ -153,10 +131,8 @@ function silentFrames(b: Uint8Array, at: number, seconds: number): Uint8Array {
 }
 
 /**
- * Several MP3 files as one: every part's audio frames end to end, with no tag and no Xing frame
- * from any of them, and silence wherever `pieces` has a number of seconds rather than a file. The
- * parts have to agree on rate and channels — a player reads the whole file at the first frame's —
- * and a part that does not is named by its place.
+ * Every part's audio frames end to end, with silence for each number of seconds in `pieces`.
+ * Parts must agree on rate and channels: a player reads the whole file at the first frame's.
  */
 export function joinMp3(pieces: (Uint8Array | number)[]): Uint8Array {
   const files = pieces.filter((p) => typeof p !== "number");

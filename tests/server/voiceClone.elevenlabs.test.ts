@@ -1,10 +1,6 @@
-// Making a voice from recordings on ElevenLabs, and on BreezeBlue, which copies ElevenLabs' shape
-// but clones in two requests of its own.
-//
-// Each cloner against a `fetch` that answers from memory: the request each provider's docs give,
-// the answer read into a voice, that every request goes out once whatever fails, and how a refusal
-// reads. And the route in front of them: what each provider does not take is refused before
-// anything is sent. Fish's cloner, and the route's own rules, are `voiceClone.test.ts`'s.
+// Making a voice on ElevenLabs, and on BreezeBlue, which copies ElevenLabs' shape but clones in
+// two requests. Each cloner against a fake `fetch`, then the route refusing what each provider does
+// not take. Fish's cloner and the route's own rules are in `voiceClone.test.ts`.
 import { describe, expect, test } from "bun:test";
 
 import type { Endpoint } from "@/types";

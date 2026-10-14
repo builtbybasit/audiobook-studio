@@ -1,11 +1,6 @@
-// The demo library, answering the page's services in-process: what a demo tab talks to.
-//
-// A store test that wants the seeded world — `cliche`, `starforge`, the seeded cast and endpoints —
-// opens one of these and gets the demo exactly as the server holds it: the same `openLibrary` the
-// server boots with, over a private in-memory database and temporary folders, seeded with
-// `makeWorld()`, every endpoint simulated. The page's services are pointed at it, so a store
-// under test asks it the way the browser asks `/demo/api`. Nothing reaches the network: the
-// providers are handed a `fetch` that fails the test.
+// The demo library in-process, for store tests that want the seeded world: the server's own
+// `openLibrary` over an in-memory database, every endpoint simulated, with the page's services
+// pointed at it. Providers get a `fetch` that fails the test.
 import { HttpDemoService, setDemoService } from "@/services/demo";
 import type { FetchLike } from "@/services/http";
 import {
@@ -21,7 +16,7 @@ import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import { ffmpegEncoders } from "~/providers/ffmpegEncoder";
 import { collectingLogger, tempAudioDir, tempExportDir, tempVoiceDir } from "./server";
 
-/** A fetch that fails the test: the demo's endpoints are simulated, and must never reach one. */
+/** The demo's endpoints are simulated and must never reach the network. */
 const noNetwork = (async (url: string) => {
   throw new Error(`the demo sent a request to ${url}`);
 }) as unknown as typeof globalThis.fetch;
@@ -30,26 +25,17 @@ export interface DemoServer {
   library: Library;
   /** the page's `fetch`, answered by the demo library */
   fetch: FetchLike;
-  /**
-   * `POST /demo/api/demo/situations/:id`, as the Demo drawer sends it. A situation rebuilds the
-   * demo whole, so a `reset()` right before one is wasted.
-   */
+  /** As the Demo drawer sends it. A situation rebuilds the demo, so a `reset()` first is wasted. */
   situate(id: string): Promise<{ note: string; open: string }>;
   /** `POST /demo/api/demo/reset` */
   reset(): Promise<void>;
   /** let every job the demo's queue holds finish */
   idle(): Promise<void>;
-  /**
-   * Stop the queue, so the runs a situation set going no longer move the demo on between one
-   * read and the next. The next reset or situation starts it again.
-   */
+  /** Stop the queue so situation runs hold still between reads. Reset or situate restarts it. */
   hold(): Promise<void>;
 }
 
-/**
- * Open a seeded demo library, start its queue, and point the page's services at it. Call it before
- * the stores under test are created: a store reads its service when its state is first built.
- */
+/** Call before the stores under test are created: a store reads its service when first built. */
 export async function demoServer(): Promise<DemoServer> {
   const library = openLibrary({
     name: "demo",

@@ -1,13 +1,6 @@
 <script setup lang="ts">
-// The sidebar's body.
-//
-// Desktop: an icon rail for the three app places — Library, Queue, Endpoints. Badges carry the
-// counts and tooltips the words; the chevron at the foot widens it to show labels and counts.
-// The open book is not here: it lives in the header (BookSelector, BookTabs), so the rail never
-// repeats it.
-//
-// Narrow screens: the drawer. Full rows with labels, and under them the open book's pages with
-// their counts — the header's tab row does not fit a phone, so the pages live here instead.
+// The sidebar's body: an icon rail for Library, Queue and Endpoints on desktop (the open book lives
+// in the header); on narrow screens a drawer that also lists the open book's pages.
 import { useLibraryStore } from "@/stores/library";
 import { useUiStore } from "@/stores/ui";
 
@@ -50,13 +43,13 @@ interface Item {
   to: string;
   icon: unknown;
   label: string;
-  /** the figure beside the label, when there is room for words */
+  /** shown beside the label when widened */
   count?: string;
   /** a number worth a badge on the icon */
   badge?: number;
   /** something worth a dot on the icon */
   dot?: "amber" | "emerald";
-  /** the count is a warning, not a fact */
+  /** the count is a warning */
   warn?: boolean;
 }
 const app = computed<Item[]>(() => [
@@ -159,7 +152,6 @@ const countCls = (i: Item) =>
 </script>
 
 <template>
-  <!-- narrow screens: the drawer, with words -->
   <nav class="mt-1 flex flex-col gap-0.5 px-2 lg:hidden">
     <RouterLink v-for="a in app" :key="a.key" :to="a.to" :class="[ROW, on(a.key, ROW_ON)]">
       <component :is="a.icon" class="icon text-zinc-400" />
@@ -181,7 +173,6 @@ const countCls = (i: Item) =>
     </template>
   </nav>
 
-  <!-- desktop: the rail, icons only unless widened -->
   <nav
     class="mt-2 hidden flex-col gap-1 lg:flex"
     :class="uiStore.railExpanded ? 'px-2' : 'items-center'"

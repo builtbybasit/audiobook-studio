@@ -1,16 +1,6 @@
-// What a real speech endpoint's WAV is turned into before the job keeps it.
-//
-// A model streams its audio, so it writes the header before it knows how long the audio will be.
-// Fish Audio's answer starts `RIFF ffffff24 WAVE … data ffffff00`: sizes that claim four gigabytes
-// and are true of nothing. OpenAI's `wav` is written the same way. The job reads a clip's rate
-// off that header, the join and the export read its sample span, and a player seeks by it, so a
-// file kept as it came would be a header everything downstream has to second-guess. Instead the
-// samples that really arrived — whole frames of them, a torn last one dropped — are written out
-// again under the plain 44-byte header the rest of the server already writes, and the clip's
-// duration is counted from those samples rather than taken from anything the endpoint claims.
-//
-// And what every WAV in the server is read and written with: a header walked for its format and
-// samples (`readWavHeader`), several joined into one (`joinWav`), and the 44 bytes in front.
+// WAV reading and writing for the whole server. A streamed WAV (Fish, OpenAI) has placeholder sizes
+// (`ffffff24`), so an endpoint's answer is rewritten under a plain 44-byte header with only the
+// whole frames that arrived, and its duration counted from them (`plainWav`).
 
 const HEADER = 44;
 
@@ -20,7 +10,7 @@ export interface WavFormat {
   bits: number;
 }
 
-/** Where the samples of a RIFF/WAVE file start, how many there are, and what they are. */
+/** `start` and `length` of the samples, in bytes. */
 export interface WavBody extends WavFormat {
   start: number;
   length: number;
@@ -29,33 +19,19 @@ export interface WavBody extends WavFormat {
 export const formatLabel = (f: WavFormat): string =>
   `${f.sampleRate} Hz, ${f.bits}-bit, ${f.channels === 1 ? "mono" : `${f.channels} channels`}`;
 
-/** Bytes per second of audio, which is what turns a pause in seconds into a run of silence. */
 export const byteRate = (f: WavFormat): number => (f.sampleRate * f.channels * f.bits) / 8;
 
 /**
- * How many bytes of silence a pause is: whole sample frames, never a byte count that splits one.
- *
- * `seconds × byteRate` rounded to a byte is right only for 8-bit mono, where a frame is one byte.
- * For 16-bit audio a pause of 0.1234 s at 24 kHz is 5,923 bytes — an odd number — and every sample
- * after it is read a byte out of step, which plays as loud noise to the end of the file. So the
- * pause is rounded to a whole number of frames first, and a frame is every channel's sample.
+ * Whole frames only: a byte count that splits a frame shifts every later sample a byte out of step,
+ * which plays as loud noise to the end of the file.
  */
 export const silenceBytes = (f: WavFormat, seconds: number): number =>
   Math.round(seconds * f.sampleRate) * ((f.channels * f.bits) / 8);
 
-/**
- * Silence, as this format spells it: 8-bit PCM is unsigned and its zero is 128, everything wider
- * is signed and its zero is 0. Getting this wrong is a click between every clip.
- */
+/** 8-bit PCM is unsigned (zero is 128); wider is signed. Wrong is a click between every clip. */
 export const silentByte = (f: WavFormat): number => (f.bits === 8 ? 128 : 0);
 
-/**
- * Read a RIFF/WAVE header: the format, and where the samples are.
- *
- * The chunks are walked rather than assumed to be the canonical 44 bytes, because a file with a
- * `LIST` chunk before its `data` is still a WAV and cutting it at 44 would put metadata into the
- * audiobook.
- */
+/** Walks the chunks rather than assume 44 bytes: a `LIST` chunk may come before `data`. */
 export function readWavHeader(head: Uint8Array): WavBody {
   const view = new DataView(head.buffer, head.byteOffset, head.byteLength);
   const tag = (at: number): string => String.fromCharCode(...head.subarray(at, at + 4));
@@ -75,8 +51,7 @@ export function readWavHeader(head: Uint8Array): WavBody {
       };
     if (name === "data") {
       if (!format) throw new Error("its samples come before it says what they are");
-      // A `data` size of zero is how a file still being written describes itself; what is really
-      // there is everything after the header.
+      // a size of 0 means still being written: take everything after the header
       return { ...format, start: body, length: size || head.byteLength - body };
     }
     at = body + size + (size % 2);
@@ -84,12 +59,7 @@ export function readWavHeader(head: Uint8Array): WavBody {
   throw new Error("it has no samples in it");
 }
 
-/**
- * Several WAV files as one, their samples end to end: a line an endpoint would only take in parts,
- * put back together, with silence wherever `pieces` has a number of seconds rather than a file.
- * The files have to agree on what a sample is — 24 kHz laid after 22.05 kHz plays at the wrong
- * pitch — and a part that does not is named by its place.
- */
+/** Joins WAVs end to end, a number in `pieces` being seconds of silence. Formats must match. */
 export function joinWav(pieces: (Uint8Array | number)[]): Uint8Array {
   const files = pieces.filter((p) => typeof p !== "number");
   const bodies = files.map((f) => readWavHeader(f));
@@ -105,7 +75,7 @@ export function joinWav(pieces: (Uint8Array | number)[]): Uint8Array {
     if (typeof p === "number")
       return new Uint8Array(silenceBytes(first, p)).fill(silentByte(first));
     const b = bodies[file++];
-    // what is really there, if a header claims more samples than the file holds
+    // a header may claim more samples than the file holds
     return p.subarray(b.start, b.start + b.length);
   });
   const length = spans.reduce((a, s) => a + s.byteLength, 0);
@@ -119,7 +89,6 @@ export function joinWav(pieces: (Uint8Array | number)[]): Uint8Array {
   return out;
 }
 
-/** The 44 bytes that say what the samples after them are. */
 export function wavHeader(f: WavFormat, samples: number): Uint8Array {
   const bytes = new Uint8Array(HEADER);
   const view = new DataView(bytes.buffer);
@@ -143,17 +112,14 @@ export function wavHeader(f: WavFormat, samples: number): Uint8Array {
 }
 
 export interface PlainWav {
-  /** RIFF, `fmt `, `data` and nothing else, every size in it true */
+  /** RIFF, `fmt `, `data` and nothing else, every size true */
   bytes: Uint8Array;
   format: WavFormat;
-  /** how long the samples play, in seconds */
+  /** seconds */
   duration: number;
 }
 
-/**
- * The samples in `bytes` under a header that tells the truth about them. Throws, saying why, when
- * there is no WAV here or no sample in it — an answer that is not audio is not a clip.
- */
+/** The samples under a truthful header; throws when there is no WAV or no sample. */
 export function plainWav(bytes: Uint8Array): PlainWav {
   const body = readWavHeader(bytes);
   const format: WavFormat = {
@@ -164,11 +130,10 @@ export function plainWav(bytes: Uint8Array): PlainWav {
   const frame = (format.channels * format.bits) / 8;
   if (!Number.isInteger(frame) || frame <= 0 || !format.sampleRate)
     throw new Error(`it says its samples are ${format.bits}-bit in ${format.channels} channels`);
-  // a streaming header's size is a placeholder: what is there is what arrived
+  // a streaming header's size is a placeholder
   const arrived = Math.min(body.length, bytes.byteLength - body.start);
   const length = arrived - (arrived % frame);
   if (length <= 0) throw new Error("it has no samples in it");
-  // one file joined with nothing is that file under a plain header, its span cut to `length`
   return {
     bytes: joinWav([bytes.subarray(0, body.start + length)]),
     format,

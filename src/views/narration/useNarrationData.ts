@@ -1,19 +1,7 @@
 // What the Narration page reads before it can say anything true, and whether it has.
-//
-// The stores start empty: a book's cast, a chapter's script and every other chapter's are only
-// there once a query has read them, and until then the getters answer 0, "" and [] — which on this
-// page read as "no voices assigned", "0 clips · $0.00", "no endpoint configured" and a run with
-// nothing in it. So the page mounts its reads here and draws the strip, the tabs and the ledger
-// only once every one of them has landed, with a reading state before that and the failure, with a
-// Retry, when one does not.
-//
-// - the cast and the dictionary: the voices, the routes, every blocker about either;
-// - the open chapter's script: the ledger and its player;
-// - every scripted chapter's script: the run plan and the estimate over whichever chapters are
-//   picked (only a scripted chapter can be), each speaker's line count, the dictionary's uses and
-//   the book's queue of retakes to judge;
-// - the endpoint configuration, which the router reads before any page: not having it is a failed
-//   read, never an empty pool.
+// Until a query lands the store getters answer 0, "" and [], which would read as "no voices" or
+// "$0.00", so the page draws nothing until every read here has landed. Missing endpoint
+// configuration is a failed read, never an empty pool.
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
@@ -49,7 +37,6 @@ export function useNarrationData(bookId: string, opened: MaybeRefOrGetter<number
       .every((c) => scriptsStore.held(bookId, c.id)),
   );
 
-  /** everything the page reads has been read at least once */
   const ready = computed(
     () => castHeld.value && scriptHeld.value && bookHeld.value && endpointsStore.loaded,
   );
@@ -63,7 +50,6 @@ export function useNarrationData(bookId: string, opened: MaybeRefOrGetter<number
       return "The endpoint configuration could not be read.";
     return null;
   });
-  /** read again whatever failed */
   async function retry(): Promise<void> {
     if (!castHeld.value) void cast.refetch();
     if (!scriptHeld.value) void script.refetch();

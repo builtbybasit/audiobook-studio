@@ -1,47 +1,7 @@
-// The scripting prompt: what a chat model is told, how the three places that may change it are
-// layered, and how its tags are filled in for one request.
-//
-// Shared by the browser and the server. The page previews exactly what the job will send, so the
-// rendering lives here and nowhere else — a preview built by a second copy of these rules would
-// drift from the requests that are actually billed.
-//
-// **Three layers.** The library has a default, which is the built-in prompt until somebody edits
-// it on the Endpoints page. A scripting endpoint may replace it outright. A book may replace the
-// whole prompt for itself, and wins over an endpoint, because a book's conventions are about the
-// text and hold whichever model reads it.
-//
-// **Notes** are the other way in, and hold whichever prompt is sent: an endpoint's (a model's
-// quirk: "keep paragraphs apart") and a book's ("dialogue is marked with em-dashes"), each kept
-// whatever its prompt mode and placed where the prompt says `{{endpoint.notes}}` or
-// `{{book.notes}}`. A prompt without the tag does not send the notes; the page says so where they
-// are typed, rather than the notes turning up somewhere nobody put them.
-//
-// **One part is not editable**: the output format. The answer is parsed as `{"lines":[…]}` and held
-// word for word against the prose (`fidelity` in `server/providers/chatScripting.ts`), so a prompt
-// that forgot to ask for either would fail every chunk. It is added after the system prompt, always,
-// and the page shows it read-only under the editor.
-//
-// **Expression tags** are the model's to add only when a prompt asks for them, and the output
-// format says how: plain words in a marker the excerpt does not already have (`[[sigh]]`), read out
-// of the line when the answer comes back (`readScriptedTags`), so the line's text stays the prose
-// and the word-for-word check never sees them. Which brackets a voice wants is decided when the
-// line is sent, by the voice it is sent to. A **pause** is written the same way, `[[pause]]` or
-// `[[long pause]]`, and becomes a pause of the book's length for it (`scriptedAnnotation`); the
-// built-in prompt says when to write one.
-//
-// **Line effects** are offered the same way, in the output format: every library effect with a
-// `useWhen` sentence is listed by name, and the model may name several on a line ("effects"), which
-// the job matches back to the effects' ids (`Segment.effects`). With none offered the format is
-// word for word what it was, so a provider's cache and the page's copy of it hold.
-//
-// **Personas** are cast entries marked as another character's disguise (`Character.personaOf`);
-// `{{cast}}` says so ("persona of Sunny"), and the built-in prompt's rule 5 says when a line goes
-// to the persona rather than the character.
-//
-// **Tags** are `{{name}}`, filled in one pass: nothing a tag puts in is read for tags again, so a
-// novel that happens to contain `{{` is sent as it is. A line whose tags all came out empty is left
-// out, which is how `Notes on this book: {{book.notes}}` disappears from a book with no notes
-// without the template needing a conditional.
+// The scripting prompt: built-in template, layers (book > endpoint > library) and tag filling.
+// Shared by browser and server so the page previews exactly what the job sends. The output format
+// is appended to every request and not editable: the parser and `fidelity`
+// (server/providers/chatScripting.ts) depend on it.
 import type {
   BookPrompt,
   Effect,
@@ -62,10 +22,8 @@ export const REASONING_EFFORTS: readonly ReasoningEffort[] = ["off", "low", "med
 // The built-in prompt
 
 /**
- * How the model marks an expression tag in a line's text: `[[sigh]]`, or for an excerpt that has
- * either half of that in it already, the first pair it has neither half of — so a marker read back
- * is always the model's, never the book's. Almost every excerpt gets the first, which keeps the
- * system prompt the same from one request to the next, as a provider's cache wants.
+ * Expression-tag markers: the first pair the excerpt contains neither half of, so a marker read
+ * back is always the model's. Almost every excerpt gets `[[ ]]`, which keeps the prompt cacheable.
  */
 export const SCRIPT_MARKERS = [
   ["[[", "]]"],
@@ -74,16 +32,14 @@ export const SCRIPT_MARKERS = [
 ] as const;
 export type ScriptMarker = (typeof SCRIPT_MARKERS)[number];
 
-/** The marker an excerpt's tags are written in; null for one that has all three in it. */
+/** Null for an excerpt that contains all three. */
 export const scriptMarkerFor = (excerpt: string): ScriptMarker | null =>
   SCRIPT_MARKERS.find(([open, close]) => !excerpt.includes(open) && !excerpt.includes(close)) ??
   null;
 
-/** What a tag's words may be: a few words, a sound or a delivery, nothing that is markup. */
 const TAG_WORDS = /^[\p{L}\p{N}'’ ,-]{1,60}$/u;
-/** what a word is made of, an apostrophe or a hyphen inside it included (`don't`, `well-known`) */
 const WORD_CHAR = /[\p{L}\p{N}'’-]/u;
-/** punctuation that closes onto the word before it, so a tag before it goes before the space */
+/** closes onto the word before it, so a tag before it goes before the space */
 const CLOSING = /[,.;:!?…)\]’”"]/u;
 
 /** `tags` once `lead` characters are cut from the front of their line, now `length` long. */
@@ -91,12 +47,9 @@ export const shiftTags = (tags: ScriptedTag[], lead: number, length: number): Sc
   tags.map((t) => ({ ...t, at: Math.min(Math.max(t.at - lead, 0), length) }));
 
 /**
- * A line's text with the model's markers taken out, and where each one was. A tag goes between
- * words, never inside one. A marker with no space on either side is told apart by the `excerpt`:
- * when the two sides glued together are in it, the marker was cut into one word and moves to the
- * word's start (`wo[[sigh]]rd`); when they are not, it stood for the space between two words,
- * which is put back (`you,[[laughs]]didn't`). With no excerpt, it is read as one word. A marker
- * that is not a few plain words is left in the text as written, for `answerOf` to refuse.
+ * A line's text with the model's markers taken out, and where each was. An unspaced marker moves
+ * to its word's start if the joined sides are in `excerpt` (`wo[[sigh]]rd`), else stands for a
+ * lost space (`you,[[laughs]]didn't`). A non-word marker stays, for `answerOf` to refuse.
  */
 export function readScriptedTags(
   marked: string,
@@ -146,18 +99,15 @@ export function readScriptedTags(
   return { text, tags: shiftTags(tags, lead, text.length) };
 }
 
-/** A library effect the model may put on a line: one with a sentence saying when. */
+/** A library effect the model may put on a line: one with a `useWhen` sentence. */
 export type LineEffect = Effect & { useWhen: string };
 
-/** The library's effects that are offered to the model as line effects, in the library's order. */
 export const lineEffectsOf = (effects: readonly Effect[]): LineEffect[] =>
   effects.filter((e): e is LineEffect => !!e.useWhen?.trim());
 
 /**
- * What every answer must look like, with its tags in `marker` and the `lineEffects` it may name.
- * Not editable: the parser and the word-for-word check depend on it. Appended to the system prompt
- * of every request. A cue written any other way is forbidden either way: nothing could tell it from
- * the prose.
+ * The answer format, appended to every system prompt. With no line effects it is word for word
+ * the same, so a provider's cache holds.
  */
 export const outputFormat = (
   marker: ScriptMarker | null,
@@ -177,7 +127,7 @@ export const outputFormat = (
         : "",
   );
 
-/** Where `outputFormat` puts what it says of expression tags and line effects; not prompt tags. */
+/** `outputFormat` placeholders; not prompt tags. */
 const TAGS_SLOT = "%EXPRESSION_TAGS%\n";
 const EFFECTS_SLOT = "%LINE_EFFECTS%\n";
 
@@ -210,10 +160,10 @@ Besides the lines, the answer has:
 Answer with JSON only, in this shape:
 {"lines":[{"type":"narration","speaker":"${NARRATOR}","text":"The door opened."},{"type":"dialogue","speaker":"Mara","text":"Come in,","direction":"soft, wary"},{"type":"narration","speaker":"${NARRATOR}","text":"said Mara softly."}],"cast":[{"name":"Mara","gender":"female","aliases":["Mar"],"description":"A young lamplighter, quick and wary."}],"recap":"Mara has let a stranger in out of the cold, at her door; she spoke last, to him, and he has not answered."}`;
 
-/** The output format as a request is sent it when the library offers no line effects. */
+/** With no line effects offered. */
 export const OUTPUT_FORMAT = outputFormat(SCRIPT_MARKERS[0]);
 
-/** The prompt a library starts with, and what Reset puts back. */
+/** What a library starts with, and what Reset puts back. */
 export const BUILT_IN_PROMPT: PromptTemplate = {
   system: `You turn an excerpt from a chapter of an English novel into an audiobook script.
 
@@ -242,12 +192,12 @@ Excerpt:
 // ---------------------------------------------------------------------------------------------
 // Tags
 
-/** How often a tag's value changes — what decides whether it breaks a provider's prompt cache. */
+/** How often a tag's value changes, which decides whether it breaks a provider's prompt cache. */
 export type TagScope = "request" | "chapter" | "book" | "endpoint";
 
 export interface PromptTag {
   name: string;
-  /** what it is replaced with, for the chip's title */
+  /** the chip's title */
   about: string;
   scope: TagScope;
 }
@@ -312,45 +262,40 @@ export const PROMPT_TAGS: readonly PromptTag[] = [
 
 const TAG_NAMES = new Set(PROMPT_TAGS.map((t) => t.name));
 
-/** `{{ name }}`, spaces inside the braces allowed. */
 const TAG = /\{\{\s*([\w.]+)\s*\}\}/g;
 
-/** Every tag a text names, in order, repeats included. */
+/** In order, repeats included. */
 export function tagsIn(text: string): string[] {
   return [...text.matchAll(TAG)].map((m) => m[1]);
 }
 
-/** A known speaker, as `{{cast}}` and `{{cast.details}}` read one. */
 export interface PromptCastMember {
   name: string;
   aliases?: readonly string[];
   gender?: Gender;
   description?: string;
-  /** the character this speaker is a persona of, when that character is in the cast */
   personaOf?: string;
-  /** a disguise the scripting model found (`Character.masked`); with no `personaOf`, its wearer is unknown */
+  /** `Character.masked`; with no `personaOf`, the wearer is unknown */
   masked?: boolean;
 }
 
-/** Everything a request's tags are filled from. */
 export interface PromptVars {
   book: { title: string; author: string; notes: string };
   chapter: { title: string; number: number };
   /** 1-based */
   part: number;
   parts: number;
-  /** the speakers the chapter needs (`chapterCast`); the Narrator and "Unknown" are left out of both cast tags */
+  /** `chapterCast`; the Narrator and "Unknown" are left out of both cast tags */
   cast: readonly PromptCastMember[];
   excerpt: string;
-  /** the end of the text before the excerpt, when it is not the chapter's first request */
+  /** the end of the text before the excerpt */
   before?: string;
-  /** the recap the chapter before's script left; absent or empty when it has none */
+  /** the previous chapter's recap */
   recap?: string;
-  /** `notes` absent is none, as for an endpoint with nothing typed */
   endpoint: { name: string; model: string; notes?: string };
-  /** the tag names the speech endpoints list (`expressionNames`); absent is none */
+  /** `expressionNames` */
   expressions?: readonly string[];
-  /** the line effects the output format offers (`lineEffectsOf`); absent is none */
+  /** `lineEffectsOf` */
   lineEffects?: readonly { name: string; useWhen: string }[];
 }
 
@@ -362,10 +307,7 @@ function castOf(vars: PromptVars): PromptCastMember[] {
   return vars.cast.filter((c) => c.name !== NARRATOR && c.name !== UNKNOWN);
 }
 
-/**
- * "Mara (female; also called Mar)", "Lord of Shadows (male; persona of Sunny)", "the Black Mask
- * (masked, identity unknown)": what tells a speaker apart, without the description.
- */
+/** "Mara (female; also called Mar)", "Lord of Shadows (male; persona of Sunny)". */
 function nameOf(c: PromptCastMember): string {
   const facts = [
     GENDER[c.gender ?? "?"],
@@ -375,7 +317,7 @@ function nameOf(c: PromptCastMember): string {
   return `${c.name}${facts.length ? ` (${facts.join("; ")})` : ""}`;
 }
 
-/** "Mara (female; also called Mar): A lamplighter." — everything known of a speaker, on one line. */
+/** "Mara (female; also called Mar): A lamplighter." */
 export function speakerLine(c: PromptCastMember): string {
   const description = (c.description ?? "").replace(/\s+/g, " ").trim();
   return `${nameOf(c)}${description ? `: ${description}` : ""}`;
@@ -383,7 +325,7 @@ export function speakerLine(c: PromptCastMember): string {
 
 const detailOf = (c: PromptCastMember): string => `- ${speakerLine(c)}`;
 
-/** A tag's value for one request; undefined for a name that is not a tag. */
+/** Undefined for a name that is not a tag. */
 function valueOf(name: string, vars: PromptVars): string | undefined {
   switch (name) {
     case "excerpt":
@@ -426,8 +368,8 @@ function valueOf(name: string, vars: PromptVars): string | undefined {
 }
 
 /**
- * One message with its tags filled. A line whose tags all came out empty is dropped; an unknown
- * tag is left as it was written (`promptProblems` refuses one before it is saved).
+ * One message with its tags filled, in one pass (a novel containing `{{` is sent as is). A line
+ * whose tags all came out empty is dropped; an unknown tag is left as written.
  */
 export function fill(text: string, vars: PromptVars): string {
   const out: string[] = [];
@@ -447,7 +389,7 @@ export function fill(text: string, vars: PromptVars): string {
   return out.join("\n").trim();
 }
 
-/** The messages as they are sent: tags filled, and the output format after the system prompt. */
+/** The messages as sent: tags filled, the output format after the system prompt. */
 export function renderPrompt(template: PromptTemplate, vars: PromptVars): RenderedPrompt {
   const system = fill(template.system, vars);
   return {
@@ -461,14 +403,10 @@ export function renderPrompt(template: PromptTemplate, vars: PromptVars): Render
 // ---------------------------------------------------------------------------------------------
 // Layers
 
-/** The library's default, or the built-in prompt when nobody has edited it. */
 export const libraryPrompt = (saved: PromptTemplate | null | undefined): PromptTemplate =>
   saved ?? BUILT_IN_PROMPT;
 
-/**
- * The template one request is built from: the book's replacement, else the endpoint's, else the
- * library's default, else the built-in prompt.
- */
+/** A book's conventions are about the text, so its replacement wins over an endpoint's. */
 export function resolvePrompt(layers: {
   library: PromptTemplate | null | undefined;
   profile?: ProfilePrompt | null;
@@ -485,10 +423,7 @@ export function resolvePrompt(layers: {
   return { system, user, origin: { from, fingerprint: fingerprint({ system, user }) } };
 }
 
-/**
- * Which notes a template would not send: the ones with text whose tag it does not name. What the
- * page warns about beside the notes, so a note typed for a prompt that drops it says so.
- */
+/** Notes with text whose tag the template does not name, so they would not be sent. */
 export function unplacedNotes(
   t: PromptTemplate,
   notes: { book?: string; endpoint?: string },
@@ -499,7 +434,7 @@ export function unplacedNotes(
   );
 }
 
-/** A short, stable hash of a template: FNV-1a over both messages, as eight hex digits. */
+/** FNV-1a over both messages, as eight hex digits. */
 export function fingerprint(t: PromptTemplate): string {
   let h = 0x811c9dc5;
   for (const ch of `${t.system}\u0000${t.user}`) {
@@ -509,7 +444,6 @@ export function fingerprint(t: PromptTemplate): string {
   return h.toString(16).padStart(8, "0");
 }
 
-/** How a history entry or a run names where its prompt came from, e.g. "library prompt + endpoint". */
 export function describeOrigin(o: PromptOrigin): string {
   const base = {
     "built-in": "built-in prompt",
@@ -523,11 +457,10 @@ export function describeOrigin(o: PromptOrigin): string {
 // ---------------------------------------------------------------------------------------------
 // Checks
 
-/** The longest a message's template may be, and a book's or an endpoint's notes. Every character is sent, and billed, with every request. */
+/** Every character is sent, and billed, with every request. */
 export const PROMPT_MAX_CHARS = 20_000;
 export const NOTES_MAX_CHARS = 4_000;
 
-/** What stops a book's or an endpoint's notes from being saved. */
 export function notesProblems(notes: string): string[] {
   return notes.length > NOTES_MAX_CHARS
     ? [
@@ -536,11 +469,7 @@ export function notesProblems(notes: string): string[] {
     : [];
 }
 
-/**
- * What stops a template from being saved as a prompt of its own — the library's, an endpoint's or
- * a book's replacement: unknown tags, the excerpt missing, doubled or in the system prompt, and
- * length.
- */
+/** What stops a template from being saved as a prompt of its own. */
 export function promptProblems(t: PromptTemplate): string[] {
   const problems = lengthProblems(t);
   for (const [label, text] of [
@@ -558,7 +487,7 @@ export function promptProblems(t: PromptTemplate): string[] {
   return problems;
 }
 
-/** Only how long a template is: what a prompt keeps but does not send is otherwise its own. */
+/** For texts kept but not sent, only length is checked. */
 export function lengthProblems(t: PromptTemplate): string[] {
   return (
     [
@@ -574,11 +503,7 @@ export function lengthProblems(t: PromptTemplate): string[] {
   );
 }
 
-/**
- * What stops an endpoint's say over the prompt from being saved: its notes always; a replacement
- * as a prompt on its own, and the texts a `default` endpoint keeps for later only for their
- * length, since they are sent nowhere.
- */
+/** A `default` endpoint's kept texts are sent nowhere, so only their length is checked. */
 export function profilePromptProblems(p: ProfilePrompt): string[] {
   return [
     ...notesProblems(p.notes),
@@ -586,16 +511,12 @@ export function profilePromptProblems(p: ProfilePrompt): string[] {
   ];
 }
 
-/**
- * The same for a book's: its notes always, its texts as a whole prompt only while it is switched
- * on. A replacement that is off is kept as it was typed, problems and all, since nothing is sent
- * from it — but not at any length.
- */
+/** A replacement that is off is kept as typed, problems and all, but not at any length. */
 export function bookPromptProblems(p: BookPrompt): string[] {
   return [...notesProblems(p.notes), ...(p.replace ? promptProblems(p) : lengthProblems(p))];
 }
 
-/** What is allowed but costly: a tag in the system prompt that changes with every chapter. */
+/** Allowed but costly: a system-prompt tag that changes per chapter breaks the provider's cache. */
 export function promptWarnings(t: PromptTemplate): string[] {
   const scopes = new Map(PROMPT_TAGS.map((tag) => [tag.name, tag.scope]));
   const moving = [
@@ -612,7 +533,7 @@ export function promptWarnings(t: PromptTemplate): string[] {
 // ---------------------------------------------------------------------------------------------
 // Fixed values
 
-/** What the Endpoints page previews and the connection test sends: a made-up book. */
+/** A made-up book for the Endpoints page preview and the connection test. */
 export function sampleVars(excerpt: string, endpoint: PromptVars["endpoint"]): PromptVars {
   return {
     book: { title: "The Lamplighter", author: "A. N. Author", notes: "" },
@@ -626,10 +547,8 @@ export function sampleVars(excerpt: string, endpoint: PromptVars["endpoint"]): P
 }
 
 /**
- * Roughly how many characters a request sends besides its excerpt: both messages rendered with an
- * empty excerpt, a cast of ten, a paragraph of each kind of notes, of text before the excerpt and of
- * recap, the output format included with two line effects offered. For estimates and budget holds, which are made before the cast
- * and the chunks are known.
+ * Roughly how many characters a request sends besides its excerpt, rendered with typical filler.
+ * For estimates and budget holds, made before the cast and the chunks are known.
  */
 export function promptOverhead(t: PromptTemplate): number {
   const cast = Array.from({ length: 10 }, (_, i) => ({

@@ -1,8 +1,5 @@
-// A clip a part at a time: what `<audio>` asks for when it seeks. The audiobook route answers
-// the same way through the same helper; its case is in exports.test.ts, beside its download.
-//
-// Bun answers a `Range` on a file response with the whole file and a 200, so without this a player
-// could not seek, and one that insists on ranges would not play at all.
+// A clip a part at a time: what `<audio>` asks for when it seeks. Bun answers a `Range` on a file
+// response with the whole file and a 200, so without this a player could not seek.
 import { describe, expect, test } from "bun:test";
 
 import { testApi } from "../support/server";

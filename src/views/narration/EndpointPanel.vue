@@ -4,13 +4,7 @@ import { useEndpointsStore } from "@/stores/endpoints";
 import { useScriptsStore } from "@/stores/scripts";
 
 // Routing, not configuration: where this book's lines go, and what would stop them getting there.
-//
-// Endpoints are app-wide — one pool, shared by every book — so they are configured in one place,
-// on /endpoints. This panel used to be a second editor for the same objects, with its own copies
-// of the same fields and its own idea of what a legal concurrency was; two editors for one object
-// is how a book quietly ends up pointed at a different provider than the one you were looking at.
-// What is left is the half that is genuinely per book: which endpoint each speaker resolves to,
-// and which of them can't currently render.
+// Endpoints are app-wide and edited only on /endpoints; never add a second editor here.
 import { computed } from "vue";
 import { useNow } from "@vueuse/core";
 import { useEndpointLive } from "@/queries";
@@ -26,18 +20,15 @@ import type { VoiceSource } from "@/lib/cast";
 import type { Endpoint } from "@/types";
 
 const props = defineProps<{ bookId: string }>();
-/** "assign a voice" belongs to the Voices tab next door, not to a second picker in here. */
 const emit = defineEmits<{ voices: [] }>();
 const castStore = useCastStore();
 const endpointsStore = useEndpointsStore();
 const scriptsStore = useScriptsStore();
 
-// a cooldown counts down in seconds
 const now = useNow({ interval: 1000 });
 // a cooldown on the server is the gate's, read while narration runs
 useEndpointLive();
 
-/** Deep link to the one page that edits endpoints, landing on the tab that fixes this. */
 const settingsLink = (e: Endpoint, tab = "overview") =>
   `/endpoints?endpoint=tts:${e.id}&tab=${tab}`;
 
@@ -49,9 +40,7 @@ interface Status {
   tab: string;
 }
 
-/** Only the states that decide whether this book's lines can render — `speechReadiness`, the one
- *  answer the blockers and the Endpoints page read too. Observed health — latency, error rates,
- *  spend — is the app-wide page's job, and is a click away. */
+/** Only whether this book's lines can render (`speechReadiness`); observed health is /endpoints'. */
 function statusOf(e: Endpoint): Status {
   const r = speechReadiness(e, now.value.getTime());
   switch (r.state) {
@@ -106,8 +95,7 @@ const borrowed = (v: { from: VoiceSource; of?: string }): string =>
 const counts = computed(() => scriptsStore.lineCounts(props.bookId));
 const linesOf = (name: string) => counts.value[name] ?? 0;
 
-/** Every speaker resolved the way narration resolves it — a speaker with no voice of its own is
- *  read in the Character voice or the Narrator's, and lands on that voice's endpoint. */
+/** Every speaker resolved the way narration resolves it (`effectiveVoice`). */
 const resolved = computed(() => {
   const routes: Route[] = [];
   const unvoiced: { name: string; lines: number }[] = [];
@@ -140,14 +128,12 @@ const resolved = computed(() => {
   };
 });
 
-/** Endpoints in the pool that nothing in this book reaches — listed so the pool is never a
- *  mystery, but kept out of the way. */
 const unused = computed(() =>
   endpointsStore.endpoints.filter(
     (e) => !resolved.value.routes.some((r) => r.endpoint.id === e.id),
   ),
 );
-/** Each route's status, worked out once a tick rather than once per place its row shows it. */
+/** Once a tick, not once per place a row shows it. */
 const statuses = computed(
   () => new Map(resolved.value.routes.map((r) => [r.endpoint.id, statusOf(r.endpoint)])),
 );

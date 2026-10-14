@@ -1,9 +1,5 @@
-// The client and the server, against each other.
-//
-// Both sides of the seam are in this repository, so "the API returns what the client reads" is
-// something the suite can actually check rather than a comment two files apart. These drive the
-// real `HttpLibraryService` against the real Hono app, so a route that renames a field fails here
-// rather than in the browser.
+// The client and the server against each other: the real `HttpLibraryService` over the real Hono
+// app, so a route that renames a field fails here rather than in the browser.
 import { describe, expect, test } from "bun:test";
 
 import { HttpLibraryService, ApiError } from "@/services/library";
@@ -62,9 +58,8 @@ describe("the library client against the real API", () => {
   });
 
   test("removing the only volume removes the book, and says which it did", async () => {
-    // The store never asks the server this — it removes a one-volume book as a book — so the
-    // client's reading of the answer is checked here or nowhere. (A volume added and discarded is
-    // driven through this client by libraryBackend.test.ts.)
+    // The store never asks this (it removes a one-volume book as a book), so the client's reading of
+    // the answer is checked here or nowhere.
     const api = client();
     const { book } = await api.importBook(await volume(["One"]));
     await api.confirmImport(book.id);
@@ -96,8 +91,7 @@ describe("the library client against the real API", () => {
       .catch((e: unknown) => e);
 
     expect(failed).toBeInstanceOf(ApiError);
-    // Before, the server answered a bad body in the validator's shape and this could only ever
-    // read "Request failed (400)" — a worse message than the one the server already had.
+    // A bad body reads as the server's own message, not "Request failed (400)".
     expect((failed as ApiError).message).not.toContain("Request failed");
     expect((failed as ApiError).status).toBe(400);
   });

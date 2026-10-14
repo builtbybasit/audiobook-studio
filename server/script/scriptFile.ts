@@ -1,10 +1,5 @@
-// A script file read into its parts, and refused when it cannot be one.
-//
-// Two callers read a file this way: the import plan (`importPlan.ts`), which matches what it finds
-// against a book and writes nothing, and the voice samples' route (`~/speakerSamples/store`), which
-// reads the same file again when an import is applied, to keep the recordings it carries. Both go
-// through the same guard on what the zip unzips to and the same schemas, so a file the plan showed
-// is a file the apply step reads the same way.
+// A script file read into its parts, or refused. Shared by the import plan and the voice samples'
+// route (`~/speakerSamples/store`), so the apply step reads a file exactly as the plan did.
 import * as v from "valibot";
 
 import type {
@@ -33,38 +28,33 @@ import {
 
 /** An uploaded script file: a `<book>.script.zip`, or one chapter's `.json` on its own. */
 export interface ScriptUpload {
-  /** the file's name as the browser sent it, which history's "Imported from …" reads */
+  /** as the browser sent it; history's "Imported from …" reads it */
   name: string;
   bytes: Uint8Array;
 }
 
 export interface ReadFile {
   manifest?: ScriptManifest;
-  /** the chapter files that parsed, in the order their names sort — the export numbers them */
+  /** the chapter files that parsed, in name order (the export numbers them) */
   chapters: { file: string; chapter: ScriptFileChapter }[];
   /** the chapter files that did not */
   refused: RefusedChapter[];
   cast: ScriptFileSpeaker[];
   lexicon: ScriptFileTerm[];
   ignored: string[];
-  /**
-   * Every file under `voices/`, by its path relative to the manifest, with its size — and its bytes
-   * when it was small enough to be worth keeping. Judged a folder at a time by what the cast names.
-   */
+  /** Every file under `voices/`, by path relative to the manifest: size, and maybe bytes. */
   voices: Map<string, FolderEntry>;
-  /** the folder the manifest sits in, which every other path is read from — `""` at the top */
+  /** the manifest's folder, which other paths are relative to; `""` at the top */
   root: string;
 }
 
 /**
- * How much of each recording a read holds. A plan needs to know what a recording is, not to hold
- * it, so by default only its first bytes are kept — enough for `sniffSample` — and its size is
- * the one the zip guard measured. Keeping recordings is the voice samples' route's job, and it
- * asks for whole ones only in the folders it is keeping, named by their path in the zip.
+ * How much of each recording a read holds: by default only a head for `sniffSample`. The voice
+ * samples' route asks for whole ones in the folders it keeps.
  */
 export type RecordingReads = "head" | { whole(path: string): boolean };
 
-/** What `sniffSample` reads of a recording; comfortably more than any header it looks for. */
+/** What `sniffSample` reads of a recording; more than any header it looks for. */
 export const SNIFF_BYTES = 4096;
 
 const refuse = (message: string, detail?: string): AppError => new AppError(400, message, detail);
@@ -72,10 +62,7 @@ const refuse = (message: string, detail?: string): AppError => new AppError(400,
 /** A zip starts with a local file header, `PK\x03\x04` — or `PK\x05\x06` when it is empty. */
 const isZip = (b: Uint8Array): boolean => b.length >= 4 && b[0] === 0x50 && b[1] === 0x4b;
 
-/**
- * Read an upload into its parts, refusing what cannot be a script file. The voice samples' route
- * reads the same file again when the import is applied, and comes through here too.
- */
+/** Read an upload into its parts, refusing what cannot be a script file. */
 export async function readScriptFile(
   upload: ScriptUpload,
   limits: SampleLimits = SAMPLE_LIMITS,
@@ -95,8 +82,7 @@ export async function readScriptFile(
       notZip: (message) =>
         new AppError(415, "That file could not be read as a script file", message),
     },
-    // A recording over the limit on one is refused by its size alone, so it is never inflated
-    // into memory to be refused; the rest are held as a head unless this read keeps them whole.
+    // An oversized recording is refused by size, never inflated; the rest are a head unless kept.
     keep: (name, size) => {
       if (junk(name)) return false;
       if (/\.json$/i.test(name)) return true;
@@ -121,10 +107,7 @@ export async function readScriptFile(
 /** A file in a `voices/` folder, wherever the manifest sits. */
 const VOICES = /(^|\/)voices\//;
 
-/**
- * What a hand-made zip picks up on the way: Finder's `__MACOSX/` resource forks and `._` files,
- * and the `.DS_Store` a folder leaves behind. Skipped without a word — nobody put them there.
- */
+/** Finder junk (`__MACOSX/`, `._*`, `.DS_Store`), skipped silently. */
 function junk(name: string): boolean {
   const parts = name.split("/");
   const base = parts.at(-1) ?? "";
@@ -138,8 +121,7 @@ function readZip(
   sizes: ReadonlyMap<string, number>,
   partial: ReadonlySet<string>,
 ): ReadFile {
-  // Finder's Compress wraps everything in a folder, so the manifest is wherever it is shallowest
-  // and every other path is read from there.
+  // Finder's Compress wraps everything in a folder: the shallowest manifest is the root.
   const manifests = kept.filter((n) => n.split("/").at(-1) === "manifest.json");
   if (!manifests.length)
     throw refuse(
@@ -208,8 +190,7 @@ function readZip(
     const rest = name.startsWith(chapterDir) ? name.slice(chapterDir.length) : "";
     if (rest && !rest.includes("/") && /\.json$/i.test(rest)) {
       const file = name.slice(root.length);
-      // Named as a chapter but with nothing inflated: the zip's data for it is damaged, which is a
-      // chapter refused, not a stray file nobody meant to send.
+      // A chapter whose data would not inflate is refused, not ignored.
       if (!bytes) {
         read.refused.push({
           file,

@@ -1,27 +1,7 @@
-// The build job: a selection of narrated chapters in, an audiobook on disk out.
-//
-// It is the third kind the same runner claims, cancels and recovers, and the first one that is
-// about a book rather than a chapter — so its `chapterId` is null, its dedupe key is the book,
-// and one book builds one audiobook at a time. That is stricter than the browser's rule, which
-// lets two audiobooks of one book build at once; the difference is deliberate, because here a
-// build reads every clip the other one might be replacing.
-//
-// **What goes into the file is decided once, by the planner the page drew with.** `planOf` in
-// `src/lib/exports.ts` turns the selection, the volumes and the settings into the files, their
-// order, their chapters and their names, and the build lays down exactly that. Nothing here
-// re-derives which chapter belongs in which file, because the page has already shown someone the
-// answer and a second copy of the rule is how the preview and the file stop agreeing.
-//
-// **An update is a whole new encode.** Every chapter's clips are read and encoded again, by ffmpeg,
-// the only encoder: a span of AAC or MP3 cannot be spliced beside audio encoded in another run.
-// What each chapter's audio was is recorded on the export (`state`), which is how the page says a
-// version is behind the book.
-//
-// **The version on disk stays current until the new one lands.** The row goes up as `building`
-// straight away, so the Audiobooks tab shows a version arriving; the export it supersedes is only
-// marked `replaced` by the write that finishes the new one. A build that fails keeps its row and
-// its error for Retry to read, and a cancelled one leaves nothing behind at all — in both cases
-// the half-written files go and the audiobook that was already there is untouched.
+// The build job: narrated chapters in, an audiobook on disk out. One build per book at a time
+// (`chapterId` null). The file layout comes from `planOf` in src/lib/exports.ts, the same planner
+// the page previews with, so nothing here re-derives it. An update is a full re-encode (AAC/MP3
+// can't be spliced). The previous version stays current until the new one lands.
 import { basename } from "node:path";
 
 import type {
@@ -69,19 +49,15 @@ import { inBackground } from "~/lib/background";
 export interface BuildInput {
   ids: readonly number[];
   settings: ExportSettings;
-  /** the finished export this build is the next version of, when it is an update */
+  /** the export this build updates, if any */
   updates?: number | null;
 }
 
-/** Megabytes, as the page quotes them, from bytes as the disk counts them. */
 const mb = (bytes: number): number => Math.round((bytes / 1024 / 1024) * 100) / 100;
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
-/**
- * One file's tags. The track number is only said of a file per chapter and the disc only of a
- * file per volume: a set of one, or a single file holding the whole book, has neither to say.
- */
+/** One file's tags. Track number only for per-chapter files, disc only for per-volume files. */
 function tagsOf(
   s: ExportSettings,
   file: ExportFile,
@@ -103,7 +79,7 @@ function tagsOf(
   };
 }
 
-/** The plan, with the marks the encoder will really write: none in an MP3. */
+/** The plan, with the chapter marks the encoder really writes (none in MP3). */
 function planFor(
   chapters: Chapter[],
   volumes: Volume[],
@@ -125,10 +101,7 @@ function planFor(
   };
 }
 
-/**
- * What a chapter's audio is right now: its fingerprint, and the lines that can be heard — a line the
- * book does not read is left out of the stitch, clip or no clip (`heardLines`).
- */
+/** A chapter's audio fingerprint and its heard lines; unread lines are left out (`heardLines`). */
 function audioOf(
   db: Db | Tx,
   book: Book,
@@ -145,16 +118,9 @@ function audioOf(
 // ---------- queueing one ----------
 
 /**
- * Queue a build, and put its row up while it waits.
- *
- * Every refusal here is one the page already makes, kept because the page is not the only client:
- * a chapter with no usable audio is a gap in the audiobook, and `reviewOf` — the function that
- * draws the blocker panel — is what is asked, so the server's reasons are the page's reasons.
- * Chapters are never quietly dropped from a build the way they are from a bulk narration run: a
- * selection is a promise about what will be in the file.
- *
- * Only the queue's `enqueue` is asked for, so the demo can put up a build the worker never runs —
- * one that failed before this session began (`demo/live.ts`) — through the same refusals and plan.
+ * Queue a build and put its row up. Refusals come from `reviewOf`, the page's blocker panel, so
+ * both give the same reasons. Unlike narration, chapters are never silently dropped. Takes only
+ * `enqueue` so the demo (`demo/live.ts`) can stage a build the worker never runs.
  */
 export function enqueueBuild(
   db: Db,
@@ -168,10 +134,8 @@ export function enqueueBuild(
   const book = library.getBook(db, bookId);
   if (!book) throw notFound("No such book");
   if (book.importing) throw conflict("Finish the contents review before building this book");
-  // A cover is named by the url it was uploaded to. Anything else — the demo's data URL, another
-  // book's image, another library's, a path that is not one — is a cover this library could never
-  // find, and is said now rather than as a build that fails once it gets there. Whether the file is
-  // still on disk is asked by the build itself, which is when it has to be.
+  // Only this book's uploaded cover URLs resolve; refuse anything else now rather than mid-build.
+  // Whether the file still exists is checked by the build.
   if (settings.cover != null && !covers.fileOf(bookId, settings.cover))
     throw badRequest(
       "The cover image is not one this server holds; choose it again",
@@ -203,8 +167,7 @@ export function enqueueBuild(
   const named = updates == null ? null : exports.getExport(db, updates);
   if (updates != null && (!named || named.bookId !== bookId))
     throw notFound("No such export to update");
-  // An update of an audiobook the settings have since renamed is not an update at all; it is the
-  // first version of a different one, and saying so beats versioning the wrong thing quietly.
+  // a renamed audiobook is a different one, not an update
   const prev =
     named?.key === key
       ? named
@@ -239,12 +202,10 @@ export function enqueueBuild(
     chapterGap: settings.chapterGap,
     normalize: settings.normalize,
     loudness: settings.loudness,
-    // Both are what was written, so they stay at nothing until something has been.
     size: 0,
     markers,
     createdAt: "",
-    // what the selection claims, so a later chapter is behind a whole-book audiobook and not a
-    // chosen handful
+    // a chapter added later makes a whole-book audiobook behind, not a chosen handful
     scope: scopeOf([...known.values()], ordered, settings.grouping),
     version: prev ? prev.version + 1 : 1,
     replaces: prev?.id ?? null,
@@ -275,18 +236,14 @@ export function enqueueBuild(
     bookId,
     chapterId: null,
     label: `Build ${label}`,
-    // the fake speech model costs nothing to reserve, and encoding its files nothing at all
     run: { exportRun: run },
-    // In the same transaction as the job row, so there is never a queued build with no version
-    // showing, nor a version with no build coming — and so the job knows which version it is
-    // making before the worker can claim it. An id written after the enqueue returns is an id the
-    // handler can start without, since an enqueue wakes the queue at once.
+    // Same transaction as the job row: the job knows its export id before the worker can claim it.
     onCreated: (tx, id) => {
       exportId = exports.insertBuild(tx, { ...draft, jobId: id }, Date.now());
       setRun(tx, id, { ...run, exportId });
     },
   });
-  // Lost the race to another request for this book: the unique index refused the second row.
+  // lost the race: the unique index refused a second build for this book
   if (!created) throw conflict("This book is already building an audiobook");
 
   return { job, export: exports.getExport(db, exportId)! };
@@ -295,7 +252,7 @@ export function enqueueBuild(
 // ---------- running one ----------
 
 export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFiles): JobHandler {
-  /** The clip's file on disk, from the url its row carries — made first if it is a demo clip not yet made. */
+  /** The clip's file on disk; a demo clip is made first if needed. */
   const clipPath = async (bookId: string, url: string | undefined): Promise<string | null> =>
     url ? clips.ready(bookId, basename(url)) : null;
   const covers = coverFiles(clips);
@@ -307,9 +264,7 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
     const book = library.getBook(db, job.bookId);
     if (!book) throw notFound("The book was removed before the build started");
 
-    // A run that died holding this export — a crash, or a restart — left files nobody will
-    // finish. They go before this one writes its own, so a book built three times after two
-    // crashes has one audiobook on disk and not three.
+    // remove files a crashed earlier attempt left behind
     const leftover = exports.exportFileTokens(db, entry.id);
     if (leftover.length) {
       await files.remove(job.bookId, leftover);
@@ -334,9 +289,7 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
         bitrateKbps: run.settings.bitrate,
       },
     );
-    // The picture: the one the settings chose, or the EPUB's own. A chosen one that has gone is the
-    // build failing — the audiobook asked for was one with that picture on it — while the EPUB's
-    // gone missing is a build without one, said out loud.
+    // A missing chosen cover fails the build; a missing EPUB cover is a warning and no picture.
     const chosen = run.settings.cover;
     let cover = chosen ? await covers.existing(job.bookId, chosen) : null;
     if (chosen && !cover)
@@ -354,8 +307,7 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
     }
     if (cover)
       ctx.note(chosen ? "Embedding your cover image" : "Embedding the EPUB's cover", "info", {});
-    // The book's details from the page, written into every file. A blank title is the book's own,
-    // because a file tagged with no title is listed by its file name.
+    // blank title falls back to the book's: untitled files are listed by file name
     const details = { ...run.settings, title: run.settings.title.trim() || book.title };
     ctx.note("Tagging each file with the book's details", "info", {
       title: details.title,
@@ -389,16 +341,12 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
         chapters: file.chapterIds.length,
       });
       const { token, path } = await files.reserve(job.bookId, encoder.ext);
-      // Recorded before a byte is written, so a build that dies leaves behind a row that knows
-      // which file to clean up rather than an orphan nobody can name.
+      // recorded before writing, so a crash leaves a row that knows what to clean up
       exports.setBuildFile(db, entry.id, position, token);
 
       const plan: EncodeChapter[] = [];
-      // One file holds one sample rate — the encoder does not resample — so the first clip that says
-      // what rate it is sets the file's, and a line rendered at another is named here, by chapter,
-      // rather than by the path of a clip file deep inside the encoder. The rate is the one the
-      // narration job read off the file whatever its format, so an MP3 at 44.1 kHz and a WAV at
-      // 24 kHz are refused together here, and an Opus clip counts as the 48 kHz it decodes at.
+      // One sample rate per file (the encoder doesn't resample): the first clip sets it, and a
+      // mismatch is reported here by chapter and line. Opus counts as 48 kHz.
       let rate: { hz: number; chapter: string } | null = null;
       for (const id of file.chapterIds) {
         const chapter = known.get(id);
@@ -426,8 +374,7 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
             throw new Error(
               `“${chapter.title}” has a line rendered at ${sampleRateLabel(hz)}, and ${file.name} already holds ${sampleRateLabel(rate.hz)} audio from “${rate.chapter}”; narrate it again at one rate`,
             );
-          // The silence inside a chapter is the book's pacing, the same gap the reader draws and
-          // the player leaves; there is none after the last line.
+          // the book's pacing gap, none after the last line
           const pause = pauseAfter(s, lines[i + 1], pacing);
           if (pause > 0) parts.push({ kind: "silence", seconds: pause });
         }
@@ -457,8 +404,7 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
       ctx.note(`${file.name} is written`, "info", {
         seconds: Math.round(result.seconds),
         sizeMB: mb(result.bytes),
-        // what the file measured before it was levelled, which is the figure the Export page
-        // cannot know until a build has read the audio
+        // pre-normalisation loudness, which the Export page can't know until a build
         ...(result.measuredLufs != null
           ? {
               loudness: `${result.measuredLufs.toFixed(1)} LUFS in, levelled to ${run.settings.loudness}`,
@@ -467,13 +413,10 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
       });
     }
 
-    // The last point a cancel can still take the build back. Past it the new version is the
-    // audiobook and the one it supersedes is `replaced`; the build returns, and the queue calls
-    // it done however late a cancel arrives.
+    // Last point a cancel can take the build back; past it the build counts as done.
     if (signal.aborted) throw signal.reason;
     db.transaction((tx) => {
       exports.finishBuild(tx, entry.id, written, signatures);
-      // Only now. Until this line the version it supersedes is still the audiobook on disk.
       if (entry.replaces != null) exports.setBuildStatus(tx, entry.replaces, "replaced");
     });
     setRun(db, job.id, {
@@ -501,8 +444,7 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
       try {
         await build(ctx, entry);
       } catch (e) {
-        // The row is the page's account of what happened, so it learns the reason here rather
-        // than from the queue's log. A cancelled build has no reason and no row to put one on.
+        // the page reads the reason from the row, not the job log
         if (!ctx.signal.aborted)
           exports.setBuildStatus(
             ctx.db,
@@ -523,12 +465,9 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
       if (!entry) return;
       const tokens = exports.exportFileTokens(ctx.db, id);
       if (status === "cancelled") {
-        // A cancelled build leaves nothing behind: there is no half an audiobook, and the version
-        // it was going to replace is still the one on disk.
         exports.deleteExport(ctx.db, id);
       } else {
-        // Still `building` here means the run never reached its own catch — a recovery that gave
-        // up on a job that took the process down with it.
+        // still `building`: the process died before the run's own catch
         if (entry.status === "building")
           exports.setBuildStatus(
             ctx.db,
@@ -538,7 +477,7 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
           );
         exports.clearBuildFiles(ctx.db, id);
       }
-      // Nobody is waiting on the disk, and a settle that blocked on it would hold the queue.
+      // don't hold the queue on disk cleanup
       inBackground(files.remove(ctx.job.bookId, tokens), "could not remove a build's files", {
         book: ctx.job.bookId,
         export: id,

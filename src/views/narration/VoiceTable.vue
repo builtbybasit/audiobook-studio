@@ -33,8 +33,7 @@ const props = defineProps<{ bookId: string }>();
 const castStore = useCastStore();
 const endpointsStore = useEndpointsStore();
 const scriptsStore = useScriptsStore();
-// voices come from the endpoints, which are configured app-wide on /endpoints; grouped per
-// endpoint here, paused endpoints listed but disabled
+// grouped per endpoint; paused endpoints listed but disabled
 const voiceOpts = computed(() => endpointsStore.voiceOptions);
 const missing = (c: Character) => c.voice && !endpointsStore.resolveVoice(c.voice);
 const issueOf = (c: Character) =>
@@ -71,8 +70,7 @@ const minorFallback = computed(() => {
 });
 const assignmentPlan = computed(() => castStore.autoAssignPlan(props.bookId));
 const genderLabel = (g: Gender): string => GENDER[g] ?? "unknown";
-/** The Cast page holds the whole record; this opens it on one speaker rather than at the top of a
- *  list you then have to find them in. */
+/** Opens the Cast page on this speaker. */
 const editLink = (c: Character) => ({
   path: `/book/${props.bookId}/cast`,
   query: { speaker: c.name },
@@ -88,9 +86,7 @@ function applyAssignments() {
 
 <template>
   <div class="p-3">
-    <!-- No summary line: the tab above reads "Voices 5/22", and a speaker with no voice of its own
-         shows "Character voice" or "Narrator’s voice" right in its picker. Filters left, bulk
-         actions right. -->
+    <!-- no summary line: the tab above already reads "Voices 5/22" -->
     <div class="mb-3 flex flex-wrap items-center gap-2">
       <input v-model="q" class="input w-44 py-1" placeholder="Find a speaker…" />
       <label class="flex items-center gap-1.5 text-xs"

@@ -1,11 +1,7 @@
-// Narration against a priced endpoint: every request it sends is priced into the ledger, and every
-// way of queuing it is held to the book's budget — before anything is queued, and again before each
-// line goes out.
-//
-// The speech model is the fake, which reports each line it renders as a simulated request, so a
-// run is metered and capped exactly as a paid one would be without a request leaving the machine.
-// The endpoint bills $15 per million characters, so a line costs a fraction of a cent and a cap of
-// a millionth of a dollar is one no line fits.
+// Narration against a priced endpoint: every request priced into the ledger, every way of queuing
+// held to the book's budget before queuing and again before each line. The fake reports each line
+// as a simulated request at $15 per million characters, so a cap of a millionth of a dollar fits
+// no line.
 import { describe, expect, test } from "bun:test";
 
 import type { Endpoint, Job, Segment } from "@/types";
@@ -25,7 +21,7 @@ import {
   type TestApi,
 } from "../support/server";
 
-// $15 per million characters, billed by the character: see the top of the file.
+// $15 per million characters, billed by the character.
 const speech = (over: Partial<Endpoint> = {}): Endpoint =>
   speechEndpoint({ price: 15, billing: { unit: "chars", rate: 15 }, ...over });
 

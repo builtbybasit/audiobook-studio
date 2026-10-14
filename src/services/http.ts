@@ -1,9 +1,4 @@
-// Talking to the API: one client, one error, for every service that goes over the wire.
-//
-// The library service and the jobs service ask different questions of the same server, and the
-// part that is the same — where it is, what a failure looks like, what to do when something other
-// than the API answers — is here so it is written once. A service holds one of these and says what
-// it wants in terms of paths and bodies.
+// The one HTTP client and error every service uses over the wire.
 import { API_BASE } from "@/services/mode";
 import type { ApiErrorCode } from "@/types";
 
@@ -21,12 +16,7 @@ export class ApiError extends Error {
   }
 }
 
-/**
- * Just the part of `fetch` this client calls.
- *
- * Narrower than `typeof fetch` on purpose: the global carries extras that differ between runtimes,
- * and requiring them would mean a test could not hand over a plain function.
- */
+/** Narrower than `typeof fetch` (whose extras vary by runtime), so a test can pass a function. */
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 /** What the API returns when something goes wrong; see `server/lib/errors.ts`. */
@@ -40,10 +30,8 @@ function excerpt(text: string, max = 200): string {
   return flat.length <= max ? flat : flat.slice(0, max) + "…";
 }
 
-// Not everything that answers this URL is the API. A proxy, a dev server or a gateway in front
-// of it answers with HTML, and parsing that would throw a `SyntaxError` out of a method whose
-// whole contract is that it throws `ApiError` — so the page would report a JavaScript fault
-// where it should be saying the server is unreachable.
+// Something other than the API (a proxy, a dev server) may answer with HTML; parsing it must not
+// throw a `SyntaxError` out of a method whose contract is to throw `ApiError`.
 function parseJson(text: string): { body: unknown; parsed: boolean } {
   try {
     return { body: text ? JSON.parse(text) : null, parsed: true };
@@ -54,15 +42,11 @@ function parseJson(text: string): { body: unknown; parsed: boolean } {
 
 const UNREACHABLE = "Could not reach the server";
 
-// A gateway's answer for an API it could not reach. The API's own 502 carries its error body with
-// a code; one without is the proxy in front of it — `pnpm dev`'s, when the server is not running —
-// and is the same failure as a refused connection, so it is reported as one.
+// The API's own 502 carries an error code; one without is the proxy in front of it (e.g. the dev
+// proxy with the server down), reported as unreachable.
 const GATEWAY = new Set([502, 503, 504]);
 
-/**
- * Whether a failure is the API not answering at all: nothing listening (status 0, no response),
- * or a proxy in front of it that could not reach it.
- */
+/** Nothing listening (status 0), or a proxy in front that could not reach the API. */
 export const unreachable = (cause: unknown): boolean =>
   cause instanceof ApiError && (cause.status === 0 || (!cause.code && GATEWAY.has(cause.status)));
 
@@ -96,8 +80,7 @@ export class HttpClient {
     } catch (cause) {
       // a request the page cancelled was not the server failing to answer
       if (init?.signal?.aborted) throw init.signal.reason;
-      // The server is not answering. Saying so is the whole point: the alternative is a UI that
-      // looks like an empty library rather than one that cannot be reached.
+      // Say so, or the UI looks like an empty library instead of an unreachable one.
       throw new ApiError(UNREACHABLE, 0, cause instanceof Error ? cause.message : undefined);
     }
   }
@@ -116,10 +99,7 @@ export class HttpClient {
     return body as T;
   }
 
-  /**
-   * POST JSON and take a file back rather than JSON: the bytes and the response's headers. A
-   * refusal is still the API's JSON error, and is thrown as `send` throws it.
-   */
+  /** POST JSON and take a file back, with its headers. A refusal is still the API's JSON error. */
   async postForFile(path: string, body: unknown): Promise<{ blob: Blob; headers: Headers }> {
     const res = await this.reach(path, {
       method: "POST",
@@ -134,7 +114,7 @@ export class HttpClient {
     return this.send<T>(path);
   }
 
-  /** GET a file rather than JSON: its bytes. A refusal is still the API's JSON error. */
+  /** A refusal is still the API's JSON error. */
   async getBlob(path: string): Promise<Blob> {
     const res = await this.reach(path);
     if (!res.ok) throw refusal(res, await res.text());
@@ -158,7 +138,6 @@ export class HttpClient {
     });
   }
 
-  /** Change part of something: what the body leaves out is left alone. */
   patch<T>(path: string, body: unknown): Promise<T> {
     return this.send<T>(path, {
       method: "PATCH",
@@ -167,7 +146,7 @@ export class HttpClient {
     });
   }
 
-  /** `multipart/form-data`: the file under `file`, and only the fields that have something in them. */
+  /** The file under `file`, and only the non-blank fields. */
   postForm<T>(path: string, file: File, fields: Record<string, string | undefined>): Promise<T> {
     const form = new FormData();
     form.set("file", file);
@@ -175,7 +154,6 @@ export class HttpClient {
     return this.postFormData<T>(path, form);
   }
 
-  /** `multipart/form-data` built by the caller — several files under one name, say. */
   postFormData<T>(path: string, form: FormData): Promise<T> {
     return this.send<T>(path, { method: "POST", body: form });
   }
@@ -185,5 +163,4 @@ export class HttpClient {
   }
 }
 
-/** A path segment, made safe. */
 export const seg = (s: string): string => encodeURIComponent(s);

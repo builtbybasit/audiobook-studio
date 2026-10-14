@@ -1,6 +1,4 @@
-// What the demo sets running whenever it is seeded as it began — when it is first opened, and on a
-// reset — so the Queue, the job indicator and the endpoint activity are not empty the first time
-// you look at them. The server sets them going (`server/demo/situations.ts`); this is only the list.
+// Runs the demo starts when seeded with no situation, so the Queue isn't empty on first look.
 export interface StartupRun {
   kind: "scripting" | "narration";
   bookId: string;

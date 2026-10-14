@@ -1,14 +1,7 @@
 <script setup lang="ts">
-// The voice effects sheet, opened from the cast page for the book's thought effect or for one
-// speaker (`subject`). Two views slide side by side inside it: the list of effects to try on and
-// choose (`TryList`), and one effect taken apart (`EffectEditor`), for which the sheet widens.
-//
-// The header is both views': who the sheet is for, and the line they try effects on — one of the
-// subject's own narrated lines, stepped through by its place among them and blurred until asked
-// for, since the line is there to be heard and the story not read ahead. A speaker's sheet switches
-// between their lines and their thoughts itself; the book's is about thoughts only. A line
-// effect's sheet is the editor alone, on every narrated line: it is the scripting model that
-// puts the effect on a line, so there is nothing here to choose.
+// The voice effects sheet, for the book's thought effect or one speaker (`subject`): the list
+// (`TryList`) and one effect taken apart (`EffectEditor`) slide side by side. A line effect's sheet
+// is the editor alone, since the scripting model puts line effects on lines.
 import { computed, nextTick, ref, watch } from "vue";
 import { DialogTitle } from "reka-ui";
 import { ChevronLeft as PrevIcon, ChevronRight as NextIcon, X as CloseIcon } from "@lucide/vue";
@@ -29,7 +22,6 @@ import TryList from "./TryList.vue";
 
 const props = defineProps<{ bookId: string; subject: EffectSubject | null }>();
 const open = defineModel<boolean>("open", { default: false });
-// the library's effects, read in once and kept; the page may read them too, which costs nothing more
 useEffects();
 const effectsStore = useEffectsStore();
 const castStore = useCastStore();
@@ -108,8 +100,7 @@ const pasteInto = computed(() =>
     : null,
 );
 
-/** Opened, or opened for someone else: start on the list, at their first line — or in the editor,
- *  when the book's sheet was opened to tune an effect. */
+/** Opened, or for someone else: start on the list at their first line, or in the editor to tune. */
 watch(
   () => [open.value, props.subject] as const,
   ([o, s]) => {

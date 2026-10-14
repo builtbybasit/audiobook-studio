@@ -1,16 +1,6 @@
-// What a book has spent and what its unfinished work holds.
-//
-// Spending is the server's: every request a job sends is priced and appended to its ledger, and
-// every run it queued holds a reservation there. Nothing edits it in the browser, so the reads stay
-// in the query cache, and the jobs store's `spent` / `reserved` / `scriptSpent` / `scriptReserved`
-// answer from them (`spendOf`) — so the book's budget panel, the Endpoints page's budget table, the
-// wait reasons and the run estimates all read the one figure.
-//
-// Spending moves when a job does, so the queue's poll invalidates a book's spend on every move of
-// one of its jobs (`spendMoved`), the same way it reads a chapter's script again as clips land; a
-// budget write invalidates it too. Only what a page is showing is read again at once — a poll tick
-// would otherwise re-read every book the Endpoints page ever totalled — and the rest is marked
-// stale, so the next page to ask reads it afresh, as it does an entry already collected.
+// What a book has spent and what its unfinished work holds, from the server's ledger, kept in the
+// query cache; the jobs store's budget figures answer from it (`spendOf`). The queue's poll and
+// budget writes invalidate it (`spendMoved`); only what a page shows is refetched at once.
 import { computed, toValue, type MaybeRefOrGetter } from "vue";
 import { useQuery } from "@pinia/colada";
 
@@ -30,10 +20,7 @@ const spendQuery = (bookId: string) => ({
   query: () => readSpend(bookId),
 });
 
-/**
- * A book's spending read now, whether or not a page shows it — for a run started from a page that
- * has another book open, whose budget still has to be checked against what it has spent.
- */
+/** Read a book's spending now, shown or not, e.g. for a run on a book no page has open. */
 export function fetchSpend(bookId: string): Promise<BookSpend> {
   return fetchQuery(spendQuery(bookId));
 }
@@ -58,8 +45,8 @@ export function useBookSpend(bookId: MaybeRefOrGetter<string | null | undefined>
 /** Every book on the shelf's spending, for the pages that list or total the library. */
 export function useLibrarySpend() {
   const libraryStore = useLibraryStore();
-  // the shelf is in the key, so a book added or removed is a read of its own; invalidating
-  // `keys.librarySpend` still reaches every such entry, since a key matches by prefix
+  // the shelf is in the key, so adding a book is a new read; `keys.librarySpend` still matches
+  // every entry by prefix
   const ids = computed(() => libraryStore.books.map((b) => b.id));
   return useQuery(() => ({
     key: [...keys.librarySpend, ids.value.join(",")],

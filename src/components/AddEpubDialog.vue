@@ -1,7 +1,6 @@
 <script setup lang="ts">
-// Adding an EPUB: a new novel, or the next volume of one already here. Confirming reads the file
-// into a book (or volume) that waits in the contents review; nothing is on the shelf until that
-// review is done.
+// Adding an EPUB as a new novel or the next volume of one. The result waits in the contents review;
+// nothing is on the shelf until that is done.
 import { useLibraryStore } from "@/stores/library";
 
 import { computed, ref, watch } from "vue";
@@ -26,7 +25,6 @@ watch(
 const books = computed(() => libraryStore.shelved);
 const reading = ref(false);
 
-/** Read the file and go straight to its contents review. */
 async function confirm() {
   const p = draft.value;
   if (!p || reading.value) return;
@@ -38,7 +36,7 @@ async function confirm() {
         : (await libraryStore.importVolume(p.bookId, { source: p.source, name: p.volName })) == null
           ? null
           : p.bookId;
-    // The store has already said what went wrong; the dialog stays open on the file that failed.
+    // the store already reported the error; the dialog stays open on the file
     if (bookId == null) return;
     emit("close");
     void router.push(`/book/${bookId}/contents`);

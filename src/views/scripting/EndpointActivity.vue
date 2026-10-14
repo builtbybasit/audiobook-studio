@@ -14,14 +14,13 @@ import { useScriptTotals } from "@/queries/scriptActivity";
 import type { Profile, RequestRecord } from "@/types";
 const props = defineProps<{
   profile: Profile;
-  /** the profile's latest settled requests in the server's ledger, newest first */
+  /** latest settled requests, newest first */
   rows: RequestRecord[];
-  /** whether the ledger has been read: until then the figures from it are not zero, just unknown */
+  /** until then figures are unknown, not zero */
   loaded: boolean;
   now: number;
 }>();
-// the latest rows say how the profile is doing now — latency, the last error, a cooldown — and the
-// server's sum over the last seven days says how much it did, however many requests that was
+// rows give current health; the server's 7-day sum gives volume
 const scriptTotals = useScriptTotals();
 const week = computed(() => scriptTotals.totalsOf(props.profile.id));
 const jobsStore = useJobsStore();
@@ -29,8 +28,7 @@ const libraryStore = useLibraryStore();
 const uiStore = useUiStore();
 const stats = computed(() => scriptTelemetry(props.rows, props.profile));
 const error = computed(() => stats.value.lastError);
-// the reading number of the chapter it failed on, left out while that book's chapters are unread
-// or when the chapter is skipped
+// omitted while chapters are unread or the chapter is skipped
 const errorChapter = computed(() =>
   error.value?.chapterId == null || error.value.bookId == null
     ? undefined
@@ -62,9 +60,7 @@ const success = computed(() => {
     : "—";
 });
 const number = (n: number) => n.toLocaleString();
-/** a figure read off the ledger, or an ellipsis while it is still being read */
 const fromLedger = (text: string) => (props.loaded ? text : "…");
-/** a figure of the last seven days, or an ellipsis while they are still being summed */
 const fromWeek = (text: (t: NonNullable<typeof week.value>) => string) =>
   week.value ? text(week.value) : "…";
 async function copyError() {

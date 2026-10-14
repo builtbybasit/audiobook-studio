@@ -1,5 +1,5 @@
-// The queue. One job per chapter of work, whatever kind it is; `scriptRun` and `exportRun` carry
-// the live detail the Queue page opens up, and everything a retry needs to run it again.
+// The queue: one job per chapter of work. The `*Run` fields carry the live detail the Queue page
+// shows and everything a retry needs.
 import type { ExportSettings } from "@/types/export";
 import type { NarrationScope } from "@/types/run";
 import type { Profile, ResolvedPrompt } from "@/types/scripting";
@@ -27,23 +27,16 @@ export interface Job {
   startedAt: number | null;
   finishedAt: number | null;
   cancelled: boolean;
-  /**
-   * Moved ahead of the queue by "Run next": higher runs first, ties oldest first (`byRunOrder`).
-   * Absent on a job never moved, which counts as 0.
-   */
+  /** Set by "Run next": higher runs first, ties oldest first (`byRunOrder`). Absent counts as 0. */
   priority?: number;
-  /** What the job reported as it ran, oldest first; absent for a job that reported nothing. */
+  /** oldest first */
   activity?: JobEvent[];
   droppedEvents?: number;
   waitingReason?: string;
-  /**
-   * The bulk run this job belongs to. Several chapters asked for in one press share an id, so the
-   * queue can say "chapter 3 of 8", the whole run can be cancelled at once, and a retry can pick out
-   * the chapters of one run that failed.
-   */
+  /** Shared by the chapters of one press: "chapter 3 of 8", cancel all, retry the failed ones. */
   bulk?: {
     id: number;
-    /** what was asked for, in the words the button used */
+    /** in the words the button used */
     op: string;
     index: number;
     total: number;
@@ -53,9 +46,8 @@ export interface Job {
   scriptRun?: {
     profile: Profile;
     /**
-     * The prompt the run was queued with, its layers resolved and its tags not yet filled, and the
-     * book's notes as they were then. Absent on a run queued before prompts were editable, which is
-     * sent the built-in prompt.
+     * Resolved layers with tags unfilled, plus the book's notes at queue time. Absent means the
+     * built-in prompt.
      */
     prompt?: ResolvedPrompt & { notes: string };
     requests: number;
@@ -67,50 +59,38 @@ export interface Job {
     /** total input tokens, the cached slice included */
     inputTokens: number;
     outputTokens: number;
-    /** of `inputTokens`, reported as served from cache — only from requests that reported it */
+    /** only from requests that reported it */
     cachedInput?: number;
-    /** requests whose provider said nothing about cache use, so their cost is an estimate */
+    /** requests that didn't report cache use, so their cost is an estimate */
     cacheUnreported?: number;
-    /** what this run was estimated to cost when it was planned, for the reconciliation afterwards */
+    /** the planned estimate, for reconciliation afterwards */
     estimated?: number;
   };
   /**
-   * What a narration job is holding against the book's cap while it runs.
-   *
-   * Narration is charged per clip as each one lands, so without this two runs that each fit the
-   * remaining budget on their own could start together and land past the cap between them. The
-   * figure is the **undiscounted** price of everything the job queued — the same rule the scripting
-   * side reserves by. The demo releases it when the job finishes rather than clip by clip, so the
-   * reservation only ever errs towards holding too much back; the server gives each line's share
-   * back once the line is written, because it asks the budget again before every line it sends.
+   * Held against the book's cap while it runs, at **undiscounted** prices (as scripting reserves),
+   * so two runs that each fit can't together overshoot. The server returns each line's share once
+   * it is written; the demo releases it all at the end.
    */
   narrationRun?: {
     reserved: number;
-    /** clips this job put in the queue, for the reconciliation the queue shows afterwards */
+    /** for the reconciliation the queue shows afterwards */
     clips: number;
-    /**
-     * What the run renders: a scope, or `pending` — only the clips already in flight, as a retake's
-     * job is. Absent on a job queued before it was kept, whose `bulk.scope` label says instead.
-     */
+    /** `pending`: only the clips already in flight, as for a retake. Absent: see `bulk.scope`. */
     scope?: NarrationScope | "pending";
-    /** what this chapter was estimated at when it was dispatched, at the rates in force then */
+    /** at the rates in force when dispatched */
     estimated?: number;
     /**
-     * The estimate's two halves, where anything in this chapter bills on the audio it returns.
-     * They reconcile separately because they are wrong for different reasons: the input side only
-     * if the text changed under the run, the audio side whenever a line reads longer or shorter
-     * than this app's estimate — or whenever the provider's audio tokeniser is not the one
-     * `audioTokensPerSecond` assumes.
+     * Input and audio halves, where the chapter bills on returned audio. They reconcile apart:
+     * input drifts only if the text changed, audio whenever lines run longer/shorter than estimated
+     * or the tokeniser differs from `audioTokensPerSecond`.
      */
     estimatedInput?: number;
     estimatedAudio?: number | null;
   };
-  /** Live detail of a build, and everything a retry needs to run it again. */
   exportRun?: {
     exportId: number;
     settings: ExportSettings;
     chapterIds: number[];
-    /** the export this build updates, when it is an update */
     updates: number | null;
     files: number;
     /** 1-based index of the file being written */
@@ -119,19 +99,18 @@ export interface Job {
     stage: string;
     done: number;
   };
-  /** Live detail of a check by ear: one chapter's current clips heard by a transcription endpoint. */
+  /** One chapter's current clips heard by a transcription endpoint. */
   checkRun?: {
-    /** the transcription endpoint's id, as the run was queued with */
     endpoint: string;
     /** lines with a clip to hear */
     lines: number;
-    /** heard so far, this run */
+    /** this run */
     checked: number;
-    /** of those, heard saying something other than their line */
+    /** heard saying something other than their line */
     mismatched: number;
     /** requests that failed; the lines stay unchecked */
     failed: number;
-    /** hears every clip, those already heard as their line reads too ("Check again") */
+    /** "Check again": hears every clip, including those already heard right */
     again?: true;
   };
 }

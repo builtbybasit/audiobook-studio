@@ -1,19 +1,7 @@
 <script setup lang="ts">
-// One picked sample in the clone or keep form: play it, see its shape and how long it runs, cut it
-// down, say what is said in it.
-//
-// The file is decoded here once (`lib/sampleAudio.ts`) and that one decode serves everything: the
-// duration, the waveform's peaks, the speech found for "Trim silence" and the cut itself. A file the
-// browser cannot decode still plays where the <audio> element can, but has no shape and no trim.
-//
-// Playback is the app's one player, under an id made from the file's object URL, so it lights only
-// this row's button and stops when the row goes. Playing a selection starts the player at its start
-// and pauses it once the playhead passes its end, which the player notices on its own tick — a
-// tenth of a second late at most. Apply swaps the row's file for the cut, a WAV, and marks the row
-// trimmed, so a transcript typed for the whole file asks to be checked.
-//
-// Where a transcriber is switched on, the transcript can be heard rather than typed: the row's file
-// as it stands — trimmed or not — goes to the first one on, and what it heard fills the field.
+// One picked sample in the clone or keep form: play, waveform, trim, transcript. Decoded once
+// (`lib/sampleAudio.ts`) for duration, peaks, silence trim and the cut; an undecodable file still
+// plays but can't be trimmed. A selection stops on the player's tick, up to 0.1 s late.
 import { computed, defineAsyncComponent, ref, shallowRef, watch } from "vue";
 import {
   Captions as TranscribeIcon,
@@ -38,7 +26,7 @@ const Waveform = defineAsyncComponent(() => import("@/components/Waveform.vue"))
 
 const props = defineProps<{
   row: SampleRow;
-  /** the provider takes a transcript of each sample */
+  /** the provider takes a per-sample transcript */
   asks: boolean;
   /** …and will not clone without one */
   must: boolean;
@@ -53,10 +41,8 @@ const url = ref("");
 const id = computed(() => `sample-pick:${url.value}`);
 const audio = shallowRef<SampleAudio | null>(null);
 const unreadable = ref(false);
-/** the selection while trimming; null when not */
 const trim = ref<{ start: number; end: number } | null>(null);
 const silent = ref(false);
-/** where a selection being played stops */
 const stopAt = ref<number | null>(null);
 
 watch(
@@ -93,7 +79,6 @@ function toggle() {
   if (audio.value) player.playQueue(queue(audio.value));
   else void player.playFile(id.value, url.value, name.value).catch(() => {});
 }
-/** a click on the shape plays from there, or moves the playhead if this sample is loaded already */
 function seek(fraction: number) {
   if (!audio.value) return;
   const at = fraction * audio.value.duration;
@@ -107,7 +92,7 @@ function playSelection() {
   player.playQueue(queue(audio.value), trim.value.start);
   stopAt.value = trim.value.end;
 }
-// Read the playhead only while a selection plays. Pausing, or playing something else, ends it too.
+// Pausing, or playing something else, also ends the selection.
 watch(
   () =>
     stopAt.value != null &&
@@ -129,7 +114,7 @@ function trimSilence() {
   silent.value = !found;
   if (found) trim.value = found;
 }
-/** an edge typed in, kept a tenth of a second from the other one and inside the clip */
+/** kept 0.1 s from the other edge and inside the clip */
 function setEdge(edge: "start" | "end", v: number | null) {
   const t = trim.value;
   if (!t || !audio.value || v == null) return;
@@ -149,16 +134,15 @@ function apply() {
   cancel();
   emit("change", { ...props.row, file, trimmed: true });
 }
-/** the file is with a transcriber */
 const hearing = ref(false);
 async function transcribe() {
   const file = props.row.file;
   hearing.value = true;
   try {
     const text = await endpointsStore.transcribe(file);
-    // a failure has been said; a file replaced meanwhile — trimmed again — is not what was heard
+    // a file replaced meanwhile is not what was heard
     if (text == null || props.row.file !== file) return;
-    // heard from the file as it is now, so a trim before it no longer asks for a check
+    // heard from the current file, so an earlier trim no longer needs a check
     emit("change", {
       ...props.row,
       transcript: text.trim().slice(0, MAX_TRANSCRIPT_CHARS),

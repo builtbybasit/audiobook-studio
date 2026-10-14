@@ -1,12 +1,7 @@
-// The speech gate on its own: when a line may go out to its endpoint — fewer than its concurrency
-// out, not paused, not cooling down after a rate limit — in the order the lines asked, and what it
-// tells the line at the head about why it waits. The limits are a callback here, as the narration
-// job's reading of the endpoints table is, so a test changes them the way a save on the Endpoints
-// page does: in place, then `changed()` — or not, for the poll that is there for exactly that.
-//
-// The gate's timers are real, so the waits here are tens of milliseconds; where a test is about a
-// moment rather than a wait, the gate is handed a clock the test moves itself. The one wait that is
-// a second long — the paused poll — runs on Bun's fake timers.
+// The speech gate alone: when a line may go out (under its endpoint's concurrency, not paused, not
+// cooling down), in asking order, and what the head line is told about its wait. Limits are a
+// callback changed in place then `changed()`, like an Endpoints save. Timers are real (tens of ms)
+// except where a test moves its own clock; the one-second paused poll runs on fake timers.
 import { afterEach, describe, expect, jest, test } from "bun:test";
 
 import {

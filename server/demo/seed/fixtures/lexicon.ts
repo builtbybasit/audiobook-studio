@@ -1,7 +1,4 @@
-// Per-book pronunciation dictionaries. These are the names a TTS engine reliably gets wrong; the
-// prose keeps the author's spelling and only the request carries the respelling.
-//
-// A factory, so an entry edited or disabled in one world is not an entry edited in the next.
+// Per-book pronunciation dictionaries: names TTS gets wrong. Only requests carry the respelling.
 import type { LexEntry } from "@/types";
 
 export function makeLexicon(): Record<string, LexEntry[]> {

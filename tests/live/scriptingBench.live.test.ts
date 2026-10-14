@@ -1,14 +1,10 @@
-// A bench for scripting models, opt-in: every model in `BENCH` scripts every excerpt in
-// `LIVE_CASES` `BENCH_RUNS` times, all of it in one pool of `BENCH_POOL` requests at once (24 by
-// default), and prints how many runs kept every word with every speaker right, and why the
-// others did not.
-//
+// A bench for scripting models, opt-in: every `BENCH` model scripts every `LIVE_CASES` excerpt
+// `BENCH_RUNS` times (10) in one pool of `BENCH_POOL` (24), and prints how many runs kept every
+// word and speaker right, and why the others did not.
 //   LIVE=1 BENCH="codex:|gpt-6-luna|high, claude-code:|claude-haiku-5-5|medium" bun test tests/live/scriptingBench
-//
-// One entry is `base URL|model|reasoning`, as an endpoint has them; a chat-completions URL takes
-// its key from `SCRIPTING_PROVIDER_KEY`. `BENCH_RUNS` is 10 by default, `BENCH_CASES` picks
-// excerpts by id (`inn,letter`), and `BENCH_PROMPT` names a JSON file `{"system","user"}` to send
-// instead of the built-in prompt, for trying a prompt edit against the same runs.
+// An entry is `base URL|model|reasoning`; chat-completions takes `SCRIPTING_PROVIDER_KEY`.
+// `BENCH_CASES` picks excerpts by id (`inn,letter`); `BENCH_PROMPT` names a `{"system","user"}`
+// JSON file to send instead of the built-in prompt.
 import { expect, test } from "bun:test";
 
 import type { PromptTemplate, ReasoningEffort } from "@/types";

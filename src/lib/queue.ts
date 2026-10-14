@@ -24,9 +24,8 @@ export function upNextGroups(queued: Job[]): UpNextGroup[] {
   return groups;
 }
 
-// A job's label as shown. The server's label names the work without its chapter ("Narrate",
-// "Script · OpenAI"), since the chapter's reading number moves when a chapter is skipped or kept;
-// the page puts the chapter in after the verb: "Narrate · ch 2", "Script · ch 14 · OpenAI".
+// "Narrate · ch 2", "Script · ch 14 · OpenAI". The server's label omits the chapter because its
+// reading number moves when a chapter is skipped or kept.
 export function jobLabel(label: string, chapter: string | undefined): string {
   if (!chapter) return label;
   const [verb, ...rest] = label.split(" · ");

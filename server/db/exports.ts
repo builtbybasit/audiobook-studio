@@ -1,13 +1,6 @@
-// Every read and write the finished audiobooks make.
-//
-// A build writes here three times: once when it is queued, so the Audiobooks tab shows a version
-// arriving rather than nothing at all; once per file as it lands; and once at the end, when the
-// row stops being a promise and becomes what was written — the real running time, the real size
-// on disk, and how long each chapter in it plays.
-//
-// The version this one supersedes is only marked `replaced` by that final write. A build that
-// fails or is cancelled must leave the audiobook already on disk exactly as it was, and the
-// simplest way to be sure of that is never to touch it until the replacement is finished.
+// Finished audiobooks. A build writes when queued, per file, and at the end with real sizes and
+// times. Only that final write marks the previous version `replaced`, so a failed or cancelled
+// build leaves the existing audiobook untouched.
 import { and, asc, eq } from "drizzle-orm";
 
 import type { ExportItem, ExportStatus } from "@/types";
@@ -25,7 +18,7 @@ function assemble(db: Db | Tx, rows: (typeof exportItems.$inferSelect)[]): Expor
   );
 }
 
-/** Every export of a book, oldest first — the order a build lands in. */
+/** Oldest first. */
 export function listExports(db: Db, bookId: string): ExportItem[] {
   return assemble(
     db,
@@ -43,7 +36,7 @@ export function getExport(db: Db | Tx, id: number): ExportItem | undefined {
   return row ? assemble(db, [row])[0] : undefined;
 }
 
-/** Forget a finished export. Its files and chapter rows cascade; its files on disk do not. */
+/** File and chapter rows cascade; files on disk do not. */
 export function deleteExport(db: Db | Tx, id: number): boolean {
   return (
     db.delete(exportItems).where(eq(exportItems.id, id)).returning({ id: exportItems.id }).all()
@@ -51,7 +44,6 @@ export function deleteExport(db: Db | Tx, id: number): boolean {
   );
 }
 
-/** The tokens an export's files were written under, for taking them off the disk with the row. */
 export function exportFileTokens(db: Db | Tx, id: number): string[] {
   return db
     .select({ path: exportFiles.path })
@@ -61,7 +53,6 @@ export function exportFileTokens(db: Db | Tx, id: number): string[] {
     .flatMap((r) => (r.path ? [r.path] : []));
 }
 
-/** The token one file of an export was written under, by its position in the set. */
 export function exportFileToken(db: Db | Tx, id: number, position: number): string | null {
   return (
     db
@@ -74,13 +65,7 @@ export function exportFileToken(db: Db | Tx, id: number, position: number): stri
 
 // ---------- what a build writes ----------
 
-/**
- * The row a queued build puts up straight away, before a byte is written.
- *
- * Its id is the database's, not the caller's: the export it names has to be addressable in the
- * same breath the job that builds it is, and the job carries the id in its `exportRun` so a
- * retry knows what it was making.
- */
+/** Put up when queued; the job carries the id in its `exportRun` so a retry knows its row. */
 export function insertBuild(tx: Tx, draft: Omit<ExportItem, "id">, createdAt: number): number {
   const { id: _assigned, ...values } = exportValues({ ...draft, id: 0 }, createdAt);
   const id = tx.insert(exportItems).values(values).returning({ id: exportItems.id }).get().id;
@@ -103,7 +88,6 @@ export function setBuildProgress(db: Db | Tx, id: number, progress: number): voi
     .run();
 }
 
-/** What one output file turned out to be, once it has been written. */
 export interface WrittenFile {
   position: number;
   token: string;
@@ -113,7 +97,7 @@ export interface WrittenFile {
   chapters: { id: number; seconds: number }[];
 }
 
-/** The file one output is being written to, claimed before the first byte goes into it. */
+/** Claimed before the first byte is written. */
 export function setBuildFile(db: Db | Tx, id: number, position: number, token: string): void {
   db.update(exportFiles)
     .set({ path: token })
@@ -121,17 +105,14 @@ export function setBuildFile(db: Db | Tx, id: number, position: number, token: s
     .run();
 }
 
-/** Forget where an export's files were: what a build that failed or was interrupted leaves. */
+/** For a build that failed or was interrupted. */
 export function clearBuildFiles(db: Db | Tx, id: number): void {
   db.update(exportFiles).set({ path: null }).where(eq(exportFiles.exportId, id)).run();
 }
 
 /**
- * The build is done: the row stops describing what was asked for and describes what is there.
- *
- * Each chapter's running time lands here too, and its signature is rewritten with it: what an
- * export is out of date against is the audio it was actually built from, which is not always the
- * audio the build was queued against.
+ * Records what was written. Chapter signatures are rewritten too: staleness is measured against
+ * the audio actually built from, not the audio queued against.
  */
 export function finishBuild(
   tx: Tx,

@@ -1,13 +1,11 @@
-// Cutting a book into volumes, as arithmetic over the list of where each volume begins
-// (`VolumeStart[]`, in reading order, the first at the book's first chapter) and the book's chapter
-// ids in book order. Every function answers the new list and leaves its input alone; the store
-// writes the list whole, so a cut, a join, a moved boundary and a rename are each one write.
+// Cutting a book into volumes, as pure arithmetic over `VolumeStart[]` (reading order, the first at
+// the first chapter). The store writes the list whole, so each edit is one write.
 import type { Chapter, Volume, VolumeStart } from "@/types";
 
 const sorted = (starts: readonly VolumeStart[]): VolumeStart[] =>
   [...starts].sort((a, b) => a.chapter - b.chapter);
 
-/** A new volume beginning at this chapter, named by its place; cutting at a start changes nothing. */
+/** Cutting at an existing start changes nothing. */
 export function cutAt(
   starts: readonly VolumeStart[],
   chapterIds: readonly number[],
@@ -19,15 +17,12 @@ export function cutAt(
   return sorted([...starts, { chapter: chapterId, name: `Volume ${position + 1}` }]);
 }
 
-/** The volume beginning at this chapter joined with the one before it. The first never goes. */
+/** Joins with the volume before. The first never goes. */
 export function joinAt(starts: readonly VolumeStart[], chapterId: number): VolumeStart[] {
   return starts.filter((s, i) => i === 0 || s.chapter !== chapterId);
 }
 
-/**
- * The start at this chapter moved `delta` chapters along the book, stopped short of the start
- * before it and the one after it, so no volume is left empty. The first start never moves.
- */
+/** Clamped so no volume is left empty. The first start never moves. */
 export function moveStart(
   starts: readonly VolumeStart[],
   chapterIds: readonly number[],
@@ -52,7 +47,7 @@ export function renameAt(
   return starts.map((s) => (s.chapter === chapterId && next ? { ...s, name: next } : s));
 }
 
-/** Volumes beginning at the first chapter and at each of `cutIds`: the first keeps its name, the rest are "Volume k". */
+/** The first keeps `firstName`; the rest are "Volume k". */
 export function atChapters(
   chapterIds: readonly number[],
   cutIds: readonly number[],
@@ -67,7 +62,6 @@ export function atChapters(
   ];
 }
 
-/** A new volume every `n` chapters, counted over the whole book. */
 export function every(chapterIds: readonly number[], n: number, firstName: string): VolumeStart[] {
   const step = Math.max(1, Math.floor(n));
   return atChapters(
@@ -77,39 +71,35 @@ export function every(chapterIds: readonly number[], n: number, firstName: strin
   );
 }
 
-/** The book in `n` volumes of about the same size. */
 export function evenly(chapterIds: readonly number[], n: number, firstName: string): VolumeStart[] {
   return every(chapterIds, Math.ceil(chapterIds.length / Math.max(1, n)), firstName);
 }
 
-/** A title that reads like a volume start: "Volume 2", "Book Two", "Arc 3", "Part IV". */
+/** "Volume 2", "Book Two", "Arc 3", "Part IV" */
 export const TITLE_START =
   /\b(?:volume|book|arc|part)\s+(?:\d+|[ivx]+|one|two|three|four|five|six|seven|eight|nine|ten)\b/i;
 
-/** The chapters whose title says a volume starts there, the book's first left out. */
 export function startsByTitles<T extends Pick<Chapter, "id" | "title">>(
   chapters: readonly T[],
 ): T[] {
   return chapters.filter((c, i) => i > 0 && TITLE_START.test(c.title));
 }
 
-/** One volume as the Volumes tab shows it. `from`/`to` are reading numbers; `room` is how far its start can move. */
 export interface VolumeRowInfo {
   id: number;
   name: string;
-  /** every chapter of the volume, in book order */
   all: Chapter[];
   first: Chapter;
   last: Chapter;
-  /** the first and last reading number it holds; none while every chapter of it is skipped */
+  /** reading numbers; none while every chapter of it is skipped */
   from: number | undefined;
   to: number | undefined;
   included: number;
-  /** the words the audiobook reads from it */
+  /** of included chapters */
   words: number;
   /** every volume but the first begins at a boundary that can be moved or joined */
   startsHere: boolean;
-  /** how many chapters its start can move back and forward without reaching another start */
+  /** chapters its start can move without reaching another start */
   room: { back: number; forward: number };
 }
 

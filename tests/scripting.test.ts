@@ -1,6 +1,5 @@
-// Scripting endpoints and what a run is estimated at before it is queued. The run itself is the
-// server's, and so is what each request is charged: see `tests/server/`. The estimate is worked out
-// over a short book on a server of this file's own, the way a backend tab reads one.
+// Scripting endpoints and a run's estimate before it is queued, over a short book on this file's
+// own server. The run and its charges are tested in `tests/server/`.
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptingStore } from "@/stores/scripting";
@@ -79,8 +78,7 @@ test.each(["paragraph", "sentence", "clause", "word", "char"] as const)(
   },
 );
 
-// Shadow Slave ch. 8: cut at the sentence end inside the bracket, the next request opened on
-// "Its clear ringing…]" and Haiku scripted the context before it as well, every time.
+// A cut inside a bracket opened the next request mid-quote, and the model scripted the context too.
 test("a new profile cuts between paragraphs, never inside one", () => {
   const item =
     "[Silver Bell: a small memento of a long-lost home. Its clear ringing can be heard from miles away.]";
@@ -405,8 +403,7 @@ test("settings round-trip retains endpoint limits and excludes unrecognized cred
   expect(endpointsStore.profiles[0].concurrency).toBe(2500);
 });
 
-// What the Queue's Copy diagnostics puts on the clipboard: the server keeps the log bounded
-// (`tests/server/jobs.test.ts`), and this is the allowlist that keeps a run's connection off it.
+// The Queue's Copy diagnostics: the server bounds the log; this allowlist keeps the connection off.
 test("copied diagnostics carry the job's log and never the connection it ran against", () => {
   const job: Job = {
     id: 1,

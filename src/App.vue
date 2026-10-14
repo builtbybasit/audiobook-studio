@@ -1,12 +1,8 @@
 <script setup lang="ts">
 import { useUiStore } from "@/stores/ui";
 
-// App shell. Desktop: an icon rail on the left (AppRail; widens on request), the open book in the
-// header — its selector in the top row (BookSelector), its pages and stages as a tab row under it
-// (BookTabs). Narrow (< lg): a top bar with a menu button that opens the rail as a drawer, where
-// the book's pages live instead of the tab row. Also hosts the palette, toasts, the shortcuts
-// dialog and the global ⌘Z / ? keys; what runs behind every page — the "book finished"
-// notifications, the document title (active job count), the theme — is `useAppEffects`.
+// App shell: icon rail (a drawer below lg), header with the open book's selector, book tabs, and
+// the global ⌘Z / ? keys. What runs behind every page is `useAppEffects`.
 import { onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { useAppEffects } from "@/composables/useAppEffects";
@@ -107,8 +103,7 @@ const palette = ref<InstanceType<typeof CommandPalette> | null>(null);
           </div>
           <div class="leading-tight" :class="!uiStore.railExpanded && 'lg:hidden'">
             <div class="font-semibold">Audiobook Studio</div>
-            <!-- in the demo the page is on the demo library, whose endpoints are simulated; say so where
-                 the name is -->
+            <!-- the demo's endpoints are simulated; say so where the name is -->
             <div
               v-if="isDemo"
               class="text-[10px] uppercase tracking-wider text-amber-500"
@@ -158,8 +153,7 @@ const palette = ref<InstanceType<typeof CommandPalette> | null>(null);
               ><button class="btn-ghost btn-xs" aria-label="menu" @click="drawer = true">
                 <MenuIcon class="icon" /></button
             ></span>
-            <!-- the open book, or the page's name when there is none; on an app page the book
-                 stays a click away but dimmed, so the header does not pretend you are on it -->
+            <!-- on an app page the book stays a click away but dimmed -->
             <BookSelector v-if="shell.book.value" :dim="!shell.onBookPage.value" />
             <span v-else class="capitalize text-zinc-900 dark:text-zinc-100">{{
               shell.activeKey.value
@@ -184,9 +178,8 @@ const palette = ref<InstanceType<typeof CommandPalette> | null>(null);
         <CommandPalette ref="palette" />
         <ShortcutsDialog v-model:open="shortcuts" />
         <main class="relative min-h-0 flex-1 overflow-auto">
-          <!-- Stage views read `:bookId` once, at setup. Going from one book's stage straight to the
-               same stage of another (the command palette, the Export demo) reuses the instance and
-               would leave them pointed at the book you left, so the book id is the view's identity. -->
+          <!-- Stage views read `:bookId` once at setup; keying on it stops a same-stage jump to
+               another book from reusing the instance pointed at the old book. -->
           <RouterView :key="String(route.params.bookId ?? '')" />
         </main>
       </div>

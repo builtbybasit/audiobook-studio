@@ -1,15 +1,6 @@
-// A simulated speech endpoint, answered on this server and never the network.
-//
-// An endpoint whose base URL is `simulated://…` (`lib/providers/simulated.ts`) has no wire: the
-// real provider (`endpointSpeech.ts`) and the voice lister (`voices.ts`) come here instead of to
-// the registry. A line is the fake's tone (`speakTone`), at the rate the endpoint asks for, named
-// with the endpoint's model and reported as simulated — held to what the endpoint's `latency` and
-// `failRate` say, so a run on one takes time and loses lines the way a run on a real endpoint can.
-//
-// A failure it makes up is a server's that could go differently next time: retryable, reported
-// through `sent` as a request that failed and was not billed. Which lines fail is chance, and the
-// chance is injectable, so a test says which. It takes one line at a time and has nothing to clone
-// or search; its voices are the few it names.
+// A simulated speech endpoint (`simulated://…`), answered here with the fake's tone at the
+// endpoint's `latency` and `failRate`. Its made-up failures are retryable and unbilled; the chance
+// is injectable. It takes one line at a time, and has nothing to clone or search.
 import { SIMULATED_VOICES } from "@/lib/providers";
 import type { EndpointProbe, VoiceListPage } from "@/types";
 import { sleep } from "~/providers/fake";
@@ -19,10 +10,6 @@ import type { RenderedClip, SpeechInput } from "~/providers/speech";
 import { onePage } from "~/providers/speech/wire";
 import type { ProviderTarget } from "~/providers/target";
 
-/**
- * `voice` said by a simulated endpoint: after its latency, which a cancel cuts short, and failed
- * when `random()` falls within its fail rate.
- */
 export async function speakSimulated(
   input: SpeechInput,
   target: ProviderTarget,
@@ -33,7 +20,7 @@ export async function speakSimulated(
   const started = Date.now();
   if (latencyMs) await sleep(latencyMs, input.signal);
   if (input.signal.aborted) throw input.signal.reason;
-  // what a server error is, so a simulated one is retried as a real one would be
+  // a 500, so it is retried like a real one
   const failure =
     random() < failRate
       ? new ProviderError(
@@ -46,12 +33,10 @@ export async function speakSimulated(
   return { ...audio, ms: Date.now() - started, model: target.model, voice };
 }
 
-/** The Test button: there is nothing to reach, so nothing is asked. */
 export const probeSimulated = (): EndpointProbe => ({
   ok: true,
   message: "Simulated: answered here, without a request",
   ms: 0,
 });
 
-/** "Fetch from server": the voices every simulated endpoint has. */
 export const simulatedVoices = (): VoiceListPage => onePage([...SIMULATED_VOICES]);

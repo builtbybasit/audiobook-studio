@@ -1,16 +1,7 @@
-// The book's review inbox: every decision waiting on a person, gathered from the six pages that
-// each used to hold one small count of its own.
-//
-// Two properties are what make it worth having. It is *complete* — a decision that exists anywhere
-// is listed here, with a link that lands on the row rather than the top of its page. And it is
-// *settled by deciding*: accept the retake, clear the flag, dismiss the merge, retry the chapter,
-// and the row is gone on the next read. A count that only ever goes up is a count nobody trusts.
-//
-// Each reads the demo library put into one of the Demo tools' situations, with the book read in
-// whole — every scripted chapter, the cast, the audiobooks and the queue — as its pages would. The
-// tests are grouped by situation, and a situation is applied once for the tests that only read it:
-// each still reads it into a page of its own, and one that writes to the demo says so, so the next
-// test is handed the situation afresh.
+// The book's review inbox: every decision waiting on a person, each with a link that lands on its
+// row, and each gone on the next read once decided. Each test reads the demo in one of the Demo
+// tools' situations, with the book read in whole; a situation is applied once for tests that only
+// read it, and a test that writes says so, so the next one gets it afresh.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { useQueryCache } from "@pinia/colada";
 import { keys } from "@/queries/keys";
@@ -62,8 +53,7 @@ afterAll(() => demo.hold());
 async function situated(id: string, bookId: string): Promise<void> {
   if (untouched !== id) {
     await demo.situate(id);
-    // the runs a situation sets going would move the book on between one test's read and the
-    // next's; held, it keeps still until the next situation
+    // a situation's runs would move the book on between tests; held, it keeps still
     await demo.hold();
     untouched = id;
   }
@@ -244,8 +234,7 @@ describe("a book part-way through", () => {
 });
 
 test("chapters with the same notice are one decision, because one verdict settles them all", async () => {
-  // the 212-chapter serial, with updates scattered through it: a row per kind of notice, not a
-  // row per chapter, or the inbox would be longer than the book
+  // the 212-chapter serial: a row per kind of notice, not per chapter, or the inbox outgrows the book
   await situated("import-serial", "import-serial");
   const contents = group("import-serial", "contents")!;
   const pending = libraryStore.noticeGroupsOf("import-serial").filter((g) => g.pending.length);

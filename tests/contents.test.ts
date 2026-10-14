@@ -1,13 +1,6 @@
-// The contents review: import → review → add, and the same review afterwards.
-//
-// Two things matter and neither is visible from a screenshot. A suggestion never removes anything:
-// a chapter the import flagged is included until the person acts, and the import button counts it.
-// And a skipped chapter is skipped everywhere: the stages, the run totals and the export readiness
-// all read the one flag the review sets, and restoring it puts it back everywhere at once.
-//
-// The pure side reads what it is handed. The store is driven against the demo library, whose Demo
-// tools open the review on each of the import samples below, and which reads a real EPUB as one
-// more volume of a book.
+// The contents review: a suggestion never removes anything (a flagged chapter is included until
+// the person acts), and a skipped chapter is skipped everywhere, reading the one flag the review
+// sets. The store runs against the demo library and its import samples.
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 
 import { IMPORT_SAMPLES } from "~/demo/seed/fixtures/imports";
@@ -190,9 +183,8 @@ describe("the review against the demo library", () => {
     Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
     demo = await demoServer();
   });
-  // No reset before each test: a test that opens an import sample is given a freshly seeded demo
-  // by the situation itself, which lays the whole seed down again, and the rest read or add to
-  // seeded books no other test here changes. Seeding is most of what each of these costs.
+  // No reset before each test: an import sample's situation reseeds the demo itself, and the rest
+  // read seeded books no test here changes. Seeding is most of what each costs.
   beforeEach(() => {
     pinia = testPinia();
     libraryStore = useLibraryStore();
@@ -327,8 +319,8 @@ describe("the review against the demo library", () => {
   });
 });
 
-// Reading numbers on screen: a list shows, spans and searches by the number a chapter has among
-// the kept ones, so a skipped cover and contents page never push "Chapter 2" to "ch 4".
+// A list shows, spans and searches by a chapter's number among the kept ones, so a skipped cover
+// never pushes "Chapter 2" to "ch 4".
 describe("reading numbers in the lists", () => {
   // the book's file: a cover and a contents page (skipped), then three chapters, one skipped
   const book = [

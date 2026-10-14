@@ -1,35 +1,7 @@
-// A line spoken through OpenAI's `/audio/speech` shape — OpenAI itself, or any server that copies
-// it (Kokoro-FastAPI, an Orpheus or Piper bridge, vLLM-Omni).
-//
-// The request is the one OpenAI documents (https://platform.openai.com/docs/api-reference/audio/createSpeech):
-// `model`, `input`, `voice` and `response_format`: the endpoint's format, WAV unless it chose MP3
-// or Opus, which are kept as they come. The API takes no bitrate, so an endpoint naming one fails
-// before a request, as a rate does below (`encodingProblems`). The line's `direction` goes as
-// `instructions` when there is one — OpenAI documents it for its newer models and says it "does
-// not work with tts-1 or tts-1-hd", so it is left off for those two; a compatible server that does
-// not know the field ignores it, as the servers this app names do with fields they do not model.
-// A voice OpenAI made from the account's own recording has an id, `voice_…`, and the reference
-// takes it as an object, `{ "id": "voice_…" }`, where a built-in voice is a bare name.
-//
-// There is no sample-rate field in that API: OpenAI answers at 24 kHz and a local server at its
-// model's own rate. An endpoint that names a rate therefore fails before any request, saying to
-// clear it. Sending the line anyway would not be honest either way — a clip at another rate than
-// the endpoint names is drift to the job, so every run would render the line again and spend again.
-//
-// Voices: OpenAI has no endpoint that lists them — its built-in voices are written down in its
-// reference, and answered from here. The local servers that copy its API mostly answer
-// `GET /audio/voices` (Kokoro-FastAPI does), so any other server is asked that, and one that does
-// not answer it is said to have no list rather than to have no voices.
-//
-// Batches: a compatible server may also speak the batch speech API this app wrote down for local
-// servers (`docs/speech-batch-api.md`), and then a run sends it many lines per request (`batch.ts`).
-// OpenAI itself has no such route, so its wire has neither member. The Test button asks a
-// compatible server's capabilities too and says when it takes batches; a server that cannot say
-// has still passed the test, which was about the address and the key.
-//
-// Voices made from a recording: the same API's `POST /audio/voices`, for an endpoint that says its
-// server makes voices (`makesVoices`) — nothing else tells a server that does from one that does
-// not. OpenAI's own voice creation is another API this app does not speak.
+// OpenAI's `/audio/speech` (https://platform.openai.com/docs/api-reference/audio/createSpeech), for
+// OpenAI and the servers that copy it (Kokoro-FastAPI, Orpheus/Piper bridges, vLLM-Omni). It takes
+// no bitrate or rate (`encodingProblems` refuses them). A compatible server may also list voices
+// (`GET /audio/voices`), make them, and take batches (`batch.ts`); OpenAI itself does neither.
 import type { Gender, MadeVoice, Voice } from "@/types";
 import { compatible, openai } from "@/lib/providers/openai";
 import { authHeaders, call, jsonHeaders, ProviderError } from "~/providers/http";
@@ -40,16 +12,16 @@ import type { ProviderTarget } from "~/providers/target";
 import { batchCapabilities, sendBatch, takesBatches } from "~/providers/speech/batch";
 import { getJson, onePage, type SpeechWire } from "~/providers/speech/wire";
 
-/** The models OpenAI says take no `instructions`. */
+/** OpenAI: instructions "do not work with tts-1 or tts-1-hd". */
 const NO_INSTRUCTIONS = /^tts-1(-hd)?$/i;
 
-/** A custom voice's id, as OpenAI's voice-creation API hands one back. */
+/** OpenAI's custom voice ids, sent as `{ id }` where a built-in voice is a bare name. */
 const CUSTOM_VOICE = /^voice_/;
 
 /**
- * OpenAI's built-in voices, from the `voice` parameter of
- * https://developers.openai.com/api/reference/resources/audio/subresources/speech/methods/create —
- * there is no endpoint that lists them. OpenAI gives none of them a gender.
+ * From the `voice` parameter of
+ * https://developers.openai.com/api/reference/resources/audio/subresources/speech/methods/create;
+ * no endpoint lists them, and none has a gender.
  */
 export const OPENAI_VOICES: readonly string[] = [
   "alloy",
@@ -67,7 +39,6 @@ export const OPENAI_VOICES: readonly string[] = [
   "cedar",
 ];
 
-/** The body for one line; OpenAI's own API is sent a custom voice as the object it asks for. */
 function speechBody(
   input: SpeechInput,
   target: ProviderTarget,
@@ -86,19 +57,15 @@ function speechBody(
 
 const titleCase = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 
-/**
- * Kokoro names a voice by accent and gender, `af_bella` being an American woman, and that second
- * letter is the only gender these servers give. A name in any other form says nothing.
- */
+/** Kokoro's second letter is the gender (`af_bella`); any other name says nothing. */
 function genderOfName(id: string): Gender {
   const m = /^[a-z]([fm])_/i.exec(id);
   return m ? (m[1].toLowerCase() as Gender) : "?";
 }
 
 /**
- * A voice list in the shapes the OpenAI-compatible servers answer with: `{voices: [...]}` or a bare
- * array, of names or of objects naming themselves `id`, `voice_id` or `name`. Null when it is none
- * of those.
+ * `{voices}`, `{data}` or a bare array, of names or objects with `id`, `voice_id` or `name`. Null
+ * when it is none of those.
  */
 function voicesFromList(body: unknown): Voice[] | null {
   const list = Array.isArray(body)
@@ -115,7 +82,6 @@ function voicesFromList(body: unknown): Voice[] | null {
     const id = typeof entry === "string" ? entry : (rec?.id ?? rec?.voice_id ?? rec?.name);
     if (typeof id !== "string" || !id.trim()) continue;
     const name = typeof rec?.name === "string" && rec.name.trim() ? rec.name.trim() : id;
-    // the batch speech API's list says `f` or `m` where it knows
     const gender = rec?.gender === "f" || rec?.gender === "m" ? rec.gender : genderOfName(id);
     voices.push({ id: id.trim(), label: name, gender });
   }
@@ -123,9 +89,8 @@ function voicesFromList(body: unknown): Voice[] | null {
 }
 
 /**
- * A voice made from one recording (`cloning.maxSamples`) at `POST /audio/voices`, as the batch
- * speech API gives it: `name`, the recording as `samples`, and `transcript` when there is one,
- * answered with the voice as the list shows it. A server that makes no voices answers 404 or 405.
+ * `POST /audio/voices` per the batch speech API, for an endpoint that says its server makes voices
+ * (`makesVoices`). OpenAI's own voice creation is another API, not spoken here.
  */
 async function makeVoice(
   target: ProviderTarget,
@@ -158,7 +123,7 @@ async function makeVoice(
       );
     throw e;
   }
-  // the spec's voice names its id; a list entry may go by its name, but a made voice may not
+  // a made voice must name its id, unlike a list entry
   const body = (await res.json().catch(() => null)) as { id?: unknown } | null;
   const [voice] = typeof body?.id === "string" ? (voicesFromList([body]) ?? []) : [];
   if (!voice)
@@ -170,13 +135,12 @@ async function makeVoice(
   return voice;
 }
 
-/** The shape both share; `hosted` is OpenAI's own API, and differs where OpenAI documents more. */
+/** `hosted` is OpenAI's own API. */
 function openaiShaped(hosted: boolean): SpeechWire {
   const shape = hosted ? openai : compatible;
   return {
     request(input, target, voice) {
-      // what is actually sent beside the words, and so what the ledger counts: nothing for a model
-      // that takes none
+      // as sent, and so as the ledger counts; a compatible server ignores the field if unknown
       const instructions = NO_INSTRUCTIONS.test(target.model.trim())
         ? ""
         : input.instructions.trim();
@@ -193,10 +157,7 @@ function openaiShaped(hosted: boolean): SpeechWire {
       };
     },
 
-    /**
-     * The server's model list, which proves the address and the key without rendering (and paying
-     * for) a word, and says so when the configured model is not on it.
-     */
+    /** Lists models: proves address and key for free, and checks the model is listed. */
     async probe(target, signal, options) {
       const started = Date.now();
       const res = await call(

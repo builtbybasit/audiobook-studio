@@ -6,13 +6,8 @@ import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 
-// The bulk action bar's own panel: it opens in place, under the buttons, rather than over the results
-// it is about. Same idea as the ledger's row detail — a violet rail, a strip of labelled facts, and
-// tinted callouts for the things that cost something — so the numbers can be read at a glance instead
-// of parsed out of a sentence.
-//
-// Configuring and closing mutate nothing: `bulkPreview` only reads. The footer button names the exact
-// work and is dead when there is none.
+// The bulk action bar's panel, opened in place under the buttons. Configuring and closing mutate
+// nothing (`bulkPreview` only reads); the footer button names the exact work.
 import { computed, nextTick, ref, watch } from "vue";
 import {
   TriangleAlert as WarnIcon,
@@ -27,7 +22,7 @@ import type { BulkAction, BulkResult, BulkTarget, FlagKind } from "@/types";
 
 const props = defineProps<{
   bookId: string;
-  /** which of the three corrections this panel is configuring; null when it is closed */
+  /** null when closed */
   kind: "speaker" | "direction" | "flag" | null;
   targets: BulkTarget[];
 }>();
@@ -36,7 +31,7 @@ const castStore = useCastStore();
 const endpointsStore = useEndpointsStore();
 const scriptsStore = useScriptsStore();
 const libraryStore = useLibraryStore();
-/** a row's chapter by its reading number, "04" */
+/** "04" */
 const chapterTag = (chId: number) =>
   String(libraryStore.numberOf(props.bookId, chId) ?? "skipped").padStart(2, "0");
 
@@ -48,7 +43,7 @@ const flag = ref<FlagKind>("delivery");
 const note = ref("");
 const replace = ref(false);
 const expanded = ref(false);
-/** the state of the selected lines when this preview was taken; a drift means it is out of date */
+/** the selection's signature when the preview was first taken; a drift means it is out of date */
 const base = ref("");
 
 const cast = computed(() => castStore.charactersOf(props.bookId));
@@ -61,7 +56,6 @@ const castOpts = computed(() =>
       label: c.name,
       color: c.color,
       group: c.major ? "Main cast" : "Also in the script",
-      // a linked persona with no voice of their own is read in their character's
       hint: c.voice
         ? endpointsStore.voiceLabel(c.voice)
         : personaOwner(c, castStore.byName[props.bookId] ?? new Map())
@@ -73,7 +67,6 @@ const castOpts = computed(() =>
 const dirOpts = computed(() => directionOptions(scriptsStore.segments, props.bookId));
 const KINDS: FlagKind[] = ["pronunciation", "delivery", "pause", "other"];
 
-// a fresh form each time the bar opens a panel, and the focus lands in it
 watch(
   () => props.kind,
   async (k) => {
@@ -91,7 +84,7 @@ watch(
   },
 );
 
-/** Enough has been filled in to say what would happen. An empty direction is never "clear". */
+/** An empty direction is never "clear". */
 const ready = computed(() => {
   if (props.kind === "speaker") return !!speaker.value;
   if (props.kind === "direction") return mode.value === "clear" || !!direction.value.trim();
@@ -109,7 +102,6 @@ const action = computed<BulkAction | null>(() => {
 const preview = computed(() =>
   action.value ? scriptsStore.bulkPreview(props.bookId, props.targets, action.value) : null,
 );
-// the first preview of this selection is the one the numbers are promised against
 watch(preview, (p) => {
   if (p && !base.value) base.value = p.signature;
 });
@@ -118,7 +110,6 @@ const drifted = computed(
 );
 const examples = computed(() => preview.value?.rows.filter((r) => r.changes).slice(0, 2) ?? []);
 
-// --- what the change means for narration
 const voice = computed(() =>
   speaker.value ? castStore.effectiveVoice(props.bookId, speaker.value) : null,
 );
@@ -128,7 +119,6 @@ const withDirection = computed(() => props.targets.filter((t) => segOf(t)?.direc
 const alreadyFlagged = computed(() => props.targets.filter((t) => segOf(t)?.flag).length);
 const chapters = computed(() => new Set(props.targets.map((t) => t.chId)).size);
 
-/** The preview as the ledger renders an audit trail: a label above each number. */
 interface Fact {
   label: string;
   value: string;
@@ -196,7 +186,6 @@ function apply() {
     <div class="border-l-2 border-violet-400 pl-3 text-xs dark:border-violet-500">
       <div class="label mb-1.5">{{ TITLE[kind] }}</div>
 
-      <!-- the correction -->
       <div class="flex flex-wrap items-center gap-2">
         <template v-if="kind === 'speaker'">
           <span data-first
@@ -214,7 +203,6 @@ function apply() {
               endpointsStore.voiceLabel(voice.ref)
             }}</b></span
           >
-          <!-- a linked persona with no voice of their own has their character's -->
           <span v-else-if="voice?.from === 'persona'" class="text-zinc-500"
             >read in {{ voice.of }}’s voice<template v-if="voice.ref"
               >,
@@ -273,7 +261,6 @@ function apply() {
         </template>
       </div>
 
-      <!-- what it would do, as an audit strip -->
       <div v-if="preview" class="mt-2 flex flex-wrap gap-x-5 gap-y-1.5">
         <div
           v-for="f in facts"
@@ -294,7 +281,6 @@ function apply() {
         </div>
       </div>
 
-      <!-- the things that cost something -->
       <div
         v-if="voice && !voice.own && voice.from !== 'persona'"
         class="mt-2 flex flex-wrap items-center gap-2 rounded bg-amber-400/10 px-2 py-1 text-amber-700 dark:text-amber-300"
@@ -371,7 +357,6 @@ function apply() {
         </button>
       </div>
 
-      <!-- before / after, two lines of it -->
       <div v-if="examples.length" class="mt-2 space-y-1">
         <div
           v-for="r in examples"
@@ -391,7 +376,6 @@ function apply() {
         </div>
       </div>
 
-      <!-- every affected line, on request -->
       <div
         v-if="expanded && preview"
         class="mt-2 max-h-52 overflow-y-auto rounded border border-zinc-200 dark:border-zinc-700"
@@ -418,7 +402,6 @@ function apply() {
         </div>
       </div>
 
-      <!-- act -->
       <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
         <button v-if="preview" class="chip" :aria-expanded="expanded" @click="expanded = !expanded">
           <component :is="expanded ? OpenIcon : ClosedIcon" class="icon-sm" />

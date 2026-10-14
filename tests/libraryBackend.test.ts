@@ -1,15 +1,7 @@
-// The library store against the real API.
-//
-// `tests/server/libraryClient.test.ts` proves the client and the routes agree. This is the layer
-// above: the store the screens actually read, driven through the real `HttpLibraryService` against
-// the real Hono app over a private in-memory database. A store action that forgets to await, an
-// import that never sends the file, or a screen left holding books the server does not have fails
-// here rather than in the browser. Several assertions below are about what is *absent* for that
-// reason: nothing on screen may come from anywhere but the server.
-//
-// It sits with the store tests rather than in `tests/server/` because its subject is the store.
-// That project is compiled without the DOM on purpose — it is what stops server code reaching for
-// a `window` — and a Pinia store brings one in.
+// The library store against the real API over an in-memory database: a missing await, an import
+// that never sends the file, or books the server lacks fail here. Many assertions check what is
+// *absent*: nothing on screen may come from anywhere but the server. It lives outside
+// `tests/server/` because that project compiles without the DOM, and a Pinia store brings one in.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { HttpLibraryService, setLibraryService } from "@/services/library";
@@ -74,8 +66,7 @@ beforeEach(() => {
   };
 });
 
-// The service is module state. Left set, it would quietly point the next suite at a database that
-// has gone.
+// The service is module state; left set, it would point the next suite at a dead database.
 afterEach(() => {
   pinia.stop();
   setLibraryService(null);
@@ -247,9 +238,8 @@ describe("the library store with a server answering", () => {
 });
 
 describe("a server that is not answering", () => {
-  // The shelf a failed read leaves is empty, and an empty shelf is what a new library looks like.
-  // So the store remembers that nothing answered, and the Library says that in place of "No books
-  // yet" — and nothing here stands in for the books it could not read.
+  // A failed read leaves an empty shelf, which looks like a new library, so the store remembers that
+  // nothing answered and the Library says so instead of "No books yet".
   const answering = (respond: () => Promise<Response>) =>
     setLibraryService(new HttpLibraryService("/api", respond));
 
@@ -299,9 +289,8 @@ describe("a server that is not answering", () => {
 describe("chapter prose with a server answering", () => {
   test("is the server's, in both readings, and never a fixture", async () => {
     const id = (await libraryStore.importBook({ source: await volume(["One"]) }))!;
-    // The store's synchronous readings resolve the query cache through the active pinia, which a
-    // leftover task from an earlier test can point back at that test's; read them where the app
-    // resolves it by injection, as a page would.
+    // Synchronous readings resolve the query cache through the active pinia, which a leftover task can
+    // point at an earlier test's; read them by injection, as a page would.
     const partsNow = () => pinia.run(() => scriptsStore.partsOf(id, 1));
     const rawNow = () => pinia.run(() => scriptsStore.rawText(id, 1));
 
@@ -343,9 +332,8 @@ describe("chapter prose with a server answering", () => {
     expect(again.text.value).toBe(third.text.value);
     expect(asked.filter((p) => p === text)).toHaveLength(1);
 
-    // removing the first volume renumbers what is left; chapter 3 is now chapter 1, and the text
-    // read against the old number would be the wrong chapter's prose — so everything read about
-    // the book is asked for again, and the old number is not a chapter any more
+    // removing the first volume renumbers the rest (chapter 3 is now 1), so everything read about the
+    // book is asked for again and the old number is not a chapter any more
     await libraryStore.removeVolume(id, 1);
     await flush();
     await flush();

@@ -1,27 +1,7 @@
-// Checking by ear: a line's clip heard back as words, set against the line.
-//
-// A transcription endpoint hears the clip and writes down what it heard, and with a server that
-// gives them (Phonon's `verbose_json`), the time of each word. Both sides are put in their spoken
-// form first (`spokenWords`): a number as its words ("42" and "forty-two" alike), a Roman numeral
-// as its number, Mr/Mrs/Dr in full, no case, punctuation or apostrophes, and a run of one letter as
-// that letter once ("Umm" and "Um" alike). What the ear cannot tell apart is not a difference.
-//
-// The score is the share of the line's letters the clip got wrong: the two spoken forms run
-// together without spaces and set side by side by their longest common subsequence, each stretch
-// between two that agree costing its longer side — so "gray" heard "grey" is one letter, "TV" heard
-// "T V" none, and a word read out letter by letter, or a different line, many. A line is a
-// mismatch past `MISMATCH_SCORE` with at least `MISMATCH_LETTERS` wrong, so a dropped "the" in a
-// long line, or an "Ah" heard "Uh", passes.
-//
-// The words are set side by side the same way (`alignPairs`), and a heard word carries its time to
-// the script word it matched — and, for a few words heard as something like them between two that
-// matched ("gray" heard "grey", "TV" heard "T V"), the time of what was heard in their place, word
-// by word as their letters line up. The mark is put on the line's own text — the word, not the
-// comma after it — so the Listen page can light each word as it is said. A word heard as nothing,
-// or as something unlike it, has no mark, and a server that gave no times gives no marks at all: a
-// time is never estimated, from the line's length or anything else.
-//
-// Pure, so the server that writes the finding and a test that reads it agree on it.
+// Checking by ear: a clip's transcript set against its line. Both sides go to spoken form first
+// (`spokenWords`), so what the ear cannot tell apart is no difference. The score is the share of
+// the line's letters heard wrong. Heard word times map onto the line's words for the Listen page;
+// a word with no matched time gets no mark, and a time is never estimated.
 import { diffChars } from "diff";
 
 import type { HeardLine } from "@/types";
@@ -33,7 +13,7 @@ import { alignPairs } from "@/lib/scriptHistory";
 // the upgrade if it shows up in real checks.
 /** The share of a line's letters that may be wrong before the clip is called wrong… */
 export const MISMATCH_SCORE = 0.15;
-/** …and how many there must be at least: a short line with one sound off is not a wrong clip. */
+/** …and the minimum count, so a short line with one sound off passes. */
 export const MISMATCH_LETTERS = 4;
 
 /** Written words heard as something else take its time when at least this share of letters agree… */
@@ -41,10 +21,9 @@ export const MISHEARD_ALIKE = 0.5;
 /** …and they are no more than this many in a row: past that, it is another sentence. */
 export const MISHEARD_WORDS = 3;
 
-/** When a word was said, in seconds from the start of the clip. */
 type Span = Pick<TimedWord, "start" | "end">;
 
-/** One word as the endpoint heard it, in seconds from the start of the clip. */
+/** Seconds from the start of the clip. */
 export interface TimedWord {
   word: string;
   start: number;
@@ -80,7 +59,7 @@ const ORDINAL: Record<string, string> = {
   twelve: "twelfth",
 };
 
-/** A whole number as it is said; digits one by one when it is too long, or starts with a 0. */
+/** Digits one by one when too long, or when it starts with a 0. */
 function numberWords(digits: string): string[] {
   if (digits.length > 9 || (digits.length > 1 && digits[0] === "0"))
     return Array.from(digits, (d) => ONES[+d]);
@@ -103,7 +82,7 @@ const romanValue = (r: string): number =>
     0,
   );
 
-/** One written word as the words it is said as, each lower case, with repeated letters once. */
+/** Lower case, repeated letters once ("Umm" and "Um" alike). */
 function spoken(w: string): string[] {
   const said = ROMAN.test(w)
     ? numberWords(String(romanValue(w)))
@@ -122,7 +101,7 @@ function spoken(w: string): string[] {
   return said.map((s) => s.replace(/(\p{L})\1+/gu, "$1"));
 }
 
-/** A text's words in their spoken form: what an ear can tell apart, and nothing it cannot. */
+/** Numbers as words, Roman numerals as numbers, Mr/Mrs/Dr in full; no case or punctuation. */
 export function spokenWords(text: string): string[] {
   const plain = text
     .normalize("NFKC")
@@ -131,7 +110,7 @@ export function spokenWords(text: string): string[] {
   return [...plain.matchAll(WORD)].flatMap(([w]) => spoken(w));
 }
 
-/** Letters to change, add or take out to turn `a` into `b`: each unmatched stretch costs its longer side. */
+/** Each unmatched stretch costs its longer side: "gray"/"grey" is 1, "TV"/"T V" is 0. */
 function lettersWrong(a: string, b: string): number {
   let wrong = 0;
   let removed = 0;
@@ -147,15 +126,12 @@ function lettersWrong(a: string, b: string): number {
   return wrong + Math.max(removed, added);
 }
 
-/** Each letter of `words`, as the index of the word it is in. */
 const lettersOf = (words: readonly string[]): number[] =>
   words.flatMap((w, k) => Array.from({ length: w.length }, () => k));
 
 /**
- * Written words heard as something else, each given the time of the heard words its own letters
- * line up with — "TV" heard "T V" the time from "T" to "V" — or nothing for every one when the two
- * sound too little alike to be the same words (`MISHEARD_ALIKE`). A written word none of whose
- * letters line up with any heard has no time.
+ * Written words heard as something else, each timed by the heard words its letters line up with
+ * ("TV" heard "T V": from "T" to "V"); nothing when too unalike (`MISHEARD_ALIKE`).
  */
 function misheard(
   written: readonly string[],
@@ -164,8 +140,7 @@ function misheard(
 ): (Span | undefined)[] {
   const a = lettersOf(written);
   const b = lettersOf(said);
-  // [written word, heard word] for each letter that lines up: a letter in common with its own, and
-  // a stretch where they differ letter by letter, in proportion
+  // [written word, heard word] per letter; a differing stretch pairs up in proportion
   const pairs: [number, number][] = [];
   let ia = 0;
   let ib = 0;
@@ -206,7 +181,6 @@ function misheard(
   return out;
 }
 
-/** The line's words in their spoken form, each pointing at the stretch of the line it is said for. */
 interface Written {
   script: string[];
   tokenOf: number[];
@@ -214,9 +188,8 @@ interface Written {
 }
 
 /**
- * The line's words, each pointing at the token it came from, trimmed to its letters and digits: a
- * token may hold several words ("forty-two", "42"), and is marked only when every one was heard. A
- * dictionary hit stands as the words it is sent as, over the whole term as written ("Ji Ning").
+ * Spoken words, each pointing at its token's span (letters and digits only). A dictionary hit is
+ * its `say` words over the whole term as written.
  */
 function writtenOf(text: string, hits: readonly LexHit[]): Written {
   const out: Written = { script: [], tokenOf: [], spans: [] };
@@ -247,12 +220,8 @@ function writtenOf(text: string, hits: readonly LexHit[]): Written {
 }
 
 /**
- * Set what was heard against the line: `words` when the endpoint gave each word's time, else the
- * words of `heardText`, which then count for the score alone.
- *
- * `hits` are the dictionary's substitutions in the line as its clip was sent (`speak`): the voice
- * was given "El-oh-wen" for "Elowen", and a transcriber may write either. So the line is set
- * against what was heard both as written and as sent, and whichever is heard the closer stands.
+ * Without timed `words`, `heardText` counts for the score alone. With dictionary `hits`, the line
+ * is matched as written and as sent ("Elowen" / "El-oh-wen"), and the closer stands.
  */
 export function alignHeard(
   text: string,
@@ -288,10 +257,7 @@ function matchOf(
   const mismatch = score > MISMATCH_SCORE && wrong >= MISMATCH_LETTERS;
   if (!timed) return { words: null, score, mismatch };
 
-  // Each script word the time of the heard word it matched — and a stretch of a few between two
-  // that matched, heard as something like it ("gray" heard "grey"), the time of what was heard in
-  // its place (`misheard`): the server's own time still, never estimated. A word heard as nothing,
-  // or heard as something unlike it, has none.
+  // matched words take their heard time; short unmatched stretches between matches try `misheard`
   const pairs = alignPairs(script, heard);
   const timeAt = new Map<number, Span>(pairs.map(([i, j]) => [i, timeOf[j]]));
   const ends = [[-1, -1], ...pairs, [script.length, heard.length]];
@@ -304,9 +270,8 @@ function matchOf(
     );
   }
 
-  // A token is marked when every word of it has a time. One that starts no later than the mark just
-  // before it — both heard in one word, "forty two" heard "42" — joins that mark, so each word heard
-  // lights one stretch of the line.
+  // a token is marked only when all its words have times; one starting no later than the previous
+  // mark ("forty two" heard "42") joins it, so each heard word lights one stretch
   const marks: [number, number, number, number][] = [];
   let joins = false;
   let i = 0;

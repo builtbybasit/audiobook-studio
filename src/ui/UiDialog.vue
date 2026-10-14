@@ -1,12 +1,7 @@
 <script setup lang="ts">
-// A modal on reka-ui's Dialog: the overlay, the portal and the focus trap every dialog shares, so
-// they all dim the page the same way and sit at the same height. What is inside — its width, its
-// padding, a card or a bare panel — is the caller's, passed as `class` onto the content, and so are
-// the content's own events (`@open-auto-focus.prevent` to keep focus off the first field,
-// `@interact-outside` to stop a stray click closing a form).
-//
-// `placement` is where the panel sits: `center` in the middle, `top` a little way down (the command
-// palette, whose list grows downwards), `fill` nearly the whole screen with a margin.
+// A modal on reka-ui's Dialog: the shared overlay, portal and focus trap. Width, padding and the
+// content's events are the caller's, via `class` and listeners on the content.
+// `placement`: `center`, `top` (for lists that grow downwards), or `fill` with a margin.
 import { DialogContent, DialogOverlay, DialogPortal, DialogRoot } from "reka-ui";
 import { OVERLAY } from "@/ui/dialog";
 

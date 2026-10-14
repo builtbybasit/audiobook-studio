@@ -260,7 +260,7 @@ describe("voice samples", () => {
       }),
       method: "PUT",
     });
-    // the file they came in: Vex's clone lives on someone else's account, so only its recordings travel
+    // the file they came in: Vex's clone is on another account, so only its recordings travel
     const carried = new JSZip();
     carried.file(
       "manifest.json",
@@ -285,7 +285,7 @@ describe("voice samples", () => {
         },
       ]),
     );
-    // an older export: the listing was called consent.json and carried two fields nothing reads now
+    // an older export's consent.json listing, with two fields nothing reads now
     const original: ScriptFileVoice = {
       format: "audiobook-studio/voice-samples",
       version: 1,

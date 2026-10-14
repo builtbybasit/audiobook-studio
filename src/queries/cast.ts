@@ -1,8 +1,5 @@
-// A book's cast and pronunciation dictionary, read into the cast store.
-//
-// The cast store owns both and every change to them; this is how they arrive from the server, and
-// what a scripting job landing invalidates, since a run absorbs the speakers it
-// turned up into the cast on the server.
+// A book's cast and dictionary, read into the cast store. A scripting job landing invalidates it,
+// since the run adds speakers on the server.
 import { computed, toValue, type MaybeRefOrGetter } from "vue";
 import { useQuery } from "@pinia/colada";
 
@@ -13,7 +10,7 @@ import { useCastStore } from "@/stores/cast";
 
 async function readCast(bookId: string, signal: AbortSignal): Promise<Cast> {
   const castStore = useCastStore();
-  // where the book's writes were as it was asked for: one answered under it may not be in it
+  // where the book's writes were when asked: one answered after may not be in this read
   const readAt = castStore._readAt(bookId);
   const cast = await libraryService().cast(bookId);
   // a read overtaken by a later one leaves the store to the later one
@@ -27,10 +24,7 @@ const castQuery = (bookId: string) => ({
   query: ({ signal }: { signal: AbortSignal }) => readCast(bookId, signal),
 });
 
-/**
- * A book's cast read from the server now and installed, whether or not a page shows it — after a
- * change the server refused, or for a page that has no book open.
- */
+/** Read a book's cast now and install it, shown or not (after a refusal, or with no book open). */
 export function fetchCast(bookId: string): Promise<Cast> {
   return fetchQuery(castQuery(bookId));
 }

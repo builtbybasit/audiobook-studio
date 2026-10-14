@@ -1,14 +1,7 @@
-// Every test runs as a tab that has entered the demo. Preloaded by `bunfig.toml`.
-//
-// The app talks to the server unless the tab's `sessionStorage` says otherwise
-// (`src/services/mode.ts`), and Bun has no `sessionStorage` at all — so without this every store
-// would be built against the HTTP services and ask a server that is not there. The suite is
-// written against the seeded world; a test of the backend half hands its store a service of its
-// own (`setLibraryService` and its kind), which works whichever mode was read at startup.
-//
-// It has to run before anything imports the mode, which is what a preload is for — and so it
-// spells the key out rather than importing it, which would read the mode before the flag is set.
-// Defined rather than assigned so the mode's own test can put a storage that throws in its place.
+// Every test runs as a tab that entered the demo (Bun has no `sessionStorage`, so the stores would
+// otherwise build against a server that isn't there). Backend tests set their own services. A
+// preload, so it runs before anything reads the mode; it spells the key out for the same reason,
+// and defines rather than assigns so the mode's test can swap in a storage that throws.
 const MODE_KEY = "audiobook-studio:mode";
 
 export class MemoryStorage {

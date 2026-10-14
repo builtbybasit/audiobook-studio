@@ -1,18 +1,7 @@
-// Books, chapters and library structure. Cross-feature removal/undo is coordinated here.
-//
-// This store is the library's side of the seam in `@/services/library`: every action that changes
-// a book is a request, and what comes back is what the store holds. The requests are made here
-// rather than in the views, so no page has to know how a change reaches the server.
-//
-// One thing the library genuinely cannot do, rather than quietly pretends to: **a removal has no
-// Undo.** Nothing puts a book back in the database, and there is no route that would. So a removal
-// follows the other half of the danger rule — it asks first, in the
-// control that starts it — and the toast says it cannot be undone rather than offering a button
-// that would lie.
-//
-// An undo of a skip or a keep, by contrast, is exact: the store records what the chapters were and
-// puts that back through `setDecisions`, rather than running the inverse rule and letting an undone
-// skip come back as "looked at".
+// Books, chapters and library structure; cross-feature removal/undo is coordinated here. Every
+// change is a request through `@/services/library`, and the answer is what the store holds.
+// A removal has no Undo (nothing puts a book back), so its control asks first. Undoing a skip or
+// keep restores the recorded decisions via `setDecisions` rather than running the inverse rule.
 import { useQueryCache } from "@pinia/colada";
 import { chapterNumbers, chapterRef } from "@/lib/chapterNumber";
 import { noticeGroups, plural, summarize } from "@/lib/contents";
@@ -56,7 +45,7 @@ import { useScriptsStore } from "@/stores/scripts";
 import { toastFailure } from "@/stores/toastFailure";
 import { useUiStore } from "@/stores/ui";
 
-/** An EPUB arriving at `importBook`, and the title to give the book in place of its own. */
+/** An EPUB for `importBook`, and the title to use in place of its own. */
 export interface ImportSpec {
   source: File;
   title?: string;
@@ -65,26 +54,21 @@ export interface ImportSpec {
 interface LibraryState {
   books: Book[];
   /**
-   * Each book's chapters, once read. A book's chapters arrive when it is opened; until then the
-   * book carries counts of them (`Book.chapters`), which is what the shelf reads. Prose is not here
-   * at all: `useChapterText` in `@/queries` holds it.
+   * Each book's chapters, once opened; until then the shelf reads `Book.chapters` counts. Prose
+   * lives in `useChapterText`.
    */
   chapters: Record<string, Chapter[]>;
-  /** Whether the shelf has been read from the server yet. */
   loaded: boolean;
-  /**
-   * The last read of the shelf found nothing answering for the API. The Library says so where the
-   * books would be, so an unreachable server never passes for an empty library.
-   */
+  /** The last shelf read found no API, so an unreachable server never passes for an empty library. */
   unreachable: boolean;
 }
 
-/** A book's prompt as it is stored: null when it has no notes, is not switched on and holds no text. */
+/** Null when the prompt has no notes, is off and holds no text. */
 export function storedBookPrompt(p: BookPrompt): BookPrompt | null {
   return p.notes.trim() || p.replace || p.system.trim() || p.user.trim() ? p : null;
 }
 
-/** A promise that rejects with an `AbortError` as soon as `signal` fires, whatever it was waiting on. */
+/** Rejects with an `AbortError` as soon as `signal` fires. */
 function abortable<T>(p: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
   if (!signal) return p;
   return new Promise<T>((resolve, reject) => {
@@ -95,14 +79,10 @@ function abortable<T>(p: Promise<T>, signal: AbortSignal | undefined): Promise<T
   });
 }
 
-/**
- * How many settings writes each book has sent, so only the latest one's answer is installed. Not
- * state: nothing renders it, and a reload starting it again from nothing is correct.
- */
+/** Settings writes sent per book, so only the latest answer is installed. Not state. */
 const settingsWrites = new Map<string, number>();
 
 export const useLibraryStore = defineStore("library", {
-  // The library starts empty and is read from the server.
   state: (): LibraryState => ({
     books: [],
     chapters: {},
@@ -125,21 +105,21 @@ export const useLibraryStore = defineStore("library", {
         (s.chapters[bookId] ?? []).find((c) => c.id === chId);
     },
     /**
-     * Each book's reading numbers (`@/lib/chapterNumber`), by chapter id. Reads only the chapters'
-     * ids and `excluded`, so a progress tick does not number the book again.
+     * Each book's reading numbers (`@/lib/chapterNumber`) by chapter id. Reads only ids and
+     * `excluded`, so a progress tick does not renumber.
      */
     chapterNumbers(s): Record<string, Map<number, number>> {
       return Object.fromEntries(
         Object.entries(s.chapters).map(([id, chapters]) => [id, chapterNumbers(chapters)]),
       );
     },
-    /** A chapter's reading number; undefined when it is skipped or its book is not read yet. */
+    /** Undefined when the chapter is skipped or its book is not read yet. */
     numberOf(): (bookId: string, chId: number) => number | undefined {
       return (bookId: string, chId: number) => this.chapterNumbers[bookId]?.get(chId);
     },
     /**
-     * "ch 2", or "skipped": how a chapter is named on screen. Undefined while the book's chapters
-     * are not read, so a page leaves the chapter out rather than calling it skipped.
+     * "ch 2" or "skipped". Undefined while the chapters are unread, so a page omits the chapter
+     * rather than calling it skipped.
      */
     chapterRef(s): (bookId: string, chId: number) => string | undefined {
       return (bookId: string, chId: number) =>
@@ -158,9 +138,8 @@ export const useLibraryStore = defineStore("library", {
     },
     // ---------- contents ----------
     /**
-     * The counts the contents review keeps on screen: what goes in, what is skipped, what is
-     * undecided. A book whose chapters have not been read yet answers from the counts it was
-     * listed with, so the shelf never says "0 chapters" about a book it has not opened.
+     * The contents review's counts: in, skipped, undecided. An unopened book answers from its
+     * listing counts, so the shelf never says "0 chapters".
      */
     contentsOf(s): (id: string) => ContentsSummary {
       return (id: string): ContentsSummary => {
@@ -188,12 +167,12 @@ export const useLibraryStore = defineStore("library", {
       return (id: string): VolumeStart[] =>
         this.volumesOf(id).map((v) => ({ chapter: v.from, name: v.name }));
     },
-    /** The volume still waiting in the contents review, when the book itself is already in the library. */
+    /** The volume still in its contents review, when the book is already in the library. */
     importingVolume(s): (id: string) => Volume | undefined {
       return (id: string): Volume | undefined =>
         s.books.find((b) => b.id === id)?.volumes.find((v) => v.importing);
     },
-    /** Books the library shows: one still in its contents review is not in the library yet. */
+    /** Books the library shows; one still in its contents review is not shown. */
     shelved(s): Book[] {
       return s.books.filter((b) => !b.importing);
     },
@@ -213,7 +192,7 @@ export const useLibraryStore = defineStore("library", {
           (e) => e.bookId === id && e.status === "done",
         ).length;
         const all = s.chapters[id];
-        // a book not opened yet: the counts it was listed with, and nothing it cannot know
+        // a book not opened yet: its listing counts, and nothing it cannot know
         const counts = all ? null : s.books.find((b) => b.id === id)?.chapters;
         if (counts)
           return {
@@ -242,43 +221,36 @@ export const useLibraryStore = defineStore("library", {
   },
   actions: {
     // ---------- the seam ----------
-    /** The service answering for the library. */
     _service(): LibraryService {
       return libraryService();
     },
-    /** A book and its chapters as the server just described them, in place of what was here. */
+    /** Install a book and its chapters as the server described them. */
     _put(book: Book, chapters: Chapter[]): void {
       const i = this.books.findIndex((b) => b.id === book.id);
       if (i < 0) this.books.push(book);
       else this.books[i] = book;
       this.chapters[book.id] = chapters;
     },
-    /** The shelf as the server lists it, in place of what was here. What `useShelf` installs. */
+    /** Install the shelf as the server lists it; what `useShelf` calls. */
     _shelve(books: Book[]): void {
       this.books = books;
       this.loaded = true;
       this.unreachable = false;
     },
-    /**
-     * Read the shelf from the server (`fetchShelf`). Called once when the app starts; `force`
-     * re-reads it.
-     */
+    /** Read the shelf once at start; `force` rereads it. */
     async load(force = false): Promise<void> {
       if (this.loaded && !force) return;
       try {
         await fetchShelf();
       } catch (cause) {
-        // the page says this one where the books would be; a toast on top would say it twice
+        // the page shows this where the books would be; no toast as well
         this.unreachable = unreachable(cause);
         if (!this.unreachable) toastFailure("read the library", cause);
       }
     },
     /**
-     * Read one book and its chapters (`fetchBook`). The shelf lists books; only this brings the
-     * chapters.
-     *
-     * Returns whether the book is now here, so a page opened on a link can send the person back to
-     * the library rather than render an empty review.
+     * Read one book and its chapters; only this brings the chapters. Returns whether the book is
+     * here, so a page opened on a link can send the person back to the library.
      */
     async loadBook(bookId: string): Promise<boolean> {
       try {
@@ -290,11 +262,8 @@ export const useLibraryStore = defineStore("library", {
       }
     },
     /**
-     * Everything read about a book is out of date: its chapters were renumbered, or it is gone.
-     *
-     * Prose, scripts, histories, the cast and the exports are all filed under the book in the
-     * query cache, so one invalidation covers them; what is still on screen is read again and what
-     * is not is read when it next is.
+     * Everything read about a book is out of date (renumbered or gone). All of it is filed under
+     * the book in the query cache, so one invalidation covers it.
      */
     _forgetBook(bookId: string): void {
       void invalidate({ key: keys.book(bookId) }, "all");
@@ -304,10 +273,8 @@ export const useLibraryStore = defineStore("library", {
       return this.skipChapters(bookId, [chId], v, { quiet: true });
     },
     /**
-     * Skip chapters for the audiobook, or include them again. Nothing is deleted: a skipped chapter
-     * keeps its text, its number and its place, leaves every stage, and can be restored from the
-     * same review. Including a chapter that carries a note counts as having looked at it, so the
-     * suggestion stops asking. A batch toasts with Undo; a single click is its own undo.
+     * Skip chapters or include them again; nothing is deleted. Including a noted chapter counts as
+     * looked at. A batch toasts with Undo; a single click is its own undo.
      */
     async skipChapters(
       bookId: string,
@@ -317,15 +284,13 @@ export const useLibraryStore = defineStore("library", {
     ): Promise<number> {
       const uiStore = useUiStore();
 
-      // Only chapters the decision would actually change: the count the toast reports, the ids the
-      // request carries, and the set an Undo has to put back are all the same list.
+      // Only chapters this would change: the toast count, request ids and Undo set are one list.
       const pending = ids.filter((id) => {
         const c = this.chapter(bookId, id);
         return !!c && !!c.excluded !== skip;
       });
       if (!pending.length) return 0;
 
-      // What the chapters were, so the undo puts back exactly that.
       const before = this._decisionsOf(bookId, pending);
       try {
         this.chapters[bookId] = await this._service().skipChapters(bookId, pending, skip);
@@ -350,7 +315,7 @@ export const useLibraryStore = defineStore("library", {
       );
       return n;
     },
-    /** The user looked at a note and is keeping the chapter: it stays in, and the suggestion stops asking. */
+    /** Keep a noted chapter in, so the suggestion stops asking. */
     async keepChapters(bookId: string, ids: number[], { quiet = false } = {}): Promise<number> {
       const uiStore = useUiStore();
 
@@ -378,7 +343,7 @@ export const useLibraryStore = defineStore("library", {
       });
       return n;
     },
-    /** What these chapters' review decisions are right now, recorded for an undo to put back. */
+    /** These chapters' review decisions now, for an undo to put back. */
     _decisionsOf(bookId: string, ids: readonly number[]): ReviewDecision[] {
       return ids.flatMap((id) => {
         const c = this.chapter(bookId, id);
@@ -388,12 +353,8 @@ export const useLibraryStore = defineStore("library", {
       });
     },
     /**
-     * Put chapters' review decisions back to exactly `decisions`.
-     *
-     * The one undo for skip, include and keep. Their rules only run forwards — including a noted
-     * chapter records that it was looked at — so an undo restores what was recorded rather than
-     * asking the inverse rule to guess, through `setDecisions`; what comes back is what the store
-     * holds.
+     * Put review decisions back exactly, via `setDecisions`: the one undo for skip, include and
+     * keep. Their rules only run forwards, so the recorded state is restored, not inferred.
      */
     async _restoreDecisions(bookId: string, decisions: ReviewDecision[]): Promise<void> {
       try {
@@ -403,18 +364,12 @@ export const useLibraryStore = defineStore("library", {
       }
     },
     // ---------- budget, pause & settings ----------
-    // These are inputs on a page — a number box, a toggle — so they change here at once and the
-    // write follows; waiting on the server would make a field lag behind the typing. What the
-    // server answers is then what the store holds, and a refused write reads the book back so the
-    // screen shows what the server has rather than what was typed.
+    // These are page inputs, so they change here at once and the write follows; a refused write
+    // reads the book back.
     /**
-     * Write some of a book's settings to the server, and hold the book it answers with.
-     *
-     * Settings writes are last-one-wins: a number box sends one per keystroke, so only the answer
-     * to the latest write for a book is installed — an earlier answer arriving late would put back
-     * a value the person has already typed past. Returns the answer, or null when it was refused
-     * or has been overtaken. The clips an answer says it staled — a new length for the pauses inside
-     * a line — are marked here whichever answer it is: each write staled its own.
+     * Write some of a book's settings and hold the answer. Last-one-wins: only the latest write's
+     * answer is installed, or a late one would undo typing. Null when refused or overtaken. Clips
+     * each answer says it staled are marked whichever answer it is.
      */
     async _writeSettings(
       bookId: string,
@@ -447,9 +402,8 @@ export const useLibraryStore = defineStore("library", {
       }
     },
     /**
-     * What this side holds of a chapter's progress, moved ahead of the server's answer: an edit
-     * that staled a clip, a restore or an import that replaced the script, a pacing that re-timed
-     * the clips here. The server's next read of the book is what the chapter then says.
+     * Move a chapter's progress ahead of the server (an edit staled a clip, a restore replaced the
+     * script, pacing re-timed clips). The next book read is what it then says.
      */
     _patchChapter(
       bookId: string,
@@ -461,25 +415,25 @@ export const useLibraryStore = defineStore("library", {
       const c = this.chapter(bookId, chId);
       if (c) Object.assign(c, patch);
     },
-    /** A narrated chapter one of whose clips no longer matches its script now reads as stale. */
+    /** A narrated chapter with a clip that no longer matches now reads as stale. */
     _staleChapter(bookId: string, chId: number): void {
       const c = this.chapter(bookId, chId);
       if (c?.narration === "done") c.narration = "stale";
     },
-    /** The book's pacing as it now stands here, ahead of the write that sends it; null is the default. */
+    /** Set the pacing here ahead of its write; null is the default. */
     _setPacing(bookId: string, pacing: Pacing | null): void {
       const b = this.bookById(bookId);
       if (!b) return;
       if (pacing) b.pacing = pacing;
       else delete b.pacing;
     },
-    /** The book as the server just described it, leaving its chapters as they are here. */
+    /** Install the book as the server described it, keeping the chapters here. */
     _putBook(book: Book): void {
       const i = this.books.findIndex((b) => b.id === book.id);
       if (i < 0) this.books.push(book);
       else this.books[i] = book;
     },
-    /** The budget as it now stands here, written whole: the server takes the cap and the pause together. */
+    /** Write the budget whole: the server takes the cap and the pause together. */
     async _pushBudget(bookId: string, what: string): Promise<unknown> {
       const b = this.bookById(bookId);
       const answer = await this._writeSettings(bookId, { budget: b?.budget ?? null }, what);
@@ -487,9 +441,8 @@ export const useLibraryStore = defineStore("library", {
       return answer;
     },
     /**
-     * A budget was written: the book's spending is read again alongside it, so every panel that
-     * sets the one against the other shows both as the server now has them. `keys.spend` is
-     * named here rather than through `@/queries/spend`, which reads this store.
+     * Reread the book's spending with the budget. `keys.spend` is named here, not via
+     * `@/queries/spend`, which reads this store.
      */
     _budgetMoved(bookId: string): Promise<unknown> {
       return Promise.all([
@@ -537,10 +490,8 @@ export const useLibraryStore = defineStore("library", {
         await this._budgetMoved(bookId);
     },
     /**
-     * Whether the book reads its translator's and author's notes aloud. It changes no line, but it
-     * changes which lines are read (`isSpoken`): on, every note is a line to narrate, and a chapter
-     * whose notes have no clip is no longer finished; off, their clips stay where they are, unheard.
-     * So what each chapter lasts, still needs and counts is taken from the server's answer.
+     * Whether notes are read aloud. Changes no line but which lines are spoken (`isSpoken`), so
+     * each chapter's length, need and counts come from the server's answer.
      */
     async setReadNotes(bookId: string, on: boolean): Promise<void> {
       const b = this.bookById(bookId);
@@ -556,10 +507,7 @@ export const useLibraryStore = defineStore("library", {
       for (const { id, narration, duration, lines } of answer.chapters)
         this._patchChapter(bookId, id, { narration, duration, ...(lines ? { lines } : {}) });
     },
-    /**
-     * Whether each chapter is checked by ear once it is narrated. It changes no line and no clip,
-     * only what the server queues after a narration finishes, so nothing else is read back.
-     */
+    /** Whether chapters are checked by ear after narration; only changes what the server queues. */
     async setCheckByEar(bookId: string, on: boolean): Promise<void> {
       const b = this.bookById(bookId);
       if (!b || !!b.checkByEar === on) return;
@@ -572,9 +520,8 @@ export const useLibraryStore = defineStore("library", {
       );
     },
     /**
-     * The book's thought effect: an effect's id, "none", or null to follow the library's. It
-     * changes no clip already made — those show in the old-sound count, which is read again, until
-     * a Re-apply or a retake redoes them.
+     * The book's thought effect: an effect id, "none", or null to follow the library. Existing
+     * clips show in the reread old-sound count until Re-apply or a retake.
      */
     async setBookThoughts(bookId: string, choice: ThoughtChoice | null): Promise<void> {
       const b = this.bookById(bookId);
@@ -584,19 +531,15 @@ export const useLibraryStore = defineStore("library", {
       await this._writeSettings(bookId, { thoughts: choice }, "save this book's thought effect");
       void staleMoved(bookId);
     },
-    /**
-     * An effect removed takes every book's choice of it: they follow the library again, as the
-     * server has them. Returns the books that chose it.
-     */
+    /** A removed effect sends the books that chose it back to the library's. Returns those books. */
     _dropEffect(id: string): string[] {
       const chose = this.books.filter((b) => b.thoughts === id);
       for (const b of chose) delete b.thoughts;
       return chose.map((b) => b.id);
     },
     /**
-     * The book's Character voice — what a speaker with no voice of their own is read in — or null
-     * to go back to the Narrator's. It changes no line and no clip: a clip made in the voice it
-     * replaced shows as made in another voice, as one does when a speaker's own voice changes.
+     * The voice for speakers with none of their own, or null for the Narrator's. Changes no clip;
+     * clips in the old voice show as made in another.
      */
     async setCharacterVoice(bookId: string, cv: CharacterVoice | null): Promise<void> {
       const b = this.bookById(bookId);
@@ -606,9 +549,8 @@ export const useLibraryStore = defineStore("library", {
       await this._writeSettings(bookId, { characterVoice: cv }, "save the Character voice");
     },
     /**
-     * The book's notes for the scripter and its own prompt, written whole. One that cannot be sent
-     * is refused here, with the reason, and nothing is written; the panel shows the same reasons as
-     * they are typed and only saves once there are none. Returns whether it was written.
+     * Write the book's scripter notes and prompt whole. Refused here with the reason when it cannot
+     * be sent. Returns whether it was written.
      */
     async setBookPrompt(bookId: string, prompt: BookPrompt): Promise<boolean> {
       const uiStore = useUiStore();
@@ -629,14 +571,9 @@ export const useLibraryStore = defineStore("library", {
       return !!(await this._writeSettings(bookId, { prompt: stored }, "save this book's prompt"));
     },
     /**
-     * Send one chunk of a chapter with a prompt that need not be saved yet, and hand back what came
-     * back. Nothing is written to the script, but the request is real: the server prices it into
-     * the book's ledger and holds it to the book's budget, so once it settles the book's spend and
-     * the endpoint's activity are read again. A refusal (a budget that has no room, an endpoint
-     * that cannot be reached) is thrown for the caller to show; a model's bad answer is a result.
-     *
-     * `signal` stops waiting for it: the trial's panel is cancelled at once, and nothing that
-     * comes back afterwards is shown.
+     * Send one chunk with an unsaved prompt and return the answer. Writes no script, but is a real
+     * request priced and held to the budget, so spend and activity are reread. Refusals throw; a
+     * bad model answer is a result. `signal` stops waiting; later answers are not shown.
      */
     tryPrompt(
       bookId: string,
@@ -664,10 +601,9 @@ export const useLibraryStore = defineStore("library", {
       return false;
     },
     // ---------- library: importing ----------
-    // Import → review contents → add. An EPUB is read into a book (or a volume) marked `importing`,
-    // the contents review works on it in place — the same review the book keeps afterwards — and
-    // confirming clears the mark. Until then the library does not list it and nothing runs on it.
-    /** Read an EPUB into a new book waiting for its contents review. Returns the book's id. */
+    // An EPUB becomes a book (or volume) marked `importing`; the contents review works on it in
+    // place and confirming clears the mark. Until then it is unlisted and nothing runs on it.
+    /** Read an EPUB into a new book awaiting its contents review. Returns the book's id. */
     async importBook({ source, title }: ImportSpec): Promise<string | null> {
       try {
         const { book, chapters } = await this._service().importBook(source, { title });
@@ -679,9 +615,8 @@ export const useLibraryStore = defineStore("library", {
       }
     },
     /**
-     * A novel split across several EPUBs: the file becomes one more volume, chapters keep numbering
-     * continuously so roster / recap continuity carries across the boundary, and the new volume
-     * waits in the contents review like a new book would. Returns the volume's id.
+     * Add an EPUB as one more volume. Chapter numbering continues so roster and recap continuity
+     * carry across; the volume waits in the contents review. Returns the volume's id.
      */
     async importVolume(
       bookId: string,
@@ -697,7 +632,7 @@ export const useLibraryStore = defineStore("library", {
         return null;
       }
     },
-    /** The review is done: the book, or its new volume, is in the library. Nothing starts running. */
+    /** Finish the review: the book or new volume joins the library. Nothing starts running. */
     async confirmImport(bookId: string): Promise<boolean> {
       const uiStore = useUiStore();
 
@@ -706,7 +641,7 @@ export const useLibraryStore = defineStore("library", {
       const wasBook = !!book.importing;
       const vol = book.volumes.find((v) => v.importing);
       try {
-        // What comes back is the shelved book: the marks are the server's to clear, not ours.
+        // the server clears the marks
         const shelved = await this._service().confirmImport(bookId);
         this._put(shelved, this.chapters[bookId] ?? []);
       } catch (cause) {
@@ -732,7 +667,7 @@ export const useLibraryStore = defineStore("library", {
       );
       return true;
     },
-    /** Cancel an import: a book that was never added goes entirely; a new volume comes off its book. */
+    /** Cancel an import: a new book goes entirely; a new volume comes off its book. */
     async discardImport(bookId: string): Promise<"book" | "volume" | null> {
       const book = this.bookById(bookId);
       if (!book) return null;
@@ -750,7 +685,7 @@ export const useLibraryStore = defineStore("library", {
       }
       return discarded;
     },
-    /** A picked image as the book's cover; a refusal says why and leaves the cover as it was. */
+    /** A refusal says why and leaves the cover as it was. */
     async changeCover(bookId: string, file: File): Promise<void> {
       const refused = coverRefusal(file);
       if (refused) {
@@ -766,10 +701,7 @@ export const useLibraryStore = defineStore("library", {
         toastFailure("change the cover", cause);
       }
     },
-    /**
-     * A new name for a volume. Like the settings above it is an input, so the name changes here at
-     * once and the server's answer follows; a refused rename reads the book back.
-     */
+    /** An input like the settings: renamed here at once; a refused rename reads the book back. */
     async renameVolume(bookId: string, volId: number, name: string): Promise<void> {
       const v = this.bookById(bookId)?.volumes.find((v) => v.id === volId);
       name = name.trim();
@@ -783,9 +715,8 @@ export const useLibraryStore = defineStore("library", {
       }
     },
     /**
-     * Cut the book into these volumes: where each begins and its name, in reading order. The whole
-     * list goes to the server, so a split, a join, a moved boundary and a rename are one write and
-     * one undo — the toast's Undo writes the list as it was. Chapter numbers do not move.
+     * Cut the book into these volumes, in reading order. The whole list is one write and one undo
+     * (the toast's Undo writes the old list). Chapter numbers do not move.
      */
     async setVolumes(
       bookId: string,
@@ -814,11 +745,8 @@ export const useLibraryStore = defineStore("library", {
         });
       return true;
     },
-    // Remove a volume (wrong EPUB added): its chapters, segments, jobs and exports go; the remaining
-    // chapters are renumbered so numbering stays continuous. Removing the last volume removes the novel.
-    //
-    // Nothing puts a volume back in the database, so this cannot be undone.
-    // The control that starts it asks first, and the toast says so.
+    // Remove a volume (wrong EPUB added): its chapters and their data go and the rest renumber.
+    // Removing the last volume removes the book. Cannot be undone; the control asks first.
     async removeVolume(bookId: string, volId: number): Promise<"book" | "volume" | null> {
       const uiStore = useUiStore();
 
@@ -850,9 +778,8 @@ export const useLibraryStore = defineStore("library", {
       });
       return "volume";
     },
-    /** Take a volume off its book without a word: its chapters go and the rest renumber. The
-     *  server cancelled its jobs and dropped its export entries; the reads of both follow from
-     *  `_renumber`. Returns how many chapters went. */
+    /** Drop a volume silently; the rest renumber (`_renumber`). The server already cancelled its
+     *  jobs and dropped its exports. Returns how many chapters went. */
     _dropVolume(bookId: string, volId: number): number {
       const book = this.bookById(bookId);
       if (!book) return 0;
@@ -866,14 +793,9 @@ export const useLibraryStore = defineStore("library", {
       );
       return gone.size;
     },
-    // Volumes are sortable: chapters follow the volume order and are renumbered continuously.
-    //
-    // This asks the server first rather than moving at once: a renumbering moves every script, history, job and export filed under a chapter number,
-    // and putting all of that back after a refusal (the server refuses while an audiobook is being
-    // built, or while a volume is still in its review) would be a second renumbering. Once the
-    // server has moved its side, `_renumber` moves this side by the same rule — each chapter keeps
-    // its place within its volume — and the book and chapters the server answered with are installed
-    // over the result. Returns whether the volume moved.
+    // Asks the server first rather than moving at once: renumbering moves everything filed under a
+    // chapter number, and undoing that after a refusal (an export building, a volume in review)
+    // would be a second renumbering. Then `_renumber` follows locally. Returns whether it moved.
     async moveVolume(bookId: string, volId: number, toIndex: number): Promise<boolean> {
       const book = this.bookById(bookId);
       if (!book) return false;
@@ -894,7 +816,7 @@ export const useLibraryStore = defineStore("library", {
         toastFailure("move this volume", cause);
         return false;
       }
-      // the book may have been re-read while the request was out; renumber what is here now
+      // the book may have been reread while the request was out
       const here = this.bookById(bookId);
       const chs = this.chapters[bookId];
       if (here && chs) {
@@ -909,8 +831,8 @@ export const useLibraryStore = defineStore("library", {
       this._put(answer.book, answer.chapters);
       return true;
     },
-    // give `ordered` chapters ids 1..n in that order; re-key what each store holds by chapter
-    // number, fix volume ranges, and read again everything read from the server by those numbers
+    // give `ordered` chapters ids 1..n; re-key every store by chapter number, fix volume ranges,
+    // and reread whatever was read by those numbers
     _renumber(bookId: string, ordered: Chapter[]): void {
       const historyStore = useHistoryStore();
       const jobsStore = useJobsStore();
@@ -923,11 +845,9 @@ export const useLibraryStore = defineStore("library", {
         map[c.id] = i + 1;
       });
       scriptsStore._remapBook(bookId, map);
-      // a chapter's script history is keyed by its number too, so it moves with the script
+      // script history is keyed by chapter number too
       historyStore.remapBook(bookId, map);
-      // everything read from the server about this book was keyed by numbers that have moved: it
-      // is a cache of the server's answers, so the cheap correct thing is to ask again — the
-      // queue included, whose jobs name their chapters by number
+      // every cached answer for this book is keyed by numbers that moved (job queue included)
       this._forgetBook(bookId);
       void jobsStore._changed();
       ordered.forEach((c) => {
@@ -947,8 +867,7 @@ export const useLibraryStore = defineStore("library", {
     async removeBook(bookId: string): Promise<void> {
       const uiStore = useUiStore();
 
-      // Nothing puts a book back in the database, and no route would: the toast says so rather
-      // than offering an Undo.
+      // nothing puts a book back, so no Undo
       const title = this.bookById(bookId)?.title;
       const chapters = (this.chapters[bookId] ?? []).length;
       try {
@@ -963,10 +882,8 @@ export const useLibraryStore = defineStore("library", {
       });
     },
     /**
-     * Take every script and clip off a book so it can be scripted afresh; with `cast`, every
-     * speaker but the Narrator too. The server keeps each script in its chapter's history, but the
-     * clips' files are gone, so the toast offers no Undo. What this side held of the book's scripts
-     * and histories is let go, and every read filed under the book is made again. Returns whether
+     * Clear a book's scripts and clips to script afresh; with `cast`, every speaker but the
+     * Narrator too. Scripts stay in history but clip files are gone, so no Undo. Returns whether
      * the server did it.
      */
     async startOver(bookId: string, { cast = false }: { cast?: boolean } = {}): Promise<boolean> {
@@ -993,11 +910,7 @@ export const useLibraryStore = defineStore("library", {
       });
       return true;
     },
-    /**
-     * Everything a book owns, gone without a word. The server cancelled its jobs and took its
-     * audiobooks and its spending with it; each store that held some of the book lets it go, and
-     * the queue and the library's spending are read again.
-     */
+    /** Drop everything a removed book owned, silently; the server already cancelled its jobs. */
     _dropBook(bookId: string): void {
       const castStore = useCastStore();
       const historyStore = useHistoryStore();
@@ -1010,8 +923,7 @@ export const useLibraryStore = defineStore("library", {
       castStore._dropBook(bookId);
       scriptsStore._dropBook(bookId);
       historyStore.clearBook(bookId);
-      // nothing filed under the book is there to read again, so its reads are let go rather than
-      // invalidated: a read of a book the server no longer has would only fail
+      // removed, not invalidated: a read of a book the server no longer has would only fail
       const queryCache = useQueryCache();
       for (const entry of queryCache.getEntries({ key: keys.book(bookId) }))
         queryCache.remove(entry);

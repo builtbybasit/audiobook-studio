@@ -1,28 +1,12 @@
-// The queue's worker: one job at a time, in the order they were asked for.
-//
-// One at a time because this is a personal, single-machine app and the queue's own rule — one
-// book's chapters run sequentially so roster and recap carry forward — is easier to keep as a
-// property of the runner than to re-derive per handler. What runs inside a job may fan out as it
-// likes; the runner only promises that two jobs never write at once.
-//
-// Three things the runner is responsible for, and nothing else:
-//
-//   * **claiming** — `drain` takes the oldest queued job and runs its handler; `kick` wakes it after
-//     an enqueue, and a slow interval is a safety net for anything that went in without one.
-//   * **cancelling** — a running job has an `AbortController`; cancelling aborts it, the handler
-//     sees `signal`, and whatever it returns or throws afterwards is recorded as `cancelled`. A
-//     queued job is finished as cancelled without ever starting.
-//   * **recovering** — `start` first puts back any job the last process died holding, so a restart
-//     loses no work, and `stop` hands the running job back to the queue rather than abandoning it.
-//
-// Handlers are looked up by `job.kind`. A kind with no handler fails at once and says so.
+// The queue's worker: one job at a time, oldest first, so a book's chapters run in order (roster
+// and recap carry forward) and two jobs never write at once. Handles claiming, cancelling, and
+// recovering jobs a dead process was holding; handlers are looked up by `job.kind`.
 import type { Job, JobEvent, JobKind, JobStatus } from "@/types";
 import type { Db } from "~/db/client";
 import * as queue from "~/db/jobs";
 import { AppError } from "~/lib/errors";
 import type { Logger } from "~/log";
 
-/** What a handler is given: the job, a way to say how far it is, and a way to say what happened. */
 export interface JobContext {
   readonly job: Job;
   readonly db: Db;
@@ -34,11 +18,8 @@ export interface JobContext {
 }
 
 /**
- * The work of one job.
- *
- * Returns when done; throws to fail. A throw after the signal was aborted is a cancellation, not a
- * failure, whatever was thrown. `onSettled` is called after the row has been finished, with the
- * status it ended in, for a handler that has to put something back either way.
+ * Returns when done; throws to fail. Any throw after the signal aborted is a cancellation.
+ * `onSettled` runs after the row is finished, on every path, for cleanup.
  */
 export interface JobHandler {
   run(ctx: JobContext): Promise<void>;
@@ -49,9 +30,9 @@ export type JobHandlers = Partial<Record<JobKind, JobHandler>>;
 
 export interface RunnerOptions {
   log: Logger;
-  /** how often to look for work nobody kicked for, in ms; the safety net, not the mechanism */
+  /** ms between safety-net polls; `kick` is the real wake-up */
   pollMs?: number;
-  /** how many starts a job gets before a restart stops putting it back in the queue */
+  /** starts a job gets before recovery stops requeueing it */
   maxAttempts?: number;
 }
 
@@ -59,24 +40,16 @@ export interface RunnerOptions {
 type AbortReason = "cancel" | "stop";
 
 export interface Runner {
-  /** Put work in the queue and wake the worker. The same work already queued is handed back instead. */
+  /** Queue and wake the worker; returns the existing job if the same work is already queued. */
   enqueue(input: queue.EnqueueInput): queue.Enqueued;
-  /** Stop a job: a queued one never starts, a running one is aborted. Says which it was. */
   cancel(id: number): "queued" | "running" | "finished" | "missing";
-  /** Wake the worker; safe to call at any time. */
   kick(): void;
-  /** Recover interrupted work, then run and keep running until `stop`. */
   start(): void;
-  /**
-   * Resolves once a job is no longer being run: at once if it is not the one running, and
-   * otherwise when its handler has returned or thrown and the row says how it ended.
-   */
+  /** Resolves once the job is not running and its row is finished. */
   finished(id: number): Promise<void>;
-  /** Hand a running job back to the queue and stop taking work. Resolves once the worker is idle. */
+  /** Hand the running job back to the queue and stop taking work. */
   stop(): Promise<void>;
-  /** Resolves when the worker has nothing left to do. For tests, mostly. */
   idle(): Promise<void>;
-  /** The job being worked on right now, if any. */
   readonly running: Job | null;
 }
 
@@ -112,13 +85,7 @@ export function createRunner(
     };
   }
 
-  /**
-   * Give a handler the last word on a job that has been finished, whichever path finished it.
-   *
-   * A cancel of a queued job and a recovery that gives up on one both settle rows without a
-   * handler ever running, and the handler is the only thing that knows what else has to be put
-   * back — a chapter marked `queued`, say.
-   */
+  /** Call `onSettled` on every finish path, including ones where `run` never ran. */
   function settled(
     job: Job,
     status: queue.SettledStatus,
@@ -131,7 +98,6 @@ export function createRunner(
     }
   }
 
-  /** Run one claimed job to its end and record what it came to. */
   async function runOne(job: Job): Promise<void> {
     const controller = new AbortController();
     let end!: () => void;
@@ -144,11 +110,8 @@ export function createRunner(
     try {
       if (!handler) throw new Error(`This server has no handler for ${job.kind} jobs`);
       await handler.run(ctx);
-      // A handler that returned finished. A cancel or a stop is honoured by the handler throwing,
-      // at the last point it can still take the work back; one that arrives after that — while an
-      // export's final write commits, say — is too late, and calling the job cancelled then would
-      // have its `onSettled` delete what it had just committed, or leave it `running` for the
-      // next start to rebuild over.
+      // Returned means done, even if a cancel arrived late: `onSettled` for a cancel would undo
+      // what the handler just committed.
       status = "done";
     } catch (e) {
       if (controller.signal.aborted || isAbortError(e)) status = "cancelled";
@@ -163,14 +126,10 @@ export function createRunner(
       }
     }
 
-    // Bookkeeping can fail too — the job's book was removed while it ran, say, and its row went
-    // with it — and a throw here must not take the worker down with it: `current` is cleared
-    // whatever happens, and the worker moves on to the next job.
+    // bookkeeping can throw (e.g. the book was removed mid-run); never take the worker down
     try {
-      // A stop is not a cancellation. The row is left `running`, exactly as a crash would leave it,
-      // and `recoverInterrupted` at the next start is the one thing that puts it back — so there is
-      // one recovery path rather than two. What a stop does not do is count as a crash: the start
-      // it interrupted is given back, so only a job that keeps taking the process down runs out.
+      // A stop leaves the row `running` like a crash, so `recoverInterrupted` is the one recovery
+      // path; but the attempt is given back, so only a job that keeps crashing runs out.
       if (status === "cancelled" && current?.reason === "stop") {
         queue.appendEvent(db, job.id, "The server stopped while this ran", "warning");
         queue.handBack(db, job.id);
@@ -207,17 +166,9 @@ export function createRunner(
   }
 
   /**
-   * Wake the worker, once.
-   *
-   * `draining` is set before `drain` runs, not from its return value: `drain` does real work before
-   * its first `await` — it claims a job and starts the handler — and a `kick` arriving inside that
-   * window (an enqueue from a handler, the interval) would otherwise see nothing draining and start
-   * a second worker beside the first.
-   *
-   * A kick while one is draining is not dropped, though. The drain may already have found the
-   * queue empty and be on its way out — `draining` is cleared a turn after `drain` returns — and a
-   * job enqueued in that turn, the one straight after a `start`, would otherwise wait for the
-   * interval. So it is remembered, and the drain that missed it is followed by one more look.
+   * `draining` is set before `drain` runs: `drain` claims a job before its first `await`, and a kick
+   * in that window would start a second worker. A kick during a drain sets `missed`, since the
+   * drain may already be leaving an empty queue; one more drain follows.
    */
   function kick(): void {
     if (draining) {
@@ -276,7 +227,7 @@ export function createRunner(
         );
       kick();
       timer = setInterval(kick, pollMs);
-      // a timer must not be what keeps a process alive after everything else has stopped
+      // don't keep the process alive
       (timer as { unref?: () => void }).unref?.();
     },
     async stop() {

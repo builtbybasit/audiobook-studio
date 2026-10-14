@@ -1,9 +1,6 @@
-// Expression tags as the page places them: anchored in a line's text, spelled the way the endpoint
-// the line's voice is on says, and kept out of every edit of the prose around them. The stores here
-// read a seeded demo library, opened once; what an edit or a dictionary change would write is
-// answered without being written, so every test reads the demo as seeded, and what the server
-// keeps of an edit is `tests/server/scriptEdit.test.ts`'s. The speech endpoint the tags are
-// configured on is one the test adds, with a model that takes bracketed tags.
+// Expression tags as the page places them: anchored in a line's text, spelled the way the line's
+// endpoint says, and kept out of every edit of the prose around them. Writes are answered without
+// being written, so every test reads the demo as seeded.
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
@@ -178,7 +175,7 @@ test("an annotation put back where it already was is not an edit of the script",
   writes.length = 0;
 
   // dragging a tag home again: the script still says what the clip was rendered from, and nothing
-  // is written that would open a history entry
+  // opens a history entry
   narrationStore.updateExpression(BOOK, 1, 1, 1, { at: 8 });
   expect(segment().audio.status).toBe("done");
   await scriptsStore._settled(BOOK, 1);
@@ -246,9 +243,8 @@ test("invalid tag definitions cannot be saved or imported", () => {
 });
 
 test("tags are checked against the model they are saved for, not the one the draft was opened on", () => {
-  // drafted while the endpoint pointed at a server that takes a delivery inline, saved after it
-  // was moved to Gemini 3.8, which takes only sounds there: the tag would be refused on every
-  // line, so the save is
+  // drafted for an endpoint that takes a delivery inline, saved after moving to Gemini 3.8, which
+  // takes only sounds: the tag would be refused on every line, so the save is
   const e = endpoint();
   const softly: ExpressionTag = {
     id: "softly",

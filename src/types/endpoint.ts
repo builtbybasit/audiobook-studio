@@ -1,12 +1,6 @@
-// TTS and scripting endpoints: how they are configured, what they bill, and the request telemetry
-// the Endpoints page draws from.
-//
-// The app talks to two kinds of OpenAI-compatible server: a chat model that turns prose into an
-// attributed script, and a speech model that renders a line. They are configured, paused, rate
-// limited and billed the same way, so the Endpoints page treats them as one list of two kinds.
+// Scripting, TTS and transcription endpoints: config, billing and the request telemetry the
+// Endpoints page draws from. All kinds are configured, paused, rate limited and billed alike.
 import type { SplitMode } from "@/types/common";
-// `TtsBilling` lives with the pricing vocabulary now that a speech rate goes through the same
-// schedule and promotions as a token rate; re-exported here so nothing that imports it has moved.
 import type {
   CostBasis,
   PricedRequest,
@@ -31,7 +25,7 @@ export interface ReqError {
   code: number;
   message: string;
   body: string;
-  /** when it happened; absent on the canned ERRORS templates */
+  /** absent on the canned ERRORS templates */
   at?: number;
   /** which part of a split segment failed */
   part?: number;
@@ -50,15 +44,9 @@ export interface Endpoint {
   /** USD per million characters */
   price: number;
   needsKey: boolean;
-  /**
-   * Backend only, and only ever read: the server holds a key for this endpoint. The key itself
-   * never comes back from the server.
-   */
+  /** Read only: the server holds a key for this endpoint. The key itself never comes back. */
   hasKey?: boolean;
-  /**
-   * Backend only, and only ever sent: a key for the server to keep for this endpoint. Left out, a
-   * save keeps the one already kept; `""` forgets it.
-   */
+  /** Sent only: a key for the server to keep. Left out, a save keeps the key; `""` forgets it. */
   apiKey?: string;
   /** per-request character cap; 0 = no limit */
   maxChars: number;
@@ -71,18 +59,13 @@ export interface Endpoint {
   lastError?: ReqError;
   /** true while "fetch voices from server" is in flight */
   fetching?: boolean;
-  /** what the provider actually charges for. `price` stays the per-1M-chars figure the run
-   *  estimator has always used; this says whether that figure is a conversion or the real unit. */
+  /** what the provider really bills; `price` stays the per-1M-chars figure the estimator uses */
   billing?: TtsBilling;
   /**
-   * The peak/off-peak schedule and the temporary promotions on this endpoint's rate, with the
-   * timezone its windows are read in. The same shape the scripting endpoints use — a speech rate
-   * goes on discount the same way a token rate does — minus the cached-input fields, which mean
-   * nothing here and are never offered. Optional so an endpoint saved before it existed still
-   * loads; `ensurePricing` fills the defaults in on first use.
+   * Schedule and promotions on this rate (no cached-input fields). `ensurePricing` fills defaults.
    */
   pricing?: PricingConfig;
-  // operational settings — see EndpointOps; optional so older saved endpoints still load
+  // operational settings — see EndpointOps
   timeoutSec?: number;
   maxRetries?: number;
   cooldownSec?: number;
@@ -90,33 +73,26 @@ export interface Endpoint {
   credentialId?: string | null;
   quotaGroup?: string | null;
   expressions?: ExpressionConfig;
-  /**
-   * The sample rate every line is asked for, in Hz. Absent or null means the model's own rate: the
-   * request carries no rate at all and the clip records whatever the file came back at.
-   */
+  /** Hz. Absent or null = the model's own: none is requested; the clip records what came back. */
   sampleRate?: SampleRate | null;
   /**
-   * What every line is asked for and kept as. Absent or null means WAV, which every part of the
-   * server reads; MP3 and Opus are a tenth of the size.
-   * What an endpoint can be asked for is `speechFormats` in `lib/endpointShapes.ts`.
+   * Absent or null means WAV, which every part of the server reads. What an endpoint can be asked
+   * for is `speechFormats` in `lib/endpointShapes.ts`.
    */
   encoding?: AudioEncoding | null;
   /**
-   * Whether a run sends this endpoint's lines in batches when its server takes them — one that
-   * speaks the batch speech API (`docs/speech-batch-api.md`). Absent means yes; false sends one
-   * line a request whatever the server says.
+   * Send lines in batches when the server speaks the batch speech API (`docs/speech-batch-api.md`).
+   * Absent means yes; false sends one line a request.
    */
   batch?: boolean;
   /**
-   * An OpenAI-compatible server makes voices from samples at `POST …/audio/voices`
-   * (`docs/speech-batch-api.md#voices`), so the Voices tab offers cloning. Absent means no: nothing
-   * says whether such a server can until it is asked to.
+   * The server makes voices from samples at `POST …/audio/voices`
+   * (`docs/speech-batch-api.md#voices`), so the Voices tab offers cloning. Absent means no.
    */
   makesVoices?: boolean;
   /**
-   * The server this endpoint speaks to, for one whose base URL cannot say: a server on your own
-   * machine is `http://127.0.0.1:<port>`, whatever it runs. Absent, the base URL decides
-   * (`speechProviderOf`); a hosted API is always known by its host.
+   * The server, for one whose base URL can't say (a local `http://127.0.0.1:<port>`). Absent, the
+   * base URL decides (`speechProviderOf`).
    */
   server?: SpeechServer | null;
 }
@@ -124,19 +100,17 @@ export interface Endpoint {
 /** A server known only by being named, never by its address: Breeze-TTS-2.cpp. */
 export type SpeechServer = "breezecpp";
 
-/** A container this app can keep a clip in. */
 export type AudioFormat = "wav" | "mp3" | "opus";
 
 export interface AudioEncoding {
   format: AudioFormat;
   /**
-   * MP3 in kbps, Opus in bps with -1000 meaning the encoder's own choice — each as the provider's
-   * API spells it. Absent means the provider's default; WAV has none.
+   * MP3 in kbps, Opus in bps with -1000 meaning the encoder's own choice, as each provider's API
+   * spells it. Absent means the provider's default; WAV has none.
    */
   bitrate?: number;
 }
 
-/** The rates a speech endpoint can be asked to render at — speech-grade 16 kHz up to 48 kHz. */
 export type SampleRate = 16000 | 22050 | 24000 | 32000 | 44100 | 48000;
 
 export interface EndpointLoad {
@@ -146,23 +120,17 @@ export interface EndpointLoad {
   backoff: boolean;
 }
 
-/**
- * Backend only: what the server's process has seen of one speech endpoint since it started —
- * `GET /api/endpoints/live`. Never stored; a restart starts it again from nothing.
- */
+/** `GET /api/endpoints/live`: what the server process has seen since it started. Never stored. */
 export interface EndpointLive {
   /** lines out at the endpoint right now, across every job */
   active: number;
   /** lines held for it: its concurrency is full, it is paused, or it is cooling down */
   waiting: number;
-  /** requests it has refused as rate limited */
   rateLimits: number;
-  /** when the cooldown after its last rate limit ends, epoch ms; in the past when there is none */
+  /** epoch ms; in the past when there is none */
   backoffUntil: number;
   /**
-   * The clips it rendered that the library plays, done and failed, across every book — counted
-   * from what is stored, so unlike the rest these survive a restart. Absent for an endpoint with
-   * none.
+   * Clips the library plays, across every book. Counted from storage, so these survive a restart.
    */
   done?: number;
   failed?: number;
@@ -171,13 +139,9 @@ export interface EndpointLive {
 export type EndpointKind = "scripting" | "tts" | "transcription";
 
 /**
- * A speech-to-text server: what turns audio back into words — a clone sample's transcript, and the
- * check that a rendered line says what the script says. Any server that answers OpenAI's
- * `POST /audio/transcriptions` will do; one that answers `verbose_json` with word timestamps also
- * gives the Listen page the time of every word.
- *
- * The same table as the other two kinds and the same ops, with none of a speech endpoint's voices,
- * formats or splitting: a request is one file, and is priced by the minute of audio sent.
+ * A speech-to-text server (clone sample transcripts, checking a rendered line by ear). Any OpenAI
+ * `POST /audio/transcriptions` server works; `verbose_json` word timestamps feed the Listen page.
+ * Priced by the minute of audio sent.
  */
 export interface Transcriber extends Partial<EndpointOps> {
   id: string;
@@ -191,36 +155,30 @@ export interface Transcriber extends Partial<EndpointOps> {
   hasKey?: boolean;
   /** as on `Endpoint`: sent only, absent keeps the kept key and `""` forgets it */
   apiKey?: string;
-  /** USD per minute of audio sent; 0 for a server that charges nothing */
+  /** USD per minute of audio sent */
   perMinute: number;
-  /**
-   * How hard the server favours the hinted names, sent as `hotword_lambda` beside them (Phonon-2
-   * reads it, 0–100, its own default 2); absent sends none, for a server that takes no such field
-   */
+  /** Sent as `hotword_lambda` with hinted names (Phonon-2: 0–100, default 2); absent sends none */
   hotwordLambda?: number;
   /**
-   * Send each recording as 16 kHz mono WAV, the rate every speech-to-text model hears at (Fermion
-   * Phonon's CUDA build takes no other). Absent means yes; false sends it as it was rendered.
+   * Send each recording as 16 kHz mono WAV (Fermion Phonon's CUDA build takes no other). Absent
+   * means yes; false sends it as rendered.
    */
   resample16k?: boolean;
-  /** the schedule and promotions on that rate, as on the other kinds */
   pricing?: PricingConfig;
 }
 
 /**
- * A named credential: which provider account an endpoint uses, so several endpoints can say they
- * share one. Only a name — the server keeps one key per endpoint and never sends it back, so no
- * key is ever here. The registry travels with the endpoint configuration.
+ * Which provider account an endpoint uses, so endpoints can share one. Only a name: the server
+ * keeps one key per endpoint and never sends it back.
  */
 export interface Credential {
   id: string;
   label: string;
-  /** free-text reminder of which account this is — never the key itself */
+  /** which account this is — never the key itself */
   note: string;
 }
 
-/** Operational settings shared by both kinds. Optional on the endpoint types so anything saved
- *  before they existed still loads; `ensureOps` fills the defaults in on first use. */
+/** Operational settings shared by all kinds. `ensureOps` fills the defaults in on first use. */
 export interface EndpointOps {
   /** per-request wall clock, seconds */
   timeoutSec: number;
@@ -230,7 +188,7 @@ export interface EndpointOps {
   cooldownSec: number;
   /** USD/day for this endpoint across every book; null = no endpoint-level limit */
   spendLimit: number | null;
-  /** id from the credential registry; null = this endpoint's own key slot */
+  /** null = this endpoint's own key slot */
   credentialId: string | null;
   /** endpoints that share one provider rate limit and spend pool */
   quotaGroup: string | null;
@@ -242,32 +200,22 @@ export type RequestStatus = "done" | "failed" | "running" | "queued" | "cancelle
 export type WaitReason = "paused" | "concurrency" | "cooldown" | "nokey" | "budget" | "ordered";
 
 /**
- * What one request used. For a scripting request `inputTokens` is the **total** input — the cached
- * and cache-write parts below are slices of it, never additions — so the three never double-count.
- * `cachedInput` absent means the provider did not report it, which is not the same as zero.
+ * `inputTokens` is the **total** input; the cached and cache-write parts are slices of it. Absent
+ * means not reported, which is not zero.
  */
 export interface RequestUsage {
   inputTokens?: number;
   outputTokens?: number;
-  /** of `inputTokens`, served from the provider's cache; absent = not reported */
   cachedInput?: number;
-  /** of `inputTokens`, written into the provider's cache; absent = not reported */
   cacheWrite?: number;
-  /** of `outputTokens`, spent reasoning before the answer; absent = not reported */
+  /** of `outputTokens`, spent reasoning before the answer */
   reasoningTokens?: number;
-  /**
-   * The speech side. Four different quantities, never conversions of one another: a request is so
-   * many characters *and* so many UTF-8 bytes *and* so many text tokens, and only the one its
-   * endpoint bills in is charged. Absent means nobody counted it, which is not zero.
-   */
+  /** Speech side: separate quantities, not conversions; only the billing unit is charged. */
   chars?: number;
-  /** UTF-8 bytes of the same submitted content */
   bytes?: number;
-  /** input text tokens of the same submitted content */
   textTokens?: number;
-  /** rendered audio, seconds. Silence stitched in locally is not generated audio and is not here. */
+  /** generated audio only; silence stitched in locally is not here */
   audioSeconds?: number;
-  /** output audio tokens, where the endpoint bills on them */
   audioTokens?: number;
 }
 
@@ -291,16 +239,14 @@ export interface RequestRecord {
   responseMs: number;
   waiting?: WaitReason;
   usage: RequestUsage;
-  /** scripting: the reasoning level the request asked for; absent = none, left to the model */
+  /** scripting: the reasoning level asked for; absent = left to the model */
   reasoningEffort?: ReasoningEffort;
   /** null when the endpoint's rate is unknown */
   cost: number | null;
   costBasis: CostBasis;
   /**
-   * The receipt, frozen when the request completed: the usage as normalized, the rates in force at
-   * that instant and the reasoning behind them. Editing a rate or letting a promotion expire never
-   * touches one. A scripting request gets `priced` (tokens, with the cache split); a speech request
-   * gets `speech` (characters, audio minutes or requests, in the unit its endpoint bills by).
+   * The receipt, frozen at completion; later rate edits never touch it. Scripting requests get
+   * `priced`, speech requests get `speech`.
    */
   priced?: PricedRequest;
   speech?: SpeechCharge;
@@ -327,13 +273,11 @@ export interface MetricBucket {
   /** mean ms waiting for the provider */
   responseMs: number;
   p95Ms: number;
-  /** tokens/minute (scripting) or generated audio minutes per minute (TTS), over the requests
-   *  that reported what they produced; `null` when requests finished and none of them did */
+  /** tokens/min or audio minutes/min over requests that reported output; `null` when none did */
   throughput: number | null;
   /** finished requests whose provider reported no usage — left out of `throughput`, never as 0 */
   unreported: number;
   cost: number;
-  /** requests in this bucket whose cost could not be priced */
   unknownCost: number;
 }
 
@@ -354,13 +298,11 @@ export interface MetricTotals {
   unknownCost: number;
   inputTokens: number;
   outputTokens: number;
-  /** of `inputTokens`, reported as served from cache — only from requests that reported it */
+  /** only from requests that reported it */
   cachedInputTokens: number;
-  /** input tokens from those same requests, so a cache percentage divides like by like. Dividing
-   *  reported cached tokens by *every* request's input understates the hit rate by however much
-   *  traffic said nothing about its cache use. */
+  /** input tokens from those same requests, so a cache hit rate divides like by like */
   cacheReportedInputTokens: number;
-  /** requests whose provider reported cache detail at all; the rest say nothing either way */
+  /** requests whose provider reported cache detail at all */
   cacheReported: number;
   /** requests priced from a charge the provider reported rather than from configured rates */
   providerReported: number;
@@ -393,11 +335,11 @@ export interface SettingsFile {
   version: number;
   exportedAt: string;
   endpoints: Partial<Endpoint>[];
-  /** an older file's `append` prompt on one is read in as that endpoint's notes (`upgradeProfilePrompt`) */
+  /** an `append` prompt on one is read in as that endpoint's notes (`upgradeProfilePrompt`) */
   profiles: Profile[];
-  /** absent in a file from before transcription endpoints, which leaves the ones here be */
+  /** absent leaves the current transcribers be */
   transcribers?: Transcriber[];
-  /** the library's default scripting prompt; null is the built-in one, absent (an older file) leaves it be */
+  /** the library's default scripting prompt; null is the built-in one, absent leaves it be */
   prompt?: PromptTemplate | null;
   scriptSettings: ScriptSettings;
 }

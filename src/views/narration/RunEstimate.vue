@@ -2,22 +2,18 @@
 import { useCastStore } from "@/stores/cast";
 import { useNarrationStore } from "@/stores/narration";
 
-// "This run" panel: what the current chapter selection will cost before pressing Narrate. Cost and
-// request counts are per endpoint, because each speaker's voice pins its lines to one endpoint and
-// long segments split against that endpoint's per-request limit.
+// "This run" panel: what the chapter selection will cost before pressing Narrate. Counted per
+// endpoint, because long segments split against each endpoint's per-request limit.
 import { computed } from "vue";
 import { runSummary, SCOPE_HELP, SCOPE_LABEL, skipSummary } from "@/lib/runPlan";
 import { UiSwitch, UiToggleGroup } from "@/ui";
 import { TriangleAlert as WarnIcon } from "@lucide/vue";
-// `money` keeps fractions of a cent visible: a two-clip run really does cost $0.000002, and
-// rounding that to "$0.00" is the same lie as showing an unknown rate as free.
+// `money` keeps fractions of a cent visible: a tiny run is not "$0.00".
 import { billingOf } from "@/lib/endpoints";
 import { voiced as isVoiced } from "@/lib/cast";
 import { billingUnitLabel, money } from "@/lib/pricing";
 import type { EndpointEstimate, NarrationEstimate, NarrationScope, RunPlan } from "@/types";
-// The plan, the estimate and the blockers are worked out by the view, not here: the run strip says
-// how many blockers there are and what the run costs, and this panel lists and itemises them, and
-// one calculation is how those two stay in agreement.
+// Plan, estimate and blockers come from the view, so this panel and the run strip agree.
 const props = defineProps<{
   bookId: string;
   plan: RunPlan;
@@ -50,7 +46,7 @@ const fmt = (s: number) =>
     : `~${Math.round(s / 60)}m`;
 const k = (n: number) => (n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k" : String(n));
 
-/** Only worth a row when the text is not all ASCII — that is the whole point of byte billing. */
+/** Only worth a row when the text is not all ASCII. */
 const bytesDiffer = computed(() => est.value.units.bytes > est.value.units.chars);
 
 /** What this endpoint's share is charged on, in that endpoint's own unit. */
@@ -83,11 +79,10 @@ function rowTitle(e: EndpointEstimate): string {
 <template>
   <div class="text-xs">
     <div class="label mb-1.5">This run</div>
-    <!-- what the run is for. The estimate below counts this scope, not every line in the book. -->
+    <!-- the estimate below counts this scope, not every line in the book -->
     <UiToggleGroup v-model="scope" :options="scopes" block size="xs" />
     <p class="mb-2 mt-1 text-[11px] leading-snug text-zinc-500">{{ SCOPE_HELP[scope] }}</p>
-    <!-- only shown when this scope actually reaches lines with a retake waiting, and shown in
-         both switch positions: the count is what the choice is about, not what it left behind. -->
+    <!-- shown in both switch positions: the count is what the choice is about -->
     <div v-if="est.pending" class="mb-2">
       <UiSwitch v-model="keepPending" label="Keep retakes waiting for a verdict" />
       <p class="mt-1 text-[11px] leading-snug text-zinc-500">
@@ -103,16 +98,12 @@ function rowTitle(e: EndpointEstimate): string {
       ><span class="text-right font-mono">{{ est.chapters }}</span>
       <span class="text-zinc-500">Clips to render</span
       ><span class="text-right font-mono">{{ est.segments }}</span>
-      <!-- Billable characters, not the length of the chapter: the dictionary rewrites words on the
-           way out, expression tags are inserted and the voice instructions travel with the request.
-           The byte row sits beside it and counts the same content, so the two can be compared. -->
+      <!-- billable characters, not chapter length: respellings, tags and instructions count too -->
       <span
         class="text-zinc-500"
         title="Billable characters of what will actually be submitted — after pronunciation replacements and expression tags, plus any voice instructions. Not the length of the chapter."
         >Characters</span
       ><span class="text-right font-mono">{{ k(est.units.chars) }}</span>
-      <!-- the byte count only earns a row where it differs from the character count, which is
-           exactly when an endpoint that bills on bytes is going to cost more than it looks -->
       <template v-if="bytesDiffer">
         <span
           class="text-zinc-500"
@@ -135,9 +126,7 @@ function rowTitle(e: EndpointEstimate): string {
       ><span class="text-right font-mono">{{ est.chapters ? fmt(est.seconds) : "—" }}</span>
       <span class="text-zinc-500">Voices set</span
       ><span class="text-right font-mono">{{ voiced }}/{{ cast.length }}</span>
-      <!-- input + audio = total, where anything in this run bills on the audio. Adding them into
-           one number hides which half is large, and on a token-billed endpoint the audio half
-           usually is. -->
+      <!-- input + audio = total, split so the larger half (usually audio) is visible -->
       <template v-if="est.audioCost != null">
         <span class="text-zinc-500">Input text</span
         ><span class="text-right font-mono text-zinc-500">{{ money(est.inputCost) }}</span>
@@ -148,8 +137,7 @@ function rowTitle(e: EndpointEstimate): string {
       ><span class="text-right font-mono font-semibold text-amber-600"
         >{{ money(est.cost) }}<span v-if="est.unpriced" class="font-normal">+</span></span
       >
-      <!-- the conservative figure, labelled and used for nothing here: what the cap is actually
-           checked against is `est.worstCase`, the per-endpoint sum, which the store owns -->
+      <!-- display only: the cap is checked against `est.worstCase` in the store -->
       <template v-if="est.withoutPromotions > est.cost + 1e-9">
         <span class="text-zinc-500">Without today’s discounts</span
         ><span class="text-right font-mono text-zinc-500">{{ money(est.withoutPromotions) }}</span>
@@ -179,8 +167,7 @@ function rowTitle(e: EndpointEstimate): string {
         replacement succeeds, and the clip it displaces joins that line’s take list.</span
       >
     </p>
-    <!-- a line of site text is no clip to render and costs nothing, so it is not in the figures
-         above; said here so a line marked by mistake is not simply missing from them -->
+    <!-- unread lines are not in the figures above; said so one marked by mistake is not lost -->
     <p v-if="unread" class="mt-1 leading-snug text-zinc-500">
       {{ unread }} — the ledger lists them, dimmed, where they fall.
     </p>
@@ -211,9 +198,7 @@ function rowTitle(e: EndpointEstimate): string {
           >{{ e.cost == null ? "unknown" : e.cost === 0 ? "free" : money(e.cost) }}</span
         >
       </div>
-      <!-- how each endpoint bills, and the split where it bills on two things. Three endpoints in
-           one run can be charged on three different quantities, and the total is only readable
-           once each row says which. -->
+      <!-- each endpoint can bill on a different quantity, so each row says which -->
       <div
         v-for="e in est.per"
         :key="e.endpoint.id + '-unit'"
@@ -222,7 +207,7 @@ function rowTitle(e: EndpointEstimate): string {
         {{ e.endpoint.name }}: {{ billingUnitLabel(billingOf(e.endpoint).unit) }} ·
         {{ unitsLine(e) }}
       </div>
-      <!-- what moved an endpoint off its card rate, named rather than left as a cheaper number -->
+      <!-- what moved an endpoint off its card rate -->
       <div
         v-for="e in est.per.filter((x) => x.why.length)"
         :key="e.endpoint.id + '-why'"

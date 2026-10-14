@@ -1,14 +1,6 @@
-// The library: books, the volumes they were assembled from, their chapters, and the chapter text
-// the EPUB actually contained.
-//
-// Chapter text is a table of its own. The contents review lists a few hundred chapters at a time
-// and needs none of their prose; keeping it out of `chapters` means that listing stays a cheap read
-// no matter how long the book is.
-//
-// `chapters` is the table everything downstream hangs off. A chapter is addressed by its **number**
-// within the book, continuous across volumes, and that number moves when a volume is removed — so
-// every child keys on `(book_id, chapter_id)` with `ON UPDATE CASCADE`, and a renumbering carries
-// the script, the clips and the history with it rather than orphaning them.
+// Books, volumes, chapters, and chapter text (its own table so listing chapters stays cheap).
+// A chapter's number moves when a volume is removed, so children key on `(book_id, chapter_id)`
+// with ON UPDATE CASCADE.
 import {
   foreignKey,
   index,
@@ -28,36 +20,33 @@ export const books = sqliteTable("books", {
   author: text("author").notNull(),
   coverFrom: text("cover_from").notNull(),
   coverTo: text("cover_to").notNull(),
-  /**
-   * The EPUB's own cover: the url it was kept at, under the API base of the library that kept it,
-   * as a clip's is. Null when it had none.
-   */
+  /** the cover's url under the API base, as a clip's is */
   coverImage: text("cover_image"),
-  /** epoch ms; the API serialises this to the YYYY-MM-DD the shelf shows */
+  /** epoch ms; the API serialises it to YYYY-MM-DD */
   addedAt: integer("added_at").notNull(),
-  /** still in its contents review: the library does not list it and nothing runs on it */
+  /** in its contents review: not listed, nothing runs on it */
   importing: integer("importing", { mode: "boolean" }).notNull().default(false),
   budgetCap: real("budget_cap"),
   budgetPaused: integer("budget_paused", { mode: "boolean" }),
   scriptBudget: real("script_budget"),
   pacingLine: real("pacing_line"),
   pacingTurn: real("pacing_turn"),
-  /** the pauses inside a line; null on a book whose pacing was saved before they were asked */
+  /** pauses inside a line; null = default */
   pacingInlineShort: real("pacing_inline_short"),
   pacingInlineLong: real("pacing_inline_long"),
-  /** the book's notes for the scripter, which `{{book.notes}}` places; null = none */
+  /** placed by `{{book.notes}}` */
   promptNotes: text("prompt_notes"),
-  /** whether the two texts below are this book's whole prompt; kept either way */
+  /** whether the texts below replace the prompt; kept either way */
   promptReplace: integer("prompt_replace", { mode: "boolean" }),
   promptSystem: text("prompt_system"),
   promptUser: text("prompt_user"),
-  /** read the translator's and author's notes (`note` lines) aloud; null = skip them, the default */
+  /** read `note` lines aloud; null = skip them */
   readNotes: integer("read_notes", { mode: "boolean" }),
-  /** check each chapter by ear once it is narrated (`Book.checkByEar`); null = only when asked */
+  /** null = only when asked */
   checkByEar: integer("check_by_ear", { mode: "boolean" }),
-  /** the book's thought effect (`Book.thoughts`): an effect's id or "none"; null = the library's */
+  /** an effect id or "none"; null = the library's */
   thoughts: text("thoughts"),
-  /** the voice a speaker with none of their own is read in (`CharacterVoice`); null = the Narrator's */
+  /** for speakers with no voice of their own; null = the Narrator's */
   characterVoice: text("character_voice", { mode: "json" }).$type<CharacterVoice>(),
 });
 
@@ -67,14 +56,14 @@ export const volumes = sqliteTable(
     bookId: text("book_id")
       .notNull()
       .references(() => books.id, { onDelete: "cascade" }),
-    /** per-book, not global: volume 1 of every book is 1 */
+    /** per-book */
     id: integer("id").notNull(),
     name: text("name").notNull(),
     file: text("file").notNull(),
-    /** inclusive chapter-number range this volume covers */
+    /** inclusive chapter-number range */
     fromIndex: integer("from_index").notNull(),
     toIndex: integer("to_index").notNull(),
-    /** the order volumes are read in; chapters are numbered to follow it */
+    /** reading order; chapters are numbered to follow it */
     position: integer("position").notNull(),
     importing: integer("importing", { mode: "boolean" }).notNull().default(false),
   },
@@ -87,17 +76,9 @@ export const chapters = sqliteTable(
     bookId: text("book_id")
       .notNull()
       .references(() => books.id, { onDelete: "cascade" }),
-    /** the chapter number, continuous across volumes; `index` in the domain model is the same value */
+    /** the chapter number, continuous across volumes (`index` in the domain model) */
     id: integer("id").notNull(),
-    /**
-     * This chapter, for as long as it exists — assigned once at import and never rewritten.
-     *
-     * The number above is an *address*, not an identity: removing volume 1 turns chapter 2 into
-     * chapter 1. Everything that keys on the address follows it by cascade, which is right for the
-     * script and the clips because they move with the chapter. It is wrong for anything that must
-     * not be rewritten — the spending ledger is append-only, and a row that said "chapter 2" and now
-     * says "chapter 1" is not a record of the past, it is a quiet edit of one. Those reference this.
-     */
+    /** identity, never rewritten; for what must not follow renumbering (the ledger) */
     uid: text("uid").notNull(),
     volumeId: integer("volume_id").notNull(),
     volumeIndex: integer("volume_index").notNull(),
@@ -108,25 +89,18 @@ export const chapters = sqliteTable(
     narration: text("narration").notNull().default("none"),
     narrationProgress: real("narration_progress").notNull().default(0),
     duration: real("duration").notNull().default(0),
-    /** skipped for the audiobook: out of every stage, still in the book, restorable */
+    /** skipped: out of every stage, still in the book, restorable */
     excluded: integer("excluded", { mode: "boolean" }),
-    /** the user read the note and chose to keep the chapter */
+    /** the user chose to keep a noted chapter */
     kept: integer("kept", { mode: "boolean" }),
-    /** the import's note, as JSON; null when the chapter read as story */
+    /** the import's note; null when the chapter read as story */
     note: text("note", { mode: "json" }).$type<unknown>(),
     /**
-     * How many times this chapter's script has been written.
-     *
-     * A scripting job reads it when it starts and writes only if it has not moved, so a slow run
-     * can never overwrite a script that was edited or replaced while it was working. Moved by
-     * `writeScript` in `server/db/script.ts` and nothing else.
+     * Times the script has been written; a scripting run writes only if it hasn't moved. Moved only
+     * by `writeScript` in server/db/script.ts.
      */
     scriptRevision: integer("script_revision").notNull().default(0),
-    /**
-     * Where the chapter leaves off, as the model that last scripted it summed it up: who is
-     * present, who spoke last. Sent with the next chapter's requests (`{{previous.recap}}`), so a
-     * chapter that opens mid-conversation is still attributed. Null until a model gives one.
-     */
+    /** the model's summary of where it leaves off; the next chapter's `{{previous.recap}}` */
     recap: text("recap"),
   },
   (t) => [
@@ -142,13 +116,8 @@ export const chapterTexts = sqliteTable(
     bookId: text("book_id").notNull(),
     chapterId: integer("chapter_id").notNull(),
     /**
-     * The chapter's prose, blocks separated by blank lines, with the emphasis the EPUB carried
-     * marked `*italic*` and `**bold**`, and a literal `*` escaped `\*`.
-     *
-     * One column rather than prose here and its emphasis beside it, because the two would come
-     * apart: the text is edited, split and joined all through scripting, and a range recorded
-     * against it would point at the wrong words after the first edit. `plainText` is what anything
-     * that counts, bills or speaks this reads.
+     * Prose in blank-line blocks with `*italic*`, `**bold**` and `\*` inline (ranges would drift
+     * under edits). Anything that counts, bills or speaks reads it through `plainText`.
      */
     body: text("body").notNull(),
   },

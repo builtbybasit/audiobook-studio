@@ -5,9 +5,8 @@ export const scriptsUnread = (chapters: number): string =>
 </script>
 
 <script setup lang="ts">
-// A read the page needs that failed, said where its figures would have been and with the way to
-// ask again — so a count across the book that is short, or a list that is empty because nothing
-// arrived, never passes for one that is complete.
+// A failed read, shown where its figures would have been with a retry, so a short count or an
+// empty list never passes for a complete one.
 import { TriangleAlert as WarnIcon } from "@lucide/vue";
 
 defineProps<{ message: string }>();

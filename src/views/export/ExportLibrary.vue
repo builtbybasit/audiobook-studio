@@ -4,16 +4,9 @@ import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { useUiStore } from "@/stores/ui";
 
-// The audiobooks this book has produced. Each one knows what its chapters sounded like when it was
-// built (`state`), so "needs an update" is a real comparison against the book as it stands rather
-// than a timestamp — and an update can say exactly which chapters have moved.
-//
-// A version that is on disk stays on disk. A failed build never replaces it, and cancelling one
-// leaves it alone too — and while one build of an audiobook is running, nothing here offers to
-// start a second, because both would claim the same version number.
-//
-// "Listen" plays the export *as it was built*, from the timeline it recorded, not from the book as
-// it stands now. That is the whole point of keeping old versions: hearing what changed.
+// The audiobooks this book has produced. Each records its chapters' state when built, so "needs an
+// update" compares against the book as it stands, not a timestamp. While a build runs, nothing
+// offers a second one: both would claim the same version number.
 import { computed, ref } from "vue";
 
 import { usePlayer } from "@/composables/usePlayer";
@@ -51,9 +44,7 @@ const items = computed(() =>
     .slice()
     .sort((a, b) => (b.status === "building" ? 1 : 0) - (a.status === "building" ? 1 : 0)),
 );
-/**
- * Deleting an audiobook: nothing puts one back, so the button asks with a second click.
- */
+/** Delete asks for a second click: nothing puts an audiobook back. */
 const confirming = ref<number | null>(null);
 const deleteTitle = "Delete this audiobook. This cannot be undone.";
 function remove(id: number) {
@@ -71,25 +62,19 @@ function toggle(id: number) {
   else next.add(id);
   expanded.value = next;
 }
-/** Each audiobook with everything the card says about it, worked out once rather than per binding. */
 const rows = computed(() =>
   items.value.map((e) => ({
     e,
     u: exportsStore.exportUpdateFor(e),
     past: exportsStore.exportVersionsOf(e),
     job: jobsStore.jobs.find((j) => j.id === e.jobId),
-    // the store refuses a second build of one audiobook, so the buttons that would start one do too
     busy: items.value.some((x) => x.key === e.key && x.status === "building"),
   })),
 );
 
 /**
- * The export's own timeline, chapter by chapter, with the gap it was built with between them and no
- * gap across a file boundary — two files are two files. It plays what this version *is*, so a
- * correction made since is heard as a difference from it rather than folded into it.
- *
- * An entry from before timelines were recorded has one clip per file, at the length that file was
- * written. Still the export as built; simply less of it to see.
+ * Plays the export as built, from its recorded timeline, not the book as it stands now. No gap
+ * across a file boundary. An entry without a timeline plays one clip per file.
  */
 function listen(e: ExportItem) {
   const built = new Map((e.timeline ?? []).map((t) => [t.id, t]));
@@ -121,7 +106,6 @@ function listen(e: ExportItem) {
   playQueue({
     id: `export:${e.id}`,
     title: e.filename,
-    // no clip carries a file in this prototype, so it is always the timeline rather than the sound
     subtitle: `v${e.version} · ${plural(e.chapters, "chapter")} · as built ${e.createdAt} · timed, not heard`,
     href: `/book/${props.bookId}/export`,
     clips,
@@ -131,12 +115,7 @@ function copyPath(e: ExportItem) {
   navigator.clipboard?.writeText(diskPath(e.series || e.title, e.filename));
   uiStore.toast("Path copied", { kind: "success", timeout: 2500 });
 }
-/**
- * Fetch what the build wrote. A set of several files is several downloads rather than one: the
- * server serves a file at a time, and offering only the first would hand over part of an audiobook
- * without saying so. The name is the response's and not this card's, so each file is saved under
- * the name it has on disk.
- */
+/** One download per file (the server serves one at a time), each saved under its name on disk. */
 function download(e: ExportItem) {
   for (let i = 0; i < e.files.length; i++) {
     const a = document.createElement("a");
@@ -302,8 +281,7 @@ const summary = (u: ExportUpdate) => {
             Up to date with every chapter it contains.
           </p>
 
-          <!-- narrated elsewhere in the book: this export never claimed them, so they are their own
-               decision rather than something missing from it -->
+          <!-- narrated chapters this export never contained: not missing from it -->
           <div
             v-if="u.outside.length"
             class="mt-2 flex flex-wrap items-start gap-2 rounded-lg border border-dashed border-zinc-300 p-2.5 dark:border-zinc-700"

@@ -1,13 +1,6 @@
-// The endpoints on the server, and what a line is sent through one.
-//
-// Until this route the endpoints were the browser's alone: the server had a table for them and
-// nothing that wrote it, so a line went out with no tags and at whatever rate the model liked.
-// The first half here is the configuration — saved whole, read back as saved, refused whole when a
-// part of it could not be kept. The second is the narration job reading it: the tags a line
-// carries written in as its endpoint spells them, a line whose tags that endpoint cannot say held
-// back with the reason, and the sample rate asked for, heard in the file and recorded on the clip.
-// A line longer than the endpoint's `maxChars` goes out as the parts the demo would cut it into,
-// one request each, and comes back as one clip holding all of them.
+// The endpoints on the server: the configuration saved, read back and refused whole; and the
+// narration job reading it: tags spelled per endpoint, lines it cannot say held back, the sample
+// rate asked for, and a line over `maxChars` sent in parts and returned as one clip.
 import { describe, expect, test } from "bun:test";
 
 import type {
@@ -135,9 +128,8 @@ describe("the endpoints' configuration", () => {
       const got = body.endpoints[i];
       const { history: _h, failures: _f, rateLimits: _r, backoffUntil: _b, ...config } = e;
       const { lastError: _e, fetching: _g, ...configured } = config;
-      // Without the operational block a null credential or quota group reads back absent: a
-      // column cannot tell "set to none" from "never set", and without the block both mean the
-      // endpoint's own key slot and no shared pool.
+      // Without the operational block a null credential or quota group reads back absent: a column
+      // cannot tell "set to none" from "never set", and both mean the endpoint's own key and no pool.
       if (configured.timeoutSec == null)
         for (const k of ["spendLimit", "credentialId", "quotaGroup"] as const)
           if (configured[k] === null) delete configured[k];

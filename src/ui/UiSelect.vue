@@ -62,12 +62,9 @@ const groups = computed(() => {
   }
   return [...map.entries()];
 });
-// a value no option has shows the placeholder, marked, never the value itself
 const current = computed(() => selectLabel(props.modelValue, props.options, props.nullValue));
-// Items exist only while the list is open. Closed, reka still mounts every item into a detached
-// fragment — six thousand components for a book's chapters — for SelectValue's label, which
-// `current` gives instead, and for typeahead on the trigger, which there only focuses an item that
-// is not on the page. Opening mounts the items afresh either way, so the list opens as it did.
+// Items mount only while open: closed, reka still mounts every item into a detached fragment
+// (thousands for a book's chapters) for the label and typeahead; `current` covers the label.
 const open = ref(false);
 </script>
 

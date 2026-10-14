@@ -1,9 +1,6 @@
-// Hearing a voice before choosing it: the demo buttons beside a speaker and in the voice picker.
-//
-// What plays is the voice itself, as the server has it (`endpointsStore.sampleVoice`): the
-// provider's own recording of it where it keeps one — Fish does, free — or else the endpoint saying
-// the sample sentence, a real request billed once and kept on the server from then on. Played on
-// the one player, so pressing the same voice again pauses it.
+// Hearing a voice before choosing it (`endpointsStore.sampleVoice`): the provider's own recording
+// where it has one, else a real billed request kept on the server. Played on the one player, so
+// pressing the same voice again pauses it.
 import { ref } from "vue";
 import { usePlayer } from "@/composables/usePlayer";
 import { useEndpointsStore } from "@/stores/endpoints";
@@ -35,9 +32,8 @@ export function useVoiceSample() {
   }
 
   /**
-   * A voice's sample, played under `id` — the voice's own sample id unless the caller keeps a
-   * separate one (the Voices tab's public search does, for a voice that is not on the list yet).
-   * A sample the server timed plays at once; one only its file can time is read for it first.
+   * Play a voice's sample under `id` (the public search passes its own for unlisted voices). A
+   * sample without a server-known duration has its file read first.
    */
   function play(
     ep: Endpoint,
@@ -61,7 +57,7 @@ export function useVoiceSample() {
   /** Whether the player is playing what it was given under `id`. */
   const playingId = (id: string): boolean => player.p.id === id && player.p.playing;
 
-  /** The voice a reference names; nothing when it names none this library has. */
+  /** Nothing when the ref names no voice this library has. */
   function playRef(ref: VoiceRef | null | undefined): Promise<void> {
     const r = endpointsStore.resolveVoice(ref);
     return r ? play(r.endpoint, r.voice.id, r.voice.label) : Promise.resolve();

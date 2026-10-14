@@ -1,8 +1,6 @@
 <script setup lang="ts">
-// The row under the header, on the open book's own pages: every page and stage of the book as
-// tabs — the stages with their counts, what is wrong in colour — and the one next thing to do as
-// a pill at the far end, the same words as the shelf card and the overview banner. Desktop only:
-// on a phone the drawer lists the pages instead (AppRail).
+// The open book's pages and stages as tabs, with counts, and the next thing to do as a pill at
+// the end. Desktop only: on a phone the drawer (AppRail) lists the pages.
 import { computed } from "vue";
 import { ArrowRight as GoIcon } from "@lucide/vue";
 import { useShell } from "@/composables/useShell";

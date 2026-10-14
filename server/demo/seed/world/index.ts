@@ -1,9 +1,5 @@
-// The mock world, assembled. Every call builds the whole thing from scratch — books, chapters, cast,
-// scripts, clips, endpoints, dictionaries and finished exports — so nothing a session does to one
-// world can be observed by the next one.
-//
-// Order matters: the cast has to exist before clips can record which voice rendered them, and the
-// clips have to exist before an export can fingerprint the chapters it was built from.
+// The mock world, built from scratch on every call. Order matters: cast before clips (which record
+// their voice), clips before exports (which fingerprint them).
 import { rng } from "~/demo/seed/random";
 import { BOOK_SEEDS } from "~/demo/seed/fixtures/books";
 import { makeEndpoints } from "~/demo/seed/fixtures/endpoints";
@@ -44,8 +40,7 @@ export function makeWorld(now: number = Date.now()): World {
     characters,
     segments,
     endpoints: makeEndpoints(now),
-    // one clock for the whole world: the seeded promotions are dated from it, so every copy of
-    // this world — and every `$reset()` back to it — agrees on when they start and end
+    // one clock, so every copy of the world agrees on promotion dates
     profiles: makeProfiles(now),
     lexicon: makeLexicon(),
   };

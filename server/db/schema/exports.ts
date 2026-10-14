@@ -1,14 +1,6 @@
-// Audiobooks that have been built, and what each one was built from.
-//
-// A build makes one *export*, which is one or more files; grouping decides how many. An export is
-// identified by `key` (name + format + grouping), so building the same audiobook again is a new
-// **version** of it rather than a second entry.
-//
-// `export_chapters` carries the two per-chapter facts a finished export needs: the duration the
-// chapter had **when it was built** (so it can be heard as built, not as the book stands now) and
-// the signature of the audio it was built from. That signature is the whole mechanism behind
-// "needs an update" — comparing it against the chapter's audio now is how a stale export is found —
-// so it is a column on a row, not a key in a JSON map.
+// Built audiobooks. A build makes one export of one or more files; the same `key` built again is
+// a new version. `export_chapters.signature` against the chapter's audio now is how a stale export
+// is found.
 import {
   foreignKey,
   index,
@@ -40,14 +32,14 @@ export const exportItems = sqliteTable(
     /** same name + format + grouping ⇒ the same audiobook, built again */
     key: text("key").notNull(),
     version: integer("version").notNull().default(1),
-    /** id of the export this one supersedes */
+    /** the export this one supersedes */
     replaces: integer("replaces"),
     status: text("status").$type<ExportStatus>().notNull(),
     progress: real("progress"),
     error: text("error"),
     jobId: integer("job_id").references(() => jobs.id, { onDelete: "set null" }),
 
-    /** the file, or the folder a set of files lives in */
+    /** the file, or the folder of a set */
     filename: text("filename").notNull(),
     title: text("title").notNull(),
     series: text("series").notNull().default(""),
@@ -69,22 +61,16 @@ export const exportItems = sqliteTable(
     duration: real("duration").notNull().default(0),
     /** MB */
     size: real("size").notNull().default(0),
-    /** chapter marks written across every file */
+    /** chapter marks across every file */
     markers: integer("markers").notNull().default(0),
     createdAt: integer("created_at").notNull(),
 
-    /**
-     * Which chapters this export claims.
-     *
-     * A build of everything the book can give follows the book; three chapters picked on purpose
-     * stay those three, and anything narrated elsewhere is offered separately rather than folded in
-     * behind the user's back.
-     */
+    /** Which chapters it claims: "everything" follows the book; a hand-picked set stays put. */
     scope: text("scope").$type<ExportScope>(),
-    /** everything it was built with, so an update starts from it rather than from the defaults */
+    /** what it was built with, so an update starts from it */
     settings: text("settings", { mode: "json" }).$type<ExportSettings>(),
 
-    /** clips that were already stale when this was built, accepted on purpose */
+    /** clips already stale at build time, accepted on purpose */
     stale: integer("stale"),
   },
   (t) => [
@@ -93,7 +79,6 @@ export const exportItems = sqliteTable(
   ],
 );
 
-/** One output file of a finished export. */
 export const exportFiles = sqliteTable(
   "export_files",
   {
@@ -106,51 +91,35 @@ export const exportFiles = sqliteTable(
     duration: real("duration").notNull().default(0),
     /** MB */
     size: real("size").notNull().default(0),
-    /** chapter marks inside this file; 0 when it is one chapter, or the format has none */
+    /** 0 when it is one chapter or the format has none */
     markers: integer("markers").notNull().default(0),
-    /** which volume this file covers, when a set is cut by volume */
+    /** set when cut by volume */
     volume: text("volume", { mode: "json" }).$type<ExportVolume | null>(),
     /**
-     * The file this was written to on disk, as `server/exports/files.ts` names it.
-     *
-     * Null when nothing was written — a seeded export, or one whose build is still running. It is
-     * a token rather than `name`, for the reason a clip's file is: `name` is what the listener
-     * asked the audiobook to be called, and two versions of an audiobook have the same one.
+     * The token on disk (`server/exports/files.ts`), not `name`: two versions share a name. Null
+     * when nothing was written yet.
      */
     path: text("path"),
   },
   (t) => [primaryKey({ columns: [t.exportId, t.position] })],
 );
 
-/**
- * One chapter of a finished export, as it played when the export was built.
- *
- * `fileIndex` is which output file it landed in; `signature` is what its audio was at build time,
- * which is how "this export needs an update" is decided.
- */
+/** One chapter of a finished export, as it played when built. */
 export const exportChapters = sqliteTable(
   "export_chapters",
   {
     exportId: integer("export_id")
       .notNull()
       .references(() => exportItems.id, { onDelete: "cascade", onUpdate: "cascade" }),
-    /** carried so the chapter can be keyed the way every other child of `chapters` is */
+    /** carried so the chapter FK matches every other child of `chapters` */
     bookId: text("book_id").notNull(),
     chapterId: integer("chapter_id").notNull(),
-    /** reading order within the export */
     position: integer("position").notNull(),
     fileIndex: integer("file_index"),
-    /**
-     * The title and duration this chapter had **at build time**, so the export can be heard as
-     * built rather than as the book stands now.
-     *
-     * Both are null on an export made before the timeline was recorded. That is a real distinction
-     * and not a tidiness one: a zero here would be indistinguishable from a chapter of silence,
-     * and would hand the player a timeline that claims the audiobook is empty.
-     */
+    /** At build time. Null when unrecorded, never 0, which would read as a chapter of silence. */
     title: text("title"),
     duration: real("duration"),
-    /** what this chapter's audio was when the export was built */
+    /** the chapter's audio at build time; differs from now = needs an update */
     signature: text("signature"),
   },
   (t) => [

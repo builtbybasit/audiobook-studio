@@ -2,14 +2,8 @@
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useUiStore } from "@/stores/ui";
 
-// Two takes of one line, side by side: the clip the book still uses on the left, the one waiting for
-// a verdict on the right. Nothing is decided until the listener plays both and keeps one, so the
-// panel's whole job is to make the difference audible — the shapes, the request each was rendered
-// with, and what changed between them.
-//
-// The verdict itself belongs to the ledger, not here: a verdict removes this comparison and moves to
-// the next retake, which can be in another chapter. So this emits `decide` and the ledger, which
-// owns the book's review queue and the row keyboard shortcuts, acts on it.
+// Two takes of one line side by side: the clip in the book, and the retake waiting for a verdict.
+// The ledger acts on `decide`, since the next retake can be in another chapter.
 import { defineAsyncComponent } from "vue";
 import { FLAG_LABEL } from "@/lib/scriptReview";
 import { sampleRateLabel } from "@/lib/speech";
@@ -19,7 +13,7 @@ import { hhmm } from "@/lib/format";
 import { Pause as PauseIcon, Play as PlayIcon, Flag as FlagIcon } from "@lucide/vue";
 import type { Segment } from "@/types";
 
-// wavesurfer is only ever needed once a compare panel is open, so it stays out of the entry chunk.
+// keeps wavesurfer out of the entry chunk
 const Waveform = defineAsyncComponent(() => import("@/components/Waveform.vue"));
 
 defineProps<{
@@ -28,7 +22,6 @@ defineProps<{
   position: number;
   total: number;
 }>();
-/** the verdict, taken by the ledger: it owns the queue this comparison is one of */
 defineEmits<{ decide: [keep: "current" | "new"] }>();
 const endpointsStore = useEndpointsStore();
 const uiStore = useUiStore();
@@ -48,7 +41,7 @@ function takeDiff(s: Segment): string[] {
     );
   if ((a.style || "") !== (b.style || ""))
     out.push(`style “${a.style || "—"}” → “${b.style || "—"}”`);
-  // only when both clips recorded one: a clip from before rates were recorded says nothing either way
+  // only when both clips recorded one
   if (a.sampleRate && b.sampleRate && a.sampleRate !== b.sampleRate)
     out.push(`sample rate ${sampleRateLabel(a.sampleRate)} → ${sampleRateLabel(b.sampleRate)}`);
   if ((a.text || "") !== (b.text || "")) out.push("the line itself was edited");
@@ -62,7 +55,6 @@ const waveColors = (candidate: boolean) =>
   candidate
     ? { wave: uiStore.dark ? "#075985" : "#bae6fd", played: uiStore.dark ? "#38bdf8" : "#0284c7" }
     : { wave: uiStore.dark ? "#3f3f46" : "#d4d4d8", played: uiStore.dark ? "#a78bfa" : "#7c3aed" };
-/** clicking a waveform plays that take from where you clicked */
 function seekTake(id: string, duration: number, url: string | undefined, frac: number) {
   if (p.clipId !== id) play(id, duration, url);
   seekTo(frac * duration);
@@ -70,8 +62,6 @@ function seekTake(id: string, duration: number, url: string | undefined, frac: n
 </script>
 
 <template>
-  <!-- a retake waiting to be judged. The left card is the clip the book still uses; the
-       right one only replaces it if the listener says so. -->
   <tr class="bg-sky-50 dark:bg-sky-500/5">
     <td></td>
     <td colspan="5" class="px-2 py-2 pr-4 text-xs">

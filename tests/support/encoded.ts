@@ -1,12 +1,6 @@
-// MP3 and Ogg Opus files built in the test, so no binary fixture has to be kept and none has to
-// come from anywhere.
-//
-// Neither is made by an encoder. An MP3 Layer III frame whose side information and main data are
-// all zero is a frame of silence every decoder plays — it is the first frame Fish Audio's own MP3
-// starts with — so a file of them is a real, playable MP3 of an exact length. An Ogg Opus file is
-// pages of packets under an `OpusHead` and an `OpusTags` header, each page with its CRC; its length
-// is the last page's granule position less the pre-skip, which is what a reader times it by. Its
-// packets are the one-byte "no data" frame Opus allows, which a decoder conceals as silence.
+// MP3 and Ogg Opus files built in the test, without an encoder. An all-zero MPEG-1 Layer III frame
+// is silence every decoder plays (Fish Audio's MP3 starts with one). Opus pages carry the one-byte
+// "no data" frame, concealed as silence; length is the last granule position less the pre-skip.
 
 export interface Mp3Options {
   /** 44100 (default), 48000 or 32000: MPEG-1 */

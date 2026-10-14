@@ -1,16 +1,6 @@
-// What narration will cost before it is sent, and what a run holds against the book's cap.
-//
-// The figure the page's run strip checks the cap against, on rows: every line goes to the endpoint
-// its speaker's voice belongs to, is measured as it will be spoken — after the dictionary, with the
-// endpoint's tags written in, with the instructions sent beside it, in as many requests as the
-// endpoint's limit cuts it into — and each endpoint's lines are priced together on its own card, at
-// the **undiscounted** price, because a run lasts long enough for a promotion to end inside it
-// (`~/usage/budget`). A line with no voice, or whose voice's endpoint is gone, is refused by the
-// provider before any request, so it holds nothing.
-//
-// The same figure is held twice: whole, before anything is queued, to refuse a run that does not
-// fit; and line by line while the job runs, released as each line settles, so the job's check
-// before its next line does not count again what has already been spent.
+// What narration will cost before it is sent, priced per endpoint at the **undiscounted** price,
+// since a promotion can end mid-run (`~/usage/budget`). Held whole to refuse a run that does not
+// fit, then line by line while the job runs, released as each line settles.
 import type {
   BillableUnits,
   Character,
@@ -29,7 +19,7 @@ import type { Db, Tx } from "~/db/client";
 import { readEndpoint } from "~/db/endpoints";
 import { getBook, readPacing } from "~/db/library";
 
-/** Everything a clip records about how it was asked for, so drift can compare the line to it later. */
+/** What a clip records about how it was asked for, so drift can compare against it later. */
 export interface Delivery {
   voiceRef: string | null;
   voice: string | null;
@@ -37,16 +27,12 @@ export interface Delivery {
   style: string;
 }
 
-/**
- * Who says a line, and how: the voice `speakerVoice` gives the speaker — a linked persona's
- * character's, their own, the book's Character voice, or the Narrator's — and the speaker's own
- * style, a persona's included; the cast store's `effectiveVoice`, over the cast as it was read.
- */
+/** The server's `effectiveVoice`: the voice `speakerVoice` gives, and the speaker's own style. */
 export function deliveryFor(
   cast: Character[],
   characterVoice?: CharacterVoice,
 ): (speaker: string) => Delivery {
-  // the first of a name, as `find` would have it
+  // the first of a name wins, as `find` would
   const byName = new Map<string, Character>();
   for (const c of cast) if (!byName.has(c.name)) byName.set(c.name, c);
   return (speaker) => {
@@ -61,25 +47,18 @@ export function deliveryFor(
   };
 }
 
-/** The reader a delivery names, with its endpoint as it is stored now. */
 const readerOf = (db: Db | Tx, who: Delivery): Reader => ({
   endpoint: who.endpoint ? readEndpoint(db, who.endpoint) : undefined,
   voiceRef: who.voiceRef,
   style: who.style,
 });
 
-/**
- * A line's reading (`@/lib/reading`) as the server takes it: read by `who`, against the endpoint
- * and the book's dictionary and pacing as they are stored now.
- */
+/** A line's reading (`@/lib/reading`) against what is stored now. */
 export function lineReading(db: Db | Tx, bookId: string, s: ReadLine, who: Delivery): Reading {
   return prepareReading(s, readerOf(db, who), readLexicon(db, bookId), readPacing(db, bookId));
 }
 
-/**
- * What the budget holds for one line read as `reading`, at `at`: its undiscounted price on the
- * endpoint's card. Nothing for a line with no endpoint, which never reaches the wire.
- */
+/** Undiscounted; 0 for a line with no endpoint, which never reaches the wire. */
 export function lineWorstCase(reading: Reading, at: number): number {
   const ep = reading.reader.endpoint;
   if (!ep) return 0;
@@ -87,31 +66,24 @@ export function lineWorstCase(reading: Reading, at: number): number {
   return worstCaseOf(estimateSpeech(billingOf(ep), readPricing(ep), units, at));
 }
 
-/** What a chapter's lines are held at, and what they are expected to cost, in USD. */
+/** USD. */
 export interface NarrationCost {
-  /** the undiscounted worst case, which the cap is checked against and the job holds */
+  /** the undiscounted worst case the cap is checked against */
   reserved: number;
-  /** at the rates in force now, for the reconciliation the Queue shows afterwards */
+  /** at current rates, for the Queue's reconciliation afterwards */
   estimated: number;
   estimatedInput: number;
   /** null when no endpoint in the run bills on the audio it returns */
   estimatedAudio: number | null;
-  /**
-   * The first line each endpoint is sent, at its worst case: what that endpoint's daily limit must
-   * cover for the run to start (`~/usage/budget`).
-   */
+  /** each endpoint's first line, which its daily limit must cover to start (`~/usage/budget`) */
   firsts: { endpoint: string; cost: number }[];
 }
 
-/** `deliveryFor` over a book as it stands: its cast and its Character voice, read now. */
 export function bookDelivery(db: Db | Tx, bookId: string): (speaker: string) => Delivery {
   return deliveryFor(readCast(db, bookId), getBook(db, bookId)?.characterVoice);
 }
 
-/**
- * What rendering `segs` of `bookId` would cost, grouped per endpoint as the browser's estimate
- * groups it, so the figure the gate holds is the figure the estimate panel shows.
- */
+/** Grouped per endpoint as the browser's estimate is, so the gate holds what the panel shows. */
 export function narrationCost(
   db: Db | Tx,
   bookId: string,

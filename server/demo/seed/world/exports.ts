@@ -1,9 +1,5 @@
-// Audiobooks already on disk. Each one stores the fingerprint of every chapter it was built from,
-// which is what "this export needs an update" is decided from later — not a timestamp, which only
-// says a build happened, not whether the audio in it is still the audio in the book.
-//
-// Built last, and from the draft, because those fingerprints only mean anything once the clips in
-// `seedPipeline` and `seedStory` are in place.
+// Seeded audiobooks, each storing its chapters' fingerprints (what "needs an update" is decided
+// from). Built last, once `seedPipeline` and `seedStory` have placed the clips.
 import { DEFAULT_PACING } from "@/lib/speech";
 import { chapterSignature, DEFAULT_EXPORT_SETTINGS, exportKey } from "@/lib/exports";
 import { volumesOfSeed } from "~/demo/seed/world/chapters";
@@ -165,8 +161,7 @@ export function makeExports(w: WorldDraft): ExportItem[] {
       status: "done",
       state: sign("cliche", clicheV2Ids),
     },
-    // the long serial, built when volume 6 was still being narrated: nine chapters have landed
-    // since and four of its own were rendered again afterwards
+    // built mid-volume 6: nine chapters landed since, and four of its own were re-rendered
     {
       id: 4,
       bookId: "gates",
@@ -196,7 +191,7 @@ export function makeExports(w: WorldDraft): ExportItem[] {
       status: "done",
       state: asBuiltEarlier(sign("gates", gatesIds), [37, 88, 96, 140, 141]),
     },
-    // a build that fell over: the version before it is still the one on disk
+    // failed: the previous version is still the one on disk
     {
       id: 5,
       bookId: "cliche",
@@ -242,10 +237,7 @@ export function makeExports(w: WorldDraft): ExportItem[] {
   return exports;
 }
 
-/**
- * An audiobook built earlier from exactly these chapters of the book, fingerprinted with `state` —
- * the chapters as they stand now — so it reads as up to date until one of them moves.
- */
+/** Fingerprinted with the chapters' current `state`, so it reads as up to date until one moves. */
 export function finishedExport(
   id: number,
   book: Book,

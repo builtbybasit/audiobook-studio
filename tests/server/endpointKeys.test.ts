@@ -1,9 +1,5 @@
-// An endpoint's key on the server, and the Test button that uses it.
-//
-// The key is the one secret the database holds, so what matters is where it does *not* go: never
-// back over HTTP, never into a log line, and never lost by a save that did not mention it — the
-// page cannot send back a key it was never given, so "absent" has to mean "keep". The Test route
-// asks the saved endpoint, with the saved key, through whichever provider the server runs.
+// An endpoint's key on the server, and the Test button that uses it. The key never goes back over
+// HTTP or into a log, and a save that omits it keeps it: the page never has the key to send back.
 import { describe, expect, test } from "bun:test";
 
 import type { Endpoint, Profile } from "@/types";

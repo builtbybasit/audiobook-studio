@@ -1,11 +1,7 @@
-// Narration as its endpoints will take it: up to each endpoint's concurrency at once, lines for
-// two endpoints alongside each other, nothing to an endpoint that is paused until it is resumed, and
-// nothing more to one that was rate limited until its cooldown ends — the speech gate
-// (`server/providers/gate.ts`) as the narration job uses it, through the real runner and routes.
-//
-// The provider here is the tone-rendering fake with a short pause per line, wrapped to count how
-// many lines are inside it per endpoint at any moment. The pause is what gives lines the chance to
-// overlap; a count that never passes the limit holds however the timing falls.
+// Narration as its endpoints take it: up to each endpoint's concurrency at once, two endpoints side
+// by side, nothing to a paused one until resumed, nothing to a rate-limited one until its cooldown
+// ends: the speech gate (`server/providers/gate.ts`) through the real runner. The fake pauses per
+// line so lines can overlap, and counts how many are inside it per endpoint.
 import { describe, expect, test } from "bun:test";
 
 import type { Endpoint, Job, Segment } from "@/types";
@@ -26,10 +22,8 @@ const speech = (id: string, over: Partial<Endpoint> = {}): Endpoint =>
   speechEndpoint({ id, concurrency: 1, ...over });
 
 /**
- * A scripted one-chapter book whose speakers are cast by `voiceOf`, the endpoints saved first. The
- * chapter is its title, two spoken lines with their tags and four of the story's paragraphs — a
- * dozen lines, enough to fill any limit here with lines still waiting, and at the one-at-a-time
- * pace of a concurrency of one no longer than it needs to be.
+ * A scripted one-chapter book cast by `voiceOf`, endpoints saved first: about a dozen lines, enough
+ * to fill any limit here with lines still waiting.
  */
 const book = (
   api: TestApi,

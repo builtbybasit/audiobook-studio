@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import { useLibraryStore } from "@/stores/library";
 
-// Every file in the plan, and inside each one the chapters in the order they will play, with the
-// marker title the player will show. At 214 chapters this is the only honest way to answer "is the
-// order right?" — so it is a real list rather than a sample of three.
+// Every file in the plan with its chapters in play order and their marker titles.
 import { computed, ref, watch } from "vue";
 import { DialogClose, DialogDescription, DialogTitle } from "reka-ui";
 import {
@@ -28,7 +26,7 @@ const props = defineProps<{
 const emit = defineEmits<{ "update:open": [boolean]; preview: [number[], string] }>();
 const libraryStore = useLibraryStore();
 const openFiles = ref(new Set<string>());
-// a single-file plan has nothing to choose between: open it straight away
+// a single-file plan opens straight away
 watch(
   () => props.open,
   (o) => {

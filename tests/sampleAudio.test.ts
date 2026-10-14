@@ -1,6 +1,5 @@
-// What the clone form does to a sample in the browser once it is decoded: find where speech starts
-// and ends, cut it there, and write it back out as a WAV. Decoding needs Web Audio, which Bun does
-// not have, so these work on samples made here: silence, a tone, and silence around a tone.
+// The clone form's in-browser trim: find where speech starts and ends, cut there, write a WAV. Bun
+// has no Web Audio to decode with, so these use samples made here.
 import { expect, test } from "bun:test";
 
 import {

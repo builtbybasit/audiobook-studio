@@ -1,29 +1,22 @@
-// A scripting endpoint that runs an AI command-line tool on this computer instead of calling an
-// API: OpenAI's Codex (`codex exec`) or Claude Code (`claude -p`), signed in with the tool's own
-// login — a ChatGPT or Claude subscription — so there is no base URL to call and no key to keep.
-//
-// It is picked the way the simulated one is, by its base URL: `codex:` and `claude-code:` name no
-// host, so nothing is sent anywhere by HTTP by mistake. What follows the colon is the program to
-// run when it is not the one on the server's PATH, `codex:/opt/homebrew/bin/codex`. Shared by the
-// Endpoints page and the server (`server/providers/cliScripting.ts`), so what the page says is
-// what is run.
+// A scripting endpoint that runs Codex (`codex exec`) or Claude Code (`claude -p`) on this computer
+// under the tool's own login. Picked by base URL: `codex:` and `claude-code:` name no host, so
+// nothing goes over HTTP by mistake; an optional program path follows the colon.
 import type { ReasoningEffort } from "@/types";
 
 export type CliId = "codex" | "claude";
 
 export interface CliShape {
   id: CliId;
-  /** what the page and messages call it */
   label: string;
-  /** the base URL that picks it, colon included; a program's path may follow */
+  /** colon included; a program's path may follow */
   scheme: string;
-  /** what is run when the base URL names no program: found on the server's PATH */
+  /** run from the server's PATH when the base URL names no program */
   program: string;
-  /** the command line a request runs, as the Connection tab shows it */
+  /** as the Connection tab shows it */
   command: string;
   /** what to do when it is not signed in */
   login: string;
-  /** a reasoning level as its flag spells it, and a sentence when that is not what was asked */
+  /** with a note when that is not what was asked */
   effort(level: ReasoningEffort): { value: string; note: string | null };
 }
 
@@ -57,10 +50,7 @@ export const CLAUDE_CODE: CliShape = {
 
 const CLIS: readonly CliShape[] = [CODEX, CLAUDE_CODE];
 
-/**
- * The tool a base URL runs, and the program it names after the colon (empty: the one on PATH);
- * null for a base URL that is not one.
- */
+/** `path` is empty for the program on PATH. */
 export function cliOf(baseUrl: string): (CliShape & { path: string }) | null {
   const url = baseUrl.trim();
   const cli = CLIS.find((c) => url.toLowerCase().startsWith(c.scheme));

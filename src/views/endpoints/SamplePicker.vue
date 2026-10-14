@@ -1,9 +1,6 @@
 <script setup lang="ts">
-// The samples a clone or a keep is made from, as a form holds them: a picker that adds files, and
-// a row per sample (`SampleRowItem`) to hear it, see it, trim it, remove it and — where the provider
-// takes one — say what is said in it. Whatever rows the form hands over are held to the most
-// the provider takes, and the cut is said; what else may stop them is the form's to say
-// (`pickProblem`), since it is what blocks the button.
+// A clone or keep form's samples: a file picker and a `SampleRowItem` per sample. Rows are capped
+// at the provider's maximum here; other problems are the form's to say (`pickProblem`).
 import { computed, ref, watch } from "vue";
 import { Upload as PickIcon } from "@lucide/vue";
 import { UiHint } from "@/ui";
@@ -19,11 +16,11 @@ import {
 import SampleRowItem from "@/views/endpoints/SampleRowItem.vue";
 
 const props = defineProps<{ cloning: CloneSupport }>();
-/** The person picked files by hand, as against rows the form filled in from elsewhere. */
+/** Files picked by hand, as against rows the form filled in. */
 const emit = defineEmits<{ pick: [] }>();
 const rows = defineModel<SampleRow[]>({ required: true });
 const many = computed(() => maxSamplesOf(props.cloning) > 1);
-/** how many of the last pick did not fit, past the most one voice is made from */
+/** how many of the last pick didn't fit */
 const leftOut = ref(0);
 watch(
   rows,
@@ -40,7 +37,6 @@ watch(
 function pick(e: Event) {
   const el = e.target as HTMLInputElement;
   const picked = [...(el.files ?? [])].map((file) => ({ file, transcript: "" }));
-  // a provider that takes one file is given the newest pick; one that takes many, both
   rows.value = many.value ? [...rows.value, ...picked] : picked;
   el.value = "";
   emit("pick");

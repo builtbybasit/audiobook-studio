@@ -2,27 +2,9 @@
 import { useLibraryStore } from "@/stores/library";
 import { useUiStore } from "@/stores/ui";
 
-// Every request this endpoint has handled or is about to, in one filterable list.
-//
-// Two columns that usually get merged are kept apart: `queue` is how long we made the request wait
-// for one of our own slots, `response` is how long the provider took. A row that is still waiting
-// says why in words — paused, concurrency full, cooling down, no credential, out of budget — rather
-// than sitting at "queued" and leaving you to guess.
-//
-// Click a row for its audit trail: the same strip of labelled facts on every row — model, the three
-// legs of the request (waited for a slot, dispatched, answered), attempts, usage, cost and where the
-// cost figure came from — with the wait reason or the provider's error stacked above it. They stack
-// rather than replace each other, because the timings are most worth reading on the rows that failed.
-//
-// A scripting request also carries its receipt: the line-by-line breakdown of what each slice of
-// the usage was charged at, the instant those rates were read, and anything the provider left out.
-// The list itself stays a list — a row only wears a small "cache not reported" mark, and the
-// explanation is one click away rather than in the column.
-//
-// What has settled is the server's ledger, read a page at a time with every filter applied there,
-// so the count beside the filters and the pages after the first agree with the rows on screen
-// however many a run sent. What is in flight is the page's own, filtered here the same way.
-//
+// Every request this endpoint has handled or is about to, in one filterable list. `queue` (our own
+// slot wait) and `response` (the provider) stay separate columns. Settled rows are the server's
+// ledger, paged and filtered there; in-flight rows are filtered here by the same rules.
 // Error bodies are redacted before they are shown or copied.
 import { computed, ref, toRef } from "vue";
 import { refDebounced } from "@vueuse/core";
@@ -67,7 +49,6 @@ const props = defineProps<{
 const libraryStore = useLibraryStore();
 const uiStore = useUiStore();
 const expanded = ref(new Set<string>());
-// the words go to the server once typing pauses, not a read per keystroke
 const search = refDebounced(
   toRef(() => props.filter.search),
   250,
@@ -90,7 +71,7 @@ const bookOpts = computed(() => [
   ...libraryStore.books.map((b) => ({ value: b.id, label: b.title })),
 ]);
 
-/** The requests in flight that the filters keep, by the same rules the server applies. */
+/** In-flight requests the filters keep, by the same rules the server applies. */
 const live = computed(() => {
   const f = props.filter;
   const q = f.search.trim().toLowerCase();
@@ -109,7 +90,7 @@ const live = computed(() => {
   });
 });
 const visible = computed(() => [...live.value, ...settled.rows.value]);
-/** how many match, and how many the range holds — over every page, not the ones read so far */
+/** counts over every page, not just the ones read so far */
 const matching = computed(() => live.value.length + settled.total.value);
 const inRange = computed(() => props.rows.length + (settled.data.value?.pages[0]?.of ?? 0));
 const left = computed(() => settled.total.value - settled.rows.value.length);
@@ -129,14 +110,12 @@ function toggle(id: string) {
   expanded.value = next;
 }
 const bookTitle = (id: string | null) => (id ? (libraryStore.bookById(id)?.title ?? id) : "—");
-// A request's chapter by its reading number, as every page names it; the id stays in the link. The
-// number needs its book's chapters, and this page can be the first one opened.
+// The reading number needs the book's chapters, and this page can be the first one opened.
 useBooks(() => props.rows.flatMap((r) => (r.bookId ? [r.bookId] : [])));
 const chapterRef = (r: RequestRecord) =>
   r.bookId && r.chapterId != null ? libraryStore.chapterRef(r.bookId, r.chapterId) : undefined;
 const where = (r: RequestRecord) =>
   [bookTitle(r.bookId), chapterRef(r)].filter(Boolean).join(" · ");
-/** The instant a receipt read its rates at, shown to the second: it is the whole point of it. */
 const pricedAt = (ts: number) =>
   new Date(ts).toLocaleString([], {
     month: "short",
@@ -145,7 +124,6 @@ const pricedAt = (ts: number) =>
     minute: "2-digit",
     second: "2-digit",
   });
-/** The usage column, in what each kind is measured by. */
 function usageOf(r: RequestRecord): string {
   switch (r.kind) {
     case "scripting":
@@ -157,12 +135,10 @@ function usageOf(r: RequestRecord): string {
   }
 }
 
-/** A recording's length: seconds while it is short, as a clone sample is, minutes after. */
 const audioLength = (seconds: number): string =>
   seconds < 60 ? `${seconds.toFixed(1)}s` : `${(seconds / 60).toFixed(1)}m`;
 
-/** Cached input is shown as a slice of the input it is part of, never beside it as if it were
- *  extra — `12k in (8k cached)` cannot be misread as 20k tokens. */
+/** Cached input as a slice of input: `12k in (8k cached)` can't be misread as 20k tokens. */
 function tokenUsage(r: RequestRecord): string {
   const u = r.usage;
   if (!u.inputTokens) return "—";
@@ -173,9 +149,7 @@ function tokenUsage(r: RequestRecord): string {
 function speechUsage(r: RequestRecord): string {
   const u = r.usage;
   if (!u.chars) return "—";
-  // The quantity this request was actually billed on leads, because that is the one the cost beside
-  // it follows. A byte-billed endpoint showing a character count invites exactly the arithmetic the
-  // billing models exist to prevent. The rest is one click away, on the receipt.
+  // The billed quantity leads, since that is what the cost beside it follows.
   const sent =
     r.speech?.unit === "bytes"
       ? `${compact(u.bytes ?? u.chars)} B`
@@ -191,8 +165,7 @@ function speechUsage(r: RequestRecord): string {
   return `${sent}${back}`;
 }
 
-/** A settled scripting request whose provider said nothing about cache use. Marked, not explained,
- *  in the list — the list has to stay readable, and the explanation is one click away. */
+/** A settled scripting request whose provider reported no cache use. */
 const cacheUnknown = (r: RequestRecord): boolean =>
   r.kind === "scripting" &&
   (r.status === "done" || r.status === "failed") &&
@@ -203,9 +176,9 @@ interface Fact {
   label: string;
   value: string;
   mono?: boolean;
-  /** a second, muted line under the value: where the number came from, not another number */
+  /** muted second line: where the number came from */
   hint?: string;
-  /** takes the rest of the line — for the one fact whose hint is a whole phrase */
+  /** takes the rest of the line */
   wide?: boolean;
   tone?: "warn";
 }
@@ -216,8 +189,7 @@ const FINISH_LABEL: Partial<Record<RequestRecord["status"], string>> = {
   cancelled: "cancelled at",
 };
 
-/** The audit trail for one request, as labelled facts. Every row gets the same strip, whatever its
- *  status — a row that is still waiting shows how long it has waited so far rather than a blank. */
+/** The audit trail for one request; the same strip whatever its status. */
 function facts(r: RequestRecord): Fact[] {
   const queued = r.status === "queued";
   const out: Fact[] = [
@@ -273,7 +245,6 @@ function facts(r: RequestRecord): Fact[] {
   return out;
 }
 
-/** What a request used, as facts, in what its kind is measured by. */
 function usageFacts(r: RequestRecord): Fact[] {
   switch (r.kind) {
     case "scripting":
@@ -332,9 +303,7 @@ function speechFacts(r: RequestRecord): Fact[] {
   const out: Fact[] = [];
   const u = r.usage;
   if (!u.chars) return [{ label: "characters", value: "not reported yet" }];
-  // Four different readings of one request, never conversions of one another. All of them are
-  // shown whichever the endpoint bills on, because "12,400 characters" and "$1.86" only make
-  // sense together once you can see that the endpoint charged the 31,000 bytes instead.
+  // Separate readings, not conversions; all shown so the cost can be tied to the billed unit.
   out.push({ label: "characters", value: compact(u.chars), mono: true });
   if (u.bytes != null)
     out.push({
@@ -370,11 +339,7 @@ function speechFacts(r: RequestRecord): Fact[] {
   return out;
 }
 
-/**
- * The receipt for one settled request, whichever kind it is. Both kinds meet in `ChargeLine`, so
- * there is one table rather than two — a speech request has one line and a token request has up to
- * four, and the columns mean the same thing on both.
- */
+/** The receipt for one settled request; both kinds share `ChargeLine`, so one table. */
 const receipt = (r: RequestRecord) =>
   r.priced
     ? {
@@ -402,11 +367,7 @@ const receipt = (r: RequestRecord) =>
         }
       : null;
 
-/**
- * A speech-priced receipt in a sentence. A transcription is priced in the same audio minutes as
- * speech, but of the recording sent rather than of anything that came back, which the speech
- * sentence would say instead.
- */
+/** A transcription is priced in audio minutes of the recording sent, not of audio returned. */
 const SPEECH_SENTENCE: Record<EndpointKind, (charge: SpeechCharge) => string> = {
   scripting: speechSentence,
   tts: speechSentence,
@@ -414,14 +375,13 @@ const SPEECH_SENTENCE: Record<EndpointKind, (charge: SpeechCharge) => string> = 
     `${(charge.units.audioSeconds / 60).toFixed(2)} audio minutes sent. This endpoint bills per audio minute sent, and nothing else.`,
 };
 
-/** Where a request's chapter is opened from its row. */
 const CHAPTER_PAGE: Record<EndpointKind, string> = {
   scripting: "scripting",
   tts: "narration",
   transcription: "narration",
 };
 
-/** How the tokens divide, as a sentence that cannot be read as double counting. */
+/** How the tokens divide, worded so it can't be read as double counting. */
 function tokenSentence(r: RequestRecord): string {
   const priced = r.priced;
   if (!priced) return "";
@@ -453,7 +413,6 @@ async function copyDiagnostics(r: RequestRecord) {
       usage: r.usage,
       cost: r.cost,
       costBasis: r.costBasis,
-      // the receipt as it was written: usage, the rates in force at that instant, and the reasoning
       pricing: r.priced
         ? {
             pricedAt: new Date(r.priced.at).toISOString(),
@@ -473,7 +432,6 @@ async function copyDiagnostics(r: RequestRecord) {
               ...(r.speech.audioTokensPerSecond != null
                 ? { audioTokensPerSecond: r.speech.audioTokensPerSecond }
                 : {}),
-              // every quantity that was counted, and the lines that were actually charged
               measured: r.speech.units,
               reportedUsage: r.speech.reported,
               lines: r.speech.lines,
@@ -512,7 +470,6 @@ function clearAll() {
 
 <template>
   <div class="space-y-2">
-    <!-- filters -->
     <div class="flex flex-wrap items-center gap-2">
       <UiToggleGroup
         :model-value="filter.status"
@@ -619,8 +576,6 @@ function clearAll() {
                     :class="expanded.has(r.id) && 'rotate-90'"
                   />{{ r.label }}
                 </span>
-                <!-- a dot rather than a word: this column is the narrow one, and the marker only
-                     has to separate a real provider's rows from a simulated endpoint's -->
                 <span
                   v-if="!r.simulated"
                   class="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-violet-500 align-middle"
@@ -643,7 +598,6 @@ function clearAll() {
                   :title="`${r.attempts} attempts — retried ${r.attempts - 1}×`"
                   >×{{ r.attempts }}</span
                 >
-                <!-- a mark, not a sentence: the list stays a list and the detail is one click away -->
                 <span
                   v-if="cacheUnknown(r)"
                   class="ml-1 rounded bg-zinc-200 px-1 text-[10px] text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300"
@@ -663,7 +617,6 @@ function clearAll() {
                 <span v-else>{{ bookTitle(r.bookId) }}</span>
               </td>
               <td class="px-2 py-1.5 text-right font-mono text-zinc-500">
-                <!-- a request that has not been dispatched has no queue *time* yet, only a reason -->
                 {{
                   r.status === "queued"
                     ? r.queueMs
@@ -700,7 +653,6 @@ function clearAll() {
             <tr v-if="expanded.has(r.id)" class="border-b border-zinc-100 dark:border-zinc-800/70">
               <td colspan="8" class="bg-zinc-50 px-3 py-2.5 dark:bg-zinc-900/60">
                 <div class="border-l-2 border-violet-400 pl-3 dark:border-violet-500">
-                  <!-- why it has not gone out yet -->
                   <div
                     v-if="r.waiting"
                     class="mb-2 flex items-start gap-2 rounded bg-amber-400/10 px-2 py-1 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300"
@@ -711,7 +663,6 @@ function clearAll() {
                     >
                   </div>
 
-                  <!-- what the provider said back -->
                   <div
                     v-if="r.error"
                     class="mb-2 rounded border border-red-300 bg-red-500/5 px-2 py-1.5 text-[11px] dark:border-red-500/40"
@@ -735,10 +686,7 @@ function clearAll() {
                     </p>
                   </div>
 
-                  <!-- The receipt: what each slice of what was sent was charged at, and at which
-                       rates. Kept above the timings because "why did this cost that" is the
-                       question a priced row is opened for. One table for both kinds of endpoint —
-                       tokens or characters, the columns mean the same thing. -->
+                  <!-- receipt above the timings: "why did this cost that" is why a row is opened -->
                   <div
                     v-if="receipt(r)"
                     class="mb-2 rounded border border-zinc-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-950/60"
@@ -782,7 +730,7 @@ function clearAll() {
                             {{ receipt(r)!.rule }} — {{ pricedAt(receipt(r)!.at) }}
                           </td>
                         </tr>
-                        <!-- the provider's own number, kept next to ours rather than instead of it -->
+                        <!-- the provider's own number, beside ours -->
                         <tr
                           v-if="receipt(r)!.reported != null && receipt(r)!.calculated != null"
                           class="border-t border-zinc-100 text-zinc-500 dark:border-zinc-800"
@@ -819,7 +767,6 @@ function clearAll() {
                     </ul>
                   </div>
 
-                  <!-- what the request was sent as, and what each leg of it took -->
                   <div class="flex items-start gap-3">
                     <div class="flex min-w-0 flex-1 flex-wrap gap-x-5 gap-y-1.5">
                       <div

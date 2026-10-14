@@ -1,17 +1,11 @@
-// OpenAI's `/audio/speech`, and every server that copies it.
-//
-// Two descriptions share one wire shape. `openai` is OpenAI's own API, known by its host: its
-// voices and models are written down in its docs, and it documents no expression tags — a
-// bracketed word sent to it is read out as a word. `compatible` is everything no other description
-// claims — Kokoro-FastAPI, an Orpheus or Piper bridge, vLLM-Omni — taken to speak OpenAI's shape,
-// because that is what they copy. What tags such a server's model takes is its own business, so
-// the person writes them in any of the usual shapes, copied from that model's docs.
+// OpenAI's `/audio/speech`, and every server that copies it. `openai` has no expression tags (a
+// bracketed word is read out); `compatible` is anything no other provider claims, whose tags the
+// person copies from that model's docs.
 import type { SpeechProviderShape } from "@/lib/providers/types";
 
 /**
- * `response_format` (https://platform.openai.com/docs/api-reference/audio/createSpeech): it also
- * offers AAC, FLAC and raw PCM, which this app does not keep clips in. It takes no rate and no
- * bitrate; the answer is at the model's own.
+ * `response_format` (https://platform.openai.com/docs/api-reference/audio/createSpeech). No rate
+ * or bitrate: the answer is at the model's own.
  */
 const FORMATS: SpeechProviderShape["formats"] = (
   [
@@ -35,7 +29,6 @@ export const openai: SpeechProviderShape = {
   requestPath: () => "/audio/speech",
   formats: FORMATS,
   tags: () => null,
-  // OpenAI's pricing is per character or token of what it speaks; it says nothing of refusals.
   billsFailures: false,
   cloning: null,
   models: ["gpt-4o-mini-tts", "tts-1", "tts-1-hd"],
@@ -56,9 +49,8 @@ export const compatible: SpeechProviderShape = {
   }),
   // a server you run yourself bills nothing; a gateway that bills is priced by its own card
   billsFailures: false,
-  // `POST /audio/voices` in the batch speech API (docs/speech-batch-api.md#voices), for a server
-  // whose endpoint says it makes voices. Its form has one transcript for every sample, and
-  // OmniVoice clones from one clip, so a voice is made from one recording.
+  // `POST /audio/voices` (docs/speech-batch-api.md#voices): one transcript for all samples, and
+  // OmniVoice clones from one clip
   cloning: {
     maxSamples: 1,
     maxSampleBytes: 20 * 1024 * 1024,

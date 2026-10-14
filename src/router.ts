@@ -10,8 +10,7 @@ export const router = createRouter({
     { path: "/library", component: LibraryView },
     { path: "/queue", component: () => import("@/views/QueueView.vue") },
     { path: "/endpoints", component: () => import("@/views/EndpointsView.vue") },
-    // Every route below declares `:bookId` as a single segment, never a repeatable one — that is
-    // what lets `useBookId` narrow the param to a plain string.
+    // Every route declares `:bookId` as one segment, so `useBookId` can narrow it to a string.
     { path: "/book/:bookId", component: () => import("@/views/BookView.vue") },
     { path: "/book/:bookId/review", component: () => import("@/views/ReviewView.vue") },
     { path: "/book/:bookId/cast", component: () => import("@/views/CastView.vue") },
@@ -29,15 +28,8 @@ export const router = createRouter({
 });
 
 /**
- * Have the library before the page that reads it.
- *
- * This is the one place a book is fetched, so a link pasted into a new tab and a reload land on
- * the same page as a click does. A book the server does not have sends the person to the library
- * rather than to an empty review.
- *
- * The endpoint configuration is read alongside the shelf, for the same reason: the voice pickers,
- * the run estimates and the Endpoints page all read it, and a page drawn before it arrived would
- * show no endpoints where the server has some.
+ * The one place the library and endpoint config are fetched, so a pasted link or reload lands like
+ * a click. A book the server lacks sends the person to the library rather than an empty review.
  */
 router.beforeEach(async (to) => {
   const libraryStore = useLibraryStore();

@@ -1,17 +1,8 @@
-// One log line, for a person looking at a terminal.
-//
-// Written here rather than taken from `pino-pretty`, for two reasons. The look is the point — this
-// is the one part of the logger that exists purely to be read by a human, so it is worth shaping —
-// and formatting our own records for our own terminal is not the kind of long tail a dependency
-// saves you from, the way parsing arbitrary HTML is. It also keeps the logger a single in-process
-// stream with no worker thread behind it, which is the arrangement that survives `bun build`.
-//
-// Machine-readable output is untouched by any of this: in JSON mode pino writes its own lines and
-// nothing here runs.
+// Pretty log lines for a terminal. Not `pino-pretty`: this keeps the logger one in-process stream
+// with no worker thread, which survives `bun build`. JSON mode bypasses this file.
 import type { Palette } from "~/log/colour";
 import { visibleWidth } from "~/log/colour";
 
-/** pino's numeric levels, and how each one should look and read. */
 const LEVELS: { at: number; label: string; paint: (p: Palette) => (s: string) => string }[] = [
   { at: 60, label: "FATAL", paint: (p) => (s) => p.bold(p.onRed(s)) },
   { at: 50, label: "ERROR", paint: (p) => (s) => p.bold(p.red(s)) },
@@ -23,7 +14,7 @@ const LEVELS: { at: number; label: string; paint: (p: Palette) => (s: string) =>
 
 const levelOf = (n: number) => LEVELS.find((l) => n >= l.at) ?? LEVELS[LEVELS.length - 1];
 
-/** Keys pino puts on every record, which say nothing a person reading a terminal wants. */
+/** Keys not shown as context. */
 const NOISE = new Set(["level", "time", "pid", "hostname", "msg", "err", "req", "res", "name"]);
 
 const HH = (t: number): string => {
@@ -32,10 +23,8 @@ const HH = (t: number): string => {
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`;
 };
 
-/** How long a value may be before it stops being worth reading on one line. */
 const MAX = 80;
 
-/** One value, coloured for what it is, so a number reads as a number at a glance. */
 function value(v: unknown, p: Palette): string {
   if (v == null) return p.dim("null");
   if (typeof v === "number") return p.cyan(String(v));
@@ -46,7 +35,6 @@ function value(v: unknown, p: Palette): string {
   return json.length > MAX ? `${json.slice(0, MAX)}${p.dim("…")}` : json;
 }
 
-/** The context a record carries, as `key=value` pairs the eye can skip. */
 function context(record: Record<string, unknown>, p: Palette): string {
   return Object.entries(record)
     .filter(([k, v]) => !NOISE.has(k) && v !== undefined)
@@ -54,7 +42,7 @@ function context(record: Record<string, unknown>, p: Palette): string {
     .join(" ");
 }
 
-/** `server/epub/parse.ts:271  parseEpub` — where it happened, without the machine's path to it. */
+/** `server/epub/parse.ts:271  parseEpub`, without the machine's path. */
 function frames(stack: string, p: Palette, cwd: string): string[] {
   return stack
     .split("\n")
@@ -64,9 +52,7 @@ function frames(stack: string, p: Palette, cwd: string): string[] {
       if (!at) return null;
       const [, fn, file, row] = at;
       const where = file.startsWith(cwd) ? file.slice(cwd.length).replace(/^\//, "") : file;
-      // A frame inside a dependency, or in the runtime itself, is rarely the one you want. It is
-      // still there — a stack with the middle cut out is how you lose the frame that mattered —
-      // but it recedes so the eye lands on the file you can open.
+      // dependency and runtime frames are dimmed, not dropped
       const outside = where.includes("node_modules") || where.startsWith("native");
       const text = `${where}:${row}${fn ? `  ${fn}` : ""}`;
       return outside ? p.dim(text) : `${p.grey(where)}${p.dim(":" + row)}${fn ? `  ${fn}` : ""}`;
@@ -76,18 +62,13 @@ function frames(stack: string, p: Palette, cwd: string): string[] {
 
 export interface PrettyOptions {
   palette: Palette;
-  /** absolute path stripped off stack frames, so a line reads as a file in this repository */
+  /** stripped off stack frames */
   cwd?: string;
-  /** how many stack frames are worth showing before it is just noise */
+  /** stack frames shown */
   depth?: number;
 }
 
-/**
- * Turn one pino record into the line a person reads.
- *
- * Laid out in columns — time, level, message, then context — because a log is skimmed far more
- * often than it is read, and a ragged left edge is what makes skimming impossible.
- */
+/** One pino record as a line in columns: time, level, message, context. */
 export function formatRecord(record: Record<string, unknown>, options: PrettyOptions): string {
   const { palette: p, cwd = "", depth = 6 } = options;
   const level = levelOf(typeof record.level === "number" ? record.level : 30);
@@ -99,11 +80,8 @@ export function formatRecord(record: Record<string, unknown>, options: PrettyOpt
   const name = typeof record.name === "string" ? record.name : "";
   let message = typeof record.msg === "string" ? record.msg : "";
 
-  // The line that closes a request is the one record with a shape of its own worth honouring: what
-  // was asked for and what came back read better as `GET /api/books → 200` than as key-value pairs.
-  //
-  // Only that line. A record written *during* a request also carries `req`, and rendering it the
-  // same way would replace what it actually said with the path it happened to be on.
+  // The request-closing line reads `GET /api/books → 200`. Only that one: records written during
+  // a request carry `req` too, and must keep their own message.
   if (req?.method && req.url && res?.status) {
     const status = res.status;
     const paint = status >= 500 ? p.red : status >= 400 ? p.yellow : p.green;
@@ -114,7 +92,6 @@ export function formatRecord(record: Record<string, unknown>, options: PrettyOpt
 
   const head = `${time}  ${badge} ${p.white(message)}`;
   const rest = context(record, p);
-  // The context is pushed out to a column when the message is short enough to leave room for it.
   const gap = Math.max(1, 66 - visibleWidth(head));
   const line = rest ? `${head}${" ".repeat(gap)}${rest}` : head;
 
@@ -128,7 +105,6 @@ export function formatRecord(record: Record<string, unknown>, options: PrettyOpt
   );
 }
 
-/** A destination pino can write to: one formatted line per record. */
 export function prettyStream(options: PrettyOptions & { out?: (s: string) => void }): {
   write: (line: string) => void;
 } {
@@ -138,8 +114,7 @@ export function prettyStream(options: PrettyOptions & { out?: (s: string) => voi
       try {
         out(`${formatRecord(JSON.parse(line) as Record<string, unknown>, options)}\n`);
       } catch {
-        // Not a record this knows how to read. Losing a log line to the log formatter is the worst
-        // possible trade, so it goes out as it arrived.
+        // unreadable: pass it through rather than lose a log line
         out(line);
       }
     },

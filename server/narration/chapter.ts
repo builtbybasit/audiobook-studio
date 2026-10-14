@@ -1,10 +1,5 @@
-// A chapter's narration as everything that renders or judges a clip reads it: which slot a line
-// renders into, what counts as in flight, and how the chapter adds itself up afterwards.
-//
-// The narration job (`server/jobs/narration.ts`), a retake and its verdict (`ops.ts`) and a change
-// to the cast or the dictionary (`server/cast/ops.ts`) all end by settling the chapter, and the job
-// and a retake both queue lines, so each rule is stated here once and the job depends on it rather
-// than the other way round.
+// The narration rules shared by the job, retakes (`ops.ts`) and cast changes (`server/cast/ops.ts`):
+// which slot a line renders into, what is in flight, and how a chapter adds itself up.
 import type { Job, NarrationScope, NarrationStatus, SegmentAudio } from "@/types";
 import { chapterNarration } from "@/lib/runPlan";
 import { chapterSeconds, pacingOrDefault } from "@/lib/speech";
@@ -14,28 +9,21 @@ import { getBook, getChapter, setChapterNarration } from "~/db/library";
 import { readScript } from "~/db/script";
 import type { NarrationCost } from "~/narration/cost";
 
-/** The label a retake job carries as its scope and its `bulk.op`; the Queue page shows it as it is. */
+/** A retake job's scope and `bulk.op`, shown as is on the Queue page. */
 export const RETAKE_LABEL = "Retake";
 
-/**
- * What a run renders: one of the store's scopes, or `pending` — nothing new, only the clips
- * already queued or generating when the run starts. A retake queues its lines when its job is
- * created, so its job runs at `pending` and the handler's in-flight rule does the rest.
- */
+/** `pending` renders only the clips already in flight when the run starts (a retake's). */
 export type RunScope = NarrationScope | "pending";
 
 export const inFlight = (status: SegmentAudio["status"]): boolean =>
   status === "queued" || status === "generating";
 
-/** Which clip of its line a render is going to. */
 export type Slot = "current" | "candidate";
 
 /**
- * Which slot a line renders into, and the queued clip that holds it meanwhile — the store's rule,
- * kept exactly. A line whose clip has audio gets a candidate beside it, numbered after every take
- * the line has seen, so the chapter keeps playing the old clip until the new one lands; one with
- * nothing worth keeping renders in place. `auto` marks a candidate the run chose to make, which
- * takes over when it lands; a retake a person asked for is not, and waits for their verdict.
+ * The store's rule, kept exactly. A line with audio gets a candidate beside it, so the old clip
+ * plays until the new one lands; otherwise it renders in place. An `auto` candidate takes over when
+ * it lands; a retake (not `auto`) waits for a verdict.
  */
 export function queuedSlot(
   audio: SegmentAudio,
@@ -57,13 +45,8 @@ export function queuedSlot(
 }
 
 /**
- * Settle a chapter's status and its length from the clips as they now stand, and say what they
- * came to. The status is `chapterNarration`, the same reading the demo makes. The silence between
- * clips is the book's pacing, stitched rather than rendered, and is part of how long the chapter
- * plays even though no provider produced it. A run's last write and a verdict on a retake both
- * end here, so a chapter never has two ways of adding itself up. Both ask only the lines the book
- * reads aloud (`isSpoken`), so a change to what it reads — a line marked as site text, the book's
- * notes switched on — ends here too.
+ * Status and length from the clips as they now stand; the length includes the pacing silence
+ * between clips. The one way a chapter adds itself up.
  */
 export function settleChapter(
   tx: Tx,
@@ -78,13 +61,12 @@ export function settleChapter(
   return { narration, seconds };
 }
 
-/** Whether a narration job holds the chapter, whose status is then the run's to add up when it ends. */
+/** While a job holds the chapter, its status is the run's to add up. */
 export function narrationInProgress(tx: Tx, bookId: string, chapterId: number): boolean {
   const narration = getChapter(tx, bookId, chapterId)?.narration;
   return narration === "queued" || narration === "running";
 }
 
-/** A narration job's run detail: what it holds, how many clips, at which scope, and what it was estimated at. */
 export function narrationRunOf(
   cost: NarrationCost,
   clips: number,

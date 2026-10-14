@@ -1,15 +1,7 @@
 <script setup lang="ts">
-// The two messages of a scripting prompt, edited as text with `{{tags}}` in them.
-//
-// Shared by every place that may change the prompt — the library's default and an endpoint's say
-// on the Endpoints page, a book's own on its Scripting page — so the rules shown here are the ones
-// `@/lib/prompt` enforces everywhere. The editor holds nothing of its own: the parent owns both
-// texts (`v-model:system`, `v-model:user`) and whether they are saved, and renders the preview,
-// since only it knows which layers and which sample the preview is built from.
-//
-// What is not editable is shown anyway: the output format goes after the system prompt of every
-// request, and a prompt read without it would look like it asks for nothing in particular. It is
-// shown as it is sent, with the library's line effects (any effect with a "Use when") offered in it.
+// The two messages of a scripting prompt, edited as text with `{{tags}}`. The parent owns the
+// texts, their saving and the preview; the rules shown are `@/lib/prompt`'s. The fixed output
+// format is shown too, since a prompt read without it seems to ask for nothing.
 import { computed, nextTick, ref, useId } from "vue";
 import { RotateCcw as ResetIcon } from "@lucide/vue";
 import {
@@ -25,7 +17,7 @@ import { useEffects } from "@/queries";
 import type { PromptTemplate, RenderedPrompt } from "@/types";
 import { UiHint } from "@/ui";
 
-/** written out here, where the template would read a literal one as its own */
+/** a literal `{{…}}` in the template would be read as interpolation */
 const EXPRESSIONS_TAG = "{{expressions}}";
 
 const props = withDefaults(
@@ -45,9 +37,9 @@ const props = withDefaults(
 const emit = defineEmits<{ "update:system": [string]; "update:user": [string] }>();
 
 const id = useId();
-/** The two textareas, for the cursor a chip inserts at. Not state: nothing renders from them. */
+/** For the cursor a chip inserts at. Not state: nothing renders from them. */
 const els: Record<"system" | "user", HTMLTextAreaElement | null> = { system: null, user: null };
-/** Where a tag chip inserts: the textarea last focused, the user message until one is. */
+/** the textarea last focused; a tag chip inserts there */
 const last = ref<"system" | "user">("user");
 
 const { effects } = useEffects();
@@ -67,10 +59,7 @@ function set(which: "system" | "user", value: string) {
   else emit("update:user", value);
 }
 
-/**
- * Put `{{name}}` where the cursor was in the textarea last focused, over any selection, and hand
- * the focus back with the cursor after the tag — a chip is a way of typing, not a place to stay.
- */
+/** Put `{{name}}` at the cursor of the last-focused textarea and hand the focus back after it. */
 async function insert(name: string) {
   const which = last.value;
   const el = els[which];
@@ -91,12 +80,11 @@ function reset() {
   emit("update:user", props.resetTo.user);
 }
 
-/** How a tag is written. Built here: a literal pair of braces in the template would end the
- *  interpolation it sits in. */
+/** Built here: a literal pair of braces in the template would end the interpolation. */
 const tagOf = (name: string) => `{{${name}}}`;
 
 const count = (n: number) => n.toLocaleString("en");
-/** Roughly: a token is about four characters of English. */
+/** ~4 characters of English per token */
 const tokens = (n: number) => count(Math.ceil(n / 4));
 const previewChars = computed(() =>
   props.preview ? props.preview.system.length + props.preview.user.length : 0,
@@ -148,7 +136,6 @@ const FIELDS = [
       <p :id="`${id}-${f.which}-hint`" class="text-[11px] text-zinc-500">{{ f.hint }}</p>
     </div>
 
-    <!-- tags -->
     <div v-if="!readonly" class="space-y-1">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <span :id="`${id}-tags`" class="label"

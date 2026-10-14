@@ -1,14 +1,7 @@
-// Reading an actual EPUB.
-//
-// This is the one place in the app that opens a real file. It hands back what the import needs and
-// nothing more: the book's title and author, and its chapters in reading order with their text.
-// Deciding which of those chapters are story is `server/epub/notices.ts`; turning them into a book
-// is `server/import/assemble.ts`.
-//
-// Built on the Node entry point of @likecoin/epub-ts: `packaging.metadata` is synchronous once the
-// package document is parsed, and a section renders through the archive's own request function, so
-// nothing here reaches the network. The `/node` entry registers linkedom's DOMParser itself —
-// calling `setDOMParser` is not required.
+// Reads a real EPUB: title, author, and chapters in reading order with their text. Which chapters
+// are story is `server/epub/notices.ts`; building the book is `server/import/assemble.ts`.
+// Uses @likecoin/epub-ts's `/node` entry, which registers linkedom's DOMParser itself; sections
+// render through the archive, so nothing reaches the network.
 import type { Book } from "@likecoin/epub-ts/node";
 
 import { numericEntities } from "~/epub/entities";
@@ -19,22 +12,9 @@ type BookClass = new (options?: { replacements?: "none" | "blobUrl" | "base64" }
 let cached: BookClass | null = null;
 
 /**
- * Load the EPUB library, with its two import-time side effects contained.
- *
- * It is loaded here rather than at the top of the file because both fixes have to bracket the
- * import itself, and an `import` statement gives nowhere to stand.
- *
- * Going in: the bundle reads `typeof window < "u" ? window.requestAnimationFrame.bind(window)`,
- * which takes any `window` at all for a complete browser one. That holds in a browser and in a
- * bare server process, and fails in between — a test run where a frontend module has installed a
- * small `window` stub, where it throws on import and takes the whole file with it.
- *
- * Coming out: the import installs linkedom's `DOMParser` and a global `document`. The parser needs
- * the first. The second is a server process announcing itself as a browser, which is false and has
- * consequences: code that branches on `typeof document` takes the DOM path and then reaches for
- * the rest of a browser that is not there.
- *
- * Both are put back the way they were found, so loading the parser leaves no trace in the globals.
+ * Load the EPUB library with its import-time side effects contained. The bundle calls
+ * `window.requestAnimationFrame` on any `window` (throws under a test's `window` stub), and it
+ * installs a global `document` that makes server code take DOM paths. Both are undone here.
  */
 async function loadBookClass(): Promise<BookClass> {
   if (cached) return cached;
@@ -64,17 +44,13 @@ async function loadBookClass(): Promise<BookClass> {
 export interface ParsedChapter {
   /** the TOC label where there is one, else the document's own heading, else its filename */
   title: string;
-  /** the chapter's prose, blocks separated by blank lines, with `*italic*` and `**bold**` marked */
+  /** blocks separated by blank lines, with `*italic*` and `**bold**` marked */
   text: string;
-  /** counted on the prose without its markers, which is what anyone would call the length */
+  /** counted on the prose without its markers */
   words: number;
   /** the section's href inside the EPUB, with the anchor when one file holds several chapters */
   href: string;
-  /**
-   * The file held this chapter and could not be read: a missing asset, or markup that would not
-   * parse. Set so the review can say so, because an empty chapter and a lost one look identical
-   * once the text is gone.
-   */
+  /** The file held this chapter and could not be read; an empty and a lost chapter look alike. */
   unreadable?: true;
 }
 
@@ -83,11 +59,7 @@ export interface ParsedEpub {
   author: string;
   language: string;
   chapters: ParsedChapter[];
-  /**
-   * The bytes of the image the package names as its cover, as the file holds them — unchecked:
-   * what counts as a cover is the import's to say. Absent when the package names none, or names
-   * one the archive does not have.
-   */
+  /** The package's cover image bytes, unchecked. Absent when none is named or the zip lacks it. */
   cover?: Uint8Array;
 }
 
@@ -96,13 +68,8 @@ export class EpubParseError extends Error {
 }
 
 /**
- * An href as the file it names is spelled: `Chapter%201.xhtml` is `Chapter 1.xhtml`.
- *
- * An href is a URL, so a space or an accent in a filename is percent-encoded in one — but only by
- * the tools that remember to, and the navigation and the manifest are often written by different
- * ones. Compared as written, `Text/Chapter%201.xhtml#c2` never meets `Text/Chapter 1.xhtml`, and a
- * chapter anchored there loses its title and runs on into the one before. A `%` that is not an
- * escape is left as it is, since it can only be a filename that really has one.
+ * An href as its filename is spelled (`Chapter%201.xhtml` → `Chapter 1.xhtml`). Nav and manifest
+ * are often written by tools that encode differently. A `%` that is not an escape is kept.
  */
 function decoded(href: string): string {
   try {
@@ -113,17 +80,12 @@ function decoded(href: string): string {
 }
 
 /**
- * A path inside the EPUB, with `.` and `..` resolved, relative to `from`.
- *
- * The two halves of a package do not agree on what a path is relative to. A spine item's `href` is
- * written against the package document; a navigation entry's is written against the navigation
- * document, which may sit in a directory of its own — `../text/c1.xhtml` and `text/c1.xhtml` are
- * then the same file spelled two ways, and comparing them as written silently loses every label.
+ * A path inside the EPUB, with `.` and `..` resolved, relative to `from`. Spine hrefs are relative
+ * to the package document, nav hrefs to the nav document, which may sit in another directory.
  */
 function resolve(href: string, from = ""): string {
   const raw = (href ?? "").trim();
-  // A link out of the book is not a chapter of it — `//host/x.html` included, which has no scheme
-  // and names another site all the same.
+  // A link out of the book, `//host/x.html` included, is not a chapter.
   if (!raw || raw.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(raw)) return "";
   const hash = raw.indexOf("#");
   const path = hash < 0 ? raw : raw.slice(0, hash);
@@ -138,13 +100,8 @@ function resolve(href: string, from = ""): string {
 }
 
 /**
- * Whether a package-relative href climbs above the root of the zip it came in.
- *
- * `resolve` drops a `..` it has nothing left to climb out of, which is right for a path that is
- * only spelled badly and wrong for one that points somewhere else entirely: `../../extras.xhtml`
- * from a package in `OEBPS/` names a file beside the EPUB, not in it. As a spine item that used to
- * arrive as a chapter that "could not be read", for the review to decide on — a chapter the book
- * never had. A link out of the book is not a chapter of it, the same as an `https:` one.
+ * Whether a package-relative href climbs above the zip's root. `resolve` silently drops such a
+ * `..`, but `../../extras.xhtml` names a file beside the EPUB, not a chapter in it.
  */
 function leavesArchive(href: string, packageDir: string): boolean {
   let depth = 0;
@@ -156,7 +113,6 @@ function leavesArchive(href: string, packageDir: string): boolean {
   return false;
 }
 
-/** The directory a document lives in, as a prefix other paths resolve against. */
 const dirOf = (path: string): string => {
   const at = path.lastIndexOf("/");
   return at < 0 ? "" : path.slice(0, at + 1);
@@ -164,18 +120,15 @@ const dirOf = (path: string): string => {
 
 /** One place the table of contents points at. */
 interface TocEntry {
-  /** the document, package-relative */
+  /** package-relative */
   doc: string;
   /** the element id inside it, or "" when the entry names the whole document */
   frag: string;
   label: string;
-  /** how deeply nested the entry is; 0 is the top level of the table of contents */
+  /** 0 is the top level */
   depth: number;
-  /**
-   * This entry is a heading over the chapters below it rather than one of them: it names the whole
-   * document, and the navigation points *inside* that same document underneath it. "Volume One",
-   * with Chapters One and Two nested under it, is the shape.
-   */
+  /** A heading over the chapters nested under it ("Volume One"): it names the whole document and
+   * the nav points inside that document beneath it. */
   container: boolean;
 }
 
@@ -185,7 +138,7 @@ interface TocItem {
   subitems?: unknown;
 }
 
-/** Every navigation entry, nesting flattened but remembered, in the order a reader meets them. */
+/** Every navigation entry, nesting flattened but remembered, in reading order. */
 function tocEntries(toc: readonly TocItem[], navDir: string): TocEntry[] {
   const out: TocEntry[] = [];
   const visit = (items: readonly TocItem[], depth: number): void => {
@@ -200,8 +153,6 @@ function tocEntries(toc: readonly TocItem[], navDir: string): TocEntry[] {
       if (!Array.isArray(kids) || !kids.length) continue;
       const below = out.length;
       visit(kids as TocItem[], depth + 1);
-      // An entry that names a whole document and has the navigation pointing at places inside that
-      // same document beneath it is the volume title over its chapters, not a chapter.
       if (entry && !entry.frag)
         entry.container = out.slice(below).some((k) => k.doc === entry.doc && !!k.frag);
     }
@@ -211,18 +162,9 @@ function tocEntries(toc: readonly TocItem[], navDir: string): TocEntry[] {
 }
 
 /**
- * Where the navigation says this document's chapters begin.
- *
- * Only the shallowest level that reaches the document is read. A serial that lists twenty chapters
- * of one file side by side has them all at the top level, and each is a chapter; a novel that lists
- * scenes underneath a chapter has the chapter above them, and the scenes are not chapters. Reading
- * the deepest level instead would turn the second book into a hundred one-page chapters, and there
- * is no way back from that once the audiobook is built.
- *
- * A container is not one of those levels. It names the file its chapters are in and nothing
- * narrower, so taking it as the boundary is taking the whole file as one chapter — which is how a
- * volume listed above Chapters One and Two used to import with both of them inside it, and a notice
- * bundled in with them could not be skipped without taking the story either side of it too.
+ * Where the nav says this document's chapters begin: only the shallowest level that reaches it,
+ * so scenes nested under a chapter don't become chapters. Containers are skipped, or a volume
+ * heading would make the whole file one chapter.
  */
 function boundariesIn(entries: readonly TocEntry[], doc: string): TocEntry[] {
   const mine = entries.filter((e) => e.doc === doc && !e.container);
@@ -251,14 +193,8 @@ function titleFromHref(href: string): string {
 }
 
 /**
- * Cut one rendered section into the chapters the navigation says it holds.
- *
- * A single file holding several chapters is how most web-novel EPUBs are packed, and treating it
- * as one chapter is not a cosmetic loss: a notice bundled in with two chapters cannot be skipped
- * without taking the story either side of it with it.
- *
- * An anchor the file does not actually contain produces no chapter. Its text is not lost — it stays
- * with the chapter before it — which is the safe direction to be wrong in.
+ * Cut one rendered section into the chapters the nav says it holds (web novels pack many per file).
+ * An anchor the file lacks produces no chapter; its text stays with the chapter before it.
  */
 async function chaptersIn(
   html: string,
@@ -268,8 +204,7 @@ async function chaptersIn(
   const labelled = new Map(bounds.filter((b) => b.frag).map((b) => [b.frag, b.label]));
   const parts = await sectionParts(html, [...labelled.keys()]);
 
-  // Text before the first anchor that no entry claims is the file's own front matter — a series
-  // title above the first chapter. It reads as the opening of the chapter that follows it.
+  // Unclaimed text before the first anchor (a series title) joins the chapter after it.
   const lead = parts[0];
   const leadLabel = bounds.length && !bounds[0].frag ? bounds[0].label : null;
   if (parts.length > 1 && leadLabel == null) {
@@ -280,8 +215,7 @@ async function chaptersIn(
   return parts.map((part) => {
     const label = part.id ? labelled.get(part.id) : leadLabel;
     const href = part.id ? `${doc}#${part.id}` : doc;
-    // Counted and titled from the prose, not from the markers in it: `*The Ledger Opens*` is a
-    // heading with two stars in it to anybody reading the page.
+    // Titled and counted from the prose, not the `*` markers in it.
     const prose = plainText(part.text);
     return {
       title: label || headingOf(prose) || titleFromHref(href),
@@ -292,25 +226,16 @@ async function chaptersIn(
   });
 }
 
-/** The one private method this has to reach for, named rather than cast at the call site. */
+/** The one private method this has to reach for. */
 interface WithNavigationLoader {
   loadNavigation(packaging: unknown): Promise<unknown>;
   navigation?: unknown;
 }
 
 /**
- * Keep a table of contents that is not there from bringing the process down with it.
- *
- * `unpack` calls `loadNavigation(…).then(…)` with no catch, and the `Promise.all` that settles
- * `opened` has none either. An EPUB that declares a navigation document it does not contain
- * therefore produces two rejections nothing outside the library holds a handle to: the book opens,
- * every chapter is present and readable, and the process takes an unhandled rejection that is fatal
- * under Node's `--unhandled-rejections=throw`. Losing nine hundred chapters that are all there
- * because the contents page is missing is the wrong way round.
- *
- * Settling it as "no navigation" is the library's own behaviour for a book that declares none, so
- * the outcome is the documented one: the chapters keep their own headings for titles. Shadowed on
- * the instance rather than patched onto the prototype, so it affects this parse and nothing else.
+ * A missing nav document makes `unpack`'s uncaught `loadNavigation` reject, which is fatal under
+ * `--unhandled-rejections=throw`. Settle it as "no navigation", the library's own behaviour for a
+ * book that declares none. Shadowed on the instance, so only this parse is affected.
  */
 function survivableNavigation(book: Book): void {
   const b = book as unknown as WithNavigationLoader;
@@ -322,13 +247,9 @@ function survivableNavigation(book: Book): void {
 type Archive = NonNullable<Book["archive"]>;
 
 /**
- * The archive's own request for a section, with its HTML entities made ones XML knows.
- *
- * The same two steps the library's `request` takes — the file's text, then parsed by its
- * extension — with `numericEntities` between them, because after the parse is too late: an
- * `&nbsp;` the XML parser did not know is text by then, indistinguishable from a book that wrote
- * the word. A file the archive does not have goes through the library's own request, so it fails
- * the way it always did.
+ * The library's `request` for a section (text, then parse by extension) with `numericEntities`
+ * in between: after the XML parse an unknown `&nbsp;` is already literal text. Missing files go
+ * through the library's own request so they fail as before.
  */
 function readSection(archive: Archive) {
   return async (url: string, type?: string): Promise<unknown> => {
@@ -339,14 +260,7 @@ function readSection(archive: Archive) {
   };
 }
 
-/**
- * The cover image's bytes, when the package names one and the archive has it.
- *
- * The library finds it the way both versions of the spec say to — the manifest item marked
- * `cover-image` in EPUB 3, the item a `<meta name="cover">` points at in EPUB 2 — and only reads
- * it when asked, which the import never did. A cover that cannot be read is no cover, never a
- * reason to lose the book: the chapters are what the import is for.
- */
+/** The cover image's bytes, when the package names one. An unreadable cover is no cover. */
 async function coverOf(book: InstanceType<BookClass>): Promise<Uint8Array | undefined> {
   const href = book.packaging?.coverPath;
   if (!href || !book.archive) return undefined;
@@ -361,27 +275,14 @@ async function coverOf(book: InstanceType<BookClass>): Promise<Uint8Array | unde
 }
 
 /**
- * Read an EPUB from its bytes.
- *
- * Sections are read one at a time and unloaded straight after. A web-novel volume can be a
- * thousand chapters, and holding every parsed document at once is how a routine import turns into
- * an out-of-memory crash on a machine that was never short of memory.
+ * Read an EPUB from its bytes. Sections are read one at a time and unloaded straight after, so a
+ * thousand-chapter volume does not run out of memory.
  */
 export async function parseEpub(bytes: ArrayBuffer): Promise<ParsedEpub> {
-  // Opened in two steps rather than through the documented `new Book(bytes)`, so that the promise
-  // the open produces is one this function owns and awaits.
-  //
-  // A Book holds a deferred promise per part of the package — manifest, spine, metadata, cover,
-  // navigation, and the rest — and a file that cannot be unzipped rejects all of them. Nothing
-  // awaits most of them, so each becomes an unhandled rejection: three of them for a corrupt
-  // upload, which under Node's default is enough to take the process down and is noise in the test
-  // output either way. Settling them with a no-op handler first costs nothing on a good file and
-  // turns a bad one into the single error the caller is already catching.
+  // Not `new Book(bytes)`: a corrupt file rejects every deferred part promise, each unhandled and
+  // fatal. Opening in two steps lets us silence those first and await the one error here.
   const Book = await loadBookClass();
-  // No replacements. Left to its default, an archived book has every asset in its manifest turned
-  // into a blob URL for a browser to display — work nothing here reads, since a section is read
-  // through `readSection` — and an asset the manifest lists and the zip lacks is `console.error`ed
-  // with its stack, straight past the logger, on an import that is otherwise fine.
+  // No replacements: blob URLs are unused here, and a missing asset gets `console.error`ed.
   const book = new Book({ replacements: "none" });
   book.opened?.catch(() => {});
   book.ready?.catch(() => {});
@@ -398,25 +299,15 @@ export async function parseEpub(bytes: ArrayBuffer): Promise<ParsedEpub> {
     );
   }
 
-  // The spine's content hooks add a `<base>`, a canonical `<link>` and an identifier `<meta>` to
-  // each section's head, for a reader displaying it. Nothing here displays it and the converter drops
-  // the head anyway — and on a section with no `<head>` each hook throws, and the library
-  // `console.error`s all three stacks past the logger. So they are not run.
+  // Display-only hooks that throw and `console.error` on a section with no `<head>`.
   book.spine?.hooks?.content?.clear();
 
   try {
     const meta = book.packaging?.metadata;
     if (!meta) throw new EpubParseError("The EPUB has no package metadata.");
 
-    // `open` resolves as soon as the package document is parsed; the navigation document is a
-    // second file and is still being fetched. Reading `book.navigation` here without waiting finds
-    // nothing at all, and every chapter silently falls back to its own heading — which usually
-    // looks close enough to be believed and is not the title the book's contents give it.
-    //
-    // Waited for on its own rather than through `book.ready`, which also covers the cover image and
-    // the resource list: a book with no cover has a perfectly good table of contents, and losing it
-    // to an unrelated failure would be the same silent fallback by another route. A book with no
-    // navigation at all is legal, so this resolving empty is not an error either.
+    // `open` resolves before the nav document loads. Awaited alone, not via `book.ready`, so a
+    // failing cover can't cost the TOC. No navigation at all is legal.
     await book.loaded?.navigation?.catch(() => undefined);
 
     const navDoc = resolve(book.packaging.navPath ?? "");
@@ -428,9 +319,7 @@ export async function parseEpub(bytes: ArrayBuffer): Promise<ParsedEpub> {
 
     for (const section of book.spine.spineItems) {
       const doc = resolve(section.href ?? "");
-      // The navigation document is the table of contents itself, and a non-linear section is
-      // supplementary by the spec's own definition — a cover plate, a colophon. Neither is a
-      // chapter, and both would otherwise arrive in the review as one to decide on.
+      // The nav document and non-linear sections (cover plate, colophon) are not chapters.
       if (!doc || doc === navDoc || leavesArchive(section.href ?? "", packageDir)) continue;
       if (section.linear === false) continue;
       sections++;
@@ -439,9 +328,7 @@ export async function parseEpub(bytes: ArrayBuffer): Promise<ParsedEpub> {
       try {
         html = await section.render(readSection(book.archive!));
       } catch {
-        // One unreadable section is not a reason to lose the other nine hundred. It arrives as a
-        // chapter that says it could not be read, so the review can decide what to do about it
-        // rather than being shown a chapter that merely looks short.
+        // Arrives as an unreadable chapter for the review to decide on.
         html = null;
       } finally {
         section.unload();
@@ -449,10 +336,7 @@ export async function parseEpub(bytes: ArrayBuffer): Promise<ParsedEpub> {
 
       const bounds = boundariesIn(entries, doc);
       if (html == null) {
-        // One entry for each chapter the navigation says was in the file, not one for the file. A
-        // damaged file holding three chapters is three chapters to answer for; reporting it as one
-        // leaves the other two missing from a review that never mentions them — and the numbering
-        // of everything after them quietly shifts.
+        // One entry per chapter the nav puts in the file, so later numbering doesn't shift.
         for (const bound of bounds.length ? bounds : [null])
           chapters.push({
             title: bound?.label || titleFromHref(doc),
@@ -469,9 +353,7 @@ export async function parseEpub(bytes: ArrayBuffer): Promise<ParsedEpub> {
 
     if (!chapters.length)
       throw new EpubParseError("The EPUB has no readable chapters in its spine.");
-    // Every section in the spine failed to render. The file is an EPUB and its package parsed, so
-    // it opened — but there is no book in it, and importing one chapter of nothing per file would
-    // put an empty shelf entry in the library and call it a success.
+    // Every section failed to render: no book in it, so not a successful import.
     if (sections && !readable)
       throw new EpubParseError(
         `None of the ${sections} section${sections === 1 ? "" : "s"} in this EPUB could be read. Its chapter files are missing or damaged.`,

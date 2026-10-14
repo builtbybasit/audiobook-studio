@@ -1,9 +1,6 @@
-// Which world the page runs in: the server's unless this tab asked for the demo.
-//
-// The choice is a flag in the tab's `sessionStorage`, read once when the page loads; the Demo
-// chip's Enter and Leave set or clear it and load the page again. Anything short of a flag that
-// says "demo" is backend — no storage, a storage that throws, a flag with some other value — so a
-// broken browser or a server that is down never lands a person in the seeded books.
+// Which world the page runs in: the server's unless this tab's `sessionStorage` flag says "demo".
+// Anything else (no storage, storage that throws, another value) is backend, so a broken browser
+// or a down server never lands a person in the seeded books.
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
 import { enterDemo, leaveDemo, mode, MODE_KEY, readMode } from "@/services/mode";

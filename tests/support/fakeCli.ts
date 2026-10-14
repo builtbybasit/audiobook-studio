@@ -1,11 +1,6 @@
-// A stand-in for `codex` or `claude` on disk, so the command-line scripting provider can be run
-// end to end without calling a model.
-//
-// `fakeCli("codex")` writes an executable named `codex` into a fresh folder. Run, it notes what it
-// was given — its arguments, its stdin, its working folder and what was in it, the system prompt
-// file it was pointed at — and answers with the next of the replies it was handed: what to print,
-// what to write as Codex's last message, how long to take, what to exit with. The last reply
-// answers every call after it.
+// A stand-in `codex` or `claude` executable, so the command-line scripting provider runs end to end
+// without a model. It records each call (args, stdin, working folder, system prompt file) and
+// answers with the next reply it was handed; the last reply answers every call after it.
 import { chmodSync, mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,7 +23,7 @@ export interface FakeCall {
   cwd: string;
   /** what was in the working folder when it started */
   files: string[];
-  /** the file `--system-prompt-file` (Claude Code) or `model_instructions_file` (Codex) named, read */
+  /** the file `--system-prompt-file` (Claude Code) or `model_instructions_file` (Codex) named */
   system: string | null;
 }
 

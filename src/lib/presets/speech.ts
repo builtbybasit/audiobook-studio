@@ -1,17 +1,11 @@
-// The speech presets: what "Start from a preset…" offers a text-to-speech endpoint, grouped by
-// provider. Each rate is the provider's published card on the date its note gives. Each
-// `concurrency` comes from the provider's own docs as read on 2026-09-28, for the lowest plan or
-// tier someone using the preset plausibly has; a larger plan can raise it on the Requests tab.
-// Where a provider documents only a request rate, or none, the comment beside it says why.
+// Speech presets, grouped by provider. Rates are the provider's published card as of each note.
+// Each `concurrency` is from the provider's docs for the lowest plausible plan; where the docs give
+// only a request rate, or none, the comment beside it says why.
 import type { ExpressionTag } from "@/types";
 import { presetPricing, type TtsPreset } from "@/lib/presets/preset";
 import { SIMULATED_BASE_URL, SIMULATED_SPEECH_MODEL, SIMULATED_VOICES } from "@/lib/providers";
 
-/**
- * OpenAI's first two speech models, still offered: billed per character of input, so a line's cost
- * is exact rather than estimated, at up to 4,096 characters a request. They take no instructions,
- * and speak 9 of the 13 voices `gpt-4o-mini-tts` does.
- */
+/** tts-1 / tts-1-hd: billed per input character, so cost is exact; no instructions. */
 function openaiTts1(model: string, label: string, hint: string, rate: number): TtsPreset {
   return {
     id: `openai-${model}`,
@@ -42,10 +36,7 @@ function openaiTts1(model: string, label: string, hint: string, rate: number): T
   };
 }
 
-/**
- * An ElevenLabs model: billed per character of the text, at `rate` dollars per million — ElevenLabs
- * prices per thousand — and up to `maxChars` a request, the model's own limit.
- */
+/** `rate` is per million characters (ElevenLabs prices per thousand). */
 function elevenLabs(
   model: string,
   label: string,
@@ -88,12 +79,7 @@ function elevenLabs(
 
 const RATES_AS_OF = "Rates as published on 28 September 2026.";
 
-/**
- * A BreezeBlue model through its hosted API, shaped like ElevenLabs'. Billed per character of the
- * request text alone — a Chinese, Japanese or Korean one counts twice, and the instructions beside
- * it are free — at $40 a million on the free plan and less on paid ones, up to 1,000 characters a
- * request unless BreezeBlue raises it.
- */
+/** BreezeBlue's hosted API, shaped like ElevenLabs'. Instructions are not billed. */
 function breezeTts(model: string, label: string, hint: string, languages: string): TtsPreset {
   return {
     id: model,
@@ -127,10 +113,8 @@ function breezeTts(model: string, label: string, hint: string, languages: string
 }
 
 /**
- * A MiniMax speech model: billed per character at `rate` dollars a million. MiniMax takes under
- * 10,000 characters a request, but recommends streaming above 3,000, and its answer is the audio
- * as hex inside one JSON body — about 80 MB for a 10,000-character line — so requests are kept to
- * 3,000.
+ * Requests are kept to 3,000 characters: MiniMax takes up to 9,999 but recommends streaming above
+ * 3,000, and answers with hex audio in one JSON body (~80 MB for 10,000 characters).
  */
 function miniMax(model: string, label: string, hint: string, rate: number): TtsPreset {
   return {
@@ -163,10 +147,7 @@ function miniMax(model: string, label: string, hint: string, rate: number): TtsP
   };
 }
 
-/**
- * A Qwen-Audio 3.0 model through Alibaba's Model Studio, Singapore region: billed per 10,000
- * characters — a Chinese one counting twice — with the audio itself free.
- */
+/** Alibaba Model Studio, Singapore region: billed per 10,000 characters, audio free. */
 function qwenTts(model: string, label: string, hint: string, rate: number): TtsPreset {
   return {
     id: model,
@@ -202,11 +183,8 @@ function qwenTts(model: string, label: string, hint: string, rate: number): TtsP
 }
 
 /**
- * The vocal sounds Google recommends for its 3.8 speech models, written inline in angle brackets
- * where the sound should fall ("Vocal bursts and non-speech sounds" in its speech-generation
- * guide). Delivery — whispering, a tone, a pace — is not here: 3.8 takes that as the line's style,
- * beside the text. Ids are the shared names the demo's tags use, so an annotation made for one
- * model's "Sighs" is the same expression on this one.
+ * Google's recommended vocal sounds for 3.8 ("Vocal bursts and non-speech sounds"); delivery goes
+ * in the style instead. Ids match the demo's tags so an annotation carries across models.
  */
 const GEMINI_VOCAL_TAGS: ExpressionTag[] = [
   { id: "laughs", label: "Laughs", token: "<laugh>", kind: "sound" },
@@ -226,10 +204,8 @@ const GEMINI_VOCAL_TAGS: ExpressionTag[] = [
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 
 /**
- * One of the Gemini 3.8 speech models, released on 22 September 2026. Billed like 3.1 — input text
- * tokens and output audio tokens, 25 audio tokens a second — at $1 in and `audioRate` out from
- * 2027; until then Google charges half, which a promotion holds so the card turns over by itself.
- * Its expression tags start as Google's recommended vocal sounds.
+ * Gemini 3.8 speech: text tokens in, audio tokens out (25 a second). Google charges half until
+ * 2027; a promotion holds that so the card turns over by itself.
  */
 function gemini38Tts(
   id: string,
@@ -295,8 +271,7 @@ function gemini38Tts(
 
 export const TTS_PRESETS: TtsPreset[] = [
   {
-    // first, since a fresh library has no endpoints and this is the one that works without an
-    // account: its voices come with it, so a line can be rendered before anything is fetched
+    // first: works without an account, and its voices come with it
     id: "simulated",
     group: "Simulated",
     label: "Simulated (free)",

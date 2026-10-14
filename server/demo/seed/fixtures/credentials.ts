@@ -1,9 +1,5 @@
-// The credential registry the demo's endpoints and profiles name: which provider account each
-// one uses, so several can say they share one. A credential is only a name — the server keeps one
-// key per endpoint and never sends it back, and the demo holds no key at all.
-//
-// A factory, like the endpoints beside it: every call builds a fresh list, so a scenario that
-// renames one cannot leak into the next world.
+// The demo's credential registry: which provider account each endpoint uses, so several can share
+// one. Names only; the demo holds no keys.
 import type { Credential } from "@/types";
 
 export const makeCredentials = (): Credential[] => [

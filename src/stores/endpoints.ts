@@ -1,27 +1,8 @@
-// Provider configurations and voice catalogues. The server keeps each endpoint's key and this
-// store only ever holds whether it does (`hasKey`) — a typed key goes out in one write (`saveKey`)
-// and is never kept.
-//
-// The configuration is the server's: a narration job there reads it to know which endpoint a line
-// goes to and at what sample rate. The page binds its fields straight onto these objects — a text
-// box writes `ep.concurrency`, a toggle `ep.enabled`, an import assigns a dozen fields at once — so
-// rather than chase every one of those into a request, the store *writes behind*: it watches the
-// configuration as one document (the endpoints without their telemetry, the profiles, the
-// transcribers, the credential registry), and a short while after it last changed sends the whole
-// of it, one write at a time. What the server answers is what the store then holds.
-//
-// The scripting settings travel in it too (`script`, the scripting store's `scriptSettings`), and
-// are written behind like the rest. The library's default scripting prompt travels in the same
-// document (`prompt`, null for the built-in one), but it is not bound onto anything: the page
-// stages an edit to it and saves it on purpose (`setLibraryPrompt`), as it does an endpoint's own
-// prompt (`setProfilePrompt`), since a prompt half-typed is one the server would refuse and every
-// run would read.
-//
-// The request history, failure counts and back-off on each endpoint are not configuration. The
-// server never stores them, and neither sending nor installing a configuration touches them. The
-// rate limits and the cooldown are the server's gate's (`_installLive`), read while narration is
-// running, and the lines each endpoint has out and held sit beside the endpoints in `live` rather
-// than on them. They are left out of what the write-behind watches, so a poll never sends a save.
+// Provider configurations and voice catalogues. The server keeps each key; this store only holds
+// `hasKey`, and a typed key goes out in one write (`saveKey`).
+// The page binds fields straight onto these objects, so the store writes behind: it watches the
+// configuration as one document and sends the whole of it shortly after it last changed. Telemetry
+// (live counts, rate limits, cooldown) is left out of what it watches, so a poll never saves.
 import { nextTick, watch } from "vue";
 import { useQueryCache } from "@pinia/colada";
 import {
@@ -83,31 +64,25 @@ import { useUiStore } from "@/stores/ui";
 interface EndpointsState {
   endpoints: Endpoint[];
   profiles: Profile[];
-  /** The speech-to-text endpoints: what hears a clone sample back as words. */
   transcribers: Transcriber[];
-  /** The library's default scripting prompt, as saved; null is the built-in one. */
+  /** The library's default scripting prompt; null is the built-in one. */
   prompt: PromptTemplate | null;
-  /** The named credentials the endpoints and profiles say they use; names only, never a key. */
+  /** Credential names the endpoints and profiles use; never a key. */
   credentials: Credential[];
-  /** Whether the configuration has been read from the server yet. */
   loaded: boolean;
 }
 
-/** An endpoint the server has sent nothing to: nothing out, nothing held. */
 const IDLE: EndpointLive = { active: 0, waiting: 0, rateLimits: 0, backoffUntil: 0 };
-/** No endpoint's telemetry, before the first read. */
 const NONE: Record<string, EndpointLive> = {};
 
-/** How long the configuration has to sit still before it is sent. A number box sends nothing
- *  per keystroke; a pause sends the value typed. */
+/** How long the configuration sits still before it is sent, so typing sends nothing per key. */
 export const WRITE_DELAY_MS = 400;
 
 const telemetry = new Set<string>(ENDPOINT_TELEMETRY);
 
-/** An endpoint's configuration, leaving its telemetry behind. */
 function storedOf(ep: Endpoint): StoredEndpoint {
-  // Key by key rather than a rest spread: a spread reads every field, and the write-behind watch
-  // would then run again on every request an endpoint records, only to find nothing to send.
+  // Key by key, not a rest spread: a spread reads every field, so the watch would rerun on every
+  // request an endpoint records.
   const out: Record<string, unknown> = {};
   for (const k of Object.keys(ep))
     if (!telemetry.has(k) && k !== "apiKey") out[k] = ep[k as keyof Endpoint];
@@ -121,16 +96,13 @@ function configOf(
   const { endpoints, profiles, transcribers, prompt, credentials } = state;
   return {
     endpoints: endpoints.map(storedOf),
-    // `apiKey` is never on these objects, and is dropped anyway: a key that got onto one would
-    // otherwise go out with every write-behind, and a stale `""` there would forget the key
+    // `apiKey` is dropped: a stray key would go out with every write-behind, and a stale `""`
+    // would forget it
     profiles: profiles.map(({ apiKey: _apiKey, ...p }) => p),
-    // always sent, though the server would keep what it holds without them: what the page shows is
-    // what the server should hold
     transcribers: transcribers.map(({ apiKey: _apiKey, ...t }) => t),
     credentials: credentials.map((c) => ({ ...c })),
-    // always sent, so what the server holds is what the page shows
     prompt,
-    // the choice of profile only ever names one saved with it, which the server insists on
+    // the profile named is always one saved with it; the server insists
     script: {
       ...script,
       profile: profiles.some((p) => p.id === script.profile) ? script.profile : null,
@@ -138,25 +110,20 @@ function configOf(
   };
 }
 
-/** Where each kind's list is, in the store, a write's body and the server's answer alike. */
 const LIST: Record<EndpointKind, "profiles" | "endpoints" | "transcribers"> = {
   scripting: "profiles",
   tts: "endpoints",
   transcription: "transcribers",
 };
 
-/** One kind's entries in any of the three, as the fields a key write touches. */
 const entriesOf = (
   doc: Pick<EndpointConfig, "profiles" | "endpoints" | "transcribers">,
   kind: EndpointKind,
 ): { id: string; apiKey?: string; hasKey?: boolean }[] => doc[LIST[kind]];
 
 /**
- * An entry of any kind with its operational settings and its pricing block filled in, for one
- * saved before either existed. Every one the store takes on comes through here — read from the
- * server, added, or imported from a file — so the pages that edit them never find a field missing.
- * Filling in the defaults is idempotent and changes nothing a request would do differently: an
- * empty schedule and no promotions is exactly ordinary pricing.
+ * Fills in operational settings and pricing for an entry saved before they existed. Every entry
+ * the store takes on passes through here. Idempotent; the defaults change no request.
  */
 function filled<T extends Endpoint | Profile | Transcriber>(ep: T, kind: EndpointKind): T {
   ensureOps(ep, kind);
@@ -164,14 +131,14 @@ function filled<T extends Endpoint | Profile | Transcriber>(ep: T, kind: Endpoin
   return ep;
 }
 
-/** A template as it is kept: null when it is the built-in prompt, word for word. */
+/** Null when the template is the built-in prompt word for word. */
 function keptPrompt(t: PromptTemplate | null): PromptTemplate | null {
   return !t || (t.system === BUILT_IN_PROMPT.system && t.user === BUILT_IN_PROMPT.user)
     ? null
     : { system: t.system, user: t.user };
 }
 
-/** Whether a settings file's default prompt is one: null, or two strings that make a whole prompt. */
+/** Whether a settings file's default prompt is null or a whole prompt. */
 function promptOk(t: unknown): t is PromptTemplate | null {
   if (t === null) return true;
   const o = t as Partial<PromptTemplate> | undefined;
@@ -182,15 +149,14 @@ function promptOk(t: unknown): t is PromptTemplate | null {
   );
 }
 
-/** What a settings file keeps of an entry: neither the key nor whether some server holds one. */
+/** Drops the key and `hasKey` from an entry for a settings file. */
 function portable<T extends { apiKey?: string; hasKey?: boolean }>(e: T): T {
   const { apiKey: _apiKey, hasKey: _hasKey, ...rest } = e;
   return rest as T;
 }
 
 /**
- * Take on what the server holds for one object, keeping the object: the page holds references to
- * the endpoint it has open, and a replaced object would leave it editing one the store has let go.
+ * Takes on the server's fields while keeping the object, since the page holds references to it.
  * A field the server did not send is gone; telemetry is never the server's to change.
  */
 function adopt<T extends object>(cur: T, next: T): T {
@@ -201,37 +167,26 @@ function adopt<T extends object>(cur: T, next: T): T {
   return cur;
 }
 
-// The write-behind's bookkeeping. Not state: nothing renders it, and a reload starting it again
-// from nothing is correct.
-//
-// One writer sends the configuration, and only one whole-configuration write is ever out: the
-// server takes each write as the whole truth, and two out at once can land in either order, which
-// would leave it holding the older one while the page shows the newer. A change made while a write
-// is out goes in the next one, which takes the configuration as it stands when it is sent rather
-// than as it stood when it was asked for, so however many changes come in the meantime there is
-// one write behind the one out, never a queue of old copies.
+// Write-behind bookkeeping (module state, not rendered). Only one whole-configuration write is ever
+// out: two could land in either order. A change made meanwhile goes in one write owed after it,
+// built from the configuration as it stands when sent, never a queue of old copies.
 /** Local changes seen so far. A write's answer is installed only if none came after it. */
 let edits = 0;
-/** A write has been sent and its answer is not in yet: the server may be about to hold something
- *  other than `held`. Down before an answer is installed, so the watch does not send it back. */
+/** A write is out, so the server may soon hold something other than `held`. Lowered before an
+ *  answer is installed, so the watch does not send it back. */
 let sending = false;
-/** The configuration as the server last described it, serialized: what is not a change. */
+/** The configuration as the server last described it, serialized. */
 let held = "";
 let timer: ReturnType<typeof setTimeout> | null = null;
-/** The write out, until it has landed or been refused and dealt with. */
 let out: Promise<SaveOutcome> | null = null;
-/** The write owed once `out` is done, for every change asked to be saved while it was out. */
+/** The write owed once `out` is done, for changes made while it was out. */
 let next: Promise<SaveOutcome> | null = null;
-/** Keys to ride on the next write sent, by `<kind>:<id>`: each goes out once, then is dropped. */
+/** Keys to ride on the next write, by `<kind>:<id>`; each goes out once. */
 const keysWaiting = new Map<string, { kind: EndpointKind; id: string; apiKey: string }>();
 let stopWatch: (() => void) | null = null;
-/**
- * The store the watch is on, held weakly: a page has one, and a second Pinia's (a test's next tab)
- * takes it over.
- */
+/** The store the watch is on, held weakly; a second Pinia (a test's next tab) takes it over. */
 let watching: WeakRef<object> | null = null;
 
-/** How a save went: on the server, or refused there (and the server's configuration read back). */
 export type SaveOutcome = "landed" | "refused";
 
 /** A voice heard, as an object url; `duration` is null when only the file knows it. */
@@ -242,15 +197,14 @@ export interface HeardSample {
 }
 
 /**
- * Voice samples heard this session, as object urls, by what they were rendered with. The server
- * keeps them too, so this only saves the round trip — until the endpoint is pointed at another
- * server, model, format or rate, which would make it a different sample.
+ * Voice samples heard this session, by what they were rendered with. The server keeps them too;
+ * this only saves the round trip.
  */
 const samples = new Map<string, HeardSample>();
 const sampleKey = (ep: Endpoint, voiceId: string): string =>
   JSON.stringify([ep.id, ep.baseUrl, ep.model, encodingOf(ep), ep.sampleRate ?? null, voiceId]);
 
-/** A transcriber with nothing filled in: off, and priced as free until a rate is set. */
+/** Off, and priced as free until a rate is set. */
 const blankTranscriber = (): Transcriber => ({
   id: "stt" + Date.now(),
   name: "New endpoint",
@@ -268,8 +222,6 @@ function cancelTimer(): void {
 }
 
 export const useEndpointsStore = defineStore("endpoints", {
-  // The configuration is only ever the server's: the store starts on none and `load` installs what
-  // the server holds. A server nobody has configured has no endpoints.
   state: (): EndpointsState => ({
     endpoints: [],
     profiles: [],
@@ -279,32 +231,23 @@ export const useEndpointsStore = defineStore("endpoints", {
     loaded: false,
   }),
   getters: {
-    /**
-     * What the server's process last said of each speech endpoint it has sent to, by id
-     * (`GET /api/endpoints/live`, read by `useEndpointLive`). Empty until narration first runs.
-     */
+    /** Per-endpoint telemetry from the server (`useEndpointLive`). Empty until narration runs. */
     live(): Record<string, EndpointLive> {
       return useQueryCache().getQueryData<Record<string, EndpointLive>>(keys.endpointLive) ?? NONE;
     },
-    /**
-     * Lines out at a speech endpoint and lines held for it, across every job, as the server counts
-     * them. The clips the browser has loaded are only those of the chapters it has opened; the gate
-     * counts every job's lines.
-     */
+    /** Lines out and held at a speech endpoint across every job, as the server's gate counts them. */
     serverLoad(): (id: string) => EndpointLive {
       return (id) => this.live[id] ?? IDLE;
     },
     enabledEndpoints(s): Endpoint[] {
       return s.endpoints.filter((e) => e.enabled);
     },
-    /** Whether a recording can be heard back as words: some transcriber is switched on. */
     canTranscribe(s): boolean {
       return s.transcribers.some((t) => t.enabled);
     },
     /**
-     * The endpoint a voice names, whether or not it still lists the voice: where a line in that
-     * voice is sent, as the server reads it (`deliveryFor`), so a line's reading is taken against
-     * the endpoint its request will actually go to. Null when the ref names none that is saved.
+     * The endpoint a voice ref names, listed voice or not: where a line in that voice is sent
+     * (`deliveryFor` on the server). Null when it names none saved.
      */
     endpointOf(s): (ref: string | null | undefined) => Endpoint | null {
       return (ref) => {
@@ -312,7 +255,6 @@ export const useEndpointsStore = defineStore("endpoints", {
         return (i > 0 && s.endpoints.find((e) => e.id === ref!.slice(0, i))) || null;
       };
     },
-    /** The voice a ref names on its endpoint, or null when either is gone. */
     resolveVoice(): (ref: string | null | undefined) => ResolvedVoice | null {
       return (ref: VoiceRef | null | undefined): ResolvedVoice | null => {
         const ep = this.endpointOf(ref);
@@ -350,11 +292,7 @@ export const useEndpointsStore = defineStore("endpoints", {
     _config(): EndpointConfig {
       return configOf(this, useScriptingStore().scriptSettings);
     },
-    /**
-     * Hold the configuration the server answered with, in place of this one.
-     *
-     * An endpoint that survives keeps its object and its telemetry; a new one starts with none.
-     */
+    /** Hold the server's answer. A surviving endpoint keeps its object and telemetry. */
     _install(answer: EndpointSettings): void {
       const endpoints = new Map(this.endpoints.map((e) => [e.id, e]));
       this.endpoints = answer.endpoints.map((e) => {
@@ -377,15 +315,12 @@ export const useEndpointsStore = defineStore("endpoints", {
       this.credentials = answer.credentials;
       this.prompt = answer.prompt ?? null;
       if (answer.script) useScriptingStore().scriptSettings = { ...answer.script };
-      // What the watch will see next is the answer, and the answer is not a change to send.
+      // the answer is not a change to send
       held = JSON.stringify(this._config());
     },
     /**
-     * Put what the server's process last said of each speech endpoint's rate limits and cooldown on
-     * the endpoint, where the wait reasons and the effective limit read them. An endpoint the answer
-     * leaves out has had nothing sent to it, so it is not cooling down. Both fields are telemetry,
-     * which the write-behind never sees, so this sends nothing. The counts themselves stay in the
-     * query cache, where `live` reads them.
+     * Puts the server's rate limits and cooldown on each endpoint, where wait reasons read them.
+     * One the answer leaves out is not cooling down. Telemetry only, so this sends nothing.
      */
     _installLive(live: Record<string, EndpointLive>): void {
       for (const ep of this.endpoints) {
@@ -394,23 +329,15 @@ export const useEndpointsStore = defineStore("endpoints", {
         ep.backoffUntil = seen.backoffUntil;
       }
     },
-    /**
-     * Read the configuration from the server.
-     *
-     * Called once when the app starts; `force` reads it again, which is what a refused write does
-     * to put back what the server actually holds. A server that has never been given a
-     * configuration answers with none, and none is what the page then shows.
-     */
+    /** Read the configuration once at start; `force` rereads it, as a refused write does. */
     async load(force = false): Promise<void> {
       if (this.loaded && !force) return;
       const before = edits;
       try {
         const answer = await this._service().getSettings();
-        // Something was typed while the read was out: that is newer than what it read, and its
-        // own write is already on its way.
+        // something typed while the read was out is newer, and its write is already on its way
         if (this.loaded && edits !== before) return;
-        // watched first: taking the watch over from another store starts its bookkeeping afresh,
-        // and what is installed next is what the server holds
+        // watched first: taking the watch over resets its bookkeeping
         this._writeBehind();
         this._install(answer);
         this.loaded = true;
@@ -419,9 +346,8 @@ export const useEndpointsStore = defineStore("endpoints", {
       }
     },
     /**
-     * Start watching the configuration for changes to send. Once per store: the bookkeeping is
-     * module state, so a store that is not the one being watched — another Pinia's — lets the
-     * other's watch and bookkeeping go first, or it would keep sending that store's configuration.
+     * Start watching for changes to send. The bookkeeping is module state, so another Pinia's
+     * store detaches first, or it would keep sending that store's configuration.
      */
     _writeBehind(): void {
       if (watching?.deref() === this) return;
@@ -431,17 +357,14 @@ export const useEndpointsStore = defineStore("endpoints", {
         () => JSON.stringify(this._config()),
         (now) => {
           edits++;
-          // Back to what the server holds, with nothing on its way that says otherwise: there is
-          // nothing to send. With a write out, the server may be about to hold something else,
-          // so this has to be said too.
+          // Back to what the server holds: nothing to send, unless a write out may change that.
           if (now === held && !sending) return cancelTimer();
           cancelTimer();
           timer = setTimeout(() => void this._save(), WRITE_DELAY_MS);
         },
       );
     },
-    /** Stop the write-behind and forget its bookkeeping, and the samples heard: before another
-     *  store takes the watch over, and in a test between one store and the next. */
+    /** Stop the write-behind and forget its bookkeeping and samples: on takeover and in tests. */
     _detach(): void {
       stopWatch?.();
       stopWatch = null;
@@ -457,29 +380,20 @@ export const useEndpointsStore = defineStore("endpoints", {
       samples.clear();
     },
     /**
-     * Send what is waiting now rather than when the timer would have, and resolve once everything
-     * edited so far is on the server: a write already out is waited for, and so is the one sent
-     * for what was typed while it was out. With nothing waiting and nothing out, it has landed.
-     *
-     * A change made while a write was out sets the timer again, so this goes round until nothing
-     * is waiting and nothing is out. What it says is how the last write it waited on went.
+     * Send what is waiting now and resolve once every edit so far is on the server, looping while
+     * changes arrive during a write. Says how the last write it waited on went.
      */
     async flushWrites(): Promise<SaveOutcome> {
       let outcome: SaveOutcome = "landed";
       for (;;) {
-        // the watch sees an edit only before the next render, so a caller that has just edited
-        // needs nothing of its own
+        // the watch sees an edit before the next render
         await nextTick();
         const write = timer ? this._save() : (next ?? out);
         if (!write) return outcome;
         outcome = await write;
       }
     },
-    /**
-     * Save the configuration as it stands, taking it off the timer: sent now when nothing is out,
-     * or else once the write out is done, in the one write owed after it. Resolves with how the
-     * write that carried it went.
-     */
+    /** Save now, or in the one write owed after the one out. Resolves with how that write went. */
     _save(): Promise<SaveOutcome> {
       cancelTimer();
       if (next) return next;
@@ -499,17 +413,14 @@ export const useEndpointsStore = defineStore("endpoints", {
       return (out = write);
     },
     /**
-     * Send the configuration as it stands, with any keys waiting on their own entries. Only ever
-     * called by `_save`, so it is the only write out.
-     *
-     * Only the answer to the latest change is installed: an earlier write answering after the
-     * person has typed past it would put back what they typed over. A refused write is said, and
-     * the server's configuration is read back so the page shows what is actually in force.
+     * Send the configuration with any waiting keys; only `_save` calls it. Only the answer to the
+     * latest change is installed, so a late answer never undoes typing. A refused write rereads
+     * the server's configuration.
      */
     async _put(): Promise<SaveOutcome> {
       const n = edits;
       const body = this._config();
-      // what the server is expected to answer with: the keys go out, but never come back
+      // the keys go out but never come back
       const sent = JSON.stringify(body);
       const carried = [...keysWaiting.values()];
       keysWaiting.clear();
@@ -517,16 +428,14 @@ export const useEndpointsStore = defineStore("endpoints", {
         const entry = entriesOf(body, k.kind).find((e) => e.id === k.id);
         if (entry) entry.apiKey = k.apiKey;
       }
-      // Down before anything is installed: the watch sees an installed answer after this returns,
-      // and while a write is counted as out it would send that answer back.
+      // Lowered before installing: the watch would otherwise send the answer back.
       sending = true;
       let answer: EndpointSettings;
       try {
         answer = await this._service().putSettings(body);
       } catch (cause) {
         sending = false;
-        // A key not kept is always said, since the field that sent it is waiting to hear. The
-        // rest is said only while nothing was typed past it: a later write is on its way.
+        // A refused key is always said; the rest only if nothing was typed past it.
         for (const k of carried) toastFailure(k.apiKey ? "save the key" : "remove the key", cause);
         if (edits !== n) return "refused";
         if (!carried.length) toastFailure("save the endpoints", cause);
@@ -535,8 +444,7 @@ export const useEndpointsStore = defineStore("endpoints", {
       }
       sending = false;
       if (edits !== n) {
-        // Typed past while it was out: the rest of the answer is older than the page, but whether a
-        // key is held is not something the page could have changed in the meantime.
+        // Typed past: the answer is stale, but `hasKey` is not something the page could change.
         for (const k of carried) {
           const kept = entriesOf(answer, k.kind).find((e) => e.id === k.id);
           const cur = entriesOf(this, k.kind).find((e) => e.id === k.id);
@@ -545,8 +453,6 @@ export const useEndpointsStore = defineStore("endpoints", {
         }
         return "landed";
       }
-      // The usual case: the server holds exactly what was sent, so there is nothing to put back on
-      // the objects the page is editing.
       const same: EndpointConfig = {
         endpoints: answer.endpoints.map(storedOf),
         profiles: answer.profiles,
@@ -560,25 +466,16 @@ export const useEndpointsStore = defineStore("endpoints", {
       return "landed";
     },
     /**
-     * Give the server a key for one entry of any kind (`""` forgets it). Resolves true once it is
-     * on the server, false when there is no such entry or the server refused it.
-     *
-     * The key rides on one whole-configuration write, on that one entry only, and never touches
-     * the objects the page edits: the write-behind sends those again and again, and an `apiKey`
-     * left on one would go out with every write after it. So it waits beside them for the next
-     * write — sent now, with whatever else is waiting, unless one is already out — and what comes
-     * back is `hasKey`, which is all the page is ever told.
+     * Give the server a key for one entry (`""` forgets it). False when there is no such entry or
+     * it was refused. The key rides the next whole-configuration write beside the edited objects,
+     * never on them, or it would go out with every write; only `hasKey` comes back.
      */
     async saveKey(kind: EndpointKind, id: string, apiKey: string): Promise<boolean> {
       if (!entriesOf(this, kind).some((e) => e.id === id)) return false;
       keysWaiting.set(`${kind}:${id}`, { kind, id, apiKey });
       return (await this._save()) === "landed";
     },
-    /**
-     * Whether the saved speech endpoint's server takes batches, for the Requests tab: its limits,
-     * null when it takes none, or why it could not be asked. What the write-behind holds is sent
-     * first, as for a test.
-     */
+    /** Batch limits of the saved endpoint's server, null when it takes none. Flushes first. */
     async batchesOf(id: string): Promise<{ limits: BatchLimits | null } | { error: string }> {
       try {
         await this.flushWrites();
@@ -592,13 +489,9 @@ export const useEndpointsStore = defineStore("endpoints", {
       }
     },
     /**
-     * Ask the server to test what it holds for this endpoint, as the Connection tab's result.
-     *
-     * It tests the *saved* settings, not a connection draft: saving a draft can re-point queued
-     * work at another provider, which is what the Save button's confirmation is there for, and a
-     * test that saved on the way would step round it. What the write-behind is still holding is
-     * sent first, though — the page shows those edits as already in force. A test that could not
-     * run is a failed result rather than a throw, so the tab shows it where it shows the others.
+     * Test the *saved* settings, not a connection draft: saving a draft can re-point queued work,
+     * which the Save confirmation guards. Pending write-behind edits are flushed first. A test
+     * that could not run is a failed result, not a throw.
      */
     async testSaved(kind: EndpointKind, id: string): Promise<ConnectionTest> {
       try {
@@ -628,21 +521,15 @@ export const useEndpointsStore = defineStore("endpoints", {
         };
       }
     },
-    /**
-     * Save the library's default prompt; null, or the built-in prompt word for word, is kept as
-     * the built-in one. False, and nothing saved, when it is not a whole prompt. The write-behind
-     * sends it.
-     */
+    /** Null or the built-in prompt word for word is kept as built-in. False when not a whole prompt. */
     setLibraryPrompt(t: PromptTemplate | null): boolean {
       if (t && promptProblems(t).length) return false;
       this.prompt = keptPrompt(t);
       return true;
     },
     /**
-     * Save one scripting endpoint's say over the prompt. Its notes are always checked, and its
-     * texts as a whole prompt only while it replaces — the text a Default endpoint keeps is not
-     * sent — and a Default endpoint with neither text nor notes is kept as none. False, and nothing
-     * saved, when something checked has a problem.
+     * Save a scripting endpoint's prompt. Notes are always checked; texts only while it replaces.
+     * A Default endpoint with neither is kept as none. False when a check fails.
      */
     setProfilePrompt(id: string, prompt: ProfilePrompt): boolean {
       const p = this.profiles.find((x) => x.id === id);
@@ -660,9 +547,8 @@ export const useEndpointsStore = defineStore("endpoints", {
       const uiStore = useUiStore();
 
       const ep = this.endpoints.find((e) => e.id === id);
-      // checked as it is about to be saved — for the endpoint's model and address now, not those
-      // the draft was opened with: which tags are allowed is the provider's, and the model may have
-      // changed on the Connection tab since
+      // checked against the endpoint's model and address now, not the draft's: allowed tags are
+      // the provider's
       if (!ep || configErrors({ ...config, model: ep.model, baseUrl: ep.baseUrl }).length)
         return false;
       const previous = ep.expressions ? clone(ep.expressions) : undefined;
@@ -718,25 +604,21 @@ export const useEndpointsStore = defineStore("endpoints", {
 
       if (!obj || !Array.isArray(obj.endpoints)) throw new Error("not a settings file");
       for (const ep of obj.endpoints) {
-        // a file from before brackets were asked for takes the ones the provider's docs show
+        // a file without brackets takes the ones the provider's docs show
         if (ep.expressions?.tags) ep.expressions = withBrackets(ep.expressions);
         if (ep.expressions && configErrors(ep.expressions).length)
           throw new Error(`Invalid expression support for ${ep.name}`);
       }
       if (obj.profiles != null && !Array.isArray(obj.profiles))
         throw new Error("Invalid scripting endpoints");
-      // a file from before transcription endpoints says nothing of them, and leaves these be
       if (obj.transcribers !== undefined && !Array.isArray(obj.transcribers))
         throw new Error("Invalid speech-to-text endpoints");
-      // a file from before the prompt could be edited says nothing of it, and leaves this one's be
       if (obj.prompt !== undefined && !promptOk(obj.prompt))
         throw new Error("Invalid default prompt");
-      // an endpoint's `append` prompt, from a file written before notes, comes in as its notes
-      // (`newProfile` upgrades it)
+      // an older `append` prompt becomes notes (`newProfile` upgrades it)
       const profiles = (obj.profiles ?? []).map((imported) => {
         const existing = this.profiles.find((p) => p.id === imported?.id);
-        // what the file says about a key is dropped: `hasKey` belongs to the server that wrote it,
-        // and a key in the file would ride along on every write from here on
+        // the file's `hasKey` belongs to another server, and a key would ride every write
         const profile = newProfile({ ...existing, ...portable(imported ?? {}) });
         if (profileErrors(profile).length)
           throw new Error("Invalid scripting endpoint: " + profile.name);
@@ -779,7 +661,7 @@ export const useEndpointsStore = defineStore("endpoints", {
       if (obj.prompt !== undefined) this.prompt = keptPrompt(obj.prompt);
       if (obj.scriptSettings) {
         const { profile } = obj.scriptSettings;
-        // a file's choice of profile holds only if that profile is here now
+        // the file's profile choice holds only if that profile is here
         if (this.profiles.some((p) => p.id === profile))
           scriptingStore.scriptSettings.profile = profile;
       }
@@ -793,7 +675,7 @@ export const useEndpointsStore = defineStore("endpoints", {
         },
       );
     },
-    /** A new named credential for the Connection tab to pick. Returns its id. */
+    /** Returns the new credential's id. */
     addCredential(label: string): string {
       const id = "cred-" + Math.random().toString(36).slice(2, 8);
       this.credentials.push({ id, label: label.trim() || "New credential", note: "" });
@@ -816,7 +698,7 @@ export const useEndpointsStore = defineStore("endpoints", {
       const i = this.profiles.findIndex((p) => p.id === id);
       if (i < 0) return;
       const [p] = this.profiles.splice(i, 1);
-      // runs no longer go to it: the first profile that can take one does, until another is picked
+      // runs go to the first profile that can take one, until another is picked
       const chosen = scriptingStore.scriptSettings.profile === id;
       if (chosen) scriptingStore.scriptSettings.profile = null;
       uiStore.toast(`Removed ${p.name}`, {
@@ -827,12 +709,11 @@ export const useEndpointsStore = defineStore("endpoints", {
       });
     },
     // ---------- transcription ----------
-    /** `presetId` fills in what a provider pins down (base URL, model, rate); every field stays
-     *  editable afterwards. Without one this is a blank OpenAI-shaped endpoint. */
+    /** `presetId` fills in what a provider pins down; every field stays editable. */
     addTranscriber(presetId?: string): Transcriber {
       const base = blankTranscriber();
       const preset = presetId ? transcriptionPresetById(presetId) : undefined;
-      // a copy, so the preset's pricing never becomes an object two endpoints share
+      // a copy, so two endpoints never share the preset's pricing object
       this.transcribers.push(
         filled(Object.assign(base, preset ? clone(preset.apply) : undefined), "transcription"),
       );
@@ -849,9 +730,8 @@ export const useEndpointsStore = defineStore("endpoints", {
       });
     },
     /**
-     * What is said in one recording, heard by the first transcriber switched on: the clone form's
-     * Transcribe button. What the write-behind holds is sent first, so a transcriber just switched
-     * on is one the server knows. Null when it could not be heard, which has been said.
+     * Hear a recording as words with the first transcriber on. Flushes first, so a transcriber
+     * just switched on is known. Null on failure, which has been said.
      */
     async transcribe(file: File): Promise<string | null> {
       try {
@@ -861,13 +741,12 @@ export const useEndpointsStore = defineStore("endpoints", {
         toastFailure("transcribe the sample", cause);
         return null;
       } finally {
-        // answered or not, a request may have reached the provider, and it is a row on this page
+        // a request may have reached the provider either way
         void invalidate({ key: keys.endpointRequests });
       }
     },
     // ---------- endpoints & their voices ----------
-    /** `presetId` fills in what a provider pins down (base URL, model, billing, limits); every
-     *  field stays editable afterwards. Without one this is the blank OpenAI-shaped endpoint. */
+    /** `presetId` fills in what a provider pins down; every field stays editable. */
     addEndpoint(presetId?: string): Endpoint {
       const base: Endpoint = {
         id: "ep" + Date.now(),
@@ -890,7 +769,7 @@ export const useEndpointsStore = defineStore("endpoints", {
         fetching: false,
       };
       const preset = presetId ? presetById(presetId) : undefined;
-      // a copy, so the preset's billing never becomes an object two endpoints share
+      // a copy, so two endpoints never share the preset's billing object
       this.endpoints.push(
         filled(Object.assign(base, preset ? clone(preset.apply) : undefined), "tts"),
       );
@@ -899,7 +778,7 @@ export const useEndpointsStore = defineStore("endpoints", {
     removeEndpoint(id: string): void {
       const uiStore = useUiStore();
 
-      // characters keep a dangling ref → shown as "missing" until undone or re-picked
+      // characters keep a dangling ref, shown as "missing" until undone or re-picked
       const i = this.endpoints.findIndex((e) => e.id === id);
       if (i < 0) return;
       const e = this.endpoints[i];
@@ -914,7 +793,7 @@ export const useEndpointsStore = defineStore("endpoints", {
       ep.voices.push({ id, label: (label ?? "").trim() || id, gender: gender ?? "n" });
       return true;
     },
-    /** Take a voice off an endpoint without a word, as an undo of adding it does. */
+    /** Remove a voice silently, as undoing its add does. */
     _dropVoice(endpointId: string, voiceId: string): void {
       const ep = this.endpoints.find((e) => e.id === endpointId);
       if (ep) ep.voices = ep.voices.filter((v) => v.id !== voiceId);
@@ -930,11 +809,9 @@ export const useEndpointsStore = defineStore("endpoints", {
         undo: () => ep.voices.splice(Math.min(i, ep.voices.length), 0, v),
       });
     },
-    // Voice discovery. Most OpenAI-compatible servers (Kokoro-FastAPI, Orpheus…) expose
-    // GET /audio/voices; Fish Audio instead has a per-account model catalogue at the host root,
-    // which is authenticated and returns far more than voices, so it is mapped down to the few
-    // fields a voice picker needs. The server asks the real endpoint (`POST /endpoints/voices`), and
-    // what it finds is merged: new ids are added, and nothing already here is touched or removed.
+    // Voice discovery runs on the server (`POST /endpoints/voices`): most OpenAI-compatible servers
+    // expose GET /audio/voices; Fish Audio has an authenticated per-account model catalogue, mapped
+    // down to voice fields. Found voices are merged: new ids added, nothing touched or removed.
     fetchVoices(ep: Endpoint): Promise<number> {
       const uiStore = useUiStore();
 
@@ -943,8 +820,7 @@ export const useEndpointsStore = defineStore("endpoints", {
       const work = (async () => {
         ep.fetching = true;
         try {
-          // The server asks what it has saved, key and base URL alike, so what the page is still
-          // holding goes first.
+          // the server uses its saved key and base URL, so flush first
           await this.flushWrites();
           const found = await this._service().listVoices(ep.id, { source: "library" });
           empty = !found.voices.length;
@@ -972,7 +848,7 @@ export const useEndpointsStore = defineStore("endpoints", {
       });
       return work.catch(() => 0);
     },
-    /** Add the voices whose ids this endpoint does not have yet; answers how many that was. */
+    /** Adds voices whose ids are new; returns how many. */
     mergeVoices(ep: Endpoint, found: Voice[]): number {
       const added = found
         .filter((v) => !ep.voices.some((x) => x.id === v.id))
@@ -981,10 +857,8 @@ export const useEndpointsStore = defineStore("endpoints", {
       return added.length;
     },
     /**
-     * One of `ep`'s voices, heard: the provider's own recording of it, or the saved endpoint saying
-     * the sample sentence with its saved key — a real request, priced into the ledger, that the
-     * server makes once and keeps. Heard once in this tab, it is replayed from here. Null when the
-     * request failed, which has been said.
+     * Hear a voice: the provider's recording, or a real (priced) request the server makes once
+     * and keeps. Replayed from this tab after. Null on failure, which has been said.
      */
     async sampleVoice(ep: Endpoint, voiceId: string): Promise<HeardSample | null> {
       const key = sampleKey(ep, voiceId);
@@ -1000,15 +874,13 @@ export const useEndpointsStore = defineStore("endpoints", {
         toastFailure("play the sample", cause);
         return null;
       } finally {
-        // answered or not, a request may have reached the provider, and it is a row on this page
+        // a request may have reached the provider either way
         void invalidate({ key: keys.endpointRequests });
       }
     },
     /**
-     * Make a voice from samples on `ep`'s provider and add it to the endpoint, where the
-     * write-behind saves it like any other voice. The server keeps the samples with it; when it
-     * could not, the voice is still made, and the toast says the samples were not kept. Null
-     * when the provider refused, which has been said.
+     * Clone a voice on `ep`'s provider and add it; the write-behind saves it. If the server could
+     * not keep the samples the voice is still made. Null when refused, which has been said.
      */
     async cloneVoice(ep: Endpoint, request: VoiceCloneRequest): Promise<Voice | null> {
       const uiStore = useUiStore();
@@ -1016,8 +888,7 @@ export const useEndpointsStore = defineStore("endpoints", {
         await this.flushWrites();
         const { samplesKept, warning, ...voice } = await this._service().cloneVoice(ep.id, request);
         this.addVoice(ep, voice);
-        // what the provider said to do before the voice speaks comes first: a line spoken with it
-        // before then fails
+        // the provider's "wait before speaking" note comes first: speaking sooner fails
         const said = samplesKept
           ? "It is private to your account, and on this endpoint's list now. Its samples are kept here with it."
           : "It is private to your account, and on this endpoint's list now — but its samples could not be kept here. Keep them from the voice's row to let it travel with a script.";
@@ -1031,10 +902,7 @@ export const useEndpointsStore = defineStore("endpoints", {
         return null;
       }
     },
-    /**
-     * Every voice of `ep` whose samples the server keeps. Empty when the endpoint is not saved
-     * yet, or the server could not say — the Voices tab then offers nothing it cannot do.
-     */
+    /** Voices of `ep` with kept samples. Empty when unsaved or the server could not say. */
     async keptSamples(ep: Endpoint): Promise<KeptVoiceSamples[]> {
       try {
         return await this._service().keptSamples(ep.id);
@@ -1043,9 +911,8 @@ export const useEndpointsStore = defineStore("endpoints", {
       }
     },
     /**
-     * Keep the samples a voice already on `ep` was made from, in place of any it had. Nothing is
-     * sent to the provider. The endpoint is saved first, so a voice added on the page is one the
-     * server knows. Null when the server refused, which has been said.
+     * Keep samples for a voice already on `ep`, replacing any; nothing goes to the provider.
+     * Saves first, so the server knows the voice. Null when refused, which has been said.
      */
     async keepVoiceSamples(
       ep: Endpoint,
@@ -1070,9 +937,8 @@ export const useEndpointsStore = defineStore("endpoints", {
       }
     },
     /**
-     * Forget the samples kept for one voice of `ep`; the voice stays. The server only hides them
-     * until a later save makes it final, so the toast's Undo brings them back, and `restored` hands
-     * them to whoever shows them. False when the forget failed.
+     * Forget a voice's kept samples; the voice stays. The server only hides them until a later
+     * save, so Undo works and `restored` hands them back. False when the forget failed.
      */
     async forgetVoiceSamples(
       ep: Endpoint,
@@ -1097,10 +963,8 @@ export const useEndpointsStore = defineStore("endpoints", {
       return true;
     },
     /**
-     * One page of a public voice search on the server — Fish Audio's catalogue. The answer is only
-     * shown: a voice joins the endpoint when the page adds it (`addVoice`), and the write-behind
-     * saves it. Throws the server's `ApiError`, which the search panel shows where it searched.
-     * Nothing is cached: a search is typed, read and moved past.
+     * One page of Fish Audio's public voice search. Results are only shown; `addVoice` adds one.
+     * Throws the server's `ApiError`. Not cached.
      */
     async searchVoices(
       ep: Endpoint,

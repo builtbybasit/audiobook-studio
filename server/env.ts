@@ -1,9 +1,5 @@
-// Server configuration, read once and validated at startup.
-//
-// A missing or malformed setting stops the process here with a message naming the variable, rather
-// than surfacing as a confusing failure three layers into a request. Nothing in this file has a
-// provider credential in it: a real provider's base URL, model and key are the Endpoints page's,
-// kept in the database. The `.env` variables the live tests read are theirs alone.
+// Server configuration, validated at startup so a bad setting fails here, naming the variable.
+// No provider credentials: those live in the endpoints table; `.env` ones are for live tests.
 import * as v from "valibot";
 
 import { MAX_SAMPLES_BYTES } from "@/lib/voiceSamples";
@@ -21,10 +17,8 @@ const Env = v.object({
   /** the SQLite file. `:memory:` is how the tests get a private database per run. */
   DATABASE_URL: v.optional(v.string(), "./data/library.db"),
   /**
-   * The demo library's SQLite file. A database of its own rather than rows beside the real ones:
-   * the demo is emptied and seeded again on request, and what does that is never given the real
-   * library's database to do it to. Seeded at boot while it holds no endpoint and no book, and
-   * left as it is once it does.
+   * The demo library's own SQLite file, so a demo reset can never touch the real library.
+   * Seeded at boot only while it holds no endpoint and no book.
    */
   DEMO_DATABASE_URL: v.optional(v.string(), "./data/demo.db"),
   /** how much is logged: trace, debug, info, warn, error, fatal, or silent */
@@ -32,17 +26,11 @@ const Env = v.object({
     v.picklist(["trace", "debug", "info", "warn", "error", "fatal", "silent"]),
     "info",
   ),
-  /**
-   * `pretty` for a person at a terminal, `json` for anything a machine reads.
-   *
-   * Unset means "decide from whether stdout is a terminal", which is right almost always and wrong
-   * exactly when something is piping a dev server's output somewhere it wants parsed.
-   */
+  /** `pretty` or `json`; unset picks from whether stdout is a terminal. */
   LOG_FORMAT: v.optional(v.picklist(["pretty", "json"])),
   /**
-   * The address the server listens on. Loopback by default: the API has no accounts and deletes
-   * books on request, so it answers this machine and nothing else unless told otherwise. `0.0.0.0`
-   * opens it to the network, and everyone on it.
+   * Loopback by default: the API has no accounts and deletes books on request.
+   * `0.0.0.0` opens it to everyone on the network.
    */
   HOST: v.optional(v.string(), "127.0.0.1"),
   /** hard ceiling on an uploaded EPUB, in megabytes */
@@ -52,12 +40,7 @@ const Env = v.object({
     v.number(),
     v.minValue(1),
   ),
-  /**
-   * Hard ceiling on an uploaded script file, in megabytes. Apart from the EPUB's because a script
-   * can carry voice samples, and audio barely compresses: a
-   * few voices' recordings are hundreds of megabytes whatever the zip does. A script without them
-   * is text, and nowhere near either limit.
-   */
+  /** hard ceiling on an uploaded script file, in megabytes; it may carry voice samples */
   MAX_SCRIPT_UPLOAD_MB: v.pipe(
     v.optional(v.string(), "512"),
     v.transform(Number),
@@ -65,11 +48,8 @@ const Env = v.object({
     v.minValue(1),
   ),
   /**
-   * Hard ceiling on what an uploaded EPUB unzips to, in megabytes, everything in it together.
-   *
-   * The upload limit is on the zip, and a zip can be a thousand times smaller than its contents.
-   * Images are most of a big book, so this is generous; the limit that protects the parser is the
-   * next one.
+   * Hard ceiling on an EPUB's total unzipped size, in megabytes (zip-bomb guard). Generous because
+   * images are most of a big book; MAX_DOCUMENT_MB is what protects the parser.
    */
   MAX_UNZIPPED_MB: v.pipe(
     v.optional(v.string(), "512"),
@@ -78,9 +58,8 @@ const Env = v.object({
     v.minValue(1),
   ),
   /**
-   * Hard ceiling on any one document inside an EPUB — a chapter file, above all — in megabytes,
-   * unzipped. A document is held whole, parsed into a DOM and converted, at many times its own
-   * size; a whole novel in a single file is around 10 MB.
+   * Hard ceiling on one unzipped EPUB document, in megabytes. It is parsed into a DOM at many times
+   * its size; a whole novel in one file is around 10 MB.
    */
   MAX_DOCUMENT_MB: v.pipe(
     v.optional(v.string(), "32"),
@@ -88,33 +67,15 @@ const Env = v.object({
     v.number(),
     v.minValue(1),
   ),
-  /**
-   * Where rendered clips are kept: one directory per book under this one, and a file per render.
-   * A clip's url points here and nowhere else, so moving the directory means moving the files
-   * with it.
-   */
+  /** rendered clips, one directory per book; clip urls point here */
   AUDIO_DIR: v.optional(v.string(), "./data/audio"),
-  /**
-   * The ffmpeg every build, thought effect and transcription goes through — required, checked at
-   * boot — for a machine that keeps it off `PATH`.
-   */
+  /** ffmpeg binary, for a machine that keeps it off `PATH`; required, checked at boot */
   FFMPEG_BIN: v.optional(v.string(), "ffmpeg"),
-  /**
-   * Where built audiobooks are kept: one directory per book, one file per output file. Apart from
-   * the clips on purpose — a clip is an input the next build reads again, an audiobook is the
-   * deliverable — so the two can be measured, backed up and cleared separately.
-   */
+  /** built audiobooks, one directory per book; apart from clips so each is cleared separately */
   EXPORT_DIR: v.optional(v.string(), "./data/exports"),
-  /**
-   * Where the recordings a cloned voice was made from are kept: one directory per voice. Apart from
-   * the clips and the audiobooks, because these are recordings of a person rather than anything
-   * this server rendered — measured, backed up and cleared on their own terms.
-   */
+  /** a cloned voice's source recordings, one directory per voice */
   VOICE_DIR: v.optional(v.string(), "./data/voices"),
-  /**
-   * Where the demo library keeps its files: `audio/`, `exports/` and `voices/` under this one, the
-   * demo's own versions of the three above. A reset of the demo removes all three.
-   */
+  /** the demo's `audio/`, `exports/` and `voices/`; a demo reset removes all three */
   DEMO_DIR: v.optional(v.string(), "./data/demo"),
 });
 
@@ -131,22 +92,15 @@ export function readEnv(source: Record<string, string | undefined> = Bun.env): E
 
 export const env: Env = readEnv();
 
-/**
- * The most a request body carrying a file of up to `mb` megabytes may be: the file at its limit, and
- * the multipart envelope around it — the boundaries, the field names, a title — which a megabyte
- * covers many times over.
- */
+/** Body limit for a file of up to `mb` megabytes, plus a megabyte for the multipart envelope. */
 export const uploadBodyBytes = (mb: number): number => (mb + 1) * 1024 * 1024;
 
-/** The most an import's request body may be; see `uploadBodyBytes`. */
 export const importBodyBytes = (e: Env = env): number => uploadBodyBytes(e.MAX_UPLOAD_MB);
 
-/** The same for a script file, which may carry voice samples: see `MAX_SCRIPT_UPLOAD_MB`. */
 export const scriptBodyBytes = (e: Env = env): number => uploadBodyBytes(e.MAX_SCRIPT_UPLOAD_MB);
 
 /**
- * The largest body the clone and keep routes read: the samples, and a little over for the multipart
- * envelope around them. The server's own ceiling (`maxRequestBodySize`) is set above it, so these
- * routes are the ones that answer.
+ * Body limit for the clone and keep routes: the samples plus the multipart envelope. Kept below
+ * `maxRequestBodySize` so these routes, not the server, answer.
  */
 export const CLONE_BODY_BYTES = MAX_SAMPLES_BYTES + 256 * 1024;

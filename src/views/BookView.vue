@@ -9,7 +9,7 @@ import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptingStore } from "@/stores/scripting";
 
-// Book overview: volumes, pipeline progress per stage, cast summary, latest exports, and what to do next.
+// Book overview: volumes, progress per stage, cast summary, latest exports, and what to do next.
 import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { isScripted } from "@/lib/scriptReview";
@@ -41,18 +41,16 @@ const exportsStore = useExportsStore();
 const jobsStore = useJobsStore();
 const libraryStore = useLibraryStore();
 const scriptingStore = useScriptingStore();
-/** The endpoint scripting runs are sent to, which the book's prompt is previewed and tried with. */
+/** The endpoint the book's prompt is previewed and tried with. */
 const runProfile = computed(() => scriptingStore.runProfile);
 const bookId = useBookId();
 const router = useRouter();
 const route = useRoute();
 
-// `#prompt` — the Scripting page's "Edit on Overview" — lands on the prompt. The page scrolls inside
-// the app's <main>, not the window, so the router's own hash scrolling never sees it; and the
-// section only exists once the book has loaded, which is what the watch waits for.
+// `#prompt` lands on the prompt. The page scrolls inside <main>, so the router's hash scrolling
+// never sees it; the watch waits for the section to load. `scrollIntoView` would scroll every
+// ancestor and push the header out of the window.
 const promptSection = ref<HTMLElement | null>(null);
-// It scrolls <main> alone: `scrollIntoView` would scroll every ancestor, the app's frame included,
-// and push the header out of the window.
 watch([promptSection, () => route.hash], ([el, hash]) => {
   const main = el?.closest("main");
   if (!el || !main || hash !== "#prompt") return;
@@ -61,11 +59,9 @@ watch([promptSection, () => route.hash], ([el, hash]) => {
     top: main.scrollTop + el.getBoundingClientRect().top - main.getBoundingClientRect().top - gap,
   });
 });
-// the router only reaches this view with a real book id
 const book = computed(() => libraryStore.bookById(bookId)!);
 const chapters = computed(() => libraryStore.chaptersOf(bookId));
 const p = computed(() => libraryStore.progress(bookId));
-// the cast and the audiobooks, read from the server when the overview opens
 const { characters: cast } = useCast(bookId);
 useBookExports(bookId);
 const unreviewed = computed(() => cast.value.filter((c) => c.isNew).length);
@@ -81,7 +77,7 @@ const exportsHere = computed(() =>
 const building = computed(() =>
   exportsStore.exports.some((e) => e.bookId === bookId && e.status === "building"),
 );
-/** A finished audiobook that no longer matches the book — new chapters, or chapters re-rendered. */
+/** New chapters, or chapters re-rendered, since the audiobook was built. */
 const behind = computed(() =>
   exportsHere.value.some((e) => exportsStore.exportUpdateFor(e).needed),
 );
@@ -112,7 +108,6 @@ function saveName(v: Volume) {
   void libraryStore.renameVolume(bookId, v.id, draft.value);
   editing.value = null;
 }
-/** A removal cannot be undone, so the row asks first. */
 const confirming = ref<number | null>(null);
 async function remove(v: Volume) {
   if (confirming.value !== v.id) {
@@ -123,7 +118,6 @@ async function remove(v: Volume) {
   const r = await libraryStore.removeVolume(bookId, v.id);
   if (r === "book") router.push("/library");
 }
-/** What the row is about to take, read before the click rather than in a step after it. */
 function removeWarning(v: Volume): string {
   const { n, scripted, narrated } = volStats(v);
   const work = [scripted && `${scripted} scripted`, narrated && `${narrated} narrated`]
@@ -133,7 +127,6 @@ function removeWarning(v: Volume): string {
     ? `${v.name} is the only volume, so this removes the whole novel: its ${n} chapters${work ? ` (${work})` : ""}, script, cast and audiobooks. This cannot be undone.`
     : `Removes ${v.name} (${v.file}) and its ${n} chapters${work ? ` (${work})` : ""}, and renumbers the rest. This cannot be undone.`;
 }
-/** Start over asks first, and says what goes, before anything is sent. */
 const startingOver = ref(false);
 const clearCast = ref(false);
 const clearing = ref(false);
@@ -141,7 +134,7 @@ const anythingToClear = computed(() =>
   chapters.value.some((c) => c.scripting !== "none" || c.narration !== "none"),
 );
 const scriptedCount = computed(() => chapters.value.filter(isScripted).length);
-// the lines that play: the server also removes retakes and the clips of lines not read aloud
+// the server also removes retakes and the clips of lines not read aloud
 const narratedLines = computed(() => chapters.value.reduce((n, c) => n + (c.lines?.done ?? 0), 0));
 const speakers = computed(() => cast.value.filter((c) => c.name !== NARRATOR).length);
 async function startOver() {
@@ -153,7 +146,7 @@ async function startOver() {
   clearCast.value = false;
 }
 const budget = computed(() => book.value.budget ?? { cap: null, paused: false });
-// undefined until the book's spending has been read, which the panel says rather than showing $0
+// undefined until spending has been read, so the panel never shows a false $0
 const spent = computed(() => jobsStore.spent(bookId));
 const scriptSpent = computed(() => jobsStore.scriptSpent(bookId));
 const narrationSpent = computed(() =>
@@ -172,7 +165,7 @@ const volStats = (v: Volume) => {
     n: chs.length,
     scripted: chs.filter(isScripted).length,
     narrated: chs.filter(isNarrated).length,
-    // the reading numbers of its first and last kept chapter; `from`/`to` are ids in the file
+    // reading numbers of its first and last kept chapter; `from`/`to` are ids in the file
     span: numberSpan(
       chs.map((c) => c.id),
       libraryStore.chapterNumbers[bookId],
@@ -183,18 +176,15 @@ const fmt = (s: number) =>
   s >= 3600
     ? `${Math.floor(s / 3600)}h ${String(Math.floor(s / 60) % 60).padStart(2, "0")}m`
     : `${Math.floor(s / 60)}m`;
-/** what "Check narrated chapters" sends: the server leaves out what it has heard already */
+/** the server leaves out what it has heard already */
 const narratedIds = computed(() => chapters.value.filter(isNarrated).map((c) => c.id));
 const runtime = computed(() => chapters.value.reduce((a, c) => a + c.duration, 0));
 
-// The banner answers "what next"; the strip under it answers "what else". The chain below can only
-// name one thing at a time, so a book with four retakes and two flagged clips was told to narrate a
-// chapter and never heard about either — the inbox is where the rest of them are listed.
+// The banner names one next step; the inbox lists everything else waiting.
 const inbox = useReviewInbox(bookId);
 const waiting = computed(() => inbox.value.reduce((n, g) => n + g.items.length, 0));
 
-// The single most useful next action. The shelf card asks the same question of the same function,
-// so a book cannot be told to do one thing here and another on its cover.
+// The shelf card uses the same function, so the cover and the overview never disagree.
 const next = computed(() =>
   nextStepOf(p.value, {
     failedScripting: chapters.value.filter((c) => c.scripting === "failed").length,
@@ -439,10 +429,8 @@ const next = computed(() =>
                 ></div>
               </div>
             </div>
-            <!-- Acts at once and offers Undo, like every other removal: the button says what it
-                 will do — including the escalation to the whole novel when it is the last volume —
-                 and the title says what goes with it. With a server answering there is no Undo,
-                 so the same rule makes the row ask first instead. -->
+            <!-- no Undo with a server, so the row asks first; the button names the whole novel when
+                 it is the last volume -->
             <template v-if="confirming === v.id">
               <span class="text-[11px] text-zinc-500">Remove for good? This cannot be undone.</span>
               <button class="btn-ghost btn-xs" @click="confirming = null">Keep it</button>
@@ -564,7 +552,6 @@ const next = computed(() =>
             {{ budget.paused ? "Resume this book" : "Pause new work on this book" }}
           </button>
         </div>
-        <!-- what of the chapter's own text is read aloud: site text never, notes when asked -->
         <div class="card p-4 text-xs text-zinc-500">
           <div class="label mb-2">Reading</div>
           <UiSwitch
@@ -581,7 +568,6 @@ const next = computed(() =>
             Site text is never read.
           </p>
         </div>
-        <!-- hearing the narration back: after each chapter narrates, or now for what is narrated -->
         <div class="card p-4 text-xs text-zinc-500">
           <div class="label mb-2">Checking</div>
           <div class="flex items-center gap-1.5">
@@ -635,7 +621,6 @@ const next = computed(() =>
         </div>
       </div>
     </div>
-    <!-- what this book tells the scripter, and the prompt it may have of its own -->
     <section id="prompt" ref="promptSection" class="card p-4" aria-labelledby="book-prompt-title">
       <div class="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <h2 id="book-prompt-title" class="label">Scripting prompt</h2>
@@ -646,8 +631,7 @@ const next = computed(() =>
       </div>
       <BookPromptPanel :key="bookId" :book-id="bookId" />
     </section>
-    <!-- the way back to the start, for a book scripted with the wrong prompt: the scripts and clips
-         go, the book and what was set up for it stay -->
+    <!-- for a book scripted with the wrong prompt: scripts and clips go, the book stays -->
     <section class="card p-4 text-xs text-zinc-500" aria-labelledby="start-over-title">
       <div class="flex flex-wrap items-center gap-x-2 gap-y-2">
         <h2 id="start-over-title" class="label">Start over</h2>

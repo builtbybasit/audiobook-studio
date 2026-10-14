@@ -1,8 +1,5 @@
 <script setup lang="ts">
-// The editor under an open line: its speaker, type and direction, who of a character and their
-// personas speaks it and its line effects (`LineControls`), its expressions, where it starts and
-// ends, its words, and the pause after it. What it acts on is the reader's editing state
-// (`segmentEditing.ts`), which the reader's keys act on too.
+// The editor under an open line. Acts on the reader's editing state (`segmentEditing.ts`).
 import { computed, toRef } from "vue";
 import { directionOptions } from "@/lib/bulk";
 import { plural } from "@/lib/contents";
@@ -54,7 +51,7 @@ const typeOpts = TYPES.map((t) => ({
   label: TYPE_LABEL[t],
   group: isSiteText(t) ? "Not the story" : "Story",
 }));
-/** the rest of the cast: everyone with no line in this chapter */
+/** everyone with no line in this chapter */
 const rest = computed(() => cast.value.filter((c) => !counts.value[c.name]));
 const speakerOpts = computed(() => [
   ...inChapter.value.map((c) => ({
@@ -73,7 +70,7 @@ const speakerOpts = computed(() => [
     keywords: c.aliases.join(" "),
   })),
 ]);
-// directions: presets + everything already used in this book, free text allowed
+// presets + every direction used in this book; free text allowed
 const dirOpts = computed(() => directionOptions(scriptsStore.segments, props.bookId));
 const sameSpeakerCount = (x: Segment) =>
   segments.value.filter((y) => y.speaker === x.speaker && y.id !== x.id).length;
@@ -84,7 +81,6 @@ const sameSpeakerCount = (x: Segment) =>
     class="-mt-1 mb-4 grid grid-cols-2 items-end gap-2 rounded-md border border-violet-300 bg-white p-2 font-sans text-xs leading-normal 2xl:grid-cols-[1fr_1fr_2fr] dark:border-violet-500/40 dark:bg-zinc-900"
     @click.stop
   >
-    <!-- the editor's own header: which line this is, and the one way out -->
     <div
       class="col-span-2 -mt-0.5 flex items-center gap-2 border-b border-zinc-100 pb-1.5 2xl:col-span-3 dark:border-zinc-800"
     >
@@ -96,8 +92,7 @@ const sameSpeakerCount = (x: Segment) =>
         class="rounded bg-zinc-100 px-1 text-[10px] text-zinc-500 dark:bg-zinc-800"
         >edited</span
       >
-      <!-- one click either way: a web address or a "read at…" line the model left in the story,
-           or a line of story it took for site text -->
+      <!-- one click between story and site text -->
       <button
         v-if="!isSiteText(s.type)"
         class="btn-ghost btn-xs ml-auto"
@@ -228,7 +223,7 @@ const sameSpeakerCount = (x: Segment) =>
       :segment="s"
       class="col-span-2 border-t border-zinc-200 pt-2 2xl:col-span-3 dark:border-zinc-800"
     />
-    <!-- boundaries: the model grouped two speakers together, or cut a sentence in half -->
+    <!-- boundaries -->
     <div
       class="col-span-2 space-y-2 border-t border-zinc-200 pt-2 2xl:col-span-3 dark:border-zinc-800"
       @mouseleave="joinPreview = null"
@@ -278,7 +273,7 @@ const sameSpeakerCount = (x: Segment) =>
         </div>
       </div>
 
-      <!-- split: the line as a strip of words, and both halves as they would come out -->
+      <!-- split -->
       <template v-if="splitting === s.id">
         <div
           class="rounded-md bg-zinc-50 p-3 leading-loose ring-1 ring-violet-300 dark:bg-zinc-800/50 dark:ring-violet-500/40"
@@ -316,7 +311,7 @@ const sameSpeakerCount = (x: Segment) =>
         </p>
       </template>
 
-      <!-- join: the merged line, and who would read it -->
+      <!-- join -->
       <div
         v-else-if="joinPreview && (joinPreview === 'prev' ? prevOf(s) : nextOf(s))"
         class="rounded border border-zinc-200 px-2 py-1 dark:border-zinc-700"
@@ -345,7 +340,7 @@ const sameSpeakerCount = (x: Segment) =>
         </div>
       </div>
     </div>
-    <!-- pacing: silence after this line. Stitched at build time, so no clip is invalidated. -->
+    <!-- pacing: stitched at build time, so no clip goes stale -->
     <div
       v-if="nextOf(s)"
       class="col-span-2 flex flex-wrap items-center gap-1.5 border-t border-zinc-200 pt-2 2xl:col-span-3 dark:border-zinc-800"

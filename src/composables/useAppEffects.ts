@@ -1,7 +1,5 @@
-// What the app does for as long as it is open, whichever page is showing: the reads that keep the
-// shell current, the open book followed from the address, the theme and the tab's title, the
-// expressions' audio, and word when a book's run finishes. App.vue calls this once and is left with
-// the layout.
+// What the app does while open, whichever page shows: shell reads, the open book from the address,
+// theme and title, expression audio, and word when a book's run finishes. App.vue calls it once.
 import { computed, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useBookJobs, useBookSpend } from "@/queries";
@@ -21,13 +19,9 @@ export function useAppEffects(): void {
   const route = useRoute();
   const router = useRouter();
 
-  // The shell reads the queue for as long as the app is open, which with a server answering is
-  // what keeps it polling while a job is live: the indicator, the title and the notifications all
-  // follow.
+  // the shell reads the queue while the app is open, which keeps it polling while a job is live
   useBookJobs();
-  // …and the open book's spending, which every page of it sets against the book's budget: the
-  // overview's panel, the scripting estimate and the narration run's cap check. With a server
-  // answering it is the server's ledger, read again as the book's jobs move.
+  // …and the open book's spending, which every page of it sets against the budget
   useBookSpend(() => uiStore.currentBookId);
   watch(
     () =>

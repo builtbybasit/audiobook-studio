@@ -1,25 +1,10 @@
-// The sound a `thought` line is given as its clip lands where Pedalboard cannot run (no uv): a
-// voice heard from inside a head rather than across a room — thinned and boxed in, the presence
-// taken down, held together, and a small room ringing around it. Where Pedalboard can, the line's
-// own thought effect is run instead (`audio/effects.ts`).
-//
-// It is applied once, when the clip arrives, and kept in the file (`jobs/narration.ts`), so the
-// player, the Listen page, a check by ear and a build all hear the same thing and nothing has to
-// remember to apply it later. The clip records that it carries it as the sound `"ffmpeg"`, and
-// keeps the voice's own file as its raw, so a Re-apply can give it the real chain later.
-//
-// It is a port, like the encoder: ffmpeg's in a running server, and nothing at all in a test's
-// library that is handed none, which narrates thoughts as the voice made them.
-//
-// What comes out is always a WAV at the clip's own rate, whatever went in: re-encoding an MP3 or an
-// Opus clip would lose a second generation and mean choosing a bitrate, and a clip's format is only
-// its extension (`audio/files.ts`) — a book already plays and builds from a mix of the three.
+// The ffmpeg `thought` sound, used where Pedalboard cannot run (no uv). Baked into the clip as it
+// lands (sound `"ffmpeg"`, the voice's file kept as raw so a Re-apply can redo it). Always WAV at
+// the clip's rate: re-encoding MP3 or Opus would lose a generation and need a bitrate.
 import type { AudioFormat } from "@/types";
 import { ffmpegWav } from "~/audio/ffmpeg";
 
-/**
- * Bytes in, processed WAV bytes out. Throws when it cannot; the caller keeps the clip as it came.
- */
+/** Throws when it cannot; the caller keeps the clip as it came. */
 export type ThoughtEffect = (
   bytes: Uint8Array,
   format: AudioFormat,
@@ -27,9 +12,8 @@ export type ThoughtEffect = (
 ) => Promise<Uint8Array>;
 
 /**
- * The chain, as one ffmpeg filter: highpass 220 Hz, lowpass 6 kHz, −4 dB at 2.5 kHz, 3:1
- * compression from −20 dB, a small room, −1 dB. ffmpeg has no Freeverb, so the room is four early
- * reflections. Chosen by ear (2026-10-10): the first, gentler chain was not audible as a thought.
+ * Chosen by ear; a gentler chain was not audible as a thought. ffmpeg has no Freeverb, so the room
+ * is four early reflections.
  */
 // ponytail: aecho taps approximate a reverb; `afir` with a small room impulse response is the upgrade
 export const THOUGHT_FILTER = [
@@ -41,7 +25,7 @@ export const THOUGHT_FILTER = [
   "volume=-1dB",
 ].join(",");
 
-/** The effect run by an ffmpeg on this machine: the clip on stdin, a 16-bit WAV on stdout. */
+/** The clip on stdin, a 16-bit WAV on stdout. */
 export const ffmpegThoughtEffect =
   (bin = "ffmpeg"): ThoughtEffect =>
   (bytes, _format, signal) =>

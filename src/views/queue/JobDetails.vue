@@ -38,7 +38,6 @@ const chapterRef = computed(() =>
     ? undefined
     : libraryStore.chapterRef(props.job.bookId, props.job.chapterId),
 );
-/** The other chapters of the same bulk run, so the panel can act on the run rather than one row. */
 const siblings = computed(() => (props.job?.bulk ? jobsStore.runJobs(props.job.bulk.id) : []));
 const runDone = computed(() => siblings.value.filter((j) => j.status === "done").length);
 // the same clause `retryRunFailures` applies, so "Retry N failed" offers exactly what it re-runs
@@ -47,13 +46,11 @@ const runFailed = computed(
 );
 const runLeft = computed(() => siblings.value.filter((j) => !j.finishedAt).length);
 const runRunning = computed(() => siblings.value.filter((j) => j.status === "running").length);
-// stopping the rest of a run cannot be undone, so it is the one control here that asks first. The
-// question closes when it stops being answerable — another job, or nothing left to stop — and not
-// merely because a chapter finished while it was on screen, which happens the whole time a run is
-// live and would take the question away mid-read.
+// Stopping the rest of a run cannot be undone, so it asks first. The question closes only when it
+// stops being answerable, not each time a chapter finishes mid-read.
 const confirmCancel = ref(false);
 watch([() => props.job?.id, () => runLeft.value === 0], () => (confirmCancel.value = false));
-/** What stopping this run would actually stop, said in chapters rather than in job rows. */
+/** said in chapters rather than job rows */
 const stopNote = computed(() => {
   const waiting = runLeft.value - runRunning.value;
   const parts: string[] = [];
@@ -123,9 +120,8 @@ async function copy() {
             ><CloseIcon class="icon"
           /></DialogClose>
         </div>
-        <!-- the label as the rest of the app shows it, with the chapter's reading number; the
-             server's own label and the chapter's id, which the logs are filed under, stay on hover
-             and in small print for whoever is reading those logs -->
+        <!-- the server's label and the chapter id, which the logs are filed under, stay on hover
+             and in small print -->
         <DialogTitle class="break-words text-lg font-semibold" :title="job.label">{{
           jobsStore.labelOf(job)
         }}</DialogTitle>
@@ -135,8 +131,6 @@ async function copy() {
             · chapter id {{ job.chapterId }}</span
           ></DialogDescription
         >
-        <!-- the run this chapter belongs to: what was asked for, where this one sits in it,
-                 and the one control that acts on the rest of it -->
         <div
           v-if="job.bulk"
           class="mt-2 flex flex-wrap items-center gap-2 rounded-md bg-zinc-50 p-2 text-xs dark:bg-zinc-800/60"
@@ -165,7 +159,6 @@ async function copy() {
           >
             Retry {{ runFailed }} failed
           </button>
-          <!-- the one step in this panel Undo cannot take back, so it is asked for -->
           <div
             v-if="confirmCancel && runLeft"
             class="basis-full rounded-md border border-red-300 bg-red-50 px-3 py-2 text-[11px] leading-relaxed text-zinc-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-zinc-200"
@@ -436,8 +429,7 @@ async function copy() {
                 differently either side of it, and the activity log records the rates each one used.
               </dd></template
             >
-            <!-- narration: the same three figures, plus the input/audio split where anything
-                     in this chapter bills on the audio it returns -->
+            <!-- plus the input/audio split where anything here bills on audio returned -->
             <template v-if="job.narrationRun"
               ><dt class="text-zinc-500">Clips queued</dt>
               <dd>{{ job.narrationRun.clips }}</dd>
@@ -473,7 +465,6 @@ async function copy() {
                 Silence stitched between clips is not rendered and is never billed.
               </dd></template
             >
-            <!-- a check by ear: how much of the chapter it heard, and what it made of it -->
             <template v-if="job.checkRun"
               ><dt class="text-zinc-500">Endpoint</dt>
               <dd class="break-all font-mono text-xs">{{ job.checkRun.endpoint }}</dd>

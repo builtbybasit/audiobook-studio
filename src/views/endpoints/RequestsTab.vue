@@ -1,15 +1,7 @@
 <script setup lang="ts">
-// How many requests go out at once, how long they are given, and how the text is cut up before it
-// is sent — the last only for the kinds that send text: a transcriber is sent one recording a
-// request, and has the first two alone. Three separate numbers are shown for concurrency because they answer different
-// questions: what you configured, what is in flight, and what is actually allowed right now (zero
-// while paused, cooling down, or missing a key).
-//
-// The split preview runs the real splitter, and checks that the pieces put back together are
-// character-for-character the source — a chunking setting that quietly drops text would be the
-// worst kind of bug to ship. For a scripting endpoint it also says what the piece shown is
-// expected to use, with the prompt this endpoint sends and, for a model that reasons, the thinking
-// its recent requests at this level were seen to spend.
+// Concurrency, timeouts and (for kinds that send text) how text is cut. Concurrency shows
+// configured, in flight, and allowed now (zero while paused, cooling down or keyless). The split
+// preview runs the real splitter and checks the pieces rejoin to the exact source.
 import { computed, ref, watch } from "vue";
 import { plural } from "@/lib/contents";
 import { UiHint, UiNumber, UiSelect, UiSwitch } from "@/ui";
@@ -48,21 +40,19 @@ import type { UiOption } from "@/ui/types";
 const props = defineProps<{
   u: UnifiedEndpoint;
   live: LiveActivity;
-  /** a real chapter when a book is open, otherwise a built-in paragraph */
   sample: string;
   sampleLabel: string;
-  /** a scripting endpoint's thinking per input token at its current level, once a request said */
+  /** observed thinking per input token at the current level, once a request reported it */
   reasoning?: ScriptEndpointTelemetry["reasoning"];
 }>();
 
 const endpointsStore = useEndpointsStore();
 
 const ep = computed(() => props.u.entry);
-/** what cuts its text into requests — a profile or a speech endpoint; null for a transcriber */
+/** null for a transcriber */
 const cut = computed(() => props.u.profile ?? props.u.endpoint);
 const ops = computed(() => opsOf(props.u));
 
-// What differs by kind, said once per kind.
 const CONCURRENCY_HINT: Record<EndpointKind, string> = {
   scripting:
     "Chunks of a chapter run in parallel up to this limit; chapters stay in order. Type any number and the slider grows to fit it.",
@@ -95,10 +85,7 @@ watch(parts, () => {
 });
 const part = computed(() => parts.value[Math.min(at.value, parts.value.length - 1)]);
 
-/**
- * What the piece shown would use as one scripting request: the prompt this endpoint sends for a
- * book without its own, and the thinking its requests at this level were seen to spend.
- */
+/** The shown piece as one scripting request, with this endpoint's prompt and observed thinking. */
 const tokens = computed(() => {
   const p = props.u.profile;
   if (!p || !part.value?.text) return null;
@@ -118,8 +105,8 @@ const thinkingNote = computed(() =>
 );
 
 // ---------- batches ----------
-// Only an OpenAI-compatible server can speak the batch speech API; whether this one does is asked
-// of the saved endpoint whenever its address, model or key changes, and on "Check again".
+// Only an OpenAI-compatible server may speak the batch speech API; re-asked when the saved
+// address, model or key changes, and on "Check again".
 const batchable = computed(
   () => props.u.endpoint && speechProviderOf(props.u.endpoint).id === "compatible",
 );
@@ -160,7 +147,7 @@ const batchNote = computed(() => {
   return `Sending ${items} a request, the server's limit${atOnce}.`;
 });
 
-// a line to speak has no paragraph end inside it, so only a scripting endpoint is offered one
+// a spoken line has no paragraph end, so only scripting is offered one
 const cutModes = computed(() =>
   props.u.kind === "scripting" ? SPLIT_MODES : SPLIT_MODES.filter((m) => m.value !== "paragraph"),
 );
@@ -173,8 +160,7 @@ const AT_LABEL: Record<SplitMode, string> = {
   char: "hard cut",
 };
 
-// What each rate is for, in the terms someone choosing one would ask about. The model's own rate is
-// the `nullValue` row above these, so it is not listed here.
+// The model's own rate is the `nullValue` row, so not listed here.
 const RATE_HINT: Record<SampleRate, string> = {
   16000: "speech-grade, smallest files",
   22050: "half of CD",
@@ -183,18 +169,14 @@ const RATE_HINT: Record<SampleRate, string> = {
   44100: "CD, and the ACX audiobook standard",
   48000: "video and broadcast",
 };
-/** A speech endpoint's rate; a scripting profile has none, and never shows the control. */
 function setRate(v: string | number | null) {
   if (props.u.endpoint) props.u.endpoint.sampleRate = v == null ? null : (v as SampleRate);
   repairNotes.value = [];
 }
 
 // ---------- audio format ----------
-// The format, bitrate and rate are one choice: which rates and bitrates exist depends on the
-// format, and which formats exist depends on the API the base URL speaks. So the rate list narrows
-// to the chosen format's, the bitrate list appears only for a format that has one, and switching
-// format goes through `repairEncoding` — anything the new format lacks is put back to the
-// provider's default and said below, rather than left for the server to refuse the next line with.
+// Format, bitrate and rate are one choice: the API decides the formats, the format decides the
+// rates and bitrates. A format switch goes through `repairEncoding`, which resets what doesn't fit.
 const formats = computed(() => (props.u.endpoint ? speechFormats(props.u.endpoint) : []));
 const support = computed(() => (props.u.endpoint ? supportOf(props.u.endpoint) : undefined));
 const encoding = computed(() => encodingOf(props.u.endpoint ?? {}));
@@ -213,7 +195,7 @@ const BITRATE_OPTIONS = computed<UiOption[]>(() =>
     hint: b.value === support.value?.defaultBitrate ? "provider default" : undefined,
   })),
 );
-/** The rates this format may be asked for; an API that takes none offers only the model's own. */
+/** An API that takes no rate offers only the model's own. */
 const RATE_OPTIONS = computed<UiOption[]>(() => {
   const rates = support.value?.rates;
   if (!rates) return [];
@@ -228,14 +210,13 @@ const rateNull = computed(() =>
     ? `Provider default (${sampleRateLabel(support.value.defaultRate)})`
     : "Model default",
 );
-/** No rate can be asked for, and none is set — the control has nothing to offer. One that is set
- *  (saved before the format picker, or imported) stays open so it can be cleared. */
+/** Locked when no rate can be asked for and none is set; a set one stays open to be cleared. */
 const rateLocked = computed(
   () => support.value?.rates === null && (props.u.endpoint?.sampleRate ?? null) === null,
 );
 const problems = computed(() => (props.u.endpoint ? encodingProblems(props.u.endpoint) : []));
 const size = computed(() => (props.u.endpoint ? sizePerMinute(props.u.endpoint) : null));
-/** What the last format change had to put back — shown until the next change. */
+/** What the last format change reset; shown until the next change. */
 const repairNotes = ref<string[]>([]);
 watch(
   () => props.u.key,
@@ -260,14 +241,12 @@ function setBitrate(v: string | number | null) {
   repairNotes.value = [];
 }
 
-/** A simulated speech endpoint has no provider to be slow or to fail, so it is told how to be: how
- *  long each answer takes and what share fail. A scripting profile has neither setting. */
+/** A simulated speech endpoint is told its latency and failure share. */
 const simulated = computed(() =>
   props.u.endpoint && isSimulated(props.u.baseUrl) ? props.u.endpoint : null,
 );
 
-/** What the host makes of the level picked, when it can't do exactly that; a simulated profile
- *  thinks about nothing, and is not offered the choice. */
+/** What the host makes of the picked level when it can't do exactly that. */
 const reasoningNote = computed(() =>
   props.u.profile ? reasoningRequest(props.u.baseUrl, props.u.profile.reasoning).note : null,
 );
@@ -326,7 +305,7 @@ const limitNote = computed(() => {
         </p>
       </section>
 
-      <!-- batches: a compatible server that speaks the batch speech API -->
+      <!-- batches -->
       <section v-if="batchable && u.endpoint" class="card p-3">
         <div class="flex items-center justify-between gap-3">
           <h3 class="label">
@@ -426,7 +405,7 @@ const limitNote = computed(() => {
         </div>
       </section>
 
-      <!-- what a transcriber is sent: the recording's rate, and how hard the cast's names count -->
+      <!-- transcriber: recording rate, and how hard the cast's names count -->
       <section v-if="u.transcriber" class="card space-y-3 p-3">
         <div class="flex items-center justify-between gap-3 text-sm">
           <span class="min-w-0"
@@ -585,7 +564,7 @@ const limitNote = computed(() => {
         </div>
       </section>
 
-      <!-- audio: speech only — a chat model returns text, which has no format or rate -->
+      <!-- audio: speech only -->
       <section v-if="u.kind === 'tts' && u.endpoint" class="card p-3">
         <h3 class="label mb-2">
           Audio
@@ -737,7 +716,7 @@ const limitNote = computed(() => {
       </section>
     </div>
 
-    <!-- when it applies: a queued run keeps its snapshot; a line is dispatched on what is saved now -->
+    <!-- a queued run keeps its snapshot; a line is dispatched on what is saved now -->
     <p class="text-[11px] text-zinc-500 xl:col-span-2">{{ WHEN_IT_APPLIES[u.kind] }}</p>
   </div>
 </template>

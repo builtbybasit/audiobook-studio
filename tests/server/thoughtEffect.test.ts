@@ -1,6 +1,5 @@
-// The ffmpeg thought effect: what a thought line is given where Pedalboard cannot run. How
-// narration chooses it is told in `effectsNarration.test.ts`; this is the filter itself, where this
-// machine has an ffmpeg.
+// The ffmpeg thought effect: what a thought line gets where Pedalboard cannot run. The filter
+// itself, where this machine has ffmpeg.
 import { describe, expect, test } from "bun:test";
 
 import { probeClip } from "~/audio/probe";

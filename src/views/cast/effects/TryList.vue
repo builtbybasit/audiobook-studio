@@ -1,11 +1,6 @@
 <script setup lang="ts">
 // The sheet's first view: every effect, plus None, to try on the sheet's line and choose.
-//
-// The highlighted row is what the subject hears now (`choice.current`). A click on a row chooses
-// it and plays it; ▶ only plays. One box above the list says what is used and where it comes
-// from, and a change made here leaves a line under it naming the change in its scope, with Undo.
-// The one action that reaches past the subject — making the chosen row the level above's — sits
-// on that row alone and names its scope.
+// The highlighted row is what the subject hears now (`choice.current`); ▶ only plays.
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import {
   Copy as CopyIcon,
@@ -127,7 +122,6 @@ function focusRow(i: number) {
   li?.focus();
   li?.scrollIntoView({ block: "nearest" });
 }
-/** a click on a row chooses it and plays it */
 function pick(i: number) {
   const c = cards.value[i];
   if (!c) return;

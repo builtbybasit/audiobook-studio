@@ -1,8 +1,5 @@
-// The installation's settings, read and written by key (`~/db/schema/settings`).
-//
-// One helper per key rather than a generic getter, because the row holds JSON and each key's
-// reader is where that JSON is held to its shape: a hand-edited or half-written row reads as the
-// setting being absent, never as an object the app cannot use.
+// Settings by key. One helper per key because each reader validates its JSON: a malformed row
+// reads as absent.
 import { eq } from "drizzle-orm";
 
 import type { PromptTemplate, ScriptSettings, ThoughtChoice } from "@/types";
@@ -10,7 +7,7 @@ import { makeScriptSettings } from "@/lib/scripting";
 import type { Db, Tx } from "~/db/client";
 import { effects, settings } from "~/db/schema";
 
-/** The library's default scripting prompt, or null when it is the built-in one. */
+/** Null means the built-in prompt. */
 export function readLibraryPrompt(db: Db | Tx): PromptTemplate | null {
   const value = db.select().from(settings).where(eq(settings.key, "prompt")).get()?.value;
   if (typeof value !== "object" || value === null) return null;
@@ -18,7 +15,7 @@ export function readLibraryPrompt(db: Db | Tx): PromptTemplate | null {
   return typeof system === "string" && typeof user === "string" ? { system, user } : null;
 }
 
-/** Keep this as the library's default; null goes back to the built-in one by removing the row. */
+/** Null goes back to the built-in prompt by removing the row. */
 export function writeLibraryPrompt(db: Db | Tx, prompt: PromptTemplate | null): void {
   if (!prompt) {
     db.delete(settings).where(eq(settings.key, "prompt")).run();
@@ -31,12 +28,7 @@ export function writeLibraryPrompt(db: Db | Tx, prompt: PromptTemplate | null): 
     .run();
 }
 
-/**
- * How the library's scripting runs are set up: the profile a run goes to. A row that is missing or
- * not of that shape reads as the defaults, with no profile; a row saved when the settings still
- * carried the "strip boilerplate" and "keep my edits" switches reads as its profile alone, since
- * nothing ever acted on them.
- */
+/** A missing or malformed row reads as the defaults, with no profile. */
 export function readScriptSettings(db: Db | Tx): ScriptSettings {
   const value = db.select().from(settings).where(eq(settings.key, "script")).get()?.value;
   const out = makeScriptSettings();
@@ -46,7 +38,6 @@ export function readScriptSettings(db: Db | Tx): ScriptSettings {
   return out;
 }
 
-/** Keep these as the library's scripting settings. */
 export function writeScriptSettings(db: Db | Tx, script: ScriptSettings): void {
   const value = { profile: script.profile };
   db.insert(settings)
@@ -55,10 +46,7 @@ export function writeScriptSettings(db: Db | Tx, script: ScriptSettings): void {
     .run();
 }
 
-/**
- * The library's thought effect: an effect's id or "none". A row that is missing, not a string or
- * naming no effect reads as the Inner voice the library starts with, or "none" once that is gone.
- */
+/** An invalid row reads as the Inner voice, or "none" once that is gone. */
 export function readThoughts(db: Db | Tx): ThoughtChoice {
   const value = db.select().from(settings).where(eq(settings.key, "thoughts")).get()?.value;
   if (value === "none") return value;
@@ -69,7 +57,6 @@ export function readThoughts(db: Db | Tx): ThoughtChoice {
   return known("inner-voice") ? "inner-voice" : "none";
 }
 
-/** Keep this as the library's thought effect. */
 export function writeThoughts(db: Db | Tx, value: ThoughtChoice): void {
   db.insert(settings)
     .values({ key: "thoughts", value })

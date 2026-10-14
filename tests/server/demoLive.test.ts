@@ -1,14 +1,7 @@
 // What a demo situation leaves running, made real on the demo library (`server/demo/live.ts`).
-//
-// The library here is put together the way `openLibrary` puts the demo together — its database
-// seeded with the browser's world, its clips made on first read, the endpoints' own providers paced
-// by the demo's speed, one speech gate for its queue and its routes — but by hand, so the test holds
-// the gate `startLive` is given and the pace. Each test hands `startLive` a `DemoLive` of its own and
-// reads the result back through the demo's API, as the Endpoints, Queue and Export pages read it.
-// What an endpoint has been through is rows and a cooldown whatever the world holds, so those tests
-// start from an empty library rather than paying for the seed. The providers' `fetch` fails the
-// test, so everything here is shown to need no network; their `random` never draws a failure, so a
-// simulated endpoint's fail rate does not make a run flaky.
+// The library is assembled by hand as `openLibrary` assembles the demo, so the test holds the gate
+// and pace `startLive` is given. Providers' `fetch` fails the test and their `random` never draws
+// a failure, so nothing needs the network or flakes.
 import { describe, expect, test } from "bun:test";
 
 import type {
@@ -49,7 +42,7 @@ import {
   testDb,
 } from "../support/server";
 
-/** The demo library, seeded unless the test needs none of the world, running, with the parts `startLive` is handed. */
+/** The demo library (seeded unless asked not to), running, with the parts `startLive` is handed. */
 function demoLibrary({ chapterMs = 0, seeded = true } = {}) {
   const asked: string[] = [];
   const fetch = (async (url: string) => {

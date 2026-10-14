@@ -21,7 +21,7 @@ import {
   CircleHelp as HintIcon,
   ExternalLink as ExternalIcon,
 } from "@lucide/vue";
-// the page's plan and its estimate, worked out once there for the run button and this panel both
+// worked out once on the page, for the run button too
 const props = defineProps<{
   bookId: string;
   plan: RunPlan;
@@ -32,11 +32,9 @@ const endpointsStore = useEndpointsStore();
 const jobsStore = useJobsStore();
 const libraryStore = useLibraryStore();
 const scriptsStore = useScriptsStore();
-// the estimate's "if cache holds" figure is read off the profile's recent requests in the ledger,
-// which the store finds in the query cache: reading them here is what puts them there
+// the "if cache holds" figure reads these from the query cache, so they must be loaded here
 useScriptActivity();
-// The corrections a re-script would replace are on the scripts it replaces, which are read here:
-// a script nobody has opened is not one without corrections.
+// Read here: an unopened script is not one without corrections.
 const replaced = computed(() =>
   props.plan.chapters.filter((row) => row.contribution === "replace").map((row) => row.id),
 );
@@ -52,7 +50,7 @@ const edits = computed(() =>
 const book = computed(() => libraryStore.bookById(props.bookId));
 const spent = computed(() => jobsStore.scriptSpent(props.bookId));
 const reserved = computed(() => jobsStore.scriptReserved(props.bookId));
-/** what the estimate checks against: the scripting budget and the book's overall cap, whichever is lower */
+/** the lower of the scripting budget and the book's cap */
 const remaining = computed(() =>
   Number.isFinite(props.est.remaining) ? Math.max(0, props.est.remaining) : null,
 );
@@ -99,7 +97,6 @@ const runs = computed(() =>
     <p v-if="est.reading" class="text-[11px] text-zinc-500" role="status">
       Reading the text of {{ plural(est.reading, "chapter") }} to price the run…
     </p>
-    <!-- one line for the run: the breakdown and the reasons it is an estimate open under it -->
     <details v-else class="group">
       <summary
         class="flex cursor-pointer list-none items-center gap-1.5 select-none [&::-webkit-details-marker]:hidden"
@@ -121,7 +118,7 @@ const runs = computed(() =>
         <dd class="text-right font-mono">{{ money(est.inputCost) }}</dd>
         <dt class="text-zinc-500">
           Output · ~{{ est.outputTokens.toLocaleString() }} tokens
-          <!-- a reasoning model bills its thinking as output: how much, from its recent requests -->
+          <!-- a reasoning model bills its thinking as output -->
           <UiHint
             v-if="est.reasoningTokens"
             label="thinking tokens"
@@ -131,8 +128,7 @@ const runs = computed(() =>
         <dd class="text-right font-mono">{{ money(est.outputCost) }}</dd>
         <dt class="font-medium">Estimated total</dt>
         <dd class="text-right font-mono font-semibold">{{ money(est.cost) }}</dd>
-        <!-- The conservative figure is the one with the weight. The cheaper ones sit under it,
-             labelled, and neither is what the budget is checked against. -->
+        <!-- the budget is checked against the conservative figure only -->
         <template v-if="est.rates && est.rates.withObservedCache">
           <dt class="text-zinc-500">
             If cache holds at {{ Math.round(est.rates.withObservedCache.hitRate * 100) }}%
@@ -148,7 +144,6 @@ const runs = computed(() =>
           </dd>
         </template>
       </dl>
-      <!-- what could move the figure between the first request and the last -->
       <details
         v-if="est.rates?.cautions.length"
         class="mt-2 rounded-lg bg-zinc-50 p-2.5 dark:bg-zinc-800/60"
@@ -216,11 +211,10 @@ const runs = computed(() =>
         />
       </div>
     </div>
-    <!-- what this book tells the scripter: edited on the Overview, where an editor has room -->
+    <!-- book notes: edited on the Overview -->
     <div class="border-t border-zinc-200 pt-3 dark:border-zinc-800">
       <BookPromptSummary :book-id="bookId" />
     </div>
-    <!-- while the text is read every figure waits for it, and so do the reasons it cannot run -->
     <div
       v-if="est.blockers.length && !est.reading"
       class="space-y-1 rounded-lg bg-amber-50 p-2.5 text-[11px] text-amber-800 dark:bg-amber-500/10 dark:text-amber-300"
@@ -255,7 +249,6 @@ const runs = computed(() =>
           · Endpoint paused</span
         >
       </p>
-      <!-- what the cache is actually doing, as the run goes -->
       <p v-if="job.scriptRun!.inputTokens" class="text-[11px] text-zinc-500">
         {{
           job.scriptRun!.cachedInput

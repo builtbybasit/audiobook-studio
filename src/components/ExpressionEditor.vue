@@ -1,15 +1,7 @@
 <script setup lang="ts">
-// Expressions on one line, edited on the line itself. "Add expression" turns the line into a
-// strip of words with its gaps showing; click the gap where the expression goes and a picker
-// opens there with this model's tags. The chips in the line are the controls for what is already
-// placed: click one to replace, move, omit or remove it. There is no position dropdown, and the
-// source text is never rewritten to hold a tag.
-//
-// A pause is placed the same way, with "Add pause", and needs no tags set up: a voice without a
-// pause tag hears it as silence. Its chip changes its length instead of replacing it.
-//
-// When the speaker's model has no tags configured, the button says so and opens the configuration
-// in place, since that is the only thing that can happen next.
+// Expressions on one line, placed by clicking a gap in the line's word strip; the chips in the line
+// edit what is placed. The source text is never rewritten to hold a tag. A pause needs no tags: a
+// voice without a pause tag hears it as silence.
 import { useCastStore } from "@/stores/cast";
 import { useNarrationStore } from "@/stores/narration";
 
@@ -52,9 +44,9 @@ const support = computed(() => expressionSupport(endpoint.value));
 const tags = computed(() =>
   support.value === "supported" ? (endpoint.value?.expressions?.tags ?? []) : [],
 );
-// a model set to take any words in its brackets takes a tag typed here, not only a listed one
+// an open model takes any words in its brackets, not only a listed tag
 const open = computed(() => support.value === "supported" && !!endpoint.value?.expressions?.open);
-/** The tag a picker's value names: a listed one by id, or on an open model the words typed. */
+/** A listed tag by id, or on an open model the words typed. */
 function tagFor(value: string) {
   const listed = tags.value.find((t) => t.id === value);
   if (listed || !open.value || !value.trim()) return listed;
@@ -75,7 +67,7 @@ const issueReason = (id: number) => issue(id)?.reason;
 const skippedReason = (id: number) => plan.value.skipped.find((i) => i.annotationId === id)?.reason;
 const count = computed(() => props.segment.expressions?.length ?? 0);
 const pacing = computed(() => castStore.pacingOf(props.bookId));
-/** the line can be edited on its strip: its model takes tags, or it holds or is getting a pause */
+/** its model takes tags, or it holds or is getting a pause */
 const editable = computed(
   () =>
     support.value === "supported" ||
@@ -85,14 +77,12 @@ const editable = computed(
 const change = (id: number, patch: Partial<ExpressionAnnotation> | null) =>
   narrationStore.updateExpression(props.bookId, props.chapterId, props.segment.id, id, patch);
 
-// ---- placing: a gap is chosen on the strip, then a tag in the picker that opens under it — or,
-// placing a pause, the pause goes straight in and its chip opens for its length
 const placing = ref(false);
 const pausing = ref(false);
 const pickAt = ref<number | null>(null);
 const moving = ref<number | null>(null);
 const selected = ref("");
-/** where the caret under the picker points: the chosen gap's x within the strip */
+/** the chosen gap's x within the strip */
 const caretX = ref(0);
 const caretAt = (el: HTMLElement) => {
   const box = strip.value?.getBoundingClientRect();
@@ -149,7 +139,6 @@ function cancel() {
   selected.value = "";
 }
 
-// ---- a chip: replace, move, omit, remove
 const editing = ref<number | null>(null);
 const current = computed(() =>
   props.segment.expressions?.find((a) => a.annotationId === editing.value),
@@ -185,7 +174,7 @@ watch(expanded, (v) => {
 });
 const tokenOf = (a: ExpressionAnnotation) => tokenFor(a, endpoint.value?.expressions).token;
 
-/** The lengths a pause can be: the book's short and long ones, or one of its own. */
+/** the book's short and long pauses, or one of its own */
 const lengths = computed(() => [
   { word: "pause" as PauseWord, label: `short · ${secs(pacing.value.inlineShort)}` },
   { word: "long pause" as PauseWord, label: `long · ${secs(pacing.value.inlineLong)}` },
@@ -269,7 +258,6 @@ function setLength(l: { word: PauseWord; seconds?: number }) {
       </p>
 
       <template v-if="editable">
-        <!-- the line itself, as a strip of words; gaps show while placing -->
         <div
           ref="strip"
           class="rounded-md bg-zinc-50 p-3 leading-loose transition-shadow dark:bg-zinc-800/50"
@@ -307,7 +295,6 @@ function setLength(l: { word: PauseWord; seconds?: number }) {
         </p>
         <p v-else-if="!placing" class="text-zinc-400">Nothing placed on this line yet.</p>
 
-        <!-- the picker, under the gap that was chosen -->
         <div v-if="pickAt != null" class="expression-picker relative">
           <span
             class="absolute -top-2 h-3 w-3 rotate-45 border-l border-t border-violet-300 bg-white dark:border-violet-500/40 dark:bg-zinc-900"
@@ -335,7 +322,6 @@ function setLength(l: { word: PauseWord; seconds?: number }) {
           </div>
         </div>
 
-        <!-- a chip's controls, under the chip -->
         <div v-else-if="current" class="relative">
           <span
             class="absolute -top-2 h-3 w-3 rotate-45 border-l border-t border-zinc-300 bg-white dark:border-zinc-700 dark:bg-zinc-900"

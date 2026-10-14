@@ -1,17 +1,13 @@
-// The keys every query is filed under, in one place, so an invalidation can name what it means.
-//
-// Keys are arrays and an invalidation matches by prefix, so the layout is the point: everything a
-// book owns sits under `["books", id]`, and everything a chapter's number addresses — its text,
-// its script, its history — sits under the book with the resource *before* the chapter number.
-// `["books", id, "script"]` therefore names every chapter's script of one book, which is what a
-// rename that moved lines in every chapter has to invalidate, without touching the prose.
+// Every query key, in one place. Invalidation matches by prefix: a book owns `["books", id]`, and
+// chapter resources put the resource before the chapter number, so `["books", id, "script"]` names
+// every chapter's script of a book without touching the prose.
 import type { TextFormat } from "@/services/library";
 
 export const keys = {
   jobs: ["jobs"] as const,
   /** every book the library lists, without their chapters */
   shelf: ["shelf"] as const,
-  /** a book and its chapters — and, as a prefix, everything filed under the book */
+  /** a book and its chapters; as a prefix, everything filed under the book */
   book: (bookId: string) => ["books", bookId] as const,
   chapterText: (bookId: string, chapterId: number, format: TextFormat) =>
     ["books", bookId, "text", chapterId, format] as const,
@@ -37,7 +33,7 @@ export const keys = {
   librarySpend: ["spend"] as const,
   /** every endpoint's settled requests, for the Endpoints page */
   endpointRequests: ["endpoints", "requests"] as const,
-  /** what the server's process has seen of each speech endpoint: lines out and held, cooldowns */
+  /** each speech endpoint's lines out and held, and cooldowns */
   endpointLive: ["endpoints", "live"] as const,
   /** the library's voice effects and its thought effect, read together */
   effects: ["effects"] as const,

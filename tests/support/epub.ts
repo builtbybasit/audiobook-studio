@@ -1,13 +1,6 @@
-// Building an EPUB to import.
-//
-// The server's import is the one part of the app that reads a real file, so its tests need real
-// files. These are assembled in memory — a valid EPUB 3 package with a navigation document, a
-// spine and the chapters asked for — which keeps the suite free of binary fixtures that nobody
-// can read a diff of.
-//
-// What can be varied here is what real EPUBs actually vary: where the navigation document sits
-// relative to the chapters, whether it names a chapter something other than the heading inside it,
-// whether one file holds several chapters, and whether a file the package promises is there at all.
+// Valid EPUB 3 files built in memory for the import tests, so the suite has no binary fixtures. The
+// options vary what real EPUBs vary: nav location, nav labels vs headings, several chapters per
+// file, and files the package promises but lacks.
 import JSZip from "jszip";
 
 /** One chapter inside a file that holds more than one, anchored where the navigation points. */
@@ -19,18 +12,14 @@ export interface SectionInput {
   /** the heading in the markup, when it differs from the navigation's label */
   heading?: string;
   paragraphs: string[];
-  /**
-   * Anchor it the way older books do, `<a name="…">`, with an unrelated `id` beside it as a
-   * converter leaves one, rather than an `id` on the section.
-   */
+  /** Anchor it the older way, `<a name="…">`, with an unrelated converter `id` beside it. */
   byName?: true;
 }
 
 export interface ChapterInput {
   title: string;
-  /** paragraphs; each becomes its own <p> */
   paragraphs?: string[];
-  /** body markup, in place of `paragraphs`, for the cases that are about the markup itself */
+  /** body markup, in place of `paragraphs` */
   raw?: string;
   /** the navigation's label, when the file's own heading says something else */
   navTitle?: string;
@@ -40,13 +29,13 @@ export interface ChapterInput {
   nonLinear?: boolean;
   /** several chapters in this one file, each with a navigation anchor of its own */
   sections?: SectionInput[];
-  /** in the manifest and the spine, but not in the zip: a file the package promises and lacks */
+  /** in the manifest and the spine, but not in the zip */
   missing?: true;
   /** write the file with no `<head>`, as some converters do */
   headless?: true;
-  /** the file's name in the zip, in place of `cN.xhtml` — `Chapter 1.xhtml`, say */
+  /** the file's name in the zip, in place of `cN.xhtml` (e.g. `Chapter 1.xhtml`) */
   file?: string;
-  /** how the manifest spells the file, when it is not as written — `Chapter%201.xhtml` */
+  /** how the manifest spells the file, when not as written (e.g. `Chapter%201.xhtml`) */
   manifestHref?: string;
   /** how the navigation spells the file, when it is not as written */
   navHref?: string;
@@ -56,17 +45,11 @@ export interface EpubInput {
   title?: string;
   author?: string;
   chapters: ChapterInput[];
-  /**
-   * Put the navigation document in a directory of its own, and the chapters in another, so its
-   * links have to be resolved against it — `../text/c1.xhtml`, not `text/c1.xhtml`.
-   */
+  /** Nav and chapters in separate directories, so links resolve as `../text/c1.xhtml`. */
   navDir?: string;
   /** nest every navigation entry under one top-level entry, the way a volume list does */
   nestUnder?: string;
-  /**
-   * Give that nesting entry a link of its own, to the file its children are in — a volume title
-   * page listed above the chapters that follow it in the same file.
-   */
+  /** Give that nesting entry its own link to its children's file, like a volume title page. */
   nestLinked?: true;
   /** promise a navigation document in the manifest and leave it out of the archive */
   missingNav?: true;
@@ -74,10 +57,7 @@ export interface EpubInput {
   extraSpine?: string[];
   /** further manifest items that are not documents, by href: an image the zip may not have */
   assets?: string[];
-  /**
-   * A cover image, named the EPUB 3 way (`properties="cover-image"`) or the EPUB 2 way (a
-   * `<meta name="cover">` pointing at the item); `missing` promises it and leaves it out of the zip.
-   */
+  /** Named the EPUB 3 or EPUB 2 (`<meta name="cover">`) way; `missing` leaves it out of the zip. */
   cover?: {
     bytes: Uint8Array;
     href?: string;
@@ -90,19 +70,11 @@ export interface EpubInput {
 const esc = (s: string): string =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-/**
- * A fixed last-modified date, which EPUB 3 requires and which a fixture must not take from the
- * clock: two builds of the same input have to be the same bytes, or a test that compares them
- * fails once a second.
- */
+/** Fixed, not from the clock: two builds of the same input must be the same bytes. */
 const MODIFIED = "2026-01-01T00:00:00Z";
 
 /**
- * A real UUID, derived from the book so it is stable across builds.
- *
- * `urn:uuid:test-3` is not one, and EPUBCheck says so. The fixtures are the only EPUBs this suite
- * ever sees, so a fixture that is quietly invalid is a blind spot exactly where the code under test
- * is supposed to be strict.
+ * A real UUID derived from the book (`urn:uuid:test-3` fails EPUBCheck; fixtures must be valid).
  */
 function uuid(seed: string, n: number): string {
   let h = 0x811c9dc5;
@@ -156,8 +128,7 @@ export async function buildEpub({
     ? `<item id="cover-image" href="${esc(coverHref)}" media-type="${cover.type ?? "image/png"}"${cover.how === "epub2" ? "" : ' properties="cover-image"'}/>`
     : "";
   const coverMeta = cover?.how === "epub2" ? `<meta name="cover" content="cover-image"/>` : "";
-  // With a navigation directory the chapters move too, so the two are genuinely relative to each
-  // other rather than both sitting in the package root where every spelling happens to work.
+  // With a nav directory the chapters move too, so the two are genuinely relative to each other.
   const textDir = navDir ? "text/" : "";
   const navPath = navDir ? `${navDir}/nav.xhtml` : "nav.xhtml";
   const up = navDir ? "../" : "";
@@ -169,7 +140,7 @@ export async function buildEpub({
     id: `c${i + 1}`,
   }));
 
-  /** The navigation entries for one chapter file: one per anchor, or one for the file. */
+  /** One nav entry per anchor, or one for the file. */
   const links = (f: (typeof files)[number]): string[] =>
     f.sections
       ? f.sections.map((s) => `<a href="${up}${f.navHref}#${s.id}">${esc(s.title)}</a>`)
@@ -228,25 +199,20 @@ ${extraSpine.map((_, i) => `<itemref idref="x${i + 1}"/>`).join("\n")}
 ${toc}
 </ol></nav></body></html>`,
     );
-  // A missing file is written nowhere: the manifest and the spine both promise it, and the archive
-  // does not have it, which is what a damaged or incompletely downloaded EPUB looks like.
+  // A missing file is promised by the manifest and spine but absent, like a damaged download.
   for (const f of files)
     if (!f.missing) zip.file(`OEBPS/${f.file}`, xhtml(f.title, bodyOf(f), f.headless));
   if (cover && !cover.missing) zip.file(`OEBPS/${decodeURIComponent(coverHref)}`, cover.bytes);
   return zip.generateAsync({ type: "arraybuffer" });
 }
 
-/** An EPUB as an upload: what a `multipart/form-data` request would carry. */
 export async function epubFile(input: EpubInput, name = "book.epub"): Promise<File> {
   return new File([await buildEpub(input)], name, { type: "application/epub+zip" });
 }
 
 /**
- * Enough sentences to read as a full chapter rather than a short notice.
- *
- * The default is for tests about classification. A test that narrates or builds pays for every
- * line — 24 paragraphs script to ~50 lines, each a clip, and a minute of audio for ffmpeg — so pass
- * the few it needs, or give each chapter one `line` instead when what it says does not matter.
+ * Enough sentences to read as a full chapter, for classification tests. Narrating tests pay per
+ * line (24 paragraphs ≈ 50 clips), so pass fewer or use `line`.
  */
 export const story = (n = 24): string[] =>
   Array.from(
@@ -256,11 +222,8 @@ export const story = (n = 24): string[] =>
   );
 
 /**
- * One line of dialogue that names its chapter, and who says it: a chapter a few seconds long.
- *
- * Named for the chapter so no two chapters say the same thing. A fake keyed on a line's text — one
- * that answers a retake differently, say — takes a line it has heard before for a retake, so a book
- * whose chapters repeat one line reads as retakes from its second chapter on.
+ * One line naming its chapter: a chapter a few seconds long. Unique per chapter, since a fake keyed
+ * on text takes a repeated line for a retake.
  */
 export const line = (title: string, who = "Mara"): string =>
   `“${title} is short again,” said ${who}.`;

@@ -1,14 +1,10 @@
-// Audio through the ffmpeg on this machine: bytes in on stdin, a 16-bit WAV out on stdout. What the
-// thought effect (`thoughtEffect.ts`) and a recording sent to be transcribed (`speechRate`) are made
-// with, each a port the server fills at boot when it found one.
-//
-// ffmpeg reads the container off the bytes, so the format that came in needs no flag; no metadata,
-// so what comes back is a header and the samples.
+// Audio through the local ffmpeg: bytes on stdin, a 16-bit WAV on stdout. ffmpeg reads the
+// container off the bytes, so the input needs no format flag.
 import { readWavHeader } from "~/providers/wav";
 
 /**
- * A WAV written to a pipe, with its sizes filled in. ffmpeg cannot seek back over a pipe to write
- * them, so it leaves 0xFFFFFFFF in both, and a reader that believes the `data` size reads past the end.
+ * ffmpeg cannot seek back over a pipe, so it leaves 0xFFFFFFFF in both WAV sizes; this fills them
+ * in, or a reader would read past the end.
  */
 function sized<T extends Uint8Array>(wav: T): T {
   const { start } = readWavHeader(wav);
@@ -18,10 +14,7 @@ function sized<T extends Uint8Array>(wav: T): T {
   return wav;
 }
 
-/**
- * `bytes` run through ffmpeg with `args` between the input and the output: a 16-bit WAV, its sizes
- * true. Throws, with ffmpeg's last words, when it fails; a cancel kills it.
- */
+/** `args` go between the input and the output. Throws with ffmpeg's last words; a cancel kills it. */
 export async function ffmpegWav(
   bin: string,
   args: readonly string[],
@@ -70,9 +63,8 @@ export async function ffmpegWav(
 }
 
 /**
- * A recording as speech-to-text hears it: 16 kHz mono WAV. Every such model works at that rate, and
- * Fermion Phonon's CUDA build refuses any other ("this runtime requires 16 kHz"), where its Mac build
- * converts for itself. The words keep their times: only the samples between them change.
+ * 16 kHz mono WAV, the rate speech-to-text works at. Fermion Phonon's CUDA build refuses any other
+ * ("this runtime requires 16 kHz"). Word times are unchanged.
  */
 export type SpeechRate = (
   bytes: Uint8Array,

@@ -308,7 +308,7 @@ describe("billing models: what is counted, and what that costs", () => {
     const text = "外门 disciple";
     expect(billableChars(text)).toBe(11);
     expect(utf8Bytes(text)).toBe(6 + 9);
-    // an emoji is one billable character and four bytes — `String.length` says two and is wrong twice
+    // an emoji is one billable character and four bytes; `String.length` says two
     expect(billableChars("🜁")).toBe(1);
     expect("🜁".length).toBe(2);
     expect(utf8Bytes("🜁")).toBe(4);
@@ -640,8 +640,7 @@ describe("changing the model", () => {
     expect(switchBillingUnit(chars, "chars")).toBe(chars);
   });
 
-  // The demo library is seeded with these endpoints as they are (`tests/server/demoWorld.test.ts`
-  // compares the two field for field), so they are read here without opening it.
+  // Read without opening the demo: `tests/server/demoWorld.test.ts` checks the seed matches.
   test("the seeded speech endpoints cover every billing model and discount case the demo claims", () => {
     const now = Date.now();
     const endpoints = makeEndpoints(now);
@@ -688,8 +687,7 @@ describe("changing the model", () => {
 
   test("a promotion is only called useless where the card prices something for it to miss", () => {
     const cfg = config({ promotions: [promo({ scope: ["speech"], percent: 20 })] });
-    // an endpoint whose rate nobody typed in: the scope is not the problem, and saying so would send
-    // the reader after the wrong thing
+    // an endpoint with no rate typed in: the scope is not the problem, so the card does not blame it
     expect(
       pricingWarnings(speechRates({ unit: "audio-tokens", rate: null }), cfg, utc(THU, "12:00")),
     ).toEqual([]);
@@ -701,8 +699,8 @@ describe("changing the model", () => {
         utc(THU, "12:00"),
       ),
     ).toEqual([]);
-    // but one scoped to the output tokens of a chat model really does apply to nothing on a speech
-    // card, whichever model it bills on: the rate is untouched, and the card says why
+    // one scoped to a chat model's output tokens applies to nothing on a speech card: the rate is
+    // untouched, and the card says why
     const wrong = config({ promotions: [promo({ scope: ["output"], percent: 20 })] });
     for (const billing of [
       speechCard(),

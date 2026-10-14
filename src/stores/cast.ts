@@ -1,20 +1,10 @@
 import { toRaw } from "vue";
 import type { Spoken } from "@/lib/speech";
-// Book cast, pronunciation and pacing. Speech text stays separate from source prose.
-//
-// The cast is the server's: `useCast` in `@/queries` reads it in, and every change here is a
-// request — a speaker written as stated, a rename or a merge that moves
-// lines in every chapter, the dictionary replaced whole — with what comes back installed in place
-// of what was here. An Undo is exact: a rename is renamed back, and a merge or a
-// removal records the lines that moved and puts exactly those back (`attribute`), rather than
-// restoring a snapshot the server never saw. The dictionary works the same way: a change reports
-// the clips it staled, and its Undo names exactly those, for the server to put back to done.
-//
-// Every one of those requests goes through one writer per book (`_write`), one at a time in the
-// order they were made, and what the server answers is put in place only where no later change
-// is still waiting to go (`_answered`): an answer to an older write, landing after a newer edit
-// was made here, would otherwise put the older speaker back — and with two writes out at once the
-// server could take them in either order and keep the older one too.
+// Book cast, pronunciation and pacing; speech text stays separate from source prose. The cast is
+// the server's (`useCast` reads it); each change is a request whose answer is installed. Undo is
+// exact: a merge or removal records the lines that moved and puts back those (`attribute`).
+// Writes go one at a time per book (`_write`), and an answer is installed only where no later
+// change waits (`_answered`), so an older answer never puts back an older speaker.
 import { fetchCast } from "@/queries/cast";
 import { staleMoved } from "@/queries/effects";
 import { speechReadiness } from "@/lib/endpoints";
@@ -62,42 +52,38 @@ interface CastState {
   characters: Record<string, Character[]>;
   lexicon: Record<string, LexEntry[]>;
 }
-/** What an undo of a request-backed change does; resolves once the server agrees. */
+/** Undo of a request-backed change; resolves once the server agrees. */
 type Undo = () => Promise<void>;
-/** Which half of the cast a write sends, and so which half its answer may put in place. */
+/** Which half of the cast a write sends, and so which half its answer may install. */
 type Part = "characters" | "lexicon";
-/** One write of a book's cast or dictionary, waiting its turn. */
 interface CastWrite {
   part: Part;
-  /** the speaker a `_push` writes, so a second push of them while this one waits joins it */
+  /** the speaker a `_push` writes, so a second push of them while this waits joins it */
   speaker?: string;
   /** what this write resolves with, for a push that joins it */
   settled: Promise<unknown>;
   send: () => Promise<void>;
 }
-/** A book's cast and dictionary writes: one out at a time, the rest waiting in the order made. */
+/** A book's cast and dictionary writes: one out at a time, the rest waiting in order. */
 interface BookWrites {
   queue: CastWrite[];
   inFlight: boolean;
-  /** the loop sending them, while `inFlight` */
   running?: Promise<void>;
-  /** a read of the cast arrived while writes were going out, and was put off */
+  /** a cast read arrived mid-write and was put off */
   deferred?: boolean;
-  /** the cast is being read back once the writes have landed, and is to be installed */
+  /** the cast is to be read back and installed once the writes land */
   reading?: boolean;
   /** refused writes, settled once the cast has been read back over them */
   owed: (() => void)[];
-  /** how many of this book's writes have been answered, so a read can tell one landed under it */
+  /** writes answered so far, so a read can tell one landed under it */
   landed: number;
 }
 /**
- * Writes in flight, per store instance, kept out of the reactive state. Keyed by the raw store:
- * in development Pinia's devtools hand each action a fresh proxy of the store as `this`, so a
- * map keyed by `this` itself would start over on every call.
+ * Writes in flight, per store, outside reactive state. Keyed by the raw store: Pinia devtools hand
+ * each action a fresh proxy as `this`.
  */
 const pending = new WeakMap<object, Map<string, BookWrites>>();
-/** A speaker's counts before any line is counted: `castStats` starts each from it, and a speaker
- *  with no line is shown it. */
+/** A speaker's counts before any line is counted; `castStats` starts from it. */
 export const newStat = (first = 0): CastStat => ({
   lines: 0,
   thoughts: 0,
@@ -113,7 +99,6 @@ export interface AutoVoiceAssignment {
   matchedGender: boolean;
 }
 export const useCastStore = defineStore("cast", {
-  // No cast is here until it has been read from the server.
   state: (): CastState => ({ characters: {}, lexicon: {} }),
   getters: {
     charactersOf(s): (id: string) => Character[] {
@@ -122,7 +107,7 @@ export const useCastStore = defineStore("cast", {
     lexiconOf(s): (bookId: string) => LexEntry[] {
       return (bookId: string): LexEntry[] => s.lexicon[bookId] ?? [];
     },
-    /** Whether this book's cast has been read: `charactersOf` is empty before it and for none. */
+    /** Whether the cast is read: `charactersOf` is empty both before and for none. */
     held(s): (bookId: string) => boolean {
       return (bookId: string): boolean => bookId in s.characters;
     },
@@ -143,7 +128,7 @@ export const useCastStore = defineStore("cast", {
         for (const k of Object.keys(scriptsStore.segments)) {
           if (!k.startsWith(prefix)) continue;
           for (const seg of scriptsStore.segments[k])
-            // one entry at a time, so an entry that is currently shadowed by a longer one reads 0
+            // one entry at a time, so an entry shadowed by a longer one reads 0
             for (const e of list) uses[e.id] += hitsIn(seg.text, [e]).length;
         }
         return uses;
@@ -161,7 +146,7 @@ export const useCastStore = defineStore("cast", {
         return "";
       };
     },
-    /** Each book's cast by name, the first of a name as `find` would have it: looked up per line. */
+    /** Each book's cast by name (first of a name wins, as `find`), for per-line lookups. */
     byName(s): Record<string, Map<string, Character>> {
       const out: Record<string, Map<string, Character>> = {};
       for (const [bookId, cast] of Object.entries(s.characters)) {
@@ -170,9 +155,8 @@ export const useCastStore = defineStore("cast", {
       }
       return out;
     },
-    // a linked persona with no voice of their own is read in their character's, and anyone else
-    // with none in the book's Character voice, or else the Narrator's — `speakerVoice`, the rule
-    // the narration job keeps too
+    // the narration job's rule (`speakerVoice`): a voiceless linked persona uses their character's
+    // voice, anyone else the book's Character voice, else the Narrator's
     effectiveVoice(): (bookId: string, name: string) => EffectiveVoice {
       const endpointsStore = useEndpointsStore();
       const libraryStore = useLibraryStore();
@@ -196,10 +180,8 @@ export const useCastStore = defineStore("cast", {
       };
     },
     /**
-     * What a speaker with no voice of their own is read in — "Character voice" or "Narrator’s
-     * voice" — whether or not they have one now: what the empty choice in their picker means. A
-     * linked persona's is their character's, "Sunny’s voice" — or "Wearer’s voice" for a link
-     * the scripting model made (`masked`), whose character is a spoiler.
+     * What the empty choice in a speaker's voice picker means: "Character voice", "Narrator’s
+     * voice", or a linked persona's character's ("Wearer’s voice" when `masked`, a spoiler).
      */
     fallbackLabel(): (bookId: string, name: string) => string {
       const libraryStore = useLibraryStore();
@@ -223,12 +205,9 @@ export const useCastStore = defineStore("cast", {
       };
     },
     /**
-     * Voices the cast routes to that cannot be rendered: the voice is gone, or its endpoint is
-     * paused or has no key (`speechReadiness`). A cooldown passes on its own and is not an issue.
-     * A speaker's own voice is named for them; a Character voice slot some speaker with no voice
-     * of their own is read in is named "Character voice", or "Character voice (male)" by gender;
-     * and the Narrator's row covers everyone who falls through to the Narrator's. A linked persona
-     * with no voice of their own is read in their character's, which their character's row covers.
+     * Voices the cast routes to that cannot render: gone, or endpoint paused or keyless
+     * (`speechReadiness`); a cooldown is not an issue. Fallback slots are named "Character voice"
+     * (by gender if split) or covered by the Narrator's or the persona's character's row.
      */
     routingIssues(): (bookId: string) => RoutingIssue[] {
       const endpointsStore = useEndpointsStore();
@@ -274,7 +253,7 @@ export const useCastStore = defineStore("cast", {
       return (bookId: string): Record<string, CastStat> => {
         const stats: Record<string, CastStat> = {};
         for (const c of libraryStore.chapters[bookId] ?? [])
-          // what a speaker is given to say, as `lineCounts` counts it, one chapter's count at a time
+          // spoken lines, as `lineCounts` counts them, one chapter at a time
           for (const [name, t] of chapterTally(bookId, c.id).spoken) {
             const st = (stats[name] ??= newStat(c.id));
             st.lines += t.lines;
@@ -287,8 +266,7 @@ export const useCastStore = defineStore("cast", {
     },
     mergeSuggestions(s): (bookId: string) => MergeSuggestion[] {
       return (bookId: string): MergeSuggestion[] => {
-        // every name normalized once rather than per pair, and read off the reactive cast once: a
-        // 350-speaker cast is 120k pairs
+        // names normalized once, not per pair: a 350-speaker cast is 120k pairs
         const cast = (s.characters[bookId] ?? [])
           .filter((c) => c.name !== "Narrator")
           .map(({ name, major, isNew, keep, aliases }) => {
@@ -304,10 +282,8 @@ export const useCastStore = defineStore("cast", {
               noAliases: aliases.length === 0,
             };
           });
-        // `keep` is the user saying "this name is its own speaker". Without it here the
-        // suggestion came straight back on the next read, so dismissing it settled nothing —
-        // and the review inbox would have listed the same decision for ever. A major speaker is
-        // never the one merged away.
+        // `keep` means "this name is its own speaker", so a dismissed suggestion stays dismissed.
+        // A major speaker is never the one merged away.
         const minor = cast.filter((c) => !c.major && !c.keep);
         const out: MergeSuggestion[] = [];
         // one suggestion per name, the first pair that makes it
@@ -337,15 +313,9 @@ export const useCastStore = defineStore("cast", {
       return libraryService();
     },
     /**
-     * The cast as the server holds it, in place of what was here. What `useCast` installs.
-     *
-     * A read that arrives while this book has a write out or waiting is put off rather than
-     * installed: it may have been read before the write landed, and would put back what was just
-     * changed here. The cast is read again once the writes have landed (`_drain`).
-     *
-     * `readAt` is `_readAt` taken as the read was asked for. A read that a write was answered
-     * under, arriving after every write has landed, was read before that write and may not hold
-     * it: it is not installed, and the cast is read again.
+     * Install the server's cast (what `useCast` calls). A read arriving while a write is out or
+     * waiting is put off and redone after `_drain`. `readAt` is `_readAt` when the read was asked;
+     * if a write was answered since, the read may predate it, so it is dropped and redone.
      */
     _install(bookId: string, { characters, lexicon }: Cast, readAt?: number): void {
       const w = pending.get(toRaw(this))?.get(bookId);
@@ -360,15 +330,11 @@ export const useCastStore = defineStore("cast", {
       this.characters[bookId] = characters;
       this.lexicon[bookId] = lexicon;
     },
-    /**
-     * The server's answer to one of this book's writes, put in place — each half only while no
-     * later write of it waits to go. A change made here while this write was out has a write of
-     * its own waiting, and that one's answer is the one kept; the server took this one first.
-     */
     /** Where this book's writes are, for a read to name when it lands (`_install`). */
     _readAt(bookId: string): number {
       return pending.get(toRaw(this))?.get(bookId)?.landed ?? 0;
     },
+    /** Install a write's answer, each half only while no later write of it waits. */
     _answered(bookId: string, { characters, lexicon }: Partial<Cast>): void {
       const queue = pending.get(toRaw(this))?.get(bookId)?.queue ?? [];
       if (characters && !queue.some((w) => w.part === "characters"))
@@ -376,12 +342,9 @@ export const useCastStore = defineStore("cast", {
       if (lexicon && !queue.some((w) => w.part === "lexicon")) this.lexicon[bookId] = lexicon;
     },
     /**
-     * Send one write of this book's cast or dictionary in its turn, and resolve with what `send`
-     * does — or null when the server refused it, once that has been said and the cast read back.
-     *
-     * `send` makes the request as things stand here when its turn comes, and hands what it is
-     * answered with to `_answered`. A push of a speaker (`speaker`) whose earlier push is still
-     * waiting joins that one, which sends them as they then are.
+     * Send one cast or dictionary write in its turn; resolves as `send` does, or null when refused
+     * (said, and the cast read back). `send` builds the request when its turn comes and passes the
+     * answer to `_answered`. A push of a speaker already waiting joins that push.
      */
     _write<T>(
       bookId: string,
@@ -407,7 +370,7 @@ export const useCastStore = defineStore("cast", {
           try {
             resolve(await send());
           } catch (cause) {
-            // the server's cast wins, read back once nothing else is waiting to go
+            // the server's cast wins, read back once nothing else is waiting
             toastFailure(failure, cause);
             book.deferred = true;
             book.owed.push(() => resolve(null));
@@ -427,8 +390,7 @@ export const useCastStore = defineStore("cast", {
             await w.queue.shift()!.send();
             continue;
           }
-          // Every write has landed, and a read was put off or a write refused meanwhile: the cast
-          // is read again now. A write made while it is out puts this read off in turn.
+          // All writes landed and a read was put off or a write refused: read again now.
           w.deferred = false;
           w.reading = true;
           const owed = w.owed.splice(0);
@@ -450,14 +412,14 @@ export const useCastStore = defineStore("cast", {
       const w = pending.get(toRaw(this))?.get(bookId);
       while (w?.inFlight) await w.running;
     },
-    // A change made here for another store — an import — is written in the same step that makes
-    // it, so no answer to an earlier write can land between the two and put the change back.
-    /** A speaker this book's cast does not have yet, added here and written; resolves as `_push`. */
+    // Changes made for another store (an import) are written in the same step, so no earlier
+    // answer can land between and undo them.
+    /** Add a new speaker here and write it; resolves as `_push`. */
     _addSpeaker(bookId: string, c: Character): Promise<boolean> {
       (this.characters[bookId] ??= []).push(c);
       return this._push(bookId, c.name);
     },
-    /** Some of one speaker's fields, changed here and written; false when there is no such speaker. */
+    /** Change some of a speaker's fields and write them; false when there is no such speaker. */
     _patchSpeaker(
       bookId: string,
       name: string,
@@ -466,14 +428,13 @@ export const useCastStore = defineStore("cast", {
       const c = this.characters[bookId]?.find((x) => x.name === name);
       if (!c) return Promise.resolve(false);
       Object.assign(c, patch);
-      // a link set or taken off by hand is the person's: the model's finding goes, as on the server
+      // a link set or removed by hand drops the model's finding, as on the server
       if ("personaOf" in patch) delete c.masked;
       return this._push(bookId, name);
     },
     /**
-     * The terms of these this book's dictionary does not have yet, added under the next ids, the
-     * clips that now read them marked stale, and the dictionary written. Returns how many were
-     * added and the write, which resolves as `_pushLexicon` does — null at once when none were.
+     * Add the new terms under the next ids, stale the clips that now read them, and write the
+     * dictionary. Returns the count and the write (`_pushLexicon`), null at once when none.
      */
     _addTerms(
       bookId: string,
@@ -490,28 +451,22 @@ export const useCastStore = defineStore("cast", {
       this._lexRestale(bookId);
       return { added, pushed: this._pushLexicon(bookId) };
     },
-    /** One term, as `next` has it, in place of the entry of the same term; the caller writes it. */
+    /** Replace the entry of the same term; the caller writes it. */
     _replaceTerm(bookId: string, next: LexEntry): void {
       const list = this.lexicon[bookId] ?? [];
       const i = list.findIndex((e) => e.term === next.term);
       if (i >= 0) list[i] = next;
     },
-    /** A book that is gone takes its cast and its dictionary with it. */
+    /** A removed book takes its cast and dictionary with it. */
     _dropBook(bookId: string): void {
       delete this.characters[bookId];
       delete this.lexicon[bookId];
     },
     /**
-     * Write one speaker to the server as they stand here when the write's turn comes.
-     *
-     * For every change that moves no lines. What comes back is the cast as the server holds it,
-     * which is what the store then holds (`_answered`); a change the server refused is read back
-     * over. Resolves true once the server has the speaker, false when it refused them.
-     *
-     * `after` is the write of a chapter whose lines brought the speaker in (`history._rewrite`):
-     * their turn waits for it, and when it was refused they are written only if some line here
-     * still names them — otherwise they are taken off here again, never having been the server's,
-     * and this resolves false.
+     * Write one speaker as they stand when the write's turn comes; for changes that move no lines.
+     * True once the server has them, false when refused (read back over). `after` is the chapter
+     * write that brought them in (`history._rewrite`): if it was refused and no line still names
+     * them, they are taken off here again and this resolves false.
      */
     async _push(bookId: string, name: string, after?: Promise<boolean>): Promise<boolean> {
       const scriptsStore = useScriptsStore();
@@ -538,7 +493,7 @@ export const useCastStore = defineStore("cast", {
       );
       return ok ?? false;
     },
-    /** A speaker taken off on the server, their lines read by the Narrator; null when refused. */
+    /** Remove a speaker on the server, their lines going to the Narrator; null when refused. */
     _delete(bookId: string, name: string): Promise<MovedLines | null> {
       return this._write(bookId, "characters", "remove this speaker", async () => {
         const result = await this._service().deleteCharacter(bookId, name);
@@ -546,28 +501,23 @@ export const useCastStore = defineStore("cast", {
         return result;
       });
     },
-    /** A speaker put back as `c` on exactly these lines, the undo of a merge or a removal. */
+    /** Put a speaker back as `c` on exactly these lines: the undo of a merge or removal. */
     _attribute(bookId: string, c: Character, lines: ChapterLines[], failure: string) {
       return this._write(bookId, "characters", failure, async () => {
         this._moved(bookId, await this._service().attribute(bookId, c, lines), c.name);
         return true;
       });
     },
-    /**
-     * Lines the server moved, applied here: the speaker on each, and the revision the chapter's
-     * script is at now, so the next edit of it names the right one.
-     */
+    /** Apply lines the server moved: the speaker on each, and each chapter's new revision. */
     _moved(bookId: string, { characters, moved }: MovedLines, speaker: string): void {
       const scriptsStore = useScriptsStore();
 
       this._answered(bookId, { characters });
-      // a chapter whose script has not been read has nothing to move, and reads its revision
-      // with its script
+      // an unread chapter has nothing to move and reads its revision with its script
       for (const { chapterId, ids, revision } of moved)
         scriptsStore._applyLines(bookId, chapterId, ids, { speaker }, revision);
     },
-    /** Add any speaker this chapter uses that the cast does not have yet. Returns their names, so
-     *  an undo of whatever brought them in can take exactly those back off again. */
+    /** Add speakers this chapter uses that the cast lacks. Returns their names for an undo. */
     _absorbCast(bookId: string, chId: number): string[] {
       const scriptsStore = useScriptsStore();
 
@@ -580,13 +530,13 @@ export const useCastStore = defineStore("cast", {
         }
       return added;
     },
-    /** Take those speakers off again — but never one that some line still gives words to. */
+    /** Take those speakers off again, but never one some line still gives words to. */
     _dropSpeakers(bookId: string, names: string[]): void {
       const scriptsStore = useScriptsStore();
 
       if (!names.length) return;
       const gone = new Set(names);
-      // every line that names them, read aloud or not: a line marked as site text still does
+      // every line naming them, spoken or not: site text still names a speaker
       const lines = scriptsStore.lineCounts(bookId, null, true);
       const dropping = (this.characters[bookId] ?? []).filter(
         (c) => gone.has(c.name) && !lines[c.name],
@@ -594,7 +544,7 @@ export const useCastStore = defineStore("cast", {
       this.characters[bookId] = (this.characters[bookId] ?? []).filter(
         (c) => !dropping.includes(c),
       );
-      // no line names them any more, so taking them off the server's cast moves nothing
+      // no line names them, so removing them on the server moves nothing
       for (const c of dropping) void this._delete(bookId, c.name);
     },
     /** Chapter length is the sum of what is actually rendered, plus the silence stitched between. */
@@ -609,10 +559,8 @@ export const useCastStore = defineStore("cast", {
       });
     },
     // ---------- pronunciation & pacing ----------
-    // Two ways to change how a book sounds without editing a word of it. The dictionary rewrites a
-    // term on its way to the endpoint, so the clips that were rendered with the old spelling no
-    // longer match and are marked stale. A pause is stitched between clips instead of rendered, so
-    // changing one re-times the chapter and invalidates nothing.
+    // The dictionary rewrites terms on the way to the endpoint, so clips with the old spelling go
+    // stale. A pause is stitched between clips, so changing one re-times and invalidates nothing.
     _lexSnapshot(bookId: string): () => void {
       const scriptsStore = useScriptsStore();
 
@@ -623,7 +571,7 @@ export const useCastStore = defineStore("cast", {
         audio();
       };
     },
-    /** Clips that would now be sent different words read the old pronunciation — mark them stale. */
+    /** Mark stale the clips that would now be sent different words. */
     _lexRestale(bookId: string): number {
       const scriptsStore = useScriptsStore();
 
@@ -636,17 +584,16 @@ export const useCastStore = defineStore("cast", {
       const uiStore = useUiStore();
 
       const n = this._lexRestale(bookId);
-      // The server stales the same clips by the same rule and says which; an Undo names exactly
-      // those back to it, so it can put them back to done rather than leave them for re-narration.
+      // The server stales the same clips and names them; Undo names them back so the server can
+      // restore them to done rather than leave them for re-narration.
       const pushed = this._pushLexicon(bookId);
       uiStore.toast(label, {
         kind: n ? "warn" : "info",
         description: n
           ? `${n} rendered line${n === 1 ? "" : "s"} still read the old pronunciation — re-narrate to apply.`
           : "The book text is unchanged; the endpoint is sent the respelling.",
-        // An Undo clicked before the change has been answered waits for it: it has to name the
-        // lines it staled, and the answer installs the new list and marks those lines here —
-        // landing after the revert, it would undo the Undo.
+        // An Undo before the change is answered waits for it: landing after the revert, the answer
+        // would undo the Undo.
         undo: () =>
           pushed.then(async (staled) => {
             revert();
@@ -655,12 +602,9 @@ export const useCastStore = defineStore("cast", {
       });
     },
     /**
-     * The dictionary as it now stands here, written whole.
-     *
-     * The server stales every clip that now reads the old pronunciation, and puts back to done
-     * those `restore` names that read this one again. Both come back with the revision each
-     * chapter's script is at now, which is adopted so the next edit of it names the right one.
-     * Returns the lines it staled, for an Undo to name; null when it refused.
+     * Write the dictionary whole. The server stales clips that read the old pronunciation and
+     * restores to done those `restore` names that match again, with each chapter's new revision.
+     * Returns the lines staled, for an Undo; null when refused.
      */
     _pushLexicon(bookId: string, restore?: ChapterLines[]): Promise<ChapterLines[] | null> {
       const scriptsStore = useScriptsStore();
@@ -672,8 +616,8 @@ export const useCastStore = defineStore("cast", {
           restore,
         );
         this._answered(bookId, { lexicon: entries });
-        // usually already stale here by the same rule; this catches a clip only the server had.
-        // The lines and revisions are the server's whether or not a later list is waiting to go.
+        // usually already stale here; this catches a clip only the server had. The lines and
+        // revisions are the server's even if a later list is waiting.
         for (const { chapterId, ids, revision } of stale)
           scriptsStore._applyLines(bookId, chapterId, ids, {}, revision);
         for (const { chapterId, revision } of restored)
@@ -721,7 +665,7 @@ export const useCastStore = defineStore("cast", {
     setPause(bookId: string, chId: number, segId: number, pause: number | null): void {
       const scriptsStore = useScriptsStore();
 
-      // the pacing of a line is part of the script, so a nudge is written as an edit of it
+      // a line's pacing is part of the script, so it is written as an edit
       if (!scriptsStore._setPause(bookId, chId, segId, pause)) return;
       this._retime(bookId, chId);
       scriptsStore._commit(bookId, chId);
@@ -742,14 +686,9 @@ export const useCastStore = defineStore("cast", {
       return this._pacingChanged(bookId, null);
     },
     /**
-     * The book's pacing changed here; re-time its chapters to match.
-     *
-     * A chapter's clips are only here once its script has been read, and re-timing one that has not
-     * been would give it a length of nothing but silence — so only those are re-timed here, for a
-     * length that moves as the slider does, and the pacing is written to the server, which re-times
-     * every narrated chapter from its clips. The lengths it answers with are the ones the store
-     * keeps. A new length for the pauses inside a line stales the clips of the lines that hold one,
-     * which the server names and `_writeSettings` marks.
+     * Re-time the chapters whose scripts are here (an unread one would be all silence) so lengths
+     * follow the slider, and write the pacing; the server re-times every narrated chapter and its
+     * lengths are kept. Changed in-line pauses stale clips, which `_writeSettings` marks.
      */
     async _pacingChanged(bookId: string, pacing: Pacing | null): Promise<void> {
       const libraryStore = useLibraryStore();
@@ -794,11 +733,11 @@ export const useCastStore = defineStore("cast", {
         return;
       }
       if (!cast.some((x) => x.name === from)) return;
-      // The server moves the lines in every chapter and says which; an undo renames back.
+      // the server moves the lines in every chapter; an undo renames back
       const undo = await this._rename(bookId, from, to);
       if (undo) uiStore.toast(`Renamed “${from}” to “${to}”`, { undo });
     },
-    /** A rename on the server, applied here. Resolves to the undo — a rename back — or null. */
+    /** Rename on the server and here. Resolves to the undo (a rename back), or null. */
     async _rename(bookId: string, from: string, to: string): Promise<Undo | null> {
       const ok = await this._write(bookId, "characters", "rename this speaker", async () => {
         this._moved(bookId, await this._service().renameCharacter(bookId, from, to), to);
@@ -821,9 +760,8 @@ export const useCastStore = defineStore("cast", {
         );
     },
     /**
-     * A merge on the server, applied here. Resolves to how many lines moved and the undo, which
-     * puts the speaker back on exactly those lines — a merge folds aliases in and cannot be told
-     * apart from ones that were already there, so the undo is recorded rather than inverted.
+     * Merge on the server and here. Resolves to lines moved and an undo that puts the speaker back
+     * on exactly those lines: merged aliases cannot be told apart, so the undo is recorded.
      */
     async _merge(
       bookId: string,
@@ -843,7 +781,7 @@ export const useCastStore = defineStore("cast", {
       return {
         lines: result.moved.reduce((n, m) => n + m.ids.length, 0),
         undo: async () => {
-          // the speaker as they were, on the lines that moved, and the other's aliases as they were
+          // the speaker as they were on the moved lines, and the other's aliases as they were
           if (!(await this._attribute(bookId, was.src, result.moved, "undo the merge"))) return;
           const now = this.characters[bookId]?.find((c) => c.name === into);
           if (now) {
@@ -872,10 +810,9 @@ export const useCastStore = defineStore("cast", {
           },
         );
     },
-    /** A speaker typed in by hand, before any line is attributed to them — so they are not "new"
-     *  in the review sense (nothing detected them, you did) and start as main cast. Returns false
-     *  when the name is taken; the caller should offer to merge instead. With `personaOf`, they
-     *  join as a persona of that character, which the server may refuse (`personaRefusal`). */
+    /** A speaker typed in by hand: not "new" in the review sense, and starts as main cast. False
+     *  when the name is taken (offer a merge). With `personaOf` they join as that character's
+     *  persona, which the server may refuse (`personaRefusal`). */
     addCharacter(bookId: string, name: string, personaOf?: string): boolean {
       const uiStore = useUiStore();
 
@@ -904,44 +841,37 @@ export const useCastStore = defineStore("cast", {
       );
       return true;
     },
-    /** Patch the fields that are the speaker's own description of themselves — gender, notes,
-     *  delivery style, main/minor. Nothing here moves a line, so none of it needs a snapshot. */
+    /** Patch the speaker's own description (gender, notes, style, main/minor). Moves no line. */
     async updateCharacter(bookId: string, name: string, patch: Partial<Character>): Promise<void> {
       const c = this.characters[bookId]?.find((x) => x.name === name);
       if (!c) return;
       const { name: _name, aliases: _aliases, ...rest } = patch;
-      // a link set or taken off by hand is the person's: the model's finding goes, as on the server
+      // a link set or removed by hand drops the model's finding, as on the server
       const relinked = "personaOf" in rest && rest.personaOf !== c.personaOf;
       Object.assign(c, rest);
       if (relinked) delete c.masked;
       await this._push(bookId, name);
     },
-    /** Take the scripting model's "masked" finding off a speaker; their link, if any, stays. */
+    /** Take the model's "masked" finding off a speaker; their link stays. */
     async unmask(bookId: string, name: string): Promise<void> {
       const c = this.characters[bookId]?.find((x) => x.name === name);
       if (!c?.masked) return;
       delete c.masked;
       await this._push(bookId, name);
     },
-    /** Give a speaker a voice, or take theirs away so they fall back to the Character voice or the
-     *  Narrator's. What every voice picker writes through: a picker bound straight to `c.voice`
-     *  would change this copy and never tell the server, and the choice would be gone on the next
-     *  read. */
+    /** Give a speaker a voice, or null to fall back. Every picker writes through this: binding
+     *  `c.voice` directly would never reach the server. */
     setVoice(bookId: string, name: string, voice: VoiceRef | null): Promise<void> {
       return this.updateCharacter(bookId, name, { voice });
     },
     /**
-     * Put a voice effect on all of a speaker's lines (an effect's id), or take theirs off (null).
-     * Their clips already made show in the old-sound count, which is read again once it is saved.
-     * True once the server has it.
+     * Put a voice effect on a speaker's lines, or null to remove it. Existing clips show in the
+     * reread old-sound count. True once the server has it.
      */
     setEffect(bookId: string, name: string, id: string | null): Promise<boolean> {
       return this._setChoice(bookId, name, "effect", id);
     },
-    /**
-     * The thought effect a speaker's thought lines get: an effect's id, "none", or null to follow
-     * the book's. True once the server has it.
-     */
+    /** A speaker's thought effect: an effect id, "none", or null to follow the book. */
     setThoughts(bookId: string, name: string, choice: ThoughtChoice | null): Promise<boolean> {
       return this._setChoice(bookId, name, "thoughts", choice);
     },
@@ -959,10 +889,7 @@ export const useCastStore = defineStore("cast", {
       if (ok) void staleMoved(bookId);
       return ok;
     },
-    /**
-     * An effect removed takes every speaker's choice of it, in every cast held here, as the server
-     * has done in the same delete. Returns who had it, and as what.
-     */
+    /** Clear a removed effect from every held cast, as the server did. Returns who had it, as what. */
     _dropEffect(id: string): SpeakerEffectUse[] {
       const out: SpeakerEffectUse[] = [];
       for (const [bookId, cast] of Object.entries(this.characters))
@@ -975,7 +902,7 @@ export const useCastStore = defineStore("cast", {
         }
       return out;
     },
-    /** Dismiss a merge suggestion: the name stays as its own speaker, and stops being new. */
+    /** Dismiss a merge suggestion: the name stays its own speaker and stops being new. */
     async keepCharacter(bookId: string, name: string): Promise<void> {
       const c = this.characters[bookId]?.find((x) => x.name === name);
       if (!c) return;
@@ -983,9 +910,8 @@ export const useCastStore = defineStore("cast", {
       c.keep = true;
       await this._push(bookId, name);
     },
-    /** An alias is a name the same speaker is called by. It is matching metadata only — moving
-     *  lines from one name to another is `mergeCharacter`, which is why an existing speaker's name
-     *  is refused here. */
+    /** An alias is matching metadata only; moving lines is `mergeCharacter`, so an existing
+     *  speaker's name is refused. */
     addAlias(bookId: string, name: string, alias: string): boolean {
       alias = (alias ?? "").trim();
       const cast = this.characters[bookId] ?? [];
@@ -1017,12 +943,9 @@ export const useCastStore = defineStore("cast", {
       return this.removeMany(bookId, [name]);
     },
     /**
-     * Take speakers off the cast, their lines read by the Narrator, under one toast and one Undo.
-     *
-     * One request per speaker, in turn: the first the server refuses is said and ends the run, so a
-     * server that is down says so once rather than once per name. What was removed before it stays
-     * removed, and the Undo puts back exactly those. The Narrator, and a name not in the cast, are
-     * passed over — the server refuses the one and has nothing to do for the other.
+     * Remove speakers (lines go to the Narrator) under one toast and Undo. One request each; the
+     * first refusal is said and ends the run, and Undo restores those removed before it. The
+     * Narrator and unknown names are skipped.
      */
     async removeMany(bookId: string, names: Iterable<string>): Promise<void> {
       const uiStore = useUiStore();
@@ -1044,10 +967,7 @@ export const useCastStore = defineStore("cast", {
         },
       });
     },
-    /**
-     * A removal on the server, applied here. Resolves to how many lines the Narrator now reads and
-     * the undo, which puts the speaker back as they were on exactly those lines; null when refused.
-     */
+    /** Remove on the server and here. Resolves to lines now the Narrator's and an exact undo. */
     async _remove(bookId: string, name: string): Promise<{ lines: number; undo: Undo } | null> {
       const c = this.characters[bookId]?.find((x) => x.name === name);
       if (!c) return null;
@@ -1071,7 +991,7 @@ export const useCastStore = defineStore("cast", {
     autoAssignPlan(bookId: string): AutoVoiceAssignment[] {
       const endpointsStore = useEndpointsStore();
 
-      // pool = voices on enabled endpoints, grouped by the gender tag the endpoint's voice list carries
+      // pool: voices on enabled endpoints, grouped by the voice list's gender tag
       const all = endpointsStore.enabledEndpoints.flatMap((e) =>
         e.voices.map((v) => ({ ref: voiceRef(e.id, v.id), gender: v.gender })),
       );
@@ -1084,8 +1004,7 @@ export const useCastStore = defineStore("cast", {
       const used: Partial<Record<Gender, number>> = {};
       const plan: AutoVoiceAssignment[] = [];
       const byName = this.byName[bookId] ?? new Map<string, Character>();
-      // a cast that has not been read yet has no one to assign; a linked persona with no voice of
-      // their own is read in their character's, which is left for a person to change
+      // an unread cast has no one to assign; a voiceless linked persona keeps their character's
       for (const c of this.characters[bookId] ?? []) {
         if (c.voice || c.name === "Narrator" || personaOwner(c, byName)) continue;
         const byG = byGender[c.gender];
@@ -1122,7 +1041,7 @@ export const useCastStore = defineStore("cast", {
       uiStore.toast(`${plan.length} unvoiced speaker${plan.length === 1 ? "" : "s"} assigned`, {
         kind: "success",
         description: "Existing voice assignments were left alone.",
-        // every one of them had no voice of their own, so that is what they go back to
+        // all of them had no voice of their own, so that is what they go back to
         undo: () => {
           for (const name of assigned) {
             const c = this.characters[bookId]?.find((x) => x.name === name);

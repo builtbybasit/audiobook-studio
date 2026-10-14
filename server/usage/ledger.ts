@@ -1,14 +1,6 @@
-// The usage ledger on the server: a request a provider sent, priced and appended.
-//
-// A job hands over what the provider reported (`~/providers/sent`) with the book, chapter and label
-// it was for, and this module prices it with the same engine the browser uses (`@/lib/pricing`), at
-// the rates in force the moment it completed, and appends the row. Nothing here updates a row:
-// the receipt on it is frozen, and spending is always a sum over what has been appended — see the
-// header of `~/db/schema/usage.ts`.
-//
-// Reading is here too, because a total that does not come from the same rows the Activity list
-// shows is a second opinion about what was spent. The Endpoints page's totals and charts are summed
-// here over every row in their range, never over a page of them: a narration run sends thousands.
+// The usage ledger: prices each sent request with `@/lib/pricing` at the rates in force when it
+// completed, and appends it. Rows are never updated (see `~/db/schema/usage.ts`). Totals are read
+// here too, summed in SQL over every row in range, so they match the Activity list.
 import {
   and,
   count,
@@ -63,42 +55,24 @@ type Sent = SentScript | SentSpeech | SentTranscription;
 
 /** Which work a request was for. The chapter by its uid, which a renumbering never moves. */
 export interface RequestFor {
-  /** null for a request no book asked for — a voice sample on the Endpoints page */
+  /** null for a request no book asked for (a voice sample on the Endpoints page) */
   bookId: string | null;
   chapterUid: string | null;
-  /** what the Activity list names it; frozen, so it still reads after the chapter is gone */
+  /** frozen, so it still reads after the chapter is gone */
   label: string;
   /** when the work was asked for; the request's own start when it went straight out */
   queuedAt?: number;
-  /**
-   * The voice a speech request was spoken in, as `<endpoint id>/<voice id>`: the first billed one
-   * spoken in a cloned voice whose provider charges at first use settles that fee too.
-   */
+  /** `<endpoint id>/<voice id>`; a clone's first billed line settles a first-use fee. */
   voiceRef?: string;
-  /**
-   * The reasoning level a scripting request asked for, as the run it belongs to was queued with —
-   * not the profile's now. What its reasoning tokens are read against for the next estimate.
-   */
+  /** The reasoning level the run was queued with, not the profile's now. */
   reasoning?: ReasoningEffort | null;
-  /**
-   * What the request held against the budgets while it was out, at its undiscounted worst case:
-   * kept on a row whose cost is unknown, which the budgets count in its place.
-   */
+  /** The undiscounted worst case held against budgets; counted in place of an unknown cost. */
   held?: number;
-  /**
-   * The card charges nothing for this request — its worst case was $0 — so one whose cost cannot
-   * be worked out (no usage reported, or cancelled once it was out) is known to be free rather
-   * than unknown. Absent, a `held` of $0 says so.
-   */
+  /** The card charges nothing, so an unknowable cost is $0. Absent, `held === 0` says so. */
   free?: boolean;
 }
 
-/**
- * What a request costs whose charge nobody here can work out — answered without saying what it
- * used, or cancelled once it was out: unknown, never $0, which would have the budgets count a paid
- * request as free and its row keeps what it held for them to count instead; unless the card
- * charges nothing for it at all.
- */
+/** A charge nobody can work out is unknown (null), never $0, unless the card charges nothing. */
 const unknownCost = (work: RequestFor): number | null =>
   (work.free ?? work.held === 0) ? 0 : null;
 
@@ -112,11 +86,7 @@ const errorOf = (sent: Sent): ReqError | undefined =>
       }
     : undefined;
 
-/**
- * Append one settled request as it stands. Everything a job sends goes through `settleScript` or
- * `settleSpeech`, which price it first; this is for a row that arrives with its receipt already
- * decided — the demo's history of its simulated endpoints, which nothing billed.
- */
+/** Append a request whose receipt is already decided; jobs go through the `settle*` functions. */
 export function append(
   db: Db | Tx,
   r: Omit<RequestRecord, "id" | "chapterId">,
@@ -142,13 +112,8 @@ function timing(sent: Sent, work: RequestFor) {
 }
 
 /**
- * Price one scripting request against `profile`'s card and append it. A request that reported no
- * usage costs nothing when it was refused — no chat completion is billed for an error. One that
- * was answered — done, or a 2xx this server could not use — was billed for something nobody here
- * knows, and so may one cancelled once it was out: either costs what nobody knows (`unknownCost`).
- * A provider that says what the request cost — OpenRouter does, at whichever of its providers
- * served it — is taken at its word; the figure worked out from the card is kept on the receipt
- * beside it.
+ * Price a scripting request and append it. No usage: a refusal costs $0 (errors aren't billed), an
+ * answered or cancelled one is unknown. A provider-reported cost (OpenRouter) wins over the card's.
  */
 export function settleScript(
   db: Db | Tx,
@@ -203,13 +168,8 @@ export function settleScript(
 }
 
 /**
- * Price one speech request against `endpoint`'s card and append it. A request the provider says it
- * did not bill (`sent.billed`: a refusal, no answer, a refusal inside a 200) is still a row, with
- * everything it sent counted, and costs nothing — each line of its receipt says why. One that was
- * billed but failed is charged for what it sent on an endpoint that bills what is sent —
- * characters, bytes, requests — and for the audio it reported on one that bills audio, which is
- * nothing when it reported none. One cancelled once it was out costs what nobody knows
- * (`uncertain`).
+ * Price a speech request and append it. Unbilled (`sent.billed` false) costs $0, units kept;
+ * billed-but-failed is charged for what it sent or the audio it reported; cancelled is unknown.
  */
 export function settleSpeech(
   db: Db | Tx,
@@ -241,8 +201,7 @@ export function settleSpeech(
       status: sent.status,
       attempts: sent.attempts,
       ...timing(sent, work),
-      // every quantity counted, not only the billed one: an endpoint that changes billing model
-      // later still has history worth comparing
+      // every quantity, not only the billed one, so a later billing-model change can compare
       usage: {
         chars: units.chars,
         bytes: units.bytes,
@@ -262,11 +221,7 @@ export function settleSpeech(
   );
 }
 
-/**
- * Price one transcription request by the minute of audio it sent, against `transcriber`'s card,
- * and append it. One that was not billed (`sent.billed`) is a row that costs nothing, and one
- * cancelled once it was out a row whose cost nobody knows, as speech is.
- */
+/** Price a transcription request per audio minute; unbilled and cancelled as for speech. */
 export function settleTranscription(
   db: Db | Tx,
   transcriber: Transcriber,
@@ -306,11 +261,7 @@ export function settleTranscription(
 
 // ---------- what a cloned voice costs ----------
 
-/**
- * The ledger row a clone's fee is: the endpoint's, not a book's, like a voice sample on its tab.
- * A clone cancelled once it was out is a row at a cost nobody knows, holding the fee for the
- * budgets to count in its place.
- */
+/** A clone fee row, on the endpoint, not a book. Cancelled: unknown cost, holding the fee. */
 function appendFee(
   db: Db | Tx,
   endpoint: Pick<Endpoint, "id">,
@@ -319,7 +270,7 @@ function appendFee(
   at: number,
   status: "done" | "cancelled" = "done",
 ): RequestRecord {
-  // credits the plan prices are a charge this ledger cannot put a figure on, and says so
+  // a fee priced in plan credits has no `usd`, so its cost is unknown
   const cost = status === "cancelled" ? null : fee.usd;
   return append(
     db,
@@ -345,11 +296,7 @@ function appendFee(
   );
 }
 
-/**
- * What making a voice costs, as its provider's `cloning.fee` says: appended now when the provider
- * charges as the voice is made, or set aside for the first line spoken in it when it charges then.
- * Nothing when it charges nothing.
- */
+/** Charge `cloning.fee` now when charged on making, else park it for the voice's first line. */
 export function settleClone(
   db: Db,
   endpoint: Pick<Endpoint, "id">,
@@ -376,10 +323,8 @@ export function settleClone(
 }
 
 /**
- * A clone cancelled once its upload was out: the provider may have made the voice, and charged for
- * it as it did, which nobody here can know — a row at an unknown cost where the provider charges
- * as a voice is made. One that charges at first use charges nothing for a voice never spoken in,
- * and nobody here has the id of one it may have made, so there is nothing to record.
+ * A clone cancelled after upload may still have been made: an unknown-cost row when charged on
+ * making. Charged at first use, there is nothing to record (no voice id, never spoken).
  */
 export function settleCancelledClone(
   db: Db,
@@ -391,13 +336,12 @@ export function settleCancelledClone(
   if (fee?.when === "made") appendFee(db, endpoint, fee, `Voice made · ${title}`, at, "cancelled");
 }
 
-/** A fee waiting on the first line spoken in this voice, charged now and once. */
 function settleFirstUse(db: Db | Tx, endpoint: Endpoint, voiceRef: string, at: number): void {
   const prefix = `${endpoint.id}/`;
   if (!voiceRef.startsWith(prefix)) return;
   const voiceId = voiceRef.slice(prefix.length);
   const where = and(eq(cloneFees.endpointId, endpoint.id), eq(cloneFees.voiceId, voiceId));
-  // taken and charged together, so two lines settling at once charge it once between them
+  // delete + append in one transaction, so two lines settling at once charge it once
   db.transaction((tx) => {
     const waiting = tx.delete(cloneFees).where(where).returning().get();
     if (waiting) appendFee(tx, endpoint, waiting, `Voice first spoken · ${waiting.title}`, at);
@@ -412,7 +356,6 @@ export const NOT_BILLED =
 export const CANCELLED =
   "cancelled once it was out: whether the provider charged for it, and how much, is not known";
 
-/** The charge for one speech or transcription request, as it ended; see `settleSpeech`. */
 function chargeOf(
   priced: SpeechCharge,
   sent: SentSpeech | SentTranscription,
@@ -422,10 +365,7 @@ function chargeOf(
   return sent.billed ? priced : unbilled(priced);
 }
 
-/**
- * A charge the provider will not make: the same lines and quantities, each at nothing and saying
- * why, so the row still shows what was sent and what it would have cost had it gone through.
- */
+/** Same lines at $0, each saying why, so the row still shows what it would have cost. */
 function unbilled(charge: SpeechCharge): SpeechCharge {
   return {
     ...charge,
@@ -436,11 +376,7 @@ function unbilled(charge: SpeechCharge): SpeechCharge {
   };
 }
 
-/**
- * A charge nobody here can know: the lines as they would have been had the request gone through,
- * each saying why it may not stand, and no total — the row keeps what it held, which the budgets
- * count in its place.
- */
+/** Same lines, no total; the budgets count the row's `held` instead. */
 function uncertain(charge: SpeechCharge): SpeechCharge {
   return {
     ...charge,
@@ -451,7 +387,7 @@ function uncertain(charge: SpeechCharge): SpeechCharge {
   };
 }
 
-/** The uid of chapter `chapterId` of `bookId`, which is what a ledger row keeps; null if none. */
+/** Ledger rows keep the chapter's uid, which survives renumbering. */
 export function chapterUidOf(db: Db | Tx, bookId: string, chapterId: number): string | null {
   return (
     db
@@ -465,10 +401,8 @@ export function chapterUidOf(db: Db | Tx, bookId: string, chapterId: number): st
 // ---------- reading ----------
 
 /**
- * A book's spending, from the ledger and the queue. `exceptJob` leaves one job's reservation out,
- * which is how a running job asks whether the rest of the book leaves room for what it holds. A
- * request whose cost is unknown is counted at what it held while it was out (`held`), and is one
- * of the `unpriced`.
+ * A book's spending from the ledger and unfinished jobs. `exceptJob` leaves that job's reservation
+ * out. An unknown cost counts at its `held` and as one of the `unpriced`.
  */
 export function bookSpend(db: Db | Tx, bookId: string, exceptJob?: number): BookSpend {
   const byKind = db
@@ -504,7 +438,7 @@ export function bookSpend(db: Db | Tx, bookId: string, exceptJob?: number): Book
   const scriptSpent = spentOn("scripting");
   const speechSpent = spentOn("tts");
   return {
-    // every kind, transcription among them, though only the two above are told apart
+    // every kind, transcription included
     spent: byKind.reduce((n, r) => n + (r.cost ?? 0), 0) + opening,
     scriptSpent,
     speechSpent,
@@ -515,21 +449,13 @@ export function bookSpend(db: Db | Tx, bookId: string, exceptJob?: number): Book
   };
 }
 
-/**
- * When a row happened, as every read here takes it: when it settled, or when it was queued if it
- * has not — the same rule as `recordAt` in the browser, so a total, a bucket, a filter and a limit
- * all put one row at one instant.
- */
+/** When a row happened; must match `recordAt` in the browser. */
 const rowAt = sql<number>`coalesce(${requests.finishedAt}, ${requests.queuedAt})`;
 
-/** One endpoint's rows. */
 const rowsOf = (kind: EndpointKind, endpointId: string) =>
   and(eq(requests.kind, kind), eq(requests.endpointId, endpointId));
 
-/**
- * What one endpoint has been charged since `since`, across every book: what its daily limit is held
- * to. A request whose cost is unknown is counted at what it held while it was out (`held`).
- */
+/** An endpoint's charges since `since`, all books, for its daily limit; unknown counts `held`. */
 export function endpointSpend(
   db: Db | Tx,
   kind: EndpointKind,
@@ -547,25 +473,21 @@ export function endpointSpend(
 
 /** Which of an endpoint's rows a page reads. */
 export interface RequestWhere {
-  /** the start of the range: every row since */
   since: number;
-  /** a chart bucket inside the range: rows from `from` up to (not including) `to` */
+  /** a chart bucket: `from` inclusive, `to` exclusive */
   window?: { from: number; to: number };
   status?: RequestStatus;
   bookId?: string;
-  /** matched, ignoring case, against the label, the error's message and code, and the chapter */
+  /** case-insensitive, over label, error message and code, and chapter number */
   search?: string;
 }
 
-/** The cursor a page hands on: the time and id of its last row, which no later append can move. */
+/** `<time>:<id>` of the page's last row, which no later append can move. */
 const cursorOf = (r: RequestRecord) => `${recordAt(r)}:${r.id}`;
 
 /**
- * One page of an endpoint's requests matching `where`, newest first, each with the number its
- * chapter goes by today — null once the chapter is gone, when the frozen label is what still names
- * the work — and how many match over every page. `before` is the cursor the previous page handed
- * on; it is keyed on the row rather than on a position, so rows settling while someone reads the
- * pages land on the first and never shift the rest. Without a `limit`, every matching row.
+ * A page of an endpoint's requests, newest first, with each chapter's current number (null once
+ * gone). Keyset-paged on `before`, so new rows never shift later pages. No `limit`: every row.
  */
 export function requestPage(
   db: Db | Tx,
@@ -615,7 +537,6 @@ export function requestPage(
   };
 }
 
-/** Every one of an endpoint's requests since `since`, newest first. */
 export const endpointRequests = (
   db: Db | Tx,
   kind: EndpointKind,
@@ -624,15 +545,8 @@ export const endpointRequests = (
 ): RequestRecord[] => requestPage(db, kind, endpointId, { since }).requests;
 
 /**
- * One endpoint's past for the Endpoints page, summed here over every row in `range` up to `now`:
- * the buckets its charts draw, the totals beside them, what it has been charged since `dayStart`
- * and when it last settled anything.
- *
- * A request whose cost is unknown — whatever its status — is counted as unknown, never added in as
- * $0. Latency is read off the requests that came back, done or failed; one cancelled says nothing
- * about how long the provider takes. A finished request whose provider reported no usage is counted
- * apart rather than as producing nothing; one that failed without usage produced nothing, and that
- * is a known zero.
+ * An endpoint's chart buckets and totals over `range`, plus today's spend. Unknown costs are
+ * counted apart, never as $0. Latency only from done/failed rows. Done without usage: `unreported`.
  */
 export function endpointSummary(
   db: Db | Tx,
@@ -645,14 +559,12 @@ export function endpointSummary(
   const spec = RANGES.find((r) => r.value === range)!;
   const from = now - spec.ms;
   const width = spec.ms / spec.buckets;
-  // a bucket is from its `from` up to (not including) its `to`, as the Activity list filters by one
+  // `to` exclusive, as the Activity list filters a bucket
   const inRange = and(rowsOf(kind, endpointId), gte(rowAt, from), lt(rowAt, now));
   const bucketOf = sql<number>`cast((${rowAt} - ${from}) / ${width} as integer)`;
   const done = sql`${requests.status} = 'done'`;
   const settled = sql`${requests.status} in ('done', 'failed')`;
-  // what a request produced, in the unit its kind's throughput is judged by — tokens for scripting,
-  // audio minutes rendered for speech, audio minutes heard for transcription; null when the
-  // provider did not say, which is never the same as none
+  // tokens for scripting, audio minutes otherwise; null when the provider did not say (not zero)
   const made =
     kind === "scripting"
       ? sql`case when ${requests.inputTokens} is null and ${requests.outputTokens} is null then null else coalesce(${requests.inputTokens}, 0) + coalesce(${requests.outputTokens}, 0) end`
@@ -678,8 +590,7 @@ export function endpointSummary(
     estimatedCost: counted(sql`${requests.costBasis} = 'estimated'`),
     inputTokens: total(requests.inputTokens),
     outputTokens: total(requests.outputTokens),
-    // a provider that said nothing about cache use is left out of both counts rather than counted
-    // as a miss — "nothing cached" and "nobody said" are different facts
+    // a provider silent on caching is left out of both counts, not counted as a miss
     cachedInputTokens: total(requests.cachedInput),
     cacheReportedInputTokens: total(
       sql`case when ${requests.cachedInput} is not null then coalesce(${requests.inputTokens}, 0) end`,
@@ -699,8 +610,7 @@ export function endpointSummary(
       .map((s) => [s.bucket, s]),
   );
 
-  // the 95th percentile of the response times, each bucket's and the range's, ranked in SQL over
-  // every request that came back: the value 95% of the way up them, which on a handful is the most
+  // nearest-rank p95 of response times, per bucket or over the range; on a handful it's the max
   const p95 = (partition?: SQL) => {
     const over = partition ? sql`partition by ${partition}` : sql``;
     const ranked = db
@@ -770,11 +680,7 @@ export function endpointSummary(
   };
 }
 
-/**
- * What a scripting profile's recent requests at its current reasoning level spent thinking, per
- * input token — the same figure its telemetry shows (`recentReasoning`), read off only the rows it
- * is worked out from. What a run's estimate adds for the thinking a reasoning model bills as output.
- */
+/** Recent reasoning tokens per input token at the profile's current level, for run estimates. */
 export function scriptReasoning(
   db: Db | Tx,
   profile: Pick<Profile, "id" | "reasoning">,

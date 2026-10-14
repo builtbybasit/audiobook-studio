@@ -1,22 +1,7 @@
-// Re-apply: a book's clips made to sound the way their lines' effects now say, without asking a
-// voice for anything again.
-//
-// A clip remembers what its effects were (`sound`) and, when it had any, the file the voice made
-// (`raw`). Editing an effect, or changing who wears which, leaves clips whose sound is not their
-// line's any more (`staleClips`). This job renders each of them again from its raw file through the
-// chains its line gets now, as one batch for the runner to spread over its workers, or — for a
-// line that now gets none — puts the raw file back as the clip. A clip with effects in it and no
-// raw file (an ffmpeg thought clip from before raw files were kept) cannot be made again; it is
-// counted and left alone.
-//
-// Each clip lands as its render ends, in a transaction of its own, so a cancel keeps what was done
-// and a failure costs only that clip. A clip lands only where a slot still plays the file the job
-// read: a line narrated again, a retake kept or a script written over it while it rendered wins,
-// and the render is thrown away. What a landing replaced — the old processed file, never a raw
-// one — is removed once the job is over, as are renders that never landed.
-//
-// One job per book at a time (`activeKey`), for the whole book. The job fails at the end when any
-// clip could not be made, as a check by ear does, so a retry redoes only those.
+// Re-apply: re-renders stale clips (`staleClips`) from their `raw` file through their line's
+// current effects, with no new voice request. A clip with effects but no raw can't be redone.
+// Each clip lands in its own transaction, only if a slot still plays the file the job read;
+// otherwise the newer work wins and the render is discarded.
 import type { Job } from "@/types";
 import { plural } from "@/lib/contents";
 import { runnable } from "@/lib/effects";
@@ -65,7 +50,7 @@ export function effectsHandler(runner: EffectRunner | undefined, files: AudioFil
       let landed = 0;
       let skipped = 0;
       let failed = 0;
-      /** files a landing replaced, and renders that never landed: removed once the job is over */
+      /** replaced and unlanded files, removed when the job ends */
       const gone: string[] = [];
       const settled = (): void => ctx.progress(((landed + skipped + failed) / todo.length) * 100);
       const fail = (c: StaleClip, e: unknown): void => {
@@ -77,11 +62,7 @@ export function effectsHandler(runner: EffectRunner | undefined, files: AudioFil
         settled();
       };
 
-      /**
-       * Make the file at `url` the clip that played `c.url`, if a slot still plays that, with the
-       * chapter re-timed to it and its revision moved, so a client holding the old file cannot
-       * write it back. Says whether it landed.
-       */
+      /** Swap in `url` where a slot still plays `c.url`, moving the revision. True if it landed. */
       const land = async (
         c: StaleClip,
         next: { url: string; raw: string | null },
@@ -111,7 +92,7 @@ export function effectsHandler(runner: EffectRunner | undefined, files: AudioFil
         });
         if (at) {
           landed++;
-          // a clip with a raw file was playing a processed one, which nothing plays now
+          // the old processed file (never a raw) is now unused
           if (c.raw) gone.push(fileName(c.url));
         } else skipped++;
         settled();
@@ -119,7 +100,7 @@ export function effectsHandler(runner: EffectRunner | undefined, files: AudioFil
       };
 
       try {
-        // a line that now gets no effect plays the voice's own file again; nothing to render
+        // lines with no effect now just play their raw file again
         for (const c of todo) {
           if (signal.aborted) throw signal.reason;
           if (c.want != null) continue;
@@ -137,7 +118,6 @@ export function effectsHandler(runner: EffectRunner | undefined, files: AudioFil
           const input = await files.find(c.raw ?? c.url, bookId);
           const out = await files.fresh(bookId, "wav");
           jobs.push({
-            // a file the book does not have fails in the batch as missing
             input: input ?? "",
             output: out.path,
             chains: c.effects.map((e) => runnable(e.chain)),
@@ -183,7 +163,7 @@ export function effectsHandler(runner: EffectRunner | undefined, files: AudioFil
   };
 }
 
-/** The book's Re-apply, queued; refused while one is already queued or running for it. */
+/** Queue the book's Re-apply; refused while one is active. */
 export function enqueueReapply(db: Db, runner: Pick<Runner, "enqueue">, bookId: string): Job {
   if (!library.getBook(db, bookId)) throw notFound("No such book");
   const { job, created } = runner.enqueue({

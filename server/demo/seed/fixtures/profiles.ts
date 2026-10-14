@@ -1,14 +1,6 @@
-// The scripting endpoints (LLM side) the prototype starts with. `newProfile` fills in every
-// operational default, so these entries only say what actually differs between the three.
-//
-// Their rate cards are the demo: between them they cover an endpoint with cached-input pricing and
-// an off-peak schedule, one that also charges for cache writes and is mid-promotion with an expired
-// one behind it, and one with no advanced pricing at all — which is what "ordinary pricing stays
-// simple" has to look like for the page to be worth anything.
-//
-// Dates are relative to when the world is built, so the seeded promotions are always the same
-// distance from "now": one running and ending on Friday, one that ended last week and is kept as
-// history, one that has not started yet.
+// The demo's scripting profiles; `newProfile` fills the defaults. Rate cards cover cached input
+// with off-peak, cache writes with promotions (running, expired, upcoming), and plain pricing.
+// Dates are relative to when the world is built.
 import { newProfile } from "@/lib/scripting";
 import type { Profile, Promotion, RateWindow } from "@/types";
 
@@ -24,10 +16,7 @@ function nextWeekday(from: number, day: number): number {
   return d.getTime();
 }
 
-/**
- * The nights and weekends discount a lot of providers offer. It runs past midnight on purpose —
- * that is the case a schedule usually gets wrong, so the seeded world always has one on screen.
- */
+/** Nights and weekends; crosses midnight on purpose, the case a schedule usually gets wrong. */
 const OFF_PEAK: RateWindow = {
   id: "off-peak",
   label: "Off-peak",
@@ -37,7 +26,7 @@ const OFF_PEAK: RateWindow = {
   percent: 40,
 };
 
-/** Weekday business hours, dearer than the card rate — a surcharge written as explicit rates. */
+/** Weekday business hours: a surcharge written as explicit rates. */
 const PEAK = (inPrice: number, outPrice: number): RateWindow => ({
   id: "peak",
   label: "Peak hours",
@@ -61,7 +50,7 @@ function promotions(now: number): Promotion[] {
     {
       id: "cache-free",
       label: "Free cache reads",
-      // ended last week: kept so the history is readable, and it no longer applies to anything
+      // ended last week; kept as history
       from: now - 21 * DAY,
       until: now - 7 * DAY,
       scope: ["cachedInput"],
@@ -94,8 +83,7 @@ export function makeProfiles(now: number = Date.now()): Profile[] {
       quotaGroup: "openai-account",
       spendLimit: 10,
       pricing: {
-        // cached input at a quarter of the card rate; OpenAI does not bill cache writes at all,
-        // which is what `null` says — not "free", but "no separate line for it"
+        // OpenAI doesn't bill cache writes: `null` means "no separate line", not "free"
         cachedInput: 0.075,
         cacheWrite: null,
         timezone: "Europe/London",
@@ -114,7 +102,6 @@ export function makeProfiles(now: number = Date.now()): Profile[] {
       credentialId: "deepseek",
       pricing: {
         cachedInput: 0.014,
-        // this one does bill cache writes separately, dearer than ordinary input
         cacheWrite: 0.175,
         timezone: "Asia/Shanghai",
         windows: [
@@ -140,8 +127,7 @@ export function makeProfiles(now: number = Date.now()): Profile[] {
       secPerChunk: 11,
       credentialId: null,
       pricing: {
-        // reads a tenth, writes a quarter dearer than ordinary input — and this provider reports
-        // usage in the shape where `input_tokens` *excludes* both, which the normalizer undoes
+        // this provider's `input_tokens` excludes cache reads and writes; the normalizer adds them
         cachedInput: 0.3,
         cacheWrite: 3.75,
         timezone: "America/New_York",
@@ -166,8 +152,7 @@ export function makeProfiles(now: number = Date.now()): Profile[] {
       model: "gemini-3.6-flash-low",
       needsKey: false,
       secPerChunk: 25,
-      // no rates, no schedule, no promotions: a model you host yourself, and the plain case the
-      // Pricing tab must still read cleanly for
+      // self-hosted: no rates, schedule or promotions
     }),
   ];
 }

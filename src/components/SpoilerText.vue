@@ -1,19 +1,15 @@
 <script setup lang="ts">
-// A character's description, hidden until asked for. The model writes descriptions from the whole
-// book, so one read before its chapter can give away who someone turns out to be; the reader and the
-// cast list show a button in its place, and the text once it is pressed. The default slot replaces
-// what is shown once it is — the Cast page's record puts the editable description there. The same
-// holds for who wears a mask the scripting model linked, which `label` and `small` fit into a tag.
+// A character's description, hidden behind a button until asked for: descriptions are written from
+// the whole book, so can spoil. The default slot replaces the revealed text (the Cast page puts its
+// editor there); `label` and `small` fit it into a tag.
 import { ref } from "vue";
 
 withDefaults(
   defineProps<{
     text?: string;
-    /** false shows it straight away — the Narrator has nothing to give away */
+    /** false shows it straight away (the Narrator has nothing to give away) */
     hidden?: boolean;
-    /** what is said when there is no text at all */
     empty?: string;
-    /** what the button says in its place */
     label?: string;
     /** a button the size of the tag it sits in */
     small?: boolean;

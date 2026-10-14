@@ -1,20 +1,7 @@
-// Words a chapter carries that are not the story.
-//
-// Web-novel sources weave their own text into a chapter: a site's boilerplate ("Read the latest
-// chapters at …"), anti-scraping lines dropped between paragraphs or inside one, and translator's or
-// author's notes. None of it belongs in the audiobook, but it cannot simply be cut: every scripting
-// answer is checked word for word against the prose it was sent (`fidelity` in
-// server/providers/chatScripting.ts), and that check is the only guarantee that a model did not
-// quietly drop a sentence of story. Loosening it to let site text go would let story go too.
-//
-// So site text is *marked*, never removed. The model gives it a line of its own with the type
-// `watermark` or `note`, its words copied exactly, and the script still holds every word of the
-// chapter. What is read aloud is then decided here, once, for the server and the browser alike:
-// narration renders, times and bills only the spoken lines, and the export stitches only their clips.
-//
-// A deterministic detector sits beside the model (`siteTextSignals`, and the repetition across
-// chapters the server counts), because a model misses some and mistakes others. It only ever
-// suggests — `Segment.siteCheck` — and a person decides.
+// Site text (boilerplate, anti-scraping lines, translator's notes) is marked as `watermark` or
+// `note` lines, never removed: the word-for-word `fidelity` check
+// (server/providers/chatScripting.ts) guarantees no story was dropped. What is read aloud is
+// decided here (`isSpoken`). `siteTextSignals` only suggests (`Segment.siteCheck`).
 import type { Book, Segment, SegmentType } from "@/types";
 
 /** The types that are not the story. */
@@ -25,7 +12,6 @@ export type SiteTextType = (typeof SITE_TEXT_TYPES)[number];
 export const isSiteText = (type: SegmentType): type is SiteTextType =>
   (SITE_TEXT_TYPES as readonly SegmentType[]).includes(type);
 
-/** How each type is named where a person reads it. */
 export const TYPE_LABEL: Record<SegmentType, string> = {
   narration: "Narration",
   dialogue: "Dialogue",
@@ -35,9 +21,8 @@ export const TYPE_LABEL: Record<SegmentType, string> = {
 };
 
 /**
- * Whether a line is read aloud: every story line, a note only when the book reads its notes, and
- * site text never. Everything that renders, times, counts, bills or exports audio asks this, and
- * nothing else — a line that is not spoken has no clip to want, lacks none, and costs nothing.
+ * Story lines always, notes when the book reads them, site text never. Everything that renders,
+ * times, counts, bills or exports audio asks this.
  */
 export function isSpoken(
   segment: Pick<Segment, "type">,
@@ -48,25 +33,17 @@ export function isSpoken(
   return true;
 }
 
-/** The types this book does not read aloud, for a query that counts lines without reading them. */
+/** For a query that counts lines without loading them. */
 export const unspokenTypes = (book: Pick<Book, "readNotes"> | undefined): SiteTextType[] =>
   SITE_TEXT_TYPES.filter((type) => !isSpoken({ type }, book));
 
-/**
- * The lines of a chapter that play: spoken, and with a clip. A line marked as site text after it
- * was rendered keeps its clip — turning it back into narration should not cost a render — but the
- * clip is not heard, timed or stitched while the line is not read.
- */
+/** Spoken and with a clip. A line marked as site text keeps its clip, unheard, for an undo. */
 export const heardLines = <S extends Pick<Segment, "type" | "audio">>(
   segments: readonly S[],
   book: Pick<Book, "readNotes"> | undefined,
 ): S[] => segments.filter((s) => s.audio.duration > 0 && isSpoken(s, book));
 
-/**
- * What in a line's own words gives it away as site text, if anything. Phrases, not words, for the
- * reason server/epub/notices.ts gives: a story says "read", "site" and "chapter" freely; what gives
- * boilerplate away is a web address, or words aimed at the reader about where they are reading.
- */
+/** Phrases, not words: a story says "read", "site", "chapter" freely (server/epub/notices.ts). */
 export function siteTextSignals(text: string): string[] {
   const out: string[] = [];
   for (const { test, saw } of SIGNALS) if (test.test(text)) out.push(saw);
@@ -74,21 +51,17 @@ export function siteTextSignals(text: string): string[] {
 }
 
 /**
- * A domain, spelled plainly or with the dot spaced, bracketed or spelled out the way scrapers dodge
- * a filter. A dot with a space after it and none before is a full stop, not an address: "look at
- * me. Me?" names no site.
+ * A domain, with the dot plain, spaced, bracketed or spelled out as scrapers dodge filters.
+ * "me. Me?" (space after only) is a full stop.
  */
 const ADDRESS =
   /\b[a-z0-9-]{2,}(?:\.|\s\.\s|\s?\[\s?dot\s?\]\s?|\s?\(\s?dot\s?\)\s?|\sdot\s)(?:com|net|org|io|co|me|info|xyz|site|online|club|top)\b/i;
 
-/** "Read the latest chapters", "find the original translation" — the first half of a pointer. */
+/** "Read the latest chapters": the first half of a pointer. */
 const READ_MORE =
   /\b(?:read|find|enjoy)(?:ing)?\b[^.!?\n]{0,40}\b(?:latest|new(?:est)?|next|more|full|original|official|updated?)\b[^.!?\n]{0,30}\b(?:chapters?|novels?|translations?|releases?)\b/gi;
 
-/**
- * Where it points, case and all: a site, an address or a name. A novel's manual has chapters too,
- * and "read the next chapter of the manual at dawn" points at a time of day, not a website.
- */
+/** Case-sensitive: "read the next chapter of the manual at dawn" points at no site. */
 const SOMEWHERE = /^(?:[A-Z0-9]|(?:(?:our|my|the|this)\s+)?(?:official\s+)?(?:web)?site\b|app\b)/;
 
 function pointsAtASite(text: string): boolean {
@@ -110,8 +83,7 @@ const SIGNALS: { test: { test(text: string): boolean }; saw: string }[] = [
     saw: "says the text was taken from a site",
   },
   {
-    // Case-sensitive on purpose: "TN", "A/N" and "ED" are labels, "An—" and "Ed—" are a stammer
-    // and a name. The words are spelled out in either case instead.
+    // case-sensitive: "TN", "A/N", "ED" are labels; "An—" and "Ed—" are a stammer and a name
     test: /^\s*[([]?\s*(?:T\/?L|TN|A\/?N|ED|[Tt]\/[LlNn]|[Aa]\/[Nn]|[Tt][Ll](?=\s*[Nn]otes?)|(?:[Tt]ranslator|[Ee]ditor|[Aa]uthor|TRANSLATOR|EDITOR|AUTHOR)(?:['’][Ss])?)\s*(?:[Nn]otes?|NOTES?|N)?\s*[:：\-–—]/,
     saw: "opens as a translator's or author's note",
   },
@@ -123,18 +95,12 @@ const SIGNALS: { test: { test(text: string): boolean }; saw: string }[] = [
 ];
 
 /**
- * The share of a chapter's words its marks leave out of the audio, past which the chapter is worth
- * a look. A site's boilerplate is a line or two in a chapter of thousands of words, so marks past
- * this are far likelier a model that took story for site text — the silent omission marking must
- * never become. The scripting job warns past it and the review inbox lists the chapter; both read
- * this figure, and count it with `unreadShare`, so they never disagree about a chapter.
+ * Past this share of unread words, a model likely took story for site text. The scripting job and
+ * the review inbox both use it with `unreadShare`.
  */
 export const UNREAD_SHARE_WARNING = 0.15;
 
-/**
- * How much of a chapter its marks leave out of the audio: the words on lines that are not read
- * aloud (`isSpoken`), of all its words. A note the book reads is not left out, so it does not count.
- */
+/** The share of a chapter's words on lines not read aloud (`isSpoken`). */
 export function unreadShare(
   segs: readonly Pick<Segment, "type" | "text">[],
   book: Pick<Book, "readNotes"> | undefined,

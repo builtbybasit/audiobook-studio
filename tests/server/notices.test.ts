@@ -1,9 +1,5 @@
-// Deciding which chapters are not story.
-//
-// The prototype's samples declared which chapter carried which note; this is the part that reads
-// the text and guesses. The guess only ever attaches a note — the review is where a person
-// decides — so these assert the note that gets attached, and, just as importantly, that ordinary
-// story chapters get none.
+// Deciding which chapters are not story. The guess only attaches a note (the review decides), so
+// these assert the note attached and, just as much, that story chapters get none.
 import { describe, expect, test } from "bun:test";
 
 import type { ChapterNote } from "@/types";

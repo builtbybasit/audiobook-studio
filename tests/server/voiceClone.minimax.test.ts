@@ -1,10 +1,7 @@
-// Making a voice with MiniMax: an upload, then a clone from the uploaded file.
-//
-// Against a `fetch` that answers from memory: the two requests as MiniMax's docs give them
-// (https://platform.minimax.io/docs/guides/speech-voice-clone), the `voice_id` chosen under its
-// rules, that each request goes out once whatever fails and a failed upload never reaches the
-// clone, and how a refusal — MiniMax's often comes inside a 200 — reaches the page. And the route,
-// which holds a MiniMax clone to its one sample and its three formats before anything is sent.
+// Making a voice with MiniMax: an upload, then a clone from it, as MiniMax's docs give them
+// (https://platform.minimax.io/docs/guides/speech-voice-clone). Each request goes out once
+// whatever fails, and a refusal often comes inside a 200. The route holds a MiniMax clone to one
+// sample in three formats before sending.
 import { describe, expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
 

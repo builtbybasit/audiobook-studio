@@ -1,9 +1,6 @@
-// A book's script as it leaves the install, and the plan an import answers with before it writes
-// anything.
-//
-// **Nothing here is local to one install.** No segment ids, no annotation ids, no `VoiceRef`: an
-// endpoint id means nothing on another machine, so a voice travels as a hint the importing side
-// judges for itself. Expression tags travel inside a line's `text` as `{tag}` markers.
+// A book's script as an exported file, and the plan an import answers with before writing anything.
+// Nothing here is local to one install: no segment or annotation ids, no `VoiceRef`. A voice
+// travels as a hint the importer judges; expression tags travel in `text` as `{tag}` markers.
 import type { Gender, VoiceRef } from "@/types/common";
 import type { Segment, SegmentType } from "@/types/segment";
 import type { KeptSample, Voice } from "@/types/voice";
@@ -32,7 +29,6 @@ export interface ScriptFileChapter {
   title: string;
   /** `sha256:<hex>` over the chapter's source words, from the one shared `sourceHash` */
   sourceHash: string;
-  /** how many source words that is, for display */
   words: number;
   lines: ScriptFileLine[];
 }
@@ -55,9 +51,8 @@ export interface ScriptManifest {
 }
 
 /**
- * Which voice a speaker had, said so another install can recognise it. `provider` is the host of
- * the endpoint's base URL (endpoints have no provider column); `endpoint` is the endpoint's name,
- * shown to a person and never matched on.
+ * `provider` is the host of the endpoint's base URL (endpoints have no provider column);
+ * `endpoint` is the endpoint's name, shown to a person and never matched on.
  */
 export interface VoiceHint {
   endpoint: string;
@@ -78,10 +73,7 @@ export interface ScriptFileSpeaker {
   voice?: VoiceHint;
   /** the speaker in this file they are a persona of (`Character.personaOf`), by name */
   personaOf?: string;
-  /**
-   * `voices/<slug>/`, when the export was asked to carry this speaker's voice samples: the folder
-   * in the zip holding the recordings and their `samples.json`.
-   */
+  /** `voices/<slug>/`: the zip folder with this speaker's recordings and `samples.json` */
   samples?: string;
 }
 
@@ -91,7 +83,6 @@ export interface ScriptFileVoice {
   version: 1;
   /** what the voice was called where it was kept */
   title: string;
-  /** the recordings, by their names inside the folder */
   samples: { file: string; name: string; format: KeptSample["format"] }[];
 }
 
@@ -109,29 +100,26 @@ export interface ScriptFileTerm {
 
 /** A file chapter paired with a chapter of the target book. */
 export interface ImportChapter {
-  /** the target book's chapter */
   chapterId: number;
-  /** the target chapter's title, as this book has it */
+  /** as this book has it */
   title: string;
   /** the title the file gave it */
   fileTitle: string;
-  /** where in the upload it came from */
+  /** path in the upload */
   file: string;
   /**
-   * The file's lines as segments: ids `1…n`, `audio` `{ status: "none", endpoint: null, ms: 0,
-   * duration: 0 }`, expressions parsed back from the markers with `label`/`token`/`kind` filled from
-   * the tags of the endpoint that would speak the line (a tag it does not offer arrives
-   * `needsReview`), fresh `annotationId`s. Ready for `planRestore(current, segments, …)`.
+   * The file's lines as segments (ids `1…n`, no audio, fresh `annotationId`s), with expressions
+   * filled from the speaking endpoint's tags; a tag it lacks arrives `needsReview`. Ready for
+   * `planRestore(current, segments, …)`.
    */
   segments: Segment[];
 }
 
 export type RefusalReason =
-  /** no chapter of this book has these source words — the EPUB changed it, or it is another book */
+  /** no chapter of this book has these source words: the EPUB changed, or it is another book */
   | "unmatched"
   /** the lines drift from the source by more than `fidelity` allows */
   | "fidelity"
-  /** the chapter file is not valid JSON, or fails its schema */
   | "malformed";
 
 export interface RefusedChapter {
@@ -140,7 +128,7 @@ export interface RefusedChapter {
   title: string;
   words: number;
   reason: RefusalReason;
-  /** one line a person can act on: the schema path that broke, or the words that are missing */
+  /** actionable: the schema path that broke, or the words that are missing */
   detail: string;
 }
 
@@ -151,7 +139,6 @@ export interface SpeakerDetails {
   style: string;
 }
 
-/** A speaker both have, whose details differ. */
 export interface SpeakerDiff {
   name: string;
   book: SpeakerDetails;
@@ -174,15 +161,11 @@ export interface TermDiff {
 }
 
 /**
- * What the file's voice for a speaker can become here.
- *
- *   here     this install has that voice (same provider host, id and label) on an enabled endpoint;
- *            several endpoints can offer it
- *   public   not here yet, but the provider can hand it over: add `voice` to `endpointId` and use it
- *   private  a clone on someone else's account; only Keep or Replace…
- *   unchecked  the provider could not be asked in time, so whether it can hand the voice over is
- *              not known; Keep or Replace…, and the row says the lookup failed rather than calling
- *              the voice private
+ * What the file's voice for a speaker can become here:
+ *   here       same provider host, id and label on an enabled endpoint (maybe several)
+ *   public     the provider can hand it over: add `voice` to `endpointId`
+ *   private    a clone on someone else's account; only Keep or Replace…
+ *   unchecked  the provider could not be asked in time; shown as a failed lookup, not as private
  */
 export type VoiceMatch =
   | { kind: "here"; options: { endpointId: string; endpointName: string; ref: VoiceRef }[] }
@@ -192,36 +175,33 @@ export type VoiceMatch =
 
 export interface VoiceRow {
   speaker: string;
-  /** the speaker is added by this import */
   isNew: boolean;
   /** the book's voice for them now; null = none of their own */
   current: VoiceRef | null;
   hint: VoiceHint;
   match: VoiceMatch;
-  /** ticked on arrival: only when `isNew` or `current` is null, and only when `match` is not private */
+  /** ticked on arrival only when `isNew` or `current` is null, and `match` is not private */
   ticked: boolean;
-  /** the recordings the file carries for this voice, when it carries any */
   samples?: VoiceRowSamples;
 }
 
 /**
- * What an import found of a voice's recordings: usable, or refused whole — a folder with one file
- * that is not audio, or over the clone limits, is refused and says why, and the lines and cast still
- * import.
+ * A folder with a non-audio file, or over the clone limits, is refused whole; the lines and cast
+ * still import.
  */
 export type VoiceRowSamples =
   | { kind: "ok"; count: number; bytes: number }
   | { kind: "refused"; reason: string };
 
 export interface ScriptImportPlan {
-  /** the manifest's title and author; a lone chapter file has neither */
+  /** a lone chapter file has neither */
   title: string;
   author: string;
-  /** the uploaded file's name, which history's "Imported from …" label reads */
+  /** the uploaded file's name, for history's "Imported from …" label */
   name: string;
   chapters: ImportChapter[];
   refused: RefusedChapter[];
-  /** entries in the upload nothing reads, listed so a person knows they were not used */
+  /** entries in the upload nothing reads */
   ignored: string[];
   cast: {
     /** speakers the book lacks, added whole when the import is applied */
@@ -241,16 +221,15 @@ export interface ScriptImportPlan {
 // ---------- voice samples waiting with a speaker ----------
 
 /**
- * Recordings that came in a script file for a speaker whose voice is a private clone this install
- * does not have. They wait with the speaker — no provider has made a voice from them yet — until
- * someone clones them on the Voices tab or discards them.
+ * Recordings from a script file for a speaker whose voice is a private clone not here. They wait
+ * with the speaker until cloned on the Voices tab or discarded.
  */
 export interface SpeakerSamples {
   id: number;
   speaker: string;
-  /** the voice's title where it was kept, which the clone form starts from */
+  /** the voice's title where it was kept; the clone form starts from it */
   title: string;
-  /** the name of the script file they came in */
+  /** the script file they came in */
   source: string;
   samples: KeptSample[];
 }

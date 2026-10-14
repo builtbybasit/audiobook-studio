@@ -1,8 +1,6 @@
 <script setup lang="ts">
-// The Scripting page's endpoint panel: which endpoint runs go to, how it is doing, and how it would
-// cut the chapter you are about to run. Its connection, limits and pricing are edited on the
-// Endpoints page, with a draft and Save — the link goes straight to its Connection tab — and so is
-// the settings file, which that page exports and imports for the whole library.
+// The Scripting page's endpoint panel: which endpoint runs use, its health, and how it would chunk
+// the next chapter. Its settings are edited on the Endpoints page.
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptingStore } from "@/stores/scripting";
@@ -38,7 +36,6 @@ const libraryStore = useLibraryStore();
 const scriptingStore = useScriptingStore();
 const clock = useNow({ interval: 500 });
 const now = computed(() => clock.value.getTime());
-// what each profile has been through is its rows in the server's ledger, read once for the panel
 const activity = useScriptActivity();
 const p = computed(() => scriptingStore.runProfile);
 const health = computed(() =>
@@ -61,7 +58,7 @@ const tone = computed(
 );
 const errors = computed(() => (p.value ? profileErrors(p.value) : []));
 
-// ---------- the chunk preview: the chapter a run would start on, cut the way the endpoint cuts it
+// ---------- the chunk preview: the run's first chapter, cut the way the endpoint cuts it
 const sampleChapter = computed(
   () =>
     libraryStore
@@ -69,7 +66,7 @@ const sampleChapter = computed(
       .find((c) => props.selected.includes(c.id) && !c.excluded) ??
     libraryStore.chaptersOf(props.bookId).find((c) => !c.excluded),
 );
-/** a kept chapter, so it always has its reading number */
+/** a kept chapter, so it has a reading number */
 const sampleNumber = computed(
   () => sampleChapter.value && libraryStore.numberOf(props.bookId, sampleChapter.value.id),
 );
@@ -78,7 +75,7 @@ const sample = useChapterText(
   () => sampleChapter.value?.id,
   "plain",
 );
-/** the sample's text is in: until then there is nothing to cut, which is not the same as no chunks */
+/** until then "no chunks" would be wrong */
 const sampleRead = computed(() => sample.data.value !== undefined);
 const parts = computed(() => (p.value ? scriptParts(sample.text.value, p.value) : []));
 const previewPart = ref(0);
@@ -86,7 +83,7 @@ watch([p, sampleChapter], () => (previewPart.value = 0));
 const preview = computed(
   () => parts.value[Math.min(previewPart.value, parts.value.length - 1)] ?? "",
 );
-/** What the endpoint's recent requests at its reasoning level spent thinking, if any said. */
+/** thinking tokens seen in recent requests at its reasoning level */
 const reasoningSeen = computed(() =>
   p.value && !isSimulated(p.value.baseUrl)
     ? scriptTelemetry(activity.rowsOf(p.value.id), p.value).reasoning
@@ -95,7 +92,7 @@ const reasoningSeen = computed(() =>
 const tokens = computed(() =>
   p.value && preview.value
     ? tokenEstimate(preview.value, p.value, now.value, {
-        // with the prompt this book's run would send, as the run's estimate is
+        // the prompt this book's run would send, as the estimate uses
         prompt: resolvePrompt({
           library: endpointsStore.prompt,
           profile: p.value.prompt,

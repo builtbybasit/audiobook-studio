@@ -1,11 +1,6 @@
 // Endpoints and scripting profiles, between rows and the shapes the app configures.
-//
-// **Configuration is stored; telemetry is not.** An `Endpoint` carries both — `history`,
-// `failures`, `rateLimits`, `backoffUntil`, `lastError` and `fetching` (`ENDPOINT_TELEMETRY`) are
-// what this session has observed, not what anybody configured. None of it is persisted here, and reading an endpoint back
-// returns those fields empty, because the durable record of what an endpoint has done is the
-// `requests` ledger. Writing a backoff deadline to disk would mean a server restart could resurrect
-// a cooldown for a rate limit that expired days ago.
+// Configuration is stored; telemetry (`ENDPOINT_TELEMETRY`) is not, and reads back empty: the
+// `requests` ledger is the durable record, and a persisted backoff would outlive its rate limit.
 import type {
   Endpoint,
   EndpointOps,
@@ -81,7 +76,7 @@ export const toExpressionTag = (row: TagRow): ExpressionTag => ({
   kind: row.kind,
 });
 
-/** The rate card, or nothing when this endpoint has never had one configured. */
+/** Undefined when never configured. */
 function toPricingConfig(row: EndpointRow, parts: EndpointParts): PricingConfig | undefined {
   if (row.timezone == null) return undefined;
   return {
@@ -116,17 +111,8 @@ function toExpressions(row: EndpointRow, parts: EndpointParts): ExpressionConfig
 }
 
 /**
- * The operational settings both kinds share — all six, or none.
- *
- * They arrive together: the app fills the whole block in on first use, and the three nullable ones
- * mean something specific when they are null. `spendLimit: null` is "no endpoint-level limit" and
- * `credentialId: null` is "this endpoint's own key slot" — both are settings, not absences, and
- * dropping them because they are null would be a different endpoint coming back.
- *
- * `timeoutSec` is the marker for the block, being the one field that is always a number once the
- * block exists at all. An endpoint without the block can still name a credential, a quota group
- * or a limit on its own — the seeded ones do, before the page fills the rest in — and those are
- * read back as they were set, since there a null can only mean "never set".
+ * The operational settings both kinds share, all six or none; `timeoutSec` marks the block. Inside
+ * it a null is a setting (`spendLimit: null` = no limit) and is kept; outside it, null means unset.
  */
 function ops(row: EndpointRow): Partial<Endpoint> {
   if (row.timeoutSec == null)
@@ -145,11 +131,7 @@ function ops(row: EndpointRow): Partial<Endpoint> {
   };
 }
 
-/**
- * A speech endpoint.
- *
- * The telemetry fields come back empty on purpose — see the note at the top of this file.
- */
+/** A speech endpoint; telemetry comes back empty (see the top of this file). */
 export function toEndpoint(row: EndpointRow, parts: EndpointParts): Endpoint {
   const e: Endpoint = {
     id: row.id,
@@ -192,29 +174,19 @@ export function toEndpoint(row: EndpointRow, parts: EndpointParts): Endpoint {
 }
 
 /**
- * Where a scripting profile's row is kept.
- *
- * The kinds share a table, but not a namespace: the app keys them `tts:<id>`, `scripting:<id>` and
- * `transcription:<id>`, and the seeded world has a speech endpoint and a scripting profile that are
- * both `openai`. A speech endpoint keeps its bare id, because a character's voice names it —
- * `<endpointId>/<voiceId>` — and the narration job looks it up by that; the other kinds' rows are
- * kept under the page's own key for them, so none of them meet.
+ * Row-id prefix for scripting profiles: the kinds share a table but not a namespace. A speech
+ * endpoint keeps its bare id, since a voice names it as `<endpointId>/<voiceId>`.
  */
 export const PROFILE_KEY = "scripting:";
 export const profileKey = (id: string): string => PROFILE_KEY + id;
 
-/** Where a transcription endpoint's row is kept; see `PROFILE_KEY`. */
+/** See `PROFILE_KEY`. */
 export const TRANSCRIBER_KEY = "transcription:";
 export const transcriberKey = (id: string): string => TRANSCRIBER_KEY + id;
 
 /**
- * A profile's say over the prompt, or nothing when it has never had one. Any of the four columns
- * set means it has: a `default` endpoint keeps its replacement's texts for when it is switched back,
- * and a mode left null reads as the `default` it stands for.
- *
- * A mode that is neither is an `append` row from before an endpoint's notes took Append's place. It
- * reads as `default`, its appended text moved into the notes — which is where that text now goes,
- * placed by `{{endpoint.notes}}` — so nothing typed is lost and nothing needs migrating.
+ * A profile's prompt, or undefined when none of its four columns is set; a null mode reads as
+ * `default`. A legacy `append` mode reads as `default` with its text moved into the notes.
  */
 function toProfilePrompt(row: EndpointRow): ProfilePrompt | undefined {
   const { promptSystem, promptUser, promptNotes } = row;
@@ -234,7 +206,7 @@ function toProfilePrompt(row: EndpointRow): ProfilePrompt | undefined {
   };
 }
 
-/** A scripting profile. Same table, `kind = "scripting"`. */
+/** Same table, `kind = "scripting"`. */
 export function toProfile(row: EndpointRow, parts: EndpointParts): Profile {
   const pricing = toPricingConfig(row, parts);
   const prompt = toProfilePrompt(row);
@@ -255,8 +227,7 @@ export function toProfile(row: EndpointRow, parts: EndpointParts): Profile {
     needsKey: row.needsKey,
     ...(row.apiKey ? { hasKey: true } : {}),
     ...ops(row),
-    // Null is a setting — leave it to the model — once the page has filled the profile in, which
-    // is when the operational block exists; before then it can only mean "never set".
+    // null means "leave it to the model" once the operational block exists, "unset" before
     ...(row.reasoningEffort != null || row.timeoutSec != null
       ? { reasoning: row.reasoningEffort }
       : {}),
@@ -264,7 +235,7 @@ export function toProfile(row: EndpointRow, parts: EndpointParts): Profile {
   };
 }
 
-/** A transcription endpoint. Same table, `kind = "transcription"`, its rate kept per minute. */
+/** Same table, `kind = "transcription"`; its rate is per minute. */
 export function toTranscriber(row: EndpointRow, parts: EndpointParts): Transcriber {
   const pricing = toPricingConfig(row, parts);
   return {

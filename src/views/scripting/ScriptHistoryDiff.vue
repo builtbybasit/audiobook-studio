@@ -1,11 +1,6 @@
 <script setup lang="ts">
-// What two versions of a chapter's script disagree on.
-//
-// The summary comes first — how many lines moved, and in what way — because on a long chapter the
-// list is the wrong thing to read first. The list itself shows only what changed, filtered by kind,
-// a page at a time, and every change says in words what it is: nothing here is told by colour
-// alone. A rewritten line is shown as the two lines it reads as, with the words that went marked
-// out of the first and the words that came marked in the second.
+// What two versions of a chapter's script disagree on: a summary, then only the changes, paged.
+// Every change is labelled in words, never by colour alone.
 import { computed, ref, watch } from "vue";
 import { comparisonSummary } from "@/lib/scriptHistory";
 import { TYPE_LABEL } from "@/lib/siteText";
@@ -15,10 +10,9 @@ import type { ChangeGroup, FieldChange, LineChange, ScriptComparison, SegmentTyp
 const props = withDefaults(
   defineProps<{
     comparison: ScriptComparison;
-    /** what the two sides are called, in the reader's words */
     fromLabel: string;
     toLabel: string;
-    /** the newer side is the current script, so a change can be opened in the reader */
+    /** the newer side is the current script, so changes link into the reader */
     jumpable?: boolean;
   }>(),
   { jumpable: false },
@@ -66,16 +60,15 @@ const rows = computed(() =>
 );
 const visible = computed(() => rows.value.slice(0, shown.value));
 const summary = computed(() => comparisonSummary(props.comparison));
-/** What a row is called: the fields that moved, or the structural thing that happened to the line. */
 const badges = (c: LineChange): string[] =>
   c.kind === "changed" ? c.fields.map((f) => FIELD_LABEL[f.field]) : [KIND_LABEL[c.kind]];
 const ids = (list: number[]): string =>
   list.length ? list.map((id) => `#${id}`).join(" + ") : "—";
 const textField = (c: LineChange) => c.fields.find((f) => f.field === "text");
-/** A line whose words are the same and whose spacing is not: shown as it is written, breaks and all. */
+/** same words, different spacing */
 const spacing = (c: LineChange): string => (c.kind === "changed" && textField(c)?.detail) || "";
 const otherFields = (c: LineChange) => c.fields.filter((f) => f.field !== "text");
-/** A field's value as the reader names it: a type by its label, so "site text" reads as it does in the reader. */
+/** a type by its reader label */
 const named = (f: FieldChange, v: string): string =>
   f.field === "type" ? (TYPE_LABEL[v as SegmentType] ?? v) : v;
 watch([() => props.comparison, filter], () => (shown.value = PAGE));
@@ -83,7 +76,7 @@ watch([() => props.comparison, filter], () => (shown.value = PAGE));
 
 <template>
   <div class="min-h-0 space-y-3">
-    <!-- the summary, before any of the detail -->
+    <!-- summary -->
     <div class="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
       <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <span class="text-sm font-semibold"
@@ -108,7 +101,6 @@ watch([() => props.comparison, filter], () => (shown.value = PAGE));
       </ul>
     </div>
 
-    <!-- what to look at -->
     <div v-if="!comparison.identical" class="flex flex-wrap items-center gap-1.5">
       <button class="chip" :class="filter === 'all' && 'chip-on'" @click="filter = 'all'">
         Everything <span class="text-zinc-400">{{ comparison.lines }}</span>
@@ -151,7 +143,7 @@ watch([() => props.comparison, filter], () => (shown.value = PAGE));
           </button>
         </div>
 
-        <!-- a line cut in two, or two lines run into one: each side as the lines it reads as -->
+        <!-- split or joined -->
         <div v-if="c.kind === 'split' || c.kind === 'joined'" class="space-y-1 font-serif">
           <p v-for="(t, k) in c.fromParts" :key="`f${k}`" class="flex gap-2">
             <span class="font-sans text-[11px] font-semibold text-zinc-400" aria-hidden="true"
@@ -171,7 +163,6 @@ watch([() => props.comparison, filter], () => (shown.value = PAGE));
           </p>
         </div>
 
-        <!-- the words: the line as it read, then as it reads -->
         <div v-else-if="textField(c) || c.kind !== 'changed'" class="space-y-1 font-serif">
           <p v-if="c.fromText" class="flex gap-2">
             <span class="font-sans text-[11px] font-semibold text-zinc-400" aria-hidden="true"
@@ -208,13 +199,11 @@ watch([() => props.comparison, filter], () => (shown.value = PAGE));
               ><template v-else>{{ c.toText }}</template></span
             >
           </p>
-          <!-- no word moved, so there is nothing to mark: say what did move instead -->
           <p v-if="spacing(c)" class="font-sans text-[11px] text-zinc-500">
             {{ spacing(c) }} — the line breaks above are shown as they are written.
           </p>
         </div>
 
-        <!-- everything else about the line -->
         <dl v-if="otherFields(c).length" class="mt-1.5 space-y-0.5">
           <div
             v-for="f in otherFields(c)"

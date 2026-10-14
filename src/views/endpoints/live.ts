@@ -1,14 +1,6 @@
-// What this endpoint is doing *right now*: the requests in flight and waiting, shaped like the
-// ledger's rows so the Activity list shows both in one. The moment one settles the server writes it
-// to its ledger and the page reads it from there (`useEndpointHistory`), with its receipt.
-//
-// A speech endpoint's busy and waiting counts are the server's gate's (`endpointsStore.serverLoad`,
-// read by `useEndpointLive`), across every job and every chapter rather than the chapters this
-// browser has open, and its cooldown is the gate's too — so the wait reasons and the effective
-// limit say what the server is actually holding the lines for.
-//
-// A transcriber's requests are a click each — a clone sample sent to be heard — and nothing reports
-// them in flight, so it has none here: what it heard is in the ledger once it answers.
+// Requests in flight and waiting, shaped like ledger rows so Activity shows both in one list.
+// Speech counts and cooldowns are the server gate's (`endpointsStore.serverLoad`), across every job.
+// Transcriber requests aren't reported in flight; they appear in the ledger once answered.
 import type { Job, RequestRecord, WaitReason } from "@/types";
 import { speechReadiness, type UnifiedEndpoint } from "@/lib/endpoints";
 import { jobLabel } from "@/lib/queue";
@@ -24,13 +16,12 @@ export interface LiveActivity {
   queued: number;
   /** why the queued work isn't moving; null when nothing is waiting */
   waiting: WaitReason | null;
-  /** the configured ceiling, and the smaller ceiling actually in force right now */
+  /** the ceiling actually in force now */
   effectiveLimit: number;
 }
 
 const bookOf = (k: string): string => k.slice(0, k.lastIndexOf(":"));
 
-/** What a live row says of itself; the rest is the endpoint's. */
 type LiveRow = Omit<RequestRecord, "kind" | "endpointId" | "simulated">;
 const liveRow = (u: UnifiedEndpoint, r: LiveRow): RequestRecord => ({
   ...r,
@@ -45,7 +36,7 @@ export function useEndpointActivity() {
   const jobsStore = useJobsStore();
   const libraryStore = useLibraryStore();
   const endpointsStore = useEndpointsStore();
-  /** Lines out at this TTS endpoint and lines waiting for it, as the server's gate counts them. */
+  /** As the server's gate counts them. */
   function ttsCounts(u: UnifiedEndpoint): { active: number; queued: number } {
     const { active, waiting } = endpointsStore.serverLoad(u.id);
     return { active, queued: waiting };
@@ -63,10 +54,9 @@ export function useEndpointActivity() {
     };
   }
 
-  /** What holds this endpoint's work before any slot or budget does: `speechReadiness`. */
+  /** What holds work before any slot or budget does. */
   const readiness = (u: UnifiedEndpoint) => speechReadiness(u.entry, Date.now());
 
-  /** In flight and waiting on this endpoint, by kind. */
   function counts(u: UnifiedEndpoint): { active: number; queued: number } {
     switch (u.kind) {
       case "scripting":
@@ -85,10 +75,8 @@ export function useEndpointActivity() {
     if (bookId) {
       const book = libraryStore.bookById(bookId);
       const cap = book?.budget?.cap;
-      // what is spent *and* what work already in flight has reserved: a queued request is waiting
-      // on the budget as soon as the cap is committed, not only once it has been charged
-      // A book whose spending has not been read is not said to be waiting on its budget: that
-      // would be a guess, where the server's own answer says so once it is read.
+      // spent plus reserved: a request waits on the budget once the cap is committed. A book whose
+      // spending is unread is not said to be waiting on it.
       const spent = jobsStore.spent(bookId);
       const reserved = jobsStore.reserved(bookId);
       if (cap != null && spent != null && reserved != null && spent + reserved >= cap)
@@ -110,14 +98,14 @@ export function useEndpointActivity() {
   function liveActivity(u: UnifiedEndpoint): LiveActivity {
     const { active, queued } = counts(u);
     const waiting = queued ? waitReasonFor(u, active, null) : null;
-    // pausing, a missing key or a cooldown drops the ceiling that is actually in force to zero
+    // paused, keyless or cooling down: the ceiling in force is zero
     const { state } = readiness(u);
     const effectiveLimit =
       state === "paused" || state === "nokey" || state === "cooldown" ? 0 : u.concurrency;
     return { active, queued, waiting, effectiveLimit };
   }
 
-  /** Unfinished jobs that would put requests through this endpoint — what a Cancel would hit. */
+  /** Unfinished jobs using this endpoint: what a Cancel would hit. */
   function jobsUsing(u: UnifiedEndpoint): Job[] {
     switch (u.kind) {
       case "scripting":
@@ -133,13 +121,12 @@ export function useEndpointActivity() {
                 castStore.effectiveVoice(j.bookId, s.speaker).endpoint?.id === u.id,
             );
         });
-      // no job sends to a transcriber yet: the clone form's button does, a click at a time
+      // no job sends to a transcriber; the clone form does
       case "transcription":
         return [];
     }
   }
 
-  /** In-flight and waiting requests, shaped like history rows so one list can show both. */
   function liveRequests(u: UnifiedEndpoint, now: number): RequestRecord[] {
     switch (u.kind) {
       case "scripting":

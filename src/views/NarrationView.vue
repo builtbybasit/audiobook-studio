@@ -1,15 +1,13 @@
 <script setup lang="ts">
 import { useCastStore } from "@/stores/cast";
-// fractions of a cent stay visible: a short run really can cost less than a cent, and rounding
-// that to "$0.00" reads as free
+// keeps fractions of a cent: rounding a short run to "$0.00" reads as free
 import { money } from "@/lib/pricing";
 import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptsStore } from "@/stores/scripts";
 
 // Narration stage: voices + routing on top, chapter picker + run estimate + job ledger below.
-// Endpoints themselves are configured app-wide on /endpoints; the Routing tab only shows where
-// this book's lines land.
+// The Routing tab only shows where this book's lines land; endpoints are set on /endpoints.
 import { useStorage } from "@vueuse/core";
 import { computed, nextTick, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
@@ -55,15 +53,13 @@ const TABS = [
 ] as const;
 const tab = ref("voices");
 const lexicon = ref<InstanceType<typeof LexiconPanel> | null>(null);
-/** the ledger's pronunciation flag hands a word straight to the dictionary */
 async function toDictionary(word: string) {
   tab.value = "pronunciation";
   collapsed.value = false;
   await nextTick();
   lexicon.value?.prefill(word);
 }
-// …also asked for from another page — the Listen page's flag — as `?pronounce=word`, which is
-// taken out of the address once the panel has it
+// the Listen page's flag sends `?pronounce=word`, taken out of the address once the panel has it
 watch(
   () => route.query.pronounce,
   (w) => {
@@ -74,9 +70,8 @@ watch(
   },
   { immediate: true },
 );
-// Whether the setup panel is folded away, remembered per book and per browser. First time round
-// it is open for a book nothing has narrated yet and closed otherwise; the saved word is
-// "open"/"closed" rather than a boolean's spelling, so what earlier visits saved still reads.
+// Whether the setup panel is folded, per book and browser. Saved as "open"/"closed", not a
+// boolean's spelling, so what earlier visits saved still reads.
 const collapsed = useStorage<boolean>(
   `audiobook-studio:narration-setup:${bookId}`,
   !!route.query.filter || libraryStore.chaptersOf(bookId).some((c) => c.narration !== "none"),
@@ -90,8 +85,7 @@ watch(
   },
 );
 const selected = ref<number[]>([]);
-// What the run is for, and whether it may take over a comparison somebody started. Both live here
-// so the picker's button, the estimate and the run itself are talking about the same thing.
+// Shared by the picker's button, the estimate and the run, so all three describe the same run.
 const scope = ref<NarrationScope>("fill");
 const keepPending = ref(true);
 const { opened, open: openChapter } = useOpenedChapter(
@@ -101,23 +95,13 @@ const { opened, open: openChapter } = useOpenedChapter(
     chapters.find((c) => c.narration === "failed")?.id ??
     chapters.find(isNarrated)?.id,
 );
-// Nothing below is drawn from the stores until they hold what it reads: an empty cast or a script
-// not read yet would otherwise pass for a book with no voices and a run with nothing in it.
+// Nothing is drawn until the stores are loaded: an empty cast or unread script would pass for a
+// book with no voices.
 const { ready: loaded, error: loadError, retry } = useNarrationData(bookId, opened);
 /**
- * The run as the picker, the strip and the estimate panel all describe it: one plan, the one
- * estimate of that plan, and what stops it starting, in the order worth fixing — worked out once
- * per change rather than once per place that shows it.
- *
- * What the *run* refuses is asked of the store: `narrationStore.blockers` is built on the same
- * figure the server reserves against the cap — a per-endpoint sum of undiscounted prices — so the
- * strip cannot green-light a press the server then turns down, and a retry from the Queue is held
- * to the same list. They are worked out here rather than in the estimate panel because the strip
- * has to say how many there are while it is closed.
- *
- * Nothing is planned until every script is in: each one that lands would otherwise plan and price
- * the whole selection again — hundreds of chapters, line by line, hundreds of times over — for a
- * label on a button that cannot be pressed yet and a count that is not true until the last lands.
+ * The run as the picker, strip and estimate panel describe it, worked out once. `blockers` uses
+ * the figure the server reserves against the cap, so the strip cannot green-light a run the server
+ * refuses. Nothing is planned until every script is in, or each landing script re-prices it all.
  */
 const run = computed(() => {
   const plan = narrationStore.narrationRunPlan(
@@ -131,7 +115,7 @@ const run = computed(() => {
 });
 const scopes = (["fill", "failed", "all"] as NarrationScope[]).map((value) => ({
   value,
-  // the strip is 300px wide: the scope's full name is in the panel, and in the run's own label
+  // the strip is 300px wide; the full name is in the panel
   label: SCOPE_LABEL[value]
     .replace("Missing & changed", "Missing")
     .replace("Failed only", "Failed"),
@@ -149,16 +133,12 @@ const runNote = computed(() => {
   );
 });
 const anyScripted = computed(() => libraryStore.chaptersOf(bookId).some(isScripted));
-/** The tab carries the cast's progress, so the Voices panel needs no summary line of its own. */
 const voices = computed(() => {
   const cast = castStore.charactersOf(bookId);
   const byName = castStore.byName[bookId] ?? new Map();
   return { assigned: cast.filter((c) => voiced(c, byName)).length, total: cast.length };
 });
-/**
- * The endpoints this book's speakers resolve to, and how many of them can take its lines — the
- * pool beyond them is the Endpoints page's business, and pausing one of those changes nothing here.
- */
+/** Only the endpoints this book's speakers resolve to: pausing any other changes nothing here. */
 const routes = computed(() => {
   const reached = new Map<string, Endpoint>();
   for (const c of castStore.charactersOf(bookId)) {
@@ -172,14 +152,10 @@ const routes = computed(() => {
   return { total: reached.size, usable: usable.length };
 });
 const chapter = computed(() => libraryStore.chapter(bookId, opened.value));
-/** the open chapter has been narrated at all, so its ledger has rows to show */
 const begun = computed(
   () => chapter.value && isScripted(chapter.value) && chapter.value.narration !== "none",
 );
-/**
- * The open chapter's lines as "Narrate this chapter" reads them: the ones read aloud, and how many
- * of site text and notes it passes over — counted, so a line marked by mistake is not simply absent.
- */
+/** Counts the site text and notes it skips, so a line marked by mistake is not simply absent. */
 const openedLines = computed(() => {
   const book = libraryStore.bookById(bookId);
   const segs = scriptsStore.segmentsOf(bookId, opened.value);
@@ -190,7 +166,7 @@ const openedLines = computed(() => {
     (unread ? ` (${plural(unread, "line")} of site text or notes not read)` : "")
   );
 });
-/** What "Narrate this chapter" would send — at the scope it runs, not the store's default. */
+/** At the scope "Narrate this chapter" runs, not the store's default. */
 const openedRequests = computed(() =>
   narrationStore
     .estimate(bookId, [opened.value], "fill")
@@ -200,8 +176,7 @@ const openedRequests = computed(() =>
 </script>
 
 <template>
-  <!-- the workspace takes whatever the window has: its two panels are the page, and a fixed height
-       either leaves a band of nothing under them or spills them off the bottom -->
+  <!-- takes the window's height: a fixed one leaves a gap or spills off the bottom -->
   <div class="flex flex-col gap-4 p-4 lg:h-full">
     <TabsRoot v-model="tab" class="card shrink-0" @update:model-value="collapsed = false">
       <UiTabs :tabs="TABS" class="border-b border-zinc-200 px-2 dark:border-zinc-800">
@@ -266,9 +241,7 @@ const openedRequests = computed(() =>
             @run="(ids) => narrationStore.startRun(bookId, ids, { scope })"
           />
         </div>
-        <!-- Scope is a choice and stays on screen; the estimate is a consequence of it and only
-             has to be reachable. Fixed height whatever the run turns out to be, so the chapter
-             list above never gives up rows to a longer answer. -->
+        <!-- fixed height, so the chapter list above never gives up rows to a longer estimate -->
         <div class="card shrink-0 p-2">
           <UiToggleGroup v-model="scope" :options="scopes" block size="xs" />
           <div class="mt-1.5 flex items-center gap-2 text-xs">

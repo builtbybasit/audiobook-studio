@@ -1,7 +1,6 @@
 // Breeze-TTS-2.cpp's `breeze-server` (https://github.com/HoppouAI/Breeze-TTS-2.cpp/blob/main/docs/server.md),
-// named by its endpoint rather than known by its address, against a `fetch` that answers as its
-// source does (`apps/server/server.cpp`, `voices.cpp`): its voice list as the Test, a busy 409 while
-// it renders, a streamed WAV whose sizes are placeholders, and voices saved at `/voices`.
+// named by the endpoint's `server`, not its address, against a `fetch` that answers as its source
+// does: its voice list as the Test, a busy 409, a streamed WAV with placeholder sizes, `/voices`.
 import { describe, expect, test } from "bun:test";
 
 import { speechProviderOf } from "@/lib/providers";

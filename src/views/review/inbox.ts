@@ -1,18 +1,6 @@
-// Every decision one book is waiting on, in one list.
-//
-// A pending decision is something only a person can settle: a retake to compare against the clip in
-// the book, a flagged clip, a speaker that might be an alias, a chunk that didn't verify, an
-// expression whose position drifted, a chapter the import wasn't sure about, a run that failed.
-// Each already has a small count on the page it belongs to, and each of those pages is somewhere
-// else — so the overview could say "review cast" while four retakes sat unheard two pages away, and
-// Export's "audio review is unfinished" only spoke up at the very end.
-//
-// This gathers them all, says where each one is, and hands back a link that lands on the row itself
-// rather than at the top of the page it lives on. Read-only over the stores, like `bookFacts`:
-// nothing here decides anything, and a decision settled anywhere leaves the list on the next read.
-// A site-text suggestion is the one decision the inbox can also settle where it stands — a yes or a
-// no about one line, through the same store actions and Undo as the reader's — so its rows say
-// which line (`siteCheck`) and the page offers Accept and Dismiss beside the link.
+// Every decision one book is waiting on, in one list, each with a link that lands on its row.
+// Read-only over the stores, like `bookFacts`. A site-text suggestion is the one decision the page
+// can also settle in place (`siteCheck`), through the reader's store actions and Undo.
 import { useCastStore } from "@/stores/cast";
 import { useExportsStore } from "@/stores/exports";
 import { useJobsStore } from "@/stores/jobs";
@@ -41,22 +29,19 @@ export type DecisionKind =
   | "retake";
 
 export interface Decision {
-  /** stable across a re-read, so the list can key on it and a jump can be remembered */
+  /** stable across a re-read, so the list can key on it */
   id: string;
   kind: DecisionKind;
-  /** what is waiting — the line, the name, the kind of notice */
   title: string;
-  /** where it is: "Ch 4 · The Iron Gate", "12 chapters", "Cast" */
+  /** "Ch 4 · The Iron Gate", "12 chapters", "Cast" */
   where: string;
-  /** the decision itself, in one sentence */
   detail: string;
-  /** when it arrived, for "oldest first"; 0 when the thing carries no time of its own */
+  /** for "oldest first"; 0 when the thing carries no time of its own */
   at: number;
-  /** the chapter it sits in, when it sits in one — the group's "open the page" link starts there */
+  /** the group's "open the page" link starts at this chapter */
   chapterId?: number;
-  /** lands on the row, not the top of the page */
   to: RouteLocationRaw;
-  /** a site-text suggestion on this line, which can be accepted or dismissed from the list */
+  /** set when the row can be accepted or dismissed from the list */
   siteCheck?: { chapterId: number; segmentId: number; suggest: "watermark" | "narration" };
 }
 
@@ -64,21 +49,18 @@ export type DecisionTone = "red" | "amber" | "violet" | "sky" | "zinc";
 
 export interface DecisionGroup {
   kind: DecisionKind;
-  /** the heading, always plural: "Retakes waiting" */
+  /** always plural: "Retakes waiting" */
   label: string;
-  /** two words for the surfaces with one line, singular and plural — see `countOf` */
+  /** singular and plural, for one-line surfaces — see `countOf` */
   one: string;
   many: string;
-  /** what settling one of these means, one line under the heading */
   blurb: string;
   tone: DecisionTone;
-  /** the page that can work through the whole group at once */
   all: RouteLocationRaw;
   allLabel: string;
   items: Decision[];
 }
 
-/** Heading, one-line explanation and colour for each kind. The page renders nothing of its own. */
 const KINDS: Record<
   DecisionKind,
   { label: string; one: string; many: string; blurb: string; tone: DecisionTone }
@@ -169,15 +151,10 @@ const ORDER: DecisionKind[] = [
 const excerpt = (t: string, n = 64): string =>
   t.length > n ? t.slice(0, n).trimEnd() + "…" : t || "(empty line)";
 
-/**
- * One inbox per book, worked out once per change to the stores it reads however many surfaces show
- * it — the shell's tabs and rail, the Review page, the overview, the palette. Each is a computed, so
- * it is never stale: a read after any change it depends on works it out again.
- */
+/** One inbox per book, recomputed once per change to the stores it reads, however many show it. */
 const useInboxes = defineStore("reviewInbox", () => {
-  // One scan per chapter, so a change to one chapter's script — or a batch of scripts landing on a
-  // long book — scans those chapters again and not every line of the book. Not returned, so Pinia
-  // does not wrap each of a long book's thousands of calls as an action.
+  // One computed per chapter, so a change to one script rescans only that chapter. Not returned, so
+  // Pinia does not wrap each call as an action.
   // ponytail: one entry per chapter ever scanned, never evicted; key by book if memory matters
   const chapters = new Map<string, ComputedRef<ChapterScan>>();
   function scanOf(bookId: string, chId: number): ChapterScan {
@@ -195,15 +172,13 @@ const useInboxes = defineStore("reviewInbox", () => {
   return { of };
 });
 
-/** What one chapter's script has waiting, as the lines that are waiting. */
 interface ChapterScan {
-  /** the share of the chapter's words marked as not read, counted as the scripting job counts it */
+  /** counted as the scripting job counts it */
   unread: ReturnType<typeof unreadShare>;
   siteChecks: Segment[];
   fallbacks: Segment[];
   flags: Segment[];
   candidates: Segment[];
-  /** whether any line has an expression, which only then can be out of place */
   expressions: boolean;
 }
 
@@ -211,7 +186,7 @@ function scan(bookId: string, chId: number): ChapterScan {
   const segs = useScriptsStore().segmentsOf(bookId, chId);
   const book = useLibraryStore().bookById(bookId);
   return {
-    // counting a chapter's words is the costly part, so only where something is unread
+    // counting words is the costly part, so only where something is unread
     unread: segs.some((s) => !isSpoken(s, book))
       ? unreadShare(segs, book)
       : { words: 0, unread: 0, lines: 0, share: 0 },
@@ -223,7 +198,6 @@ function scan(bookId: string, chId: number): ChapterScan {
   };
 }
 
-/** Every decision on this book, grouped, empty groups dropped. */
 export const reviewInbox = (bookId: string): DecisionGroup[] => useInboxes().of(bookId);
 
 function gather(
@@ -238,9 +212,7 @@ function gather(
 
   const chapters = libraryStore.chaptersOf(bookId);
   const scans = chapters.map((c) => scanOf(bookId, c.id));
-  // `where` is asked once per row, and a long book has hundreds of rows and chapters
   const byId = new Map(chapters.map((c) => [c.id, c]));
-  // by its reading number, which the library works out once per book rather than once per row
   const numbers = libraryStore.chapterNumbers[bookId];
   const where = (chId: number): string => {
     const c = byId.get(chId);
@@ -268,10 +240,8 @@ function gather(
     retake: [],
   };
 
-  // ---- runs that failed. Built from what is still broken rather than from the job history: a
-  // chapter retried successfully is not a decision any more, however many failures it logged.
-  // the latest failure of each stage of each chapter, in one pass over the history (the later
-  // listed of two that finished together)
+  // Runs that failed: built from what is still broken, not the job history, so a chapter retried
+  // successfully drops out. Latest failure per stage per chapter.
   const failures = new Map<string, Job>();
   for (const j of jobsStore.jobs) {
     if (j.bookId !== bookId || j.status !== "failed") continue;
@@ -281,8 +251,7 @@ function gather(
   }
   const lastFailure = (kind: Job["kind"], chId: number): Job | undefined =>
     failures.get(`${kind}:${chId}`);
-  // the first error, not the last: a failed run signs off with "Job failed", and the line before it
-  // is the one that says what actually went wrong
+  // the first error, not the last: the last is always "Job failed"
   const errorOf = (j: Job | undefined): string =>
     j?.activity?.find((e) => e.level === "error")?.message ?? "";
   for (const c of chapters)
@@ -319,10 +288,9 @@ function gather(
       to: { path: `/book/${bookId}/export` },
     });
 
-  // ---- contents, grouped the way the review decides them: one verdict per kind of notice
   for (const g of libraryStore.noticeGroupsOf(bookId)) {
     if (!g.pending.length) continue;
-    // a pending chapter is still kept (a skipped one counts as decided), so each has its number
+    // a pending chapter is still kept, so each has its number
     const shown = `Ch ${g.pending
       .slice(0, 4)
       .map((id) => numbers?.get(id))
@@ -344,12 +312,10 @@ function gather(
     });
   }
 
-  // ---- site text. Marking too much is the dangerous direction — a line of story marked as site
-  // text is simply not in the audiobook, and nothing else says so — so a chapter where the unread
-  // marks are an unusual share of the words is listed before the detector's line-by-line doubts.
+  // Site text. Marking too much is the dangerous direction (marked story is silently missing from
+  // the audio), so a chapter with an unusual unread share is listed before line-by-line doubts.
   chapters.forEach((c, i) => {
     const scanned = scans[i];
-    // the figure the scripting job warns at, counted the same way (`unreadShare`)
     const { words: all, unread, lines, share } = scanned.unread;
     if (share > UNREAD_SHARE_WARNING)
       items.sitetext.push({
@@ -380,7 +346,6 @@ function gather(
         });
   });
 
-  // ---- unverified chunks, flags and second takes, from each chapter's scan
   chapters.forEach((c, i) => {
     const scanned = scans[i];
     for (const s of scanned.fallbacks)
@@ -426,8 +391,8 @@ function gather(
         });
       }
   });
-  // only chapters with an expression in them can have one out of place: working out a line's
-  // render reads its whole text through the dictionary
+  // only chapters with an expression can have one out of place; checking reads text through the
+  // dictionary, which is costly
   for (const issue of narrationStore.expressionIssues(
     bookId,
     chapters.filter((_, i) => scans[i].expressions).map((c) => c.id),
@@ -443,7 +408,6 @@ function gather(
       to: inScripting(issue.chId, issue.segId),
     });
 
-  // ---- the cast: names a re-script brought in, and names that look like one speaker twice
   const stats = castStore.castStats(bookId);
   const lines = (name: string): string => plural(stats[name]?.lines ?? 0, "line");
   const firstIn = (name: string): string => {
@@ -516,11 +480,9 @@ function gather(
   }));
 }
 
-/** One group as a phrase: "2 failed runs", "1 flagged clip". */
 export const countOf = (g: DecisionGroup): string =>
   `${g.items.length} ${g.items.length === 1 ? g.one : g.many}`;
 
-/** How many decisions are open, for the badges that only have room for a number. */
 export const reviewCount = (bookId: string): number =>
   reviewInbox(bookId).reduce((n, g) => n + g.items.length, 0);
 

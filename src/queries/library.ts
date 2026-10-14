@@ -1,13 +1,6 @@
-// The shelf, and each book with its chapters, read into the library store.
-//
-// The library store is the working copy: a skip, a pause, an edit that stales a chapter act on it
-// at once, and every page reads it. These queries are how it is filled — what comes back is
-// installed there — and they are what every read of a book goes through, the router's on opening
-// one, a refused setting's read back and the queue's poll alike, so two reads of one book never
-// land out of order: a later read aborts an earlier one, and an aborted read installs nothing.
-//
-// The entries are never collected. The store keeps what they read regardless, and an entry that
-// is gone is one the next read has to make again rather than join.
+// The shelf, and each book with its chapters, read into the library store (the working copy).
+// Every read of a book goes through these, so a later read aborts an earlier one and an aborted
+// read installs nothing. Entries are never collected: the store keeps what they read anyway.
 import { computed, toValue, watch, type MaybeRefOrGetter } from "vue";
 import { useQuery, useQueryCache } from "@pinia/colada";
 
@@ -75,15 +68,14 @@ export function useBook(bookId: MaybeRefOrGetter<string | null | undefined>) {
 }
 
 /**
- * Every book in `bookIds` read with its chapters, as the list changes — for a page that shows
- * chapters of books no page has opened, like the Queue. A book already read is not read again
- * here; the queue's poll reads it again as its jobs move.
+ * Every book in `bookIds` read with its chapters as the list changes, for pages like the Queue.
+ * Each is read once here; the queue's poll rereads it as its jobs move.
  */
 export function useBooks(bookIds: MaybeRefOrGetter<readonly string[]>) {
   const queryCache = useQueryCache();
   const read = (ids: readonly string[]) => {
     for (const id of new Set(ids))
-      // the entry holds a failure, which `failed` reads; the rejection has nobody else to tell
+      // the entry holds a failure, which `failed` reads
       void queryCache.refresh(queryCache.ensure(bookQuery(id))).catch(() => {});
   };
   // watched through its joined ids, so a list rebuilt with the same books reads nothing

@@ -1,6 +1,5 @@
 <script setup lang="ts">
-// A book still in its contents review. It is not on the shelf, but it must not vanish either: the
-// card says where it stands and offers the way back in, or the way out.
+// A book still in its contents review: not on the shelf yet, but shown so it isn't lost.
 import { useLibraryStore } from "@/stores/library";
 import { useUiStore } from "@/stores/ui";
 

@@ -1,19 +1,8 @@
-// Chapter script history: the versions a chapter's script has been through, and restoring one.
-//
-// One rule holds the whole feature together: **the working script is preserved before anything
-// replaces it**, labelled by whatever produced it. A re-script, a bulk correction and a restore
-// each hand their own label over as they write; ordinary editing hands one over too, but only once
-// per session — a run of edits with less than `SESSION_IDLE_MS` between them is one entry, so the
-// list reads as "9 manual edits" rather than nine entries nobody can tell apart.
-//
-// The history is the server's. It applies that rule (`planCapture` in `@/lib/scriptHistory`) in
-// the transaction that writes the script: an edit carries what produced it and answers with the
-// history it added to, which `_install` puts here, and `useChapterHistory` in `@/queries` reads it
-// on opening a chapter. Nothing in this store captures a version itself, so the list can never
-// claim something the server did not record.
-//
-// Versions are independent copies of script content, never the audio: restoring one carries the
-// clips across rather than throwing them away.
+// Chapter script history: a chapter's versions, and restoring one. The working script is kept
+// before anything replaces it, labelled by what produced it; edits less than `SESSION_IDLE_MS`
+// apart are one entry. The server applies this (`planCapture` in `@/lib/scriptHistory`) as it
+// writes, so nothing here captures a version. Versions hold script content only; a restore
+// carries clips across.
 import { chapterName } from "@/lib/chapterNumber";
 import { key } from "@/lib/scriptReview";
 import { compareScripts, originLabel, planRestore, restoreConsequences } from "@/lib/scriptHistory";
@@ -38,10 +27,7 @@ import { useScriptsStore } from "@/stores/scripts";
 import { toastFailure } from "@/stores/toastFailure";
 import { useUiStore } from "@/stores/ui";
 
-/**
- * The runs that write into a chapter's script: a scripting run writes its lines, a narration its
- * clips, a check by ear its flags, and a Re-apply its clips' files. An export only reads the clips.
- */
+/** Runs that write into a chapter's script (lines, clips, flags, re-applied files). */
 const LANDS_ON_SCRIPT: Record<JobKind, boolean> = {
   scripting: true,
   narration: true,
@@ -61,18 +47,15 @@ export interface Rewrite {
   /** speakers a line names that the cast lacked, added to it unreviewed */
   absorbed: string[];
   /**
-   * each of `absorbed` written to the cast once the chapter's write is answered: true once the
-   * server has them, false when it refused them or the chapter's write was refused and no line
-   * here names them any more, so they were taken off again unwritten
+   * each of `absorbed` written to the cast after the chapter's write: false when refused, or when
+   * that write was refused and no line names them, so they were taken off unwritten
    */
   pushed: Promise<boolean>[];
   /** whether the write landed; a refused one has already been read back over and said */
   landed: Promise<boolean>;
   /**
-   * Put back the script and the chapter's status as they were, written as an edit, and resolve
-   * once nothing more is being written for the chapter with whether that landed. A rewrite that
-   * did not land changed nothing on the server, so there is nothing to put back and it resolves
-   * false without touching the chapter.
+   * Put back the script and chapter status as an edit; resolves with whether that landed. A
+   * rewrite that never landed resolves false without touching the chapter.
    */
   undo: () => Promise<boolean>;
 }
@@ -85,15 +68,14 @@ interface HistoryState {
 export const useHistoryStore = defineStore("history", {
   state: (): HistoryState => ({ chapters: {} }),
   getters: {
-    /** This chapter's history, or an empty one for a chapter nothing has happened to yet. */
+    /** Empty for a chapter nothing has happened to yet. */
     historyOf(s): (bookId: string, chId: number) => ChapterHistory {
       return (bookId, chId) => s.chapters[key(bookId, chId)] ?? emptyHistory();
     },
-    /** The saved versions, newest first — the order the list reads in. */
+    /** The saved versions, newest first. */
     versionsOf(): (bookId: string, chId: number) => ScriptVersion[] {
       return (bookId, chId) => [...this.historyOf(bookId, chId).versions].reverse();
     },
-    /** How the working script came to be. */
     headOf(): (bookId: string, chId: number) => HistoryHead {
       return (bookId, chId) => this.historyOf(bookId, chId).head;
     },
@@ -106,7 +88,7 @@ export const useHistoryStore = defineStore("history", {
         return v ? compareScripts(v.segments, scriptsStore.segmentsOf(bookId, chId)) : null;
       };
     },
-    /** What restoring one would do, worked out without touching anything. */
+    /** What restoring one would do, touching nothing. */
     restorePlanOf(): (bookId: string, chId: number, versionId: number) => RestorePlan | null {
       const castStore = useCastStore();
       const libraryStore = useLibraryStore();
@@ -123,11 +105,7 @@ export const useHistoryStore = defineStore("history", {
         });
       };
     },
-    /**
-     * Runs that would land on this chapter. A request sent before a restore would write a script,
-     * a clip or a chapter status that belongs to the version you have just left behind, so
-     * restoring waits for them rather than racing them.
-     */
+    /** Runs that would land on this chapter; restoring waits for them rather than racing them. */
     busyJobs(): (bookId: string, chId: number) => Job[] {
       const jobsStore = useJobsStore();
 
@@ -140,15 +118,13 @@ export const useHistoryStore = defineStore("history", {
   },
   actions: {
     // ---------- the seam ----------
-    /** A chapter's history as the server holds it, in place of what was here. */
     _install(bookId: string, chId: number, history: ChapterHistory): void {
       this.chapters[key(bookId, chId)] = history;
     },
     // ---------- checkpoints ----------
     /**
-     * Name the script as it stands and keep a copy of it. Nothing about the working script changes:
-     * a checkpoint is a place to come back to, not an edit. The copy is the server's, and so is the
-     * history that comes back; the Undo forgets the version there, which puts the head back too.
+     * Name the script and keep a copy on the server; the working script is unchanged. Undo forgets
+     * the version, which puts the head back too.
      */
     async saveCheckpoint(
       bookId: string,
@@ -185,13 +161,8 @@ export const useHistoryStore = defineStore("history", {
     },
     // ---------- restoring ----------
     /**
-     * Put this chapter's script back to one of its versions. The versions after it are kept — a
-     * restore is one more entry, never a rewriting of what came before it — and the audio is
-     * carried across clip by clip rather than thrown away.
-     *
-     * The restored script is written back through the scripts store under a `restored` origin, and
-     * the server preserves what it replaced; the undo writes the script that was here back as an
-     * edit. The speakers a restore brings back into the cast are written to it as well.
+     * Restore one version as a new entry (later versions kept), carrying clips across, written
+     * under a `restored` origin. Undo writes the old script back as an edit.
      */
     restore(bookId: string, chId: number, versionId: number): boolean {
       const castStore = useCastStore();
@@ -225,11 +196,9 @@ export const useHistoryStore = defineStore("history", {
         kind: "success",
         description: `${originLabel(version.origin)} · ${facts.join(" · ")}. Everything after it is still in the history.`,
         timeout: 12000,
-        // Only the speakers this restore added, and only while nothing else has started using
-        // them. The two writes must not race: a speaker removed while the server's script still
-        // names them hands their lines to the Narrator and moves the revision, and the write that
-        // was to take their lines away is refused. The script goes first; the removal then moves
-        // nothing. Nor may it overtake their own write, which would leave nobody to remove.
+        // Only speakers this restore added and nothing else uses, and only after the script is
+        // back: removing a speaker the server's script still names hands their lines to the
+        // Narrator and refuses the restore's write. Nor may it overtake their own write.
         undo: () =>
           Promise.all([write.undo(), ...write.pushed]).then(() =>
             castStore._dropSpeakers(bookId, write.absorbed),
@@ -238,16 +207,9 @@ export const useHistoryStore = defineStore("history", {
       return true;
     },
     /**
-     * Write `plan` over this chapter's script under `origin`, the way a restore and an import both
-     * do: the script replaced, the chapter's narration (and scripting) status set as the plan
-     * says, any speaker a line names that the cast lacks added unreviewed, the chapter re-timed,
-     * and the script saved. The server preserves what it replaced in the history. The speakers it
-     * added are written to the cast in the same step, each waiting for the chapter's write: one
-     * only this chapter named, whose write was refused, is never the server's (`cast._push`).
-     *
-     * The undo puts back exactly what this changed and nothing else — the chapter's script and its
-     * own status. Work done elsewhere in the book while the toast was up is not a rewrite's to take
-     * back, and nor are the speakers it absorbed, which the caller drops once the script is back.
+     * Write `plan` over the script under `origin` (restore and import): status as the plan says,
+     * unknown speakers added unreviewed and written after the chapter, re-timed, saved. Undo puts
+     * back only this chapter's script and status; the caller drops absorbed speakers.
      */
     _rewrite(bookId: string, chId: number, plan: RestorePlan, origin: VersionOrigin): Rewrite {
       const castStore = useCastStore();
@@ -265,8 +227,8 @@ export const useHistoryStore = defineStore("history", {
         : null;
       const beforeScript = clone(scriptsStore.segmentsOf(bookId, chId));
       scriptsStore._replace(bookId, chId, plan.segments);
-      // An imported script is the chapter's script whatever its scripting status was; a restore
-      // only moves a scripted chapter between done and fallback, and leaves a failed one failed.
+      // An imported script is the chapter's script whatever its status; a restore only moves a
+      // scripted chapter between done and fallback, and leaves a failed one failed.
       const scripted =
         origin.kind === "imported" || was?.scripting === "done" || was?.scripting === "fallback";
       if (was)
@@ -294,11 +256,7 @@ export const useHistoryStore = defineStore("history", {
       };
     },
     // ---------- the book this history belongs to ----------
-    /**
-     * The book's chapters have been renumbered — a volume was removed or moved — so each history
-     * follows the chapter it belongs to, and a chapter that is gone takes its own with it. Without
-     * this a chapter would inherit the versions of whichever chapter used to carry its number.
-     */
+    /** Histories follow renumbered chapters; a removed chapter's history goes with it. */
     remapBook(bookId: string, map: Record<number, number>): void {
       const prefix = bookId + ":";
       const next: Record<string, ChapterHistory> = {};

@@ -1,8 +1,6 @@
 <script setup lang="ts">
-// The "To decide" tab: an inbox of only the chapters the import flagged, grouped by kind — each
-// card the reason, the evidence and Skip / Keep — with one decision per group and one for every
-// suggested skip. It reads the way the person decides ("these 12 are sponsor thanks: skip them")
-// and a clean book finds it empty.
+// The "To decide" tab: only the chapters the import flagged, grouped by kind, with one decision
+// per group and one for every suggested skip.
 import { computed } from "vue";
 import { excerptOf, stateOf } from "@/lib/contents";
 import { STATE_CHIP } from "@/views/contents/shared";

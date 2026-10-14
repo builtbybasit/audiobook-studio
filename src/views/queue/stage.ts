@@ -1,7 +1,5 @@
-// What a job is called on the Queue and the page its work is looked at on, one entry per kind.
-//
-// A check by ear has no page of its own: what it heard lands on the Narration page, as flags on
-// the lines it heard wrong, so that is where it opens — on the flagged lines when it flagged any.
+// What a job is called on the Queue and the page its work is looked at on, per kind. A check by
+// ear opens on the Narration page, where what it heard lands as flags.
 import type { RouteLocationRaw } from "vue-router";
 
 import type { Job, JobKind } from "@/types";
@@ -27,7 +25,6 @@ function narrationFilter(j: Job): string | undefined {
   }
 }
 
-/** the stage page a job's work is on */
 export const PAGE: Record<JobKind, string> = {
   scripting: "scripting",
   narration: "narration",
@@ -36,7 +33,7 @@ export const PAGE: Record<JobKind, string> = {
   effects: "narration",
 };
 
-/** The page a job's work is looked at on, at its chapter when it has one. */
+/** at its chapter when it has one */
 export function stageLink(j: Job): RouteLocationRaw {
   const filter = narrationFilter(j);
   return {

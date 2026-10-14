@@ -1,7 +1,6 @@
-// Pauses inside a line: written by the scripting model as `[[pause]]` or `[[long pause]]`, or
-// placed by hand; sent as the voice's own pause tag where its provider's docs give one, and
-// otherwise as silence between the parts the line is spoken in — which the estimate counts as the
-// requests they are.
+// Pauses inside a line (`[[pause]]`, `[[long pause]]`, or placed by hand): sent as the voice's own
+// pause tag where its provider has one, else as silence between parts, which the estimate counts
+// as requests.
 import { describe, expect, test } from "bun:test";
 
 import type { Endpoint, ExpressionAnnotation } from "@/types";

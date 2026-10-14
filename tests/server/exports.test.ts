@@ -1,8 +1,5 @@
-// Finished audiobooks over HTTP: built, listed, downloaded and forgotten.
-//
-// The reading half is checked against rows written the way the round-trip test writes them, so it
-// stands on its own; the building half drives the real runner and the real encoder and checks the
-// file that comes out.
+// Finished audiobooks over HTTP: built, listed, downloaded and removed. Building drives the real
+// runner and encoder and checks the file that comes out.
 import { describe, expect, test } from "bun:test";
 import { join, relative } from "node:path";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -112,23 +109,15 @@ describe("a book's exports over HTTP", () => {
     await api.request(`/api/books/${id}/confirm`, { method: "POST" });
     await api.request(`/api/books/${id}/volumes/1`, { method: "DELETE" });
     const { body } = await api.request<{ exports: ExportItem[] }>(`/api/books/${id}/exports`);
-    // Every chapter it claimed went, so it goes too — the rule the page already applies to its own
-    // copy, now kept where the row and its files are.
+    // Every chapter it claimed went, so the export goes too.
     expect(body.exports).toEqual([]);
   });
 });
 
 // ---------- building one ----------
-//
-// The build job end to end: the real runner, the real routes, ffmpeg, and clips a fake speech model
-// actually wrote to disk. What is asserted is the file — how long it plays, as ffprobe reads it —
-// rather than the row's account of itself, because a row that agrees with itself and not with the
-// disk is the failure this page exists to catch.
-//
-// Where a build has to be genuinely in flight, `controlledEncoder` holds the door until the test
-// opens it, so nothing here waits on a timer except the two fire-and-forget removals. The door is
-// on the API's own encoder rather than a second runner beside it, because the route enqueues into
-// the API's runner and a second one would only sometimes win the race to claim the job.
+// Asserts on the file (its length per ffprobe), not the row: a row that disagrees with the disk is
+// the failure this catches. `controlledEncoder` sits on the API's own encoder because the route
+// enqueues into the API's runner, and a second runner would only sometimes win the claim.
 
 interface BuildResult {
   job: Job;
@@ -136,11 +125,8 @@ interface BuildResult {
 }
 
 /**
- * The encoder, with a door the test can close.
- *
- * `hold()` resolves once a build is inside the encoder and keeps it there until `open()`; a cancel
- * while it waits rejects the way an aborted encode would. `fail(message)` makes the next build
- * throw instead, which is the one failure path a fake speech model cannot produce.
+ * The encoder with a door: `hold()` keeps a build inside until `open()` (a cancel rejects like an
+ * aborted encode); `fail(message)` makes the next build throw.
  */
 function controlledEncoder(): AudiobookEncoder & {
   hold(): Promise<void>;
@@ -186,11 +172,8 @@ function controlledEncoder(): AudiobookEncoder & {
 }
 
 /**
- * A speech model whose second reading of a line is ten seconds longer than its first.
- *
- * The audio is lengthened, not just the duration it reports: a build reads the file, so a fake
- * that only claimed to be slower would leave the chapter exactly as long as it was and prove
- * nothing about what was re-encoded.
+ * A speech model whose second reading of a line is ten seconds longer. The audio itself grows: a
+ * build reads the file, so a fake that only reported a longer duration would prove nothing.
  */
 function slowerOnRetake(): SpeechProvider {
   const inner = fakeSpeechProvider();
@@ -229,12 +212,8 @@ const jobById = async (api: TestApi, id: number) =>
   (await api.request<{ job: Job }>(`/api/jobs/${id}`)).body.job;
 
 /**
- * A three-chapter book to narrate and build, one line of dialogue and its attribution a chapter.
- *
- * A few seconds of audio a chapter: the length of what is narrated is what every build here costs,
- * and under ffmpeg nearly all of it. At `story()`'s full length the two ffmpeg builds were most of
- * the whole suite's running time and proved nothing more. No line is repeated from one chapter to
- * the next, so `slowerOnRetake` lengthens only the chapter a test reads again.
+ * A three-chapter book, one line of dialogue and its attribution a chapter. Kept short: build time
+ * is mostly ffmpeg over this audio. No line repeats, so `slowerOnRetake` lengthens one chapter only.
  */
 const THREE: [string, string][] = [
   ["One", line("One")],
@@ -306,8 +285,7 @@ describe("building an audiobook", () => {
   });
 
   test("a finished file downloads under its name, even one no header can carry, and answers a range", async () => {
-    // A header is Latin-1. An em dash, a curly apostrophe or a Chinese title in it used to make
-    // `Headers` throw, and the download a 500.
+    // A header is Latin-1: an em dash, curly apostrophe or Chinese title must not make `Headers` throw.
     const api = testApi();
     const { id } = await narratedBook(api, { chapters: THREE });
     const name = "The Philosopher’s Stone — 三体";
@@ -327,8 +305,7 @@ describe("building an audiobook", () => {
     expect(header).toMatch(/^attachment; filename="[\x20-\x7e]+"/);
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(onDisk);
 
-    // and a part of it, so a player can seek: the route answers through the clips' range helper,
-    // whose edge cases are in ranges.test.ts
+    // and a part of it, so a player can seek
     const part = await api.fetch(url, { headers: { range: "bytes=0-43" } });
     expect(part.status).toBe(206);
     expect(part.headers.get("content-range")).toBe(`bytes 0-43/${onDisk.byteLength}`);
@@ -351,10 +328,8 @@ describe("building an audiobook", () => {
   });
 
   test("a cancel that arrives after the last file is written still leaves the old version current", async () => {
-    // The encoder has returned and the build is on its way to committing — the window the
-    // encoders' own signal checks cannot see. Before the build checked once more, it committed,
-    // marked the old version `replaced`, and was then called cancelled and deleted: no current
-    // audiobook at all.
+    // The encoder has returned and the build is committing, a window the encoders' signal checks
+    // cannot see. A cancel here must not leave the book with no current audiobook.
     const inner = ffmpegEncoder();
     let written!: () => void;
     const encoded = new Promise<void>((r) => (written = r));
@@ -482,9 +457,8 @@ describe("building an audiobook", () => {
   });
 
   test("removing a book mid-build stops the build, and leaves no directory behind", async () => {
-    // Held after the first of two files is written, where a build that carried on would reserve
-    // the second and `mkdir` the book's directory back. It is cancelled and settled before the
-    // rows and the directory go, so its `onSettled` clears what it wrote while it still can.
+    // Held after the first of two files is written. The build is cancelled and settled before the rows
+    // and directory go, so its `onSettled` clears what it wrote and nothing recreates the directory.
     const inner = ffmpegEncoder();
     let written!: () => void;
     const between = new Promise<void>((r) => (written = r));
@@ -534,9 +508,7 @@ describe("building an audiobook", () => {
 });
 
 // ---------- with a real encoder behind it ----------
-//
-// What the files hold beyond their length: the format the settings asked for, the chapter marks a
-// player reads, and an update encoded whole.
+// The format the settings asked for, the chapter marks a player reads, and an update encoded whole.
 
 const ffmpeg = await ffmpegAvailable();
 
@@ -577,11 +549,9 @@ async function probe(
 
 describe.skipIf(!ffmpeg)("building with ffmpeg", () => {
   test("finds a clip named relative to the server's folder, as the default `./data/audio` names it", async () => {
-    // ffmpeg reads a relative path in a concat list against the list's own folder — a temporary
-    // one — and then blames the list: "Error opening input file …/concat.txt". A library on the
-    // default AUDIO_DIR could not build with ffmpeg at all.
-    // Under the working folder, as `data/audio` is: a path climbing out of a deep temporary folder
-    // reaches the root and happens to resolve from anywhere.
+    // ffmpeg reads relative paths in a concat list against the list's own (temporary) folder, so a
+    // relative AUDIO_DIR failed with "Error opening input file …/concat.txt". The folder sits under the
+    // cwd like `data/audio`: from a deep temporary folder, `..` reaches the root and resolves anyway.
     const dir = mkdtempSync(join(process.cwd(), ".audiobook-relative-"));
     try {
       writeFileSync(join(dir, "a.wav"), toneWav(440, 0.5));
@@ -632,8 +602,7 @@ describe.skipIf(!ffmpeg)("building with ffmpeg", () => {
     // at the clips' rate, though loudnorm resamples inside and the encoder would otherwise pick
     expect(read.rate).toBe(SAMPLE_RATE);
     const job = await jobById(api, done.jobId!);
-    // the loudness the panel offered was measured rather than waved away, with the figure the
-    // file measured before it was levelled
+    // the loudness was measured, with the file's figure before levelling
     expect(job.activity?.some((e) => e.detail?.measured != null)).toBe(true);
     expect(job.activity?.find((e) => e.message.endsWith("is written"))?.detail?.loudness).toMatch(
       /^-?\d+\.\d LUFS in, levelled to -\d+$/,
@@ -643,8 +612,7 @@ describe.skipIf(!ffmpeg)("building with ffmpeg", () => {
   test("an update encodes the whole audiobook again, with the chapter read again in it", async () => {
     const api = testApi({ encoder: ffmpegEncoders(), speech: slowerOnRetake() });
     const { id } = await narratedBook(api, { chapters: THREE });
-    // the levels are left alone here: this is about what was encoded, and a two-pass loudnorm
-    // over a whole audiobook twice over is minutes of a test suite for nothing
+    // no levelling: a two-pass loudnorm over a whole audiobook, twice, is minutes for nothing
     const settings = settingsFor({ normalize: false });
     await build(api, id, { ids: [1, 2, 3], settings });
     await api.runner.idle();

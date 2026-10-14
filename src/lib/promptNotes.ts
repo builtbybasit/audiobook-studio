@@ -1,15 +1,11 @@
-// Notes a prompt would not send, said where the notes are typed.
-//
-// A book's notes and an endpoint's are placed where the prompt says `{{book.notes}}` or
-// `{{endpoint.notes}}`; a prompt without the tag drops them (see `@/lib/prompt`). Which notes are
-// dropped is `unplacedNotes`'s; this says so in words, names whose prompt it is, and offers the
-// line that places them when the prompt is one the page can change there and then.
+// Notes a prompt would not send (`unplacedNotes`), said in words where the notes are typed, with
+// the line that places them when the page can edit that prompt.
 import type { PromptOrigin, ResolvedPrompt } from "@/types";
 import { unplacedNotes } from "@/lib/prompt";
 
 export type NotesOwner = "book" | "endpoint";
 
-/** The line "Add the tag" puts at the end of the system prompt, as the built-in prompt words it. */
+/** As the built-in prompt words it. */
 export const NOTES_LINE: Record<NotesOwner, string> = {
   book: "Notes on this book: {{book.notes}}",
   endpoint: "Notes for this model: {{endpoint.notes}}",
@@ -19,14 +15,11 @@ export interface DroppedNotes {
   owner: NotesOwner;
   /** "This book's prompt has no {{endpoint.notes}}, so DeepSeek's notes for its model are not sent." */
   text: string;
-  /** where the tag would have to go, when it cannot be added from here; empty when it can */
+  /** where the tag would have to go; empty when it can be added from here */
   fixElsewhere: string;
 }
 
-/**
- * Which of a book's and an endpoint's notes the prompt a run would send drops, and why. `here` is
- * the origin whose text the page is editing — "Add the tag" is offered only for that one.
- */
+/** `here` is the origin the page is editing; "Add the tag" is offered only for it. */
 export function droppedNotes(
   resolved: ResolvedPrompt,
   notes: { book?: string; endpoint?: string },
@@ -56,11 +49,9 @@ export function droppedNotes(
   }));
 }
 
-/** A system prompt with the line that places `owner`'s notes added at its end. */
 export function withNotesLine(system: string, owner: NotesOwner): string {
   const body = system.trimEnd();
   if (!body) return NOTES_LINE[owner];
-  // beside the other notes line when the prompt ends on one, as the built-in prompt keeps them
   const last = body.slice(body.lastIndexOf("\n") + 1);
   const other = NOTES_LINE[owner === "book" ? "endpoint" : "book"];
   return `${body}${last === other ? "\n" : "\n\n"}${NOTES_LINE[owner]}`;

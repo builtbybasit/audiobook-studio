@@ -41,8 +41,7 @@ describe("the gaps between words", () => {
 });
 
 describe("expressions placed in a line", () => {
-  // The seeded endpoint as the demo is built from it; that the demo library serves it unchanged,
-  // tags and all, is `tests/server/demoWorld.test.ts`'s to hold.
+  // The seeded endpoint; that the demo serves it unchanged is `tests/server/demoWorld.test.ts`'s.
   test("Fish's S2 model ships with tags, so a line read by it can be annotated at once", () => {
     const ep = makeEndpoints().find((e) => e.id === "fish")!;
     expect(expressionSupport(ep)).toBe("supported");

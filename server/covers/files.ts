@@ -1,16 +1,6 @@
-// Cover images: where they live on disk, what counts as one, and how a url finds the file again.
-//
-// A cover is kept beside the book's clips, in `<AUDIO_DIR>/<bookId>/covers/`, so the removal that
-// takes a book's directory takes its covers with it and nothing else has to remember them. The file
-// is named by a hash of its bytes: the same image uploaded twice is one file under one url, and a
-// url whose bytes can never change is one a browser may cache for good. The url is under the API
-// base of the library the clips belong to, as a clip's is (`server/audio/files.ts`), and a book
-// keeps the url it was given.
-//
-// **Only JPEG and PNG.** Those are what an M4B's cover atom and an MP3's picture frame are read as
-// by every player that shows a cover at all, and what ffmpeg copies in without re-encoding. The
-// type is read from the first bytes rather than taken from the upload's name or its content type,
-// both of which are only what the browser guessed.
+// Covers live in `<AUDIO_DIR>/<bookId>/covers/`, so removing a book removes them, named by a hash
+// of their bytes so a url can be cached for good. Only JPEG and PNG, which every player reads and
+// ffmpeg embeds without re-encoding; the type is sniffed from the bytes, not the upload's guess.
 import { mkdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -19,13 +9,12 @@ import { BOOK_ID } from "~/lib/http";
 
 export type CoverType = "image/jpeg" | "image/png";
 
-/** The largest cover kept. A 3000-pixel square JPEG, the size stores ask for, is well under it. */
+/** A 3000-pixel square JPEG, the size stores ask for, is well under it. */
 export const MAX_COVER_BYTES = 10 * 1024 * 1024;
 
 const FILE = /^[a-f0-9]{32}\.(jpg|png)$/;
 const EXT: Record<CoverType, "jpg" | "png"> = { "image/jpeg": "jpg", "image/png": "png" };
 
-/** What an image's first bytes say it is, or null when they say neither JPEG nor PNG. */
 export function sniffCover(bytes: Uint8Array): CoverType | null {
   const b = bytes;
   if (b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image/jpeg";
@@ -35,21 +24,15 @@ export function sniffCover(bytes: Uint8Array): CoverType | null {
 }
 
 export interface CoverFiles {
-  /** Keep an image already sniffed as a cover, and say its url. The same bytes, the same url. */
+  /** The same bytes get the same url. */
   write(bookId: string, bytes: Uint8Array, type: CoverType): Promise<{ url: string; file: string }>;
-  /** The file a request names, or null when the request names something that cannot be one. */
+  /** null when the request can't name a cover. */
   path(bookId: string, file: string): string | null;
-  /**
-   * The file a cover url of this book names, or null when it names anything else: another book's
-   * cover, another library's, a path that is not one, a data URL. Asked before a build is queued,
-   * so a cover the server could never find is a refusal rather than a build that fails later.
-   */
+  /** null for anything but this book's cover url; checked before a build is queued. */
   fileOf(bookId: string, url: string): string | null;
-  /** The file a cover url of this book names, when it is on disk. */
   existing(bookId: string, url: string): Promise<{ path: string; type: CoverType } | null>;
 }
 
-/** Covers beside a library's clips, under the same directory and the same API base. */
 export function coverFiles({ dir, base }: Pick<AudioFiles, "dir" | "base">): CoverFiles {
   const prefix = (bookId: string) => `${base}/books/${bookId}/covers/`;
   return {

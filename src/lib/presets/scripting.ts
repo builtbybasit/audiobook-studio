@@ -1,24 +1,19 @@
-// The scripting presets: what "Start from a preset…" offers a scripting endpoint, grouped by
-// provider — a model that serves OpenAI's /chat/completions, or a command-line tool on this
-// computer that is signed in to one (`@/lib/providers/cli`).
+// Scripting presets, grouped by provider: a model serving OpenAI's /chat/completions, or a
+// signed-in command-line tool on this computer (`@/lib/providers/cli`).
 import { presetPricing, type ScriptingPreset } from "@/lib/presets/preset";
 import { SIMULATED_BASE_URL, SIMULATED_SCRIPTING_MODEL } from "@/lib/providers";
 import { CLAUDE_CODE, CODEX } from "@/lib/providers/cli";
 
-// Every hosted rate below is the provider's own published card as read on 2026-09-28, standard
-// tier, USD per million tokens. A preset's `maxOutputTokens` is the model's own ceiling per request
-// as its provider documents it, read on 2026-10-13 — thinking counts against it for every one of
-// these but Grok, where xAI documents no ceiling and caps a request at 128,000 visible tokens when
-// none is sent — so a reasoning model is never cut off by a cap of ours. A budget holds a request
-// at that ceiling until it lands. Other limits and timing stay at `newProfile`'s defaults.
+// Hosted rates: the provider's published card, standard tier, USD per million tokens.
+// `maxOutputTokens` is the model's documented ceiling (thinking included), so a reasoning model is
+// never cut off by a cap of ours; a budget holds a request at it. xAI documents none for Grok and
+// caps visible output at 128,000.
 
 const PRICES_AS_OF = "Rates as published on 28 September 2026 — check them against your own plan.";
 
 /**
- * DeepSeek's peak hours, in UTC, Monday to Friday: 01:00–04:00 and 06:00–10:00. Every other hour
- * is off-peak at half price, so the card is the off-peak rate and these windows put the full one
- * back. Chinese public holidays are off-peak too; a schedule cannot know them, so they are billed
- * here at the peak rate, which overstates rather than understates.
+ * DeepSeek's weekday peak hours (UTC). The card is the off-peak rate; these windows put the full
+ * one back. Chinese public holidays are off-peak but billed here at peak, overstating.
  */
 function deepseekPeaks(peak: { input: number; output: number; cachedInput: number }) {
   const weekdays = [1, 2, 3, 4, 5];
@@ -35,7 +30,7 @@ function deepseekPeaks(peak: { input: number; output: number; cachedInput: numbe
   ];
 }
 
-/** Gemini 3.8 Flash's 2026 price: half the card until 2027 begins (read as UTC midnight). */
+/** Half the card until 2027 begins (UTC midnight). */
 const GEMINI_FLASH_2026 = {
   id: "flash-2026",
   label: "2026 price",
@@ -47,11 +42,8 @@ const GEMINI_FLASH_2026 = {
 };
 
 /**
- * A model through OpenRouter, one key for all of them. Its rates are OpenRouter's listing for the
- * model (`GET /api/v1/models`), standard tier. That is not always the provider's own card, nor what
- * a request is charged: OpenRouter bills at the rate of whichever of its providers serves it, and
- * reports that charge with each answer as `usage.cost`, which is what the ledger records the
- * request as costing, with the figure worked out from these rates kept beside it.
+ * Rates are OpenRouter's listing (`GET /api/v1/models`), which only prices estimates: a request is
+ * billed at whichever provider serves it, and the ledger records the reported `usage.cost`.
  */
 function openRouter(
   id: string,
@@ -89,17 +81,15 @@ function openRouter(
 }
 
 /**
- * What a command-line tool's preset shares: no key, no charge — the tool's own login pays, out of
- * a subscription — two chunks at once, and the time a reasoning model run as an agent takes over a
- * chapter's chunk (a 7–9k-character one took about 65 s through Codex on gpt-6-luna).
+ * Shared by the command-line tools: no key, no charge (the tool's subscription pays). A 7–9k
+ * character chunk took about 65 s through Codex on gpt-6-luna.
  */
 const ON_SUBSCRIPTION = {
   needsKey: false,
   inPrice: 0,
   outPrice: 0,
   concurrency: 2,
-  // neither tool takes a cap on output tokens, so a preset's figure (the model's own ceiling) is
-  // only what a request holds against the budgets — at no charge, nothing
+  // neither tool takes an output cap; this is only what a request holds against budgets
   maxOutputTokens: 32000,
   secPerChunk: 60,
   timeoutSec: 600,
@@ -111,7 +101,6 @@ const SUBSCRIPTION_NOTE =
   "every request is recorded at no charge, and budgets never stop it. Each run is in an empty " +
   "folder, with no tools, files or commands, and nothing saved.";
 
-/** A Claude model through Claude Code, at the medium effort. */
 function claudeCode(id: string, label: string, model: string, hint: string): ScriptingPreset {
   return {
     id: `claude-code-${id}`,
@@ -133,7 +122,7 @@ function claudeCode(id: string, label: string, model: string, hint: string): Scr
 
 export const SCRIPTING_PRESETS: ScriptingPreset[] = [
   {
-    // first, since a fresh library has no endpoints and this is the one that works without an account
+    // first: works without an account
     id: "simulated",
     group: "Simulated",
     label: "Simulated (free)",
@@ -511,8 +500,7 @@ export const SCRIPTING_PRESETS: ScriptingPreset[] = [
       name: "Codex · GPT-6 Luna",
       baseUrl: CODEX.scheme,
       model: "gpt-6-luna",
-      // at low or medium Codex reports no reasoning at all, and the model then drops words — the
-      // two-sentence Test excerpt lost "Mara whispered" every time; at high it kept them
+      // at low or medium Codex reasons not at all and the model drops words
       reasoning: "high",
       ...ON_SUBSCRIPTION,
       maxOutputTokens: 128000,

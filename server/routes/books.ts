@@ -1,9 +1,5 @@
-// The library over HTTP.
-//
-// Import → review contents → add, the same three steps the demo walks, with the review working on
-// a book marked `importing` that the library does not list yet. Every route here is a request
-// turned into one call on `server/library/ops.ts` and the result turned into JSON: the rules are
-// there, and a refusal they raise is answered by `app.onError` in the API's one error shape.
+// The library over HTTP: import → review contents (on a book still `importing`) → add.
+// Each route is one call on `server/library/ops.ts`, where the rules are.
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { Env as PinoEnv } from "hono-pino";
@@ -54,23 +50,18 @@ const Ids = v.object({
   ids: v.pipe(v.array(v.pipe(v.number(), v.integer(), v.minValue(1))), v.minLength(1)),
 });
 
-/**
- * Chapters to script, and the scripting profile the browser has chosen — whose `maxChars` and
- * `splitAt` cut each chapter into the requests the Endpoints page previews. Absent, a chapter goes
- * whole.
- */
 const CheckIds = v.object({
   ...Ids.entries,
-  /** every clip, those already heard as their line reads too */
+  /** every clip, including those already heard as their line reads */
   again: v.optional(v.boolean()),
 });
 
 const ScriptIds = v.object({
   ...Ids.entries,
+  /** the scripting profile; its `maxChars`/`splitAt` cut each chapter. Absent, a chapter goes whole. */
   profile: v.optional(v.pipe(v.string(), v.maxLength(200))),
 });
 
-/** Chapters to narrate, and which of their lines: `all` when the request does not say. */
 const Narrate = v.object({
   ...Ids.entries,
   scope: v.optional(v.picklist(["fill", "failed", "all"]), "all"),
@@ -165,25 +156,18 @@ const ChapterParam = v.object({ id: v.string(), chapterId: IdParam });
 const VolumeParam = v.object({ id: v.string(), volumeId: IdParam });
 
 /**
- * Which form of a chapter's prose is wanted.
- *
- * `markdown` is what is stored and what the contents review renders: headings, emphasis and the
- * tables a chapter was laid out in. `plain` is that with the Markdown resolved away, and is what
- * **anything that counts, bills or sends the text to a provider must ask for** — a model given the
- * stored form would be charged for a link's address and a table's pipes, and a speech provider
- * would read them out.
+ * `markdown` is what is stored and rendered. **Anything that counts, bills or sends text to a
+ * provider must ask for `plain`**: otherwise a model is charged for link addresses and table pipes,
+ * and a speech provider reads them out.
  */
 const TextQuery = v.object({
   format: v.optional(v.picklist(["markdown", "plain"]), "markdown"),
 });
 
-/**
- * The names a mention search looks for: `?name=…`, repeated for each. A query string carries one
- * as a string and several as a list, so both are read as a list.
- */
-/** Several chapters' prose in one read: `?id=…` repeated, in either format. */
+/** Several chapters' prose in one read: `?id=…` repeated. */
 const TextsQuery = v.object({ ...TextQuery.entries, id: ChapterIds });
 
+// `?name=…` repeated: a query string carries one as a string and several as a list.
 const MentionsQuery = v.object({
   name: v.pipe(
     v.union([v.string(), v.array(v.string())]),
@@ -199,15 +183,14 @@ const MentionsQuery = v.object({
 
 const ImportForm = v.object({
   file: v.instance(File),
-  /** override the title the EPUB declares */
   title: v.optional(v.string()),
   /** set to add this file to an existing book as one more volume */
   bookId: v.optional(v.string()),
-  /** the volume's name; only read when `bookId` is set */
+  /** the volume's name; only read with `bookId` */
   name: v.optional(v.string()),
 });
 
-/** Whether the speakers the scripts found leave with them. */
+/** `cast`: whether the speakers the scripts found go too. */
 const StartOver = v.object({ cast: v.optional(v.boolean()) });
 
 const CoverForm = v.object({ file: v.instance(File) });
@@ -218,9 +201,8 @@ export function bookRoutes(
   runner: Runner,
   files: AudioFiles | undefined,
   built: AudiobookFiles | undefined,
-  /** what a prompt trial is sent to: the app's own, so a test's stands in for the network */
+  /** what a prompt trial is sent to; a test passes its own */
   scripting: ScriptingProvider,
-  /** what runs voice effects, if anything does here */
   effects?: EffectRunner,
 ): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
@@ -241,16 +223,14 @@ export function bookRoutes(
     (c) => {
       const { id, chapterId } = c.req.valid("param");
       const { format } = c.req.valid("query");
-      // Said in the response rather than left for the caller to remember what it asked for: the
-      // two forms are the same prose and only one of them is safe to bill for.
+      // Echoed back: only one of the two forms is safe to bill for.
       return c.json({ text: ops.chapterText(db, id, chapterId, format), format });
     },
   );
 
   /**
-   * Several chapters' prose at once: `{ texts: { [chapter]: text }, format }`. A page that prices
-   * or searches hundreds of chapters asks for them in a few reads rather than one each, which a
-   * browser cannot hold open at once. A chapter the book does not have is left out.
+   * `{ texts: { [chapter]: text }, format }`, for pages that read hundreds of chapters (a browser
+   * cannot hold that many requests open). A chapter the book does not have is left out.
    */
   app.get("/:id/texts", validate("param", BookParam), validate("query", TextsQuery), (c) => {
     const { id: chapterIds, format } = c.req.valid("query");
@@ -274,8 +254,7 @@ export function bookRoutes(
     importLimit.file(file);
     if (!file.size) fail(400, "That file is empty");
 
-    // `assign` puts these on the request's own line too, so the one-line summary of the request
-    // and anything written during it agree about which file they are talking about.
+    // `assign` also puts these on the request's summary line.
     const log = c.var.logger;
     log.assign({ name: "import", file: file.name, bytes: file.size });
 
@@ -294,7 +273,7 @@ export function bookRoutes(
       maxSize: MAX_COVER_BYTES + 64 * 1024,
       onError: () => fail(413, `That image is larger than ${MAX_COVER_BYTES / 1024 / 1024} MB`),
     });
-    /** An image for an audiobook's cover; answers with the url its settings name it by. */
+    /** An audiobook cover; answers with its url. */
     app.post(
       "/:id/covers",
       coverLimit,
@@ -306,7 +285,7 @@ export function bookRoutes(
       },
     );
 
-    /** An image for the book's own cover, the shelf's and the overview's; answers with the book. */
+    /** The book's own cover (shelf and overview); answers with the book. */
     app.post(
       "/:id/cover",
       coverLimit,
@@ -320,7 +299,7 @@ export function bookRoutes(
       },
     );
 
-    /** A cover's bytes. Named by their hash, so what a url serves never changes. */
+    /** Named by hash, so a url's bytes never change. */
     app.get("/:id/covers/:file", validate("param", CoverParam), (c) => {
       const { id, file } = c.req.valid("param");
       return serveFile(
@@ -334,25 +313,24 @@ export function bookRoutes(
     });
   }
 
-  /** The review is done: the book, or its new volume, joins the library. Nothing starts running. */
+  /** The book, or its new volume, joins the library. Nothing starts running. */
   app.post("/:id/confirm", validate("param", BookParam), (c) =>
     c.json({ book: ops.confirmImport(db, c.req.valid("param").id) }),
   );
 
-  /** Cancel an import: a book never added goes entirely; a new volume comes off its book. */
+  /** Cancel an import: a new book goes entirely; a new volume comes off its book. */
   app.post("/:id/discard", validate("param", BookParam), (c) =>
     c.json(ops.discardImport(db, c.req.valid("param").id)),
   );
 
   // ---------- a book's settings, and its volumes ----------
-  /** The budget, the script budget, the pacing, the prompt, whether notes are read and whether chapters are checked by ear; answers with the book and its re-settled chapters. */
+  /** Answers with the book and its re-settled chapters. */
   app.patch("/:id", validate("param", BookParam), validate("json", Settings), (c) => {
     const settings = c.req.valid("json");
     if (settings.prompt) refusePrompt("The book's prompt", bookPromptProblems(settings.prompt));
     return c.json(ops.updateBook(db, c.req.valid("param").id, settings) satisfies BookUpdated);
   });
 
-  /** Cut the book into volumes: where each begins and what it is called; see `ops.setVolumes`. */
   app.put("/:id/volumes", validate("param", BookParam), validate("json", VolumeStarts), (c) =>
     c.json(
       ops.setVolumes(
@@ -363,7 +341,7 @@ export function bookRoutes(
     ),
   );
 
-  /** Read the volumes in this order; the chapters are numbered to follow it. */
+  /** The chapters are renumbered to follow the new order. */
   app.put("/:id/volumes/order", validate("param", BookParam), validate("json", VolumeOrder), (c) =>
     c.json(
       ops.reorderVolumes(
@@ -394,7 +372,7 @@ export function bookRoutes(
         c.json(ops.reviewChapters(db, c.req.valid("param").id, decision, c.req.valid("json").ids)),
     );
 
-  /** Put decisions back exactly as they were: what an Undo of a skip or a keep sends. */
+  /** What an Undo of a skip or a keep sends. */
   app.post(
     "/:id/chapters/decisions",
     validate("param", BookParam),
@@ -403,12 +381,8 @@ export function bookRoutes(
   );
 
   // ---------- scripting ----------
-  // Reading and editing a script are in `server/routes/script.ts`; queueing the work is here,
-  // because a run is something the library does to its chapters.
-  /**
-   * Script these chapters: one job each, as one run. Answers with the jobs, and with the chapters
-   * it left out and why, so the client can say so instead of waiting for work that is not coming.
-   */
+  // Reading and editing a script are in `server/routes/script.ts`.
+  /** One job per chapter, as one run; answers with the jobs and the chapters skipped and why. */
   app.post(
     "/:id/chapters/script",
     validate("param", BookParam),
@@ -425,9 +399,8 @@ export function bookRoutes(
   );
 
   /**
-   * Try a prompt on one chunk of a chapter: the drafts sent over what is saved, and the answer
-   * shown, not written. A refused answer is a result (200, with `error`); a request the book cannot
-   * afford is refused (409) before it goes. Closing the request cancels it.
+   * Try draft prompts on one chunk; the answer is shown, not written. A refused answer is a 200
+   * with `error`; an unaffordable request is a 409 before it goes. Closing the request cancels it.
    */
   app.post(
     "/:id/script-trial",
@@ -456,11 +429,7 @@ export function bookRoutes(
   );
 
   // ---------- narration ----------
-  /**
-   * Narrate these chapters at one scope: one job each, as one run. The same answer as scripting —
-   * the jobs, and the chapters left out and why — with the reasons narration adds: a chapter with
-   * no script yet, and one the scope finds nothing to do in.
-   */
+  /** One job per chapter, as one run; answers like scripting does. */
   app.post(
     "/:id/chapters/narrate",
     validate("param", BookParam),
@@ -477,11 +446,7 @@ export function bookRoutes(
   );
 
   // ---------- checking by ear ----------
-  /**
-   * Hear these chapters' clips back on the first transcription endpoint switched on: one job each,
-   * as one run, and the chapters left out and why — with `again`, the clips already heard too.
-   * Refused whole (400) when none is switched on.
-   */
+  /** Uses the first transcription endpoint switched on; 400 when none is. */
   app.post("/:id/chapters/check", validate("param", BookParam), validate("json", CheckIds), (c) => {
     const { ids, again } = c.req.valid("json");
     const result = enqueueCheck(db, runner, c.req.valid("param").id, ids, { again });
@@ -493,19 +458,19 @@ export function bookRoutes(
   });
 
   // ---------- voice effects ----------
-  /** How many of the book's clips have an old sound, and whether effects can run to redo them. */
+  /** How many clips have an old sound, and whether effects can run to redo them. */
   app.get("/:id/effects/stale", validate("param", BookParam), async (c) =>
     c.json((await staleSound(db, c.req.valid("param").id, effects)) satisfies StaleSound),
   );
 
-  /** Queue the book's Re-apply (`jobs/effects.ts`); 409 while one is queued or running. */
+  /** 409 while a Re-apply is queued or running. */
   app.post("/:id/effects/reapply", validate("param", BookParam), (c) => {
     const job = enqueueReapply(db, runner, c.req.valid("param").id);
     return c.json({ job }, 202);
   });
 
   // ---------- removal ----------
-  /** Every script, clip and status goes, kept in each chapter's history; `cast` takes the speakers too. */
+  /** Scripts, clips and statuses go (kept in each chapter's history). */
   app.post("/:id/start-over", validate("param", BookParam), validate("json", StartOver), (c) => {
     const { id } = c.req.valid("param");
     const result = scriptOps.startOver(db, id, c.req.valid("json"), files);
@@ -521,7 +486,7 @@ export function bookRoutes(
 
   app.delete("/:id/volumes/:volumeId", validate("param", VolumeParam), async (c) => {
     const { id, volumeId } = c.req.valid("param");
-    // the last volume going takes the book with it, files and all; see `removeVolume` for the rest
+    // the last volume going takes the book with it
     return c.json(await ops.removeVolume(db, id, volumeId, { runner, files, built }));
   });
 

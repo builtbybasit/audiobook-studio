@@ -1,7 +1,5 @@
-// An EPUB as it stands the moment the import has read it: a book (or one more volume of one), its
-// chapters in reading order with continuous numbering, and the notes the import attached to the
-// chapters that did not look like story. Nothing is skipped here — every chapter arrives included
-// and the review is where the person decides.
+// A demo import sample as the import leaves it: chapters numbered on across volumes, notes on
+// non-story chapters, nothing skipped (the review decides).
 import { narrator } from "@/lib/cast";
 import { importSample, type VolumeSpec } from "~/demo/seed/fixtures/imports";
 import { noteOf } from "~/demo/seed/fixtures/notices";
@@ -15,7 +13,6 @@ export interface ImportedBook {
   chapters: Chapter[];
 }
 
-/** The word count a chapter reports: notices are short, story is not, a mixed chapter is story plus a note. */
 function wordsOf(spec: VolumeSpec["chapters"][number], r: () => number): number {
   if (spec.words) return spec.words;
   if (!spec.kind || spec.kind === "title") return 2200 + Math.floor(r() * 2400);
@@ -23,7 +20,6 @@ function wordsOf(spec: VolumeSpec["chapters"][number], r: () => number): number 
   return 90 + Math.floor(r() * 320);
 }
 
-/** Expand one volume's chapter specs into chapters numbered from `startAt`. */
 export function importedChapters(
   volume: VolumeSpec,
   volumeId: number,
@@ -50,7 +46,6 @@ export function importedChapters(
   });
 }
 
-/** A whole book from one sample, ready to be reviewed. */
 export function importedBook(sampleId: string, id: string): ImportedBook {
   const sample = importSample(sampleId) ?? importSample("clean")!;
   const volumes: Volume[] = [];
@@ -83,13 +78,11 @@ export function importedBook(sampleId: string, id: string): ImportedBook {
   };
 }
 
-/** The parts of a library an import lands in: the shelf, its chapters, its casts, and the voices a cast can use. */
 export type LocalLibrary = Pick<World, "books" | "chapters" | "characters" | "endpoints">;
 
 /**
- * An EPUB read into a library with no server behind it, waiting in the contents review: the book
- * under `id` (or `import-<sample>`), numbered on when that id is taken, with the Narrator its only
- * speaker, on the first voice an enabled endpoint offers. Returns the book's id.
+ * Adds the sample under `id` (or `import-<sample>`, numbered on when taken), awaiting review, with
+ * the Narrator on the first enabled voice. Returns the book's id.
  */
 export function importInto(
   library: LocalLibrary,
@@ -109,7 +102,7 @@ export function importInto(
   return bookId;
 }
 
-/** A shelf book straight into the library, its review already done. Returns the book's id. */
+/** Adds a book with its review done. Returns the book's id. */
 export function shelveInto(library: LocalLibrary, spec: ShelfBook): string {
   const id = importInto(library, spec.sample, { id: spec.id, title: spec.title });
   const book = library.books.find((b) => b.id === id)!;

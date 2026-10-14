@@ -1,6 +1,4 @@
-// `pnpm db:migrate` — apply the generated migrations to the configured database.
-//
-// The server does this at startup too; this is for applying a schema change without starting it.
+// `db:migrate`: apply migrations without starting the server (which also applies them at startup).
 import { openDb } from "~/db/client";
 import { migrate } from "~/db/migrate";
 import { env } from "~/env";

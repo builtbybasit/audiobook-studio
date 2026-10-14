@@ -1,23 +1,5 @@
-// The script: one row per line, the clips rendered from those lines, and the versions the script
-// has been through.
-//
-// Three decisions shape this file.
-//
-// **A line is a row.** Segments are read per chapter, filtered by speaker, counted by state and
-// rewritten one field at a time by every bulk correction in the app. That is relational work, and
-// burying it in a JSON blob per chapter would mean rewriting a whole chapter to change one line's
-// speaker.
-//
-// **A clip is a row too, and `role` says which clip it is.** `SegmentAudio`, the retake waiting for
-// a verdict (`candidate`) and every superseded `Take` are the same shape wearing three hats — the
-// domain types differ only in which optional fields they happen to carry. One table with a
-// discriminator means accepting a retake is an update to two rows rather than a restructure, and it
-// makes the rule that queueing a render (`queueRender` in `~/jobs/narration`) can never leave a
-// line with neither its clip nor its retake a constraint over rows that a query can actually check.
-//
-// **A version's segments are a document.** `ScriptVersion.segments` is explicitly "an independent
-// copy: nothing that happens later may reach into it". Normalising it would hand out exactly the
-// shared references that copy exists to prevent, so it is stored whole.
+// The script: a row per line (bulk edits touch one field), a row per clip with `role` telling the
+// book's clip, the retake and old takes apart, and versions stored whole as independent copies.
 import { sql } from "drizzle-orm";
 import {
   foreignKey,
@@ -46,43 +28,40 @@ import type {
 import type { ReqError } from "@/types";
 import { books, chapters } from "~/db/schema/library";
 
-/** One line of the script. */
 export const segments = sqliteTable(
   "segments",
   {
     bookId: text("book_id").notNull(),
-    /** the chapter's number, which moves when the book is renumbered — hence ON UPDATE CASCADE */
+    /** the chapter's number, which moves on renumbering — hence ON UPDATE CASCADE */
     chapterId: integer("chapter_id").notNull(),
-    /** the line's id within its chapter */
     id: integer("id").notNull(),
-    /** reading order; kept apart from `id` so a split can insert without renumbering the chapter */
+    /** reading order; apart from `id` so a split can insert without renumbering */
     position: integer("position").notNull(),
     type: text("type").$type<SegmentType>().notNull(),
-    /** a `characters.name` of the same book, by value — an unmatched name is a routing issue, not an error */
+    /** a `characters.name` by value; an unmatched name is a routing issue, not an error */
     speaker: text("speaker").notNull(),
     text: text("text").notNull(),
-    /** per-line delivery note, on top of the speaker's own style */
+    /** delivery note on top of the speaker's style */
     direction: text("direction").notNull().default(""),
 
-    /** the LLM failed verification on this run and the chunk was kept whole as narration */
+    /** the LLM failed verification and the chunk was kept whole as narration */
     fallback: integer("fallback", { mode: "boolean" }),
     fallbackCount: integer("fallback_count"),
     fallbackMismatch: text("fallback_mismatch"),
 
     /** changed by hand */
     edited: integer("edited", { mode: "boolean" }),
-    /** the site-text detector's suggestion for this line's type, until a person decides */
+    /** the site-text detector's suggested type, until a person decides */
     siteCheck: text("site_check", { mode: "json" }).$type<SiteCheck>(),
-    /** seconds of silence after this line, overriding the book's pacing; 0 = run straight on */
+    /** seconds of silence after, overriding the book's pacing; 0 = run straight on */
     pause: real("pause"),
-    /** the exact whitespace that followed this line in the source, when it is not a single space */
+    /** the source whitespace after this line, when not a single space */
     sep: text("sep"),
 
-    /** what a listener complained about after hearing the clip */
     flag: text("flag", { mode: "json" }).$type<SegmentFlag>(),
-    /** expression tags placed at positions in the unchanged source text */
+    /** tags at positions in the unchanged source text */
     expressions: text("expressions", { mode: "json" }).$type<ExpressionAnnotation[]>(),
-    /** line effects by id (`Segment.effects`), as a JSON array; null = none */
+    /** effect ids; null = none */
     effects: text("effects", { mode: "json" }).$type<string[]>(),
   },
   (t) => [
@@ -99,21 +78,12 @@ export const segments = sqliteTable(
   ],
 );
 
-/**
- * Which clip of its line this is.
- *
- *   current    the clip the chapter plays, times and exports
- *   candidate  a retake rendering beside it, waiting for a verdict — nothing reads it as the book's
- *   take       a superseded clip, kept so two takes can be compared
- */
+/** current = the clip the book plays; candidate = a retake awaiting a verdict; take = old. */
 export type ClipRole = "current" | "candidate" | "take";
 
 /**
- * One rendered clip, and the receipt for it.
- *
- * The audit columns — what voice, what model, what text was actually sent — are what let drift tell
- * "the script changed" from "the delivery changed", so they are columns rather than a blob: the
- * stale check reads them on every line of a chapter.
+ * One rendered clip and its receipt. What was sent is in columns, not a blob: the stale check
+ * reads them on every line to tell a script change from a delivery change.
  */
 export const clips = sqliteTable(
   "clips",
@@ -121,48 +91,46 @@ export const clips = sqliteTable(
     bookId: text("book_id").notNull(),
     chapterId: integer("chapter_id").notNull(),
     segmentId: integer("segment_id").notNull(),
-    /** surrogate, because a line can hold many takes at once */
+    /** surrogate: a line can hold many takes */
     id: integer("id").primaryKey({ autoIncrement: true }),
     role: text("role").$type<ClipRole>().notNull(),
-    /** take number, stable for the life of the segment; null on a clip that has never been retaken */
+    /** take number, stable for the segment's life; null if never retaken */
     n: integer("n"),
 
     status: text("status").$type<AudioStatus>().notNull().default("none"),
     endpoint: text("endpoint"),
     /** request round trip, ms */
     ms: real("ms").notNull().default(0),
-    /** the clip's own length, seconds. Silence stitched in locally is not generated audio. */
+    /** seconds, excluding locally stitched silence */
     duration: real("duration").notNull().default(0),
-    /** where the rendered audio is; null until there is a file */
     url: text("url"),
 
-    /** set when the request goes out, for the in-flight elapsed readout */
+    /** set when the request goes out, for the elapsed readout */
     startedAt: integer("started_at"),
     at: integer("at"),
 
-    // ---- what was actually sent, captured at render time ----
+    // ---- what was sent, captured at render time ----
     voiceRef: text("voice_ref").$type<VoiceRef>(),
     voice: text("voice"),
     model: text("model"),
     direction: text("direction"),
     style: text("style"),
-    /** the instructions submitted beside the line; a provider that meters what it receives meters these */
+    /** sent beside the line; metered by providers that meter input */
     instructions: text("instructions"),
     type: text("type").$type<SegmentType>(),
-    /** the exact text sent, so drift can tell a script change from a delivery change */
     text: text("text"),
     /** the text after the pronunciation dictionary, when it differed */
     said: text("said"),
-    /** how many dictionary substitutions this clip carried */
+    /** dictionary substitutions made */
     lex: integer("lex"),
     pronounced: text("pronounced"),
     expressionSignature: text("expression_signature"),
     expressions: text("expressions", { mode: "json" }).$type<string[]>(),
-    /** the rate the file came back at, in Hz, read from the file rather than the request */
+    /** Hz, read from the file rather than the request */
     sampleRate: integer("sample_rate"),
-    /** what the voice effects baked into the file are (`soundOf`); null = the voice's own */
+    /** the effects baked into the file (`soundOf`); null = the voice's own */
     sound: text("sound"),
-    /** the voice's own file, when `url` is one the effects made from it; null = `url` is that */
+    /** the unprocessed file when `url` has effects applied; null = `url` is it */
     raw: text("raw"),
 
     // ---- splitting, when the line exceeded the endpoint's per-request cap ----
@@ -170,20 +138,14 @@ export const clips = sqliteTable(
     splitAt: text("split_at").$type<SplitMode>(),
     cuts: text("cuts", { mode: "json" }).$type<Cut[]>(),
 
-    /** a replacement queued by a bulk run rather than a retake asked for by hand */
+    /** queued by a bulk run rather than by hand */
     auto: integer("auto", { mode: "boolean" }),
-    /** the listener heard it and chose the other take */
     rejected: integer("rejected", { mode: "boolean" }),
 
     // ---- the money ----
-    /** null = this endpoint's rate is not known, which is never the same as free */
+    /** null = rate unknown, never the same as free */
     cost: real("cost"),
-    /**
-     * The receipt: the rate in force when this landed, what moved it off the card, and what it was
-     * charged on. Written once when the render settles and never recalculated, so editing a rate
-     * or letting a promotion expire leaves every clip at the price it was actually charged. Stored
-     * whole because that is what it is — a frozen document, not a row to be updated.
-     */
+    /** The receipt, written once when the render settles and never recalculated. */
     charge: text("charge", { mode: "json" }).$type<SpeechCharge>(),
 
     error: text("error", { mode: "json" }).$type<ReqError>(),
@@ -197,11 +159,7 @@ export const clips = sqliteTable(
       .onDelete("cascade")
       .onUpdate("cascade"),
     index("clips_segment").on(t.bookId, t.chapterId, t.segmentId),
-    /**
-     * A line has at most one clip in the book and at most one retake awaiting a verdict. Takes are
-     * a list and are deliberately not covered: the partial index only constrains the two roles that
-     * are singular, so the rule holds in the database rather than only in the store.
-     */
+    /** At most one current and one candidate per line; takes are a list. */
     uniqueIndex("clips_one_per_role")
       .on(t.bookId, t.chapterId, t.segmentId, t.role)
       .where(sql`role <> 'take'`),
@@ -209,24 +167,20 @@ export const clips = sqliteTable(
 );
 
 /**
- * One version of a chapter's script.
- *
- * Content only: the cast, the voices, the dictionary and the endpoint settings belong to the book
- * and are never rolled back with a chapter, and the audio is carried across a restore clip by clip
- * rather than stored twice.
+ * One version of a chapter's script: content only. Cast, voices and settings are the book's and
+ * never roll back; audio is carried across a restore rather than stored twice.
  */
 export const scriptVersions = sqliteTable(
   "script_versions",
   {
     bookId: text("book_id").notNull(),
     chapterId: integer("chapter_id").notNull(),
-    /** 1-based, stable for the life of the chapter — what the panel calls "v3" */
+    /** 1-based, stable for the chapter's life — the panel's "v3" */
     id: integer("id").notNull(),
     /** when this content was last changed; 0 for a script that predates the session */
     at: integer("at").notNull(),
-    /** how this script came to be: scripted, edited, bulk, restored, or a named checkpoint */
     origin: text("origin", { mode: "json" }).$type<VersionOrigin>().notNull(),
-    /** an independent copy of the script at that moment */
+    /** an independent copy; nothing later may reach into it */
     segments: text("segments", { mode: "json" }).$type<Segment[]>().notNull(),
   },
   (t) => [
@@ -243,11 +197,8 @@ export const scriptVersions = sqliteTable(
 );
 
 /**
- * Where a chapter's working script stands, and the next version number to hand out.
- *
- * One row per chapter that anything has happened to. `nextId` is stored rather than derived from
- * `max(script_versions.id)`, because a version number is never reused even after a version is
- * dropped — "v3" has to keep meaning the same script to the person reading the panel.
+ * Where a chapter's working script stands. `nextId` is stored, not `max(id)`, so a dropped
+ * version's number is never reused.
  */
 export const scriptHeads = sqliteTable(
   "script_heads",
@@ -256,12 +207,11 @@ export const scriptHeads = sqliteTable(
     chapterId: integer("chapter_id").notNull(),
     at: integer("at").notNull(),
     origin: text("origin", { mode: "json" }).$type<VersionOrigin>().notNull(),
-    /** an editing session later edits still join, until it goes quiet */
+    /** an editing session later edits join, until it goes quiet */
     open: integer("open", { mode: "boolean" }),
     /**
-     * The version the open session's first edit preserved, while the session is open and it
-     * added one. A session that comes back to exactly that script drops this version and no
-     * other — a checkpoint saved after it is not the session's to forget.
+     * The version the open session's first edit preserved. A session that returns to exactly that
+     * script drops this version and no other.
      */
     sessionVersion: integer("session_version"),
     nextId: integer("next_id").notNull().default(1),
@@ -278,13 +228,7 @@ export const scriptHeads = sqliteTable(
   ],
 );
 
-/**
- * The script a re-script replaced, kept while its diff is on screen.
- *
- * `scripts._previous` in the store. It is not history — history is `script_versions` — it is the
- * one-shot "here is what just changed" the Scripting page shows after a run, and it is dropped when
- * the diff is dismissed.
- */
+/** The script a re-script replaced, kept until its diff is dismissed. Not history. */
 export const previousScripts = sqliteTable(
   "previous_scripts",
   {
@@ -307,13 +251,9 @@ export const previousScripts = sqliteTable(
 );
 
 /**
- * What a transcription endpoint heard of one rendered clip: a check by ear's finding (`HeardLine`).
- *
- * Keyed by the clip's **file** rather than its row, because a clip row is dropped and written again
- * every time the script is saved (`replaceScript`) while a render's file never changes: the file is
- * the one name a clip keeps for life. A line rendered again has a new file and so no finding yet,
- * which is exactly what makes the next check hear it. `text` is the line as it was checked, so a
- * line edited since reads as unchecked rather than as passed.
+ * A check by ear's finding for one clip (`HeardLine`). Keyed by file, not row: `replaceScript`
+ * rewrites clip rows but a render's file never changes. `text` is the line as checked, so an edit
+ * since reads as unchecked.
  */
 export const heard = sqliteTable(
   "heard",
@@ -321,7 +261,7 @@ export const heard = sqliteTable(
     bookId: text("book_id")
       .notNull()
       .references(() => books.id, { onDelete: "cascade" }),
-    /** the clip's file name under the book's audio directory, as its url ends */
+    /** the file name under the book's audio directory */
     file: text("file").notNull(),
     text: text("text").notNull(),
     heard: text("heard").notNull(),
@@ -329,7 +269,6 @@ export const heard = sqliteTable(
     words: text("words", { mode: "json" }).$type<[number, number, number, number][]>(),
     score: real("score").notNull(),
     mismatch: integer("mismatch", { mode: "boolean" }).notNull(),
-    /** the transcription endpoint that heard it */
     endpoint: text("endpoint").notNull(),
     at: integer("at").notNull(),
   },

@@ -1,9 +1,6 @@
-// Every read and write a book's cast and pronunciation dictionary make.
-//
-// Both belong to the book. A speaker is keyed by name because the script refers to a speaker by
-// name and nothing else, so renaming one is a key change that has to move the lines with it —
-// that half lives in `server/db/script.ts` (`reattribute`) and the operations in
-// `server/cast/ops.ts` do the two together in one transaction.
+// A book's cast and pronunciation dictionary. Speakers are keyed by name (the script refers to
+// them by name only), so a rename must also move the lines: `reattribute` in server/db/script.ts,
+// done together in server/cast/ops.ts.
 import { and, asc, desc, eq, inArray, lt, max, sql } from "drizzle-orm";
 
 import type { Character, LexEntry } from "@/types";
@@ -31,10 +28,8 @@ export function readCast(db: Db | Tx, bookId: string): Character[] {
 }
 
 /**
- * The speakers the book already has, as the prompt's cast tags read them, so a chunk read on its
- * own still calls Mara "Mara". A scripting run and a prompt trial both send it. A persona says
- * whose it is only when that character is in the cast and is not the persona itself, as narration
- * links them.
+ * The cast as the prompt's cast tags read it, so a chunk on its own still calls Mara "Mara".
+ * `personaOf` only when it resolves as narration links it (`personaOwner`).
  */
 export function readSpeakers(db: Db | Tx, bookId: string): PromptCastMember[] {
   const rows = db
@@ -59,14 +54,10 @@ export function readSpeakers(db: Db | Tx, bookId: string): PromptCastMember[] {
   }));
 }
 
-/** How many kept chapters before one count as just before it, for who may still be in the scene. */
+/** Kept chapters before one whose speakers may still be in the scene. */
 const RECENT_CHAPTERS = 3;
 
-/**
- * The speakers a chapter's scripting prompt lists (`chapterCast`) for its text: who it names, who
- * speaks in its script now or in the last few kept chapters before it, and every disguise. A run
- * and a prompt trial both send it, so a trial's prompt is a run's.
- */
+/** The speakers a chapter's scripting prompt lists; rule in `chapterCast`. */
 export function readChapterCast(
   db: Db | Tx,
   bookId: string,
@@ -115,7 +106,7 @@ function nextPosition(db: Db | Tx, bookId: string): number {
   );
 }
 
-/** Write one speaker: a new one goes on the end of the cast, an existing one keeps its place. */
+/** A new speaker goes on the end of the cast; an existing one keeps its place. */
 export function upsertCharacter(db: Db | Tx, bookId: string, c: Character): void {
   const existing = db
     .select({ position: characters.position })
@@ -131,7 +122,7 @@ export function upsertCharacter(db: Db | Tx, bookId: string, c: Character): void
   else db.insert(characters).values(values).run();
 }
 
-/** Change a speaker's name. The lines that name them are `reattribute`'s to move. */
+/** The lines that name them are `reattribute`'s to move. */
 export function renameCharacterRow(db: Db | Tx, bookId: string, from: string, to: string): void {
   db.update(characters)
     .set({ name: to, isNew: null })
@@ -150,11 +141,8 @@ export function deleteCharacterRow(db: Db | Tx, bookId: string, name: string): b
 }
 
 /**
- * Add any speaker in `names` the cast does not have yet, and say which were added.
- *
- * What a scripting job does with the speakers it turned up, in the transaction that writes the
- * script. A walk-on arrives as `newSpeaker` — unreviewed, so the Cast page can merge it — except
- * the Narrator, who every book has and who arrives as the main cast rather than as a stranger.
+ * Adds the speakers the cast lacks and returns them. A walk-on arrives unreviewed (`newSpeaker`),
+ * so the Cast page can merge it; the Narrator arrives as main cast.
  */
 export function ensureSpeakers(db: Db | Tx, bookId: string, names: Iterable<string>): string[] {
   const have = new Set(readCast(db, bookId).map((c) => c.name));
@@ -173,19 +161,11 @@ export function ensureSpeakers(db: Db | Tx, bookId: string, names: Iterable<stri
 }
 
 /**
- * Fill in what a scripting model learnt of the book's speakers — gender, other names, a
- * description, a disguise — where the cast has nothing yet, and say whose entries changed.
- *
- * It never overwrites: a gender or description a person set, or an earlier chapter brought, stands,
- * and other names are only ever added. An alias another speaker already goes by, as a name or an
- * alias, stays theirs. A note on someone the cast does not have — mentioned, but never given a
- * line — is dropped, as is anything said of the Narrator.
- *
- * A disguise is taken only for a speaker this answer brought in (`fresh`) or one the model marked
- * masked before, and never one a person linked or unlinked: "unknown" marks it masked, a wearer's
- * name links it (`personaOf`, adding the wearer when the cast has nobody of that name, and taking
- * the disguise's name off the wearer's other names). A link `personaRefusal` would refuse is not
- * made.
+ * Fills blanks from the model's cast notes and returns whose entries changed. Never overwrites;
+ * aliases are only added, and one another speaker already uses stays theirs. Notes on speakers not
+ * in the cast, or on the Narrator, are dropped. A disguise is taken only for a `fresh` speaker or
+ * one the model masked before, never one a person linked: "unknown" masks it, a wearer's name sets
+ * `personaOf` (adding the wearer if missing) unless `personaRefusal` refuses.
  */
 export function learnCast(
   db: Db | Tx,
@@ -256,12 +236,7 @@ export function readLexicon(db: Db | Tx, bookId: string): LexEntry[] {
     .map(toLexEntry);
 }
 
-/**
- * The dictionary, replaced whole.
- *
- * It is a short list edited one entry at a time by a person, and the order it reads in is part of
- * it, so the whole list is the natural unit to write — and what an Undo of any change to it sends.
- */
+/** Replaced whole: it is short, its order matters, and Undo sends the whole list. */
 export function replaceLexicon(db: Db | Tx, bookId: string, entries: readonly LexEntry[]): void {
   db.transaction((tx) => {
     tx.delete(lexiconEntries).where(eq(lexiconEntries.bookId, bookId)).run();
@@ -276,7 +251,8 @@ export function replaceLexicon(db: Db | Tx, bookId: string, entries: readonly Le
 
 // ---------- personas ----------
 
-/** Point every persona of `from` at `to` instead, or unlink them where `to` is null. */
+/** Repoint every persona of `from` at `to`, or unlink them when `to` is null. */
+
 export function relinkPersonas(db: Db | Tx, bookId: string, from: string, to: string | null): void {
   db.update(characters)
     .set({ personaOf: to })

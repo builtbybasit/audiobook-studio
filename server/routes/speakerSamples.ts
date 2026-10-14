@@ -1,5 +1,4 @@
-// Voice samples waiting with a book's speakers, over HTTP: kept when an import is applied, listed,
-// served, discarded and restored. See `speakerSamples/store`.
+// Voice samples waiting with a book's speakers, over HTTP. See `speakerSamples/store`.
 import { Hono } from "hono";
 import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
@@ -39,11 +38,7 @@ export function speakerSampleRoutes(
     c.json({ samples: store.listSamples(db, files, c.req.valid("param").id, options) }),
   );
 
-  /**
-   * Keep the recordings an applied import carried, for the speakers the page names. The same file
-   * the plan was made from comes back, and is read and judged again here: the plan route wrote
-   * nothing, and a request is not trusted to say what a file holds.
-   */
+  /** The import's file is read and judged again here: a request is not trusted about its contents. */
   app.post(
     "/:id/speaker-samples",
     scriptLimit.body,
@@ -80,7 +75,7 @@ export function speakerSampleRoutes(
     },
   );
 
-  // the name is the bytes' hash, so what it names can never change
+  // named by the bytes' hash, so it never changes
   app.get("/:id/speaker-samples/:sampleId/files/:file", validate("param", FileParam), (c) => {
     const { id, sampleId, file } = c.req.valid("param");
     const { path, format } = store.sampleFile(db, files, id, sampleId, file);
@@ -89,7 +84,7 @@ export function speakerSampleRoutes(
     });
   });
 
-  /** Discard: hidden now, removed a day later unless the toast's Undo restores it first. */
+  /** Hidden now, removed a day later unless restored first. */
   app.delete("/:id/speaker-samples/:sampleId", validate("param", SampleParam), (c) => {
     const { id, sampleId } = c.req.valid("param");
     return c.json(store.discardSamples(db, id, sampleId, options));

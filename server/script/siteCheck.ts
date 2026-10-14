@@ -1,22 +1,7 @@
-// The site-text detector's server half: a second opinion on the lines a model has just typed.
-//
-// The model marks a site's boilerplate `watermark` and a translator's note `note` (see
-// `src/lib/siteText.ts` for why such text is marked and never removed), and it gets some wrong
-// both ways: a watermark left as narration is read aloud, and a paragraph of story marked as site
-// text is silently not. So after a chapter is scripted, and before its lines are written, each line
-// is held against what the model cannot see — the chapter's other lines and the book's other
-// chapters — and a line the detector disagrees with carries a `siteCheck` suggestion. It never
-// changes a type: a person decides, and changing the type or dismissing the suggestion clears it.
-//
-// Three rules, each one cheap:
-//
-//   * A story line with a phrase that gives it away (`siteTextSignals`) — a web address, "read the
-//     latest chapters at", a plea for support — is suggested as site text.
-//   * A story line whose words are in three or more of the book's other chapters is too: a site
-//     drops the same sentence into every chapter, and a story rarely repeats a whole sentence.
-//     Short lines are not asked, since "Yes." and "He nodded." are in every chapter of every book.
-//   * A line marked as site text with nothing to give it away that runs past a paragraph's length
-//     is suggested back as narration: boilerplate is short, and a long one is more likely story.
+// Second opinion on the model's site-text marks (see `src/lib/siteText.ts`), run before a scripted
+// chapter is written. It only attaches a `siteCheck` suggestion, never changes a type. Story lines
+// with give-away phrases or repeated across `REPEATED_IN` other chapters are suggested as site
+// text; a long site-text line with no signals is suggested back as narration.
 import type { Book, Segment, SiteCheck } from "@/types";
 import { wordsOf } from "@/lib/gaps";
 import { isSiteText, siteTextSignals, unreadShare } from "@/lib/siteText";
@@ -25,23 +10,20 @@ import { linesElsewhere } from "~/db/script";
 
 /** How many of the book's other chapters a line has to be in to read as the site's. */
 export const REPEATED_IN = 3;
-/** The fewest words a line needs before its repeating means anything. */
+/** Shorter lines ("He nodded.") repeat in every book, so they aren't asked. */
 export const REPEAT_MIN_WORDS = 5;
 /** Past this many words, a line marked as site text that nothing gives away reads like story. */
 export const STORY_WORDS = 40;
 
-/** Why a long marked line reads like story: its length, and that nothing in it gives site text away. */
 export const storyWhy = (words: number): string =>
   `${words} words, and nothing in them gives site text away`;
 
-/** A line's words as they are compared across chapters: case and whitespace folded. */
+/** Case and whitespace folded, for comparing lines across chapters. */
 export const fold = (text: string): string => text.replace(/\s+/g, " ").trim().toLowerCase();
 
 /**
- * The lines with the detector's suggestions on them. `repeats` answers how many of the book's
- * other chapters have a line reading as this one (`fold`ed); it is asked only of lines long enough
- * for repeating to mean anything. A line with nothing to suggest is returned as it came, and any
- * suggestion it carried is dropped: this is the detector's whole opinion of the chapter.
+ * The lines with the detector's suggestions on them, replacing any earlier ones. `repeats` counts
+ * the other chapters holding a line that `fold`s the same.
  */
 export function siteChecks(
   segs: readonly Segment[],
@@ -64,15 +46,13 @@ export function siteChecks(
   });
 }
 
-/** What the detector and the model made of a chapter, for the job's log. */
+/** For the job's log. */
 export interface SiteTextTally {
-  /** lines the model marked as a site's text */
   watermarks: number;
-  /** lines the model marked as a translator's or author's note */
   notes: number;
-  /** lines the detector disagrees with, either way */
+  /** lines the detector disagrees with */
   toCheck: number;
-  /** the share of the chapter's words left out of the audio, 0–1 (`unreadShare`) */
+  /** share of words left out of the audio, 0–1 (`unreadShare`) */
   share: number;
 }
 
@@ -90,10 +70,7 @@ export function siteTextTally(
   return tally;
 }
 
-/**
- * The detector run over a chapter about to be written, inside the write's transaction: its lines
- * with suggestions, counting repeats against the book's other chapters as they stand.
- */
+/** `siteChecks` inside the write's transaction, counting repeats against the book as it stands. */
 export function checkSiteText(
   tx: Tx,
   bookId: string,

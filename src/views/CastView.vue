@@ -7,13 +7,6 @@ import { useLibraryStore } from "@/stores/library";
 import { useSpeakerSamplesStore } from "@/stores/speakerSamples";
 
 // Book-wide cast, and the one place every field of a speaker can be edited.
-//
-// A speaker used to be edited in three places and never completely: merge and rename here, voice
-// and delivery style on the Narration voice cards, voice and rename again in the reader's rail —
-// while gender, description and main/minor could not be changed anywhere at all, even though
-// auto-assign routes by gender and the cards show "unknown". The table below is still the
-// overview; expanding a row opens the full record, so there is one answer to "where do I change
-// this" and the other two surfaces stay the quick paths they always were.
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 
@@ -42,10 +35,8 @@ const libraryStore = useLibraryStore();
 const samplesStore = useSpeakerSamplesStore();
 const effectsStore = useEffectsStore();
 const bookId = useBookId();
-// the cast: read from the server when the page opens, or the seeded world's
 const { characters: cast } = useCast(bookId);
-// every speaker's line count, and the chapters they appear in, are read across the whole book —
-// and are not counts at all until every scripted chapter is in
+// line counts are not counts at all until every scripted chapter is in
 const { failed: unread, loading: reading, retry: readAgain } = useBookScripts(bookId);
 const counted = computed(() => !reading.value && !unread.value.length);
 const stats = computed(() => castStore.castStats(bookId));
@@ -79,14 +70,12 @@ const rows = computed(() => {
     )
     .filter((c) => !onlyNew.value || c.isNew)
     .map((c) => {
-      // the character a linked persona is of, whose voice they are read in when they have none
       const of = personaOwner(c, byName)?.name;
       return {
         c,
         of,
         st: stats.value[c.name] ?? newStat(),
         voice: endpointsStore.resolveVoice(c.voice),
-        // a speaker with no voice of their own borrows the Character voice or the Narrator's
         borrowed: c.voice ? null : castStore.effectiveVoice(bookId, c.name),
       };
     })
@@ -102,16 +91,15 @@ const rows = computed(() => {
 /** A speaker's line count for their record, or null while the book's scripts are not all read. */
 const linesOf = (name: string) => (counted.value ? (stats.value[name]?.lines ?? 0) : null);
 
-// a run over the rows on screen, in their order; the Narrator has no box, so no run includes them
+// the Narrator has no box, so no run includes them
 const range = useRangeSelect(() =>
   rows.value.map((r) => r.c.name).filter((name) => name !== "Narrator"),
 );
-/** Tick or untick a row, or with shift the run from the last one, to the state this box turns to. */
+/** Tick or untick a row, or with shift the run from the last one. */
 function tick(name: string, e?: MouseEvent) {
   sel.value = applySpan(sel.value, range.span(name, e), !sel.value.has(name));
 }
-// One voice picker serves every row — a reka popover per row was most of a long cast's
-// components — anchored to the row's voice button that opened it.
+// One voice picker serves every row (a reka popover per row was most of a long cast's components).
 const voiceOpen = ref(false);
 const voiceFor = ref<{ name: string; anchor: HTMLElement } | null>(null);
 function showVoice(name: string, anchor: HTMLElement | null | undefined) {
@@ -119,7 +107,6 @@ function showVoice(name: string, anchor: HTMLElement | null | undefined) {
   voiceFor.value = { name, anchor };
   voiceOpen.value = true;
 }
-/** the row's voice button: opens the picker on its row, or closes it if it is already there */
 function voiceClick(name: string, e: MouseEvent) {
   if (voiceOpen.value && voiceFor.value?.name === name) voiceOpen.value = false;
   else showVoice(name, e.currentTarget as HTMLElement);
@@ -156,7 +143,6 @@ function startRename(c: Character) {
   editing.value = c.name;
   draft.value = c.name;
 }
-/** Dismiss a merge suggestion: the name stays as its own character. */
 function keepSuggestion(name: string) {
   void castStore.keepCharacter(bookId, name);
 }
@@ -164,7 +150,7 @@ function commit() {
   if (editing.value) castStore.renameCharacter(bookId, editing.value, draft.value);
   editing.value = null;
 }
-// unknown reads as a quiet dash: it is most rows of a fresh cast, and orange on all of them was noise
+// unknown reads as a quiet dash: it is most rows of a fresh cast
 const GENDERS = (["f", "m", "n", "?"] as Gender[]).map((value) => ({
   value,
   label: GENDER[value] ?? "—",
@@ -174,12 +160,8 @@ function setGender(name: string, e: Event) {
   void castStore.updateCharacter(bookId, name, { gender });
 }
 
-// ---------- voice effects ----------
-// The library's effects are read in for the Effect column and the sheet; a speaker's choice is an
-// id, named from the store's one map rather than a lookup per row.
 useEffects();
 const effectOf = (id: string | undefined) => (id ? effectsStore.byId.get(id) : undefined);
-// One sheet serves the book's thought effect and every speaker's, opened on what was clicked.
 const sheetOpen = ref(false);
 const sheetFor = ref<EffectSubject | null>(null);
 function editEffect(subject: EffectSubject) {
@@ -187,22 +169,18 @@ function editEffect(subject: EffectSubject) {
   sheetOpen.value = true;
 }
 
-// ---------- the full record ----------
-// One row at a time: the detail is wide, and two open at once is a diff nobody asked for.
+// One open record at a time: the detail is wide.
 const open = ref<string | null>(null);
 const toggleOpen = (name: string) => (open.value = open.value === name ? null : name);
 
-/** Gender is not cosmetic — `autoAssignByGender` pools voices by it, so an unknown is a speaker
- *  auto-assign has to skip. The header counts them. */
+/** `autoAssignByGender` pools voices by gender, so an unknown is a speaker auto-assign skips. */
 const unknownGender = computed(() => cast.value.filter((c) => c.gender === "?").length);
 
-/** A row's position is not final until the page has laid out and painted: on first mount the table
- *  is already in the document but the scrolling container is not settled, and scrolling then lands
- *  a few pixels down a page that is about to grow. One frame later it is right. */
+/** A row's position is not settled on first mount; scrolling then lands a few pixels off. One frame
+ *  later it is right. */
 const afterPaint = (): Promise<void> =>
   new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
 
-/** Bring one speaker's row into view and open it. Used both by `?speaker=` and after adding one. */
 async function reveal(name: string) {
   open.value = name;
   await nextTick();
@@ -212,9 +190,8 @@ async function reveal(name: string) {
     ?.scrollIntoView({ block: "center", behavior: "smooth" });
 }
 
-// `?speaker=` — the Narration voice cards send you here to edit one speaker, so land on their
-// record rather than at the top of a list of twenty-two names. Any filter is cleared first, or the
-// row the link promised could be filtered out of the page it arrives on.
+// `?speaker=` lands on that speaker's record. Filters are cleared first, or the row could be
+// filtered out of the page it arrives on.
 const route = useRoute();
 function revealFromQuery() {
   const name = route.query.speaker;
@@ -223,23 +200,18 @@ function revealFromQuery() {
   onlyNew.value = false;
   void reveal(name);
 }
-// On mount rather than an immediate watcher: a watcher fires during setup, and the row it wants to
-// scroll to is not in the document yet, so the record opened and the page stayed at the top.
+// On mount, not an immediate watcher: during setup the row is not in the document yet.
 onMounted(revealFromQuery);
 watch(() => route.query.speaker, revealFromQuery);
 
-// Voice samples a script file brought for a speaker whose voice this install cannot reach: they
-// wait on the speaker's record, with the way to clone them and the way to let them go.
+// Voice samples a script file brought for a speaker whose voice this install cannot reach.
 void samplesStore.load(bookId);
-/** A speaker's waiting samples as a list of none or one, for the template to loop over. */
 const waiting = (name: string) => {
   const w = samplesStore.waitingFor(bookId, name);
   return w ? [w] : [];
 };
 
-// `?only=new` — the review inbox sends you here to work through the speakers a re-script brought
-// in, so the page arrives narrowed to them rather than showing all twenty-two names. Setting a ref
-// touches no DOM, so this one can fire during setup.
+// `?only=new` narrows to the speakers a re-script brought in. Touches no DOM, so runs in setup.
 watch(
   () => route.query.only,
   (v) => {
@@ -266,8 +238,7 @@ async function commitAdd() {
   if (!castStore.addCharacter(bookId, name)) return;
   adding.value = false;
   newName.value = "";
-  // A speaker added by hand has no lines, so the default "most lines" order files them at the
-  // bottom — opening their record without bringing it into view is opening it nowhere.
+  // a hand-added speaker has no lines, so "most lines" files them at the bottom
   await reveal(name);
 }
 const duplicate = computed(
@@ -434,8 +405,7 @@ const duplicate = computed(
                     :aria-label="`${open === c.name ? 'Close' : 'Open'} the full record for ${c.name}`"
                     @click="toggleOpen(c.name)"
                   >
-                    <!-- lucide's chevron-right as plain markup (turned down when open): an icon
-                         component is two instances, and every row drew three -->
+                    <!-- plain markup: an icon component is two instances, three per row -->
                     <svg
                       :class="['icon-sm', open === c.name && 'rotate-90']"
                       xmlns="http://www.w3.org/2000/svg"
@@ -586,8 +556,7 @@ const duplicate = computed(
                 </button>
               </td>
               <td class="py-1 pl-2">
-                <!-- their own effect, and a thought effect only when it is their own: the book's
-                     default would be the same mark on every row -->
+                <!-- thought effect only when their own: the book's default would mark every row -->
                 <div class="flex items-center gap-1">
                   <button
                     type="button"
@@ -641,7 +610,6 @@ const duplicate = computed(
                 </button>
               </td>
             </tr>
-            <!-- the full record: every field a speaker has, in the one place that has them all -->
             <tr v-if="open === c.name" class="bg-zinc-50/70 dark:bg-zinc-900/60">
               <td></td>
               <td colspan="6" class="px-1 py-3 pr-4">

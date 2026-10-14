@@ -1,29 +1,7 @@
-// A scripting provider that reads the prose and never the network.
-//
-// It exists so the real queue, the real storage and the real routes can be exercised end to end
-// without a request leaving the machine. It is deterministic on its input, so a test can say what
-// it will produce, and it is honest about what it is: every line it attributes comes from
-// punctuation, not understanding.
-//
-// The rules are simple on purpose. A paragraph is narration. A quoted span inside it is dialogue,
-// and the speaker is whoever the paragraph names beside a speech verb — "…," said Mara — or
-// `Unknown` when it names nobody. That is enough to give the Scripting page a cast to route, a
-// script to correct and clips to render, which is what the screens need to be tested against.
-//
-// Text that is not the story is marked the way the prompt asks a model to mark it (`OUTPUT_FORMAT`
-// in src/lib/prompt.ts), and by the same signals the detector reads (`siteTextSignals`): a paragraph
-// that opens as a translator's note is a `note` line, and a sentence that names a web address or
-// tells the reader where to read is a `watermark` line, cut out of the paragraph it was dropped
-// into with the story either side kept. A sentence is as fine as it cuts — boilerplate dropped into
-// the middle of one takes that sentence with it — and every word it was sent is still in a line.
-//
-// Each call reports one simulated request, with token counts worked out from the text (four
-// characters to a token), so a priced profile puts real-looking rows in the ledger and a budget can
-// be run out — in a test or a demo — without spending anything.
-//
-// It is what a simulated profile (`simulated://…`) is answered by, and there it is held to the
-// target's `simulation`: each chunk takes as long as that says, and fails as often. A test hands
-// it options instead, and a target with no simulation is answered at once, every time.
+// A deterministic scripting provider that never touches the network, for tests and simulated
+// profiles. Quotes become dialogue, attributed to a name beside a speech verb or `Unknown`. Site
+// text is marked by `siteTextSignals`, a sentence at a time. Token counts are text length / 4.
+// A simulated target's `simulation` sets its latency and failure rate.
 import { normalizeUsage } from "@/lib/pricing";
 import { siteTextSignals } from "@/lib/siteText";
 import { ProviderError } from "~/providers/http";
@@ -36,15 +14,14 @@ import type {
 import { setTimeout as delay } from "node:timers/promises";
 
 export interface FakeScriptingOptions {
-  /** a pause per paragraph, so a test can cancel a run that is genuinely in flight */
+  /** per paragraph, so a test can cancel a run in flight */
   delayMs?: number;
-  /** throw with this message instead of answering, to exercise the failure path */
+  /** throw this instead of answering */
   failWith?: string;
-  /** what a simulated failure is drawn against; `Math.random` unless a test wants it fixed */
+  /** `Math.random` unless a test wants it fixed */
   random?: () => number;
 }
 
-/** Whoever the narration around a quote names next to a speech verb. */
 const SPEECH_VERBS =
   "said|asked|replied|whispered|shouted|muttered|called|answered|murmured|cried|added|snapped";
 const AFTER = new RegExp(
@@ -56,7 +33,6 @@ const BEFORE = new RegExp(
   "u",
 );
 
-/** Straight or curly double quotes, and the text between them. */
 const QUOTE = /[“"]([^”"]+)[”"]/gu;
 
 export const UNKNOWN_SPEAKER = "Unknown";
@@ -66,7 +42,6 @@ function speakerNear(narration: string): string {
   return m?.[1] ?? UNKNOWN_SPEAKER;
 }
 
-/** One paragraph cut into narration and dialogue, in reading order. */
 export function attributeParagraph(paragraph: string): ScriptedLine[] {
   const lines: ScriptedLine[] = [];
   let at = 0;
@@ -82,13 +57,11 @@ export function attributeParagraph(paragraph: string): ScriptedLine[] {
   return lines;
 }
 
-/** What `siteTextSignals` says of a translator's or author's note. */
 const OPENS_A_NOTE = "opens as a translator's or author's note";
 
 /**
- * A paragraph's sentences, every character kept. A sentence ends at a full stop, question or
- * exclamation mark outside a quote, and only where the next one starts as a sentence does — so
- * "novelbin . com", "etc. and" and a line of dialogue with two sentences in it stay whole.
+ * Every character kept. A sentence ends at `.!?…` outside a quote, and only where the next starts
+ * like a sentence, so "novelbin . com", "etc. and" and a two-sentence quote stay whole.
  */
 function sentencesOf(paragraph: string): string[] {
   const out: string[] = [];
@@ -120,10 +93,8 @@ const marked = (type: "watermark" | "note", text: string): ScriptedLine => ({
 });
 
 /**
- * One paragraph as lines, site text marked. A paragraph that opens as a note is one note, every
- * sentence of it; otherwise each sentence that gives itself away is a watermark line, and the
- * story between is attributed as it would have been. A paragraph whose signals no single sentence
- * carries is left as story: when unsure, it is the story.
+ * A paragraph opening as a note is one note; otherwise each sentence with a signal is a watermark.
+ * Signals no single sentence carries leave it as story: when unsure, it is the story.
  */
 export function scriptParagraph(paragraph: string): ScriptedLine[] {
   const signals = siteTextSignals(paragraph);
@@ -147,20 +118,13 @@ export function scriptParagraph(paragraph: string): ScriptedLine[] {
   return lines;
 }
 
-/**
- * A pause that ends early, rejecting with the signal's reason, when the job is cancelled.
- *
- * `timers/promises` does the listening and the cleanup; what it rejects with is its own
- * `AbortError` carrying the reason as `cause`, and the reason itself is what every other path in a
- * provider throws, so it is unwrapped here to keep them alike.
- */
+/** Rejects with the signal's own reason, not `timers/promises`' wrapping `AbortError`. */
 export function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return delay(ms, undefined, { signal }).catch(() => {
     throw signal.reason;
   });
 }
 
-/** A rough token count: four characters to a token, which is what the demo's estimates assume. */
 const tokensIn = (text: string): number => Math.ceil(text.length / 4);
 
 export function fakeScriptingProvider(options: FakeScriptingOptions = {}): ScriptingProvider {
@@ -177,7 +141,7 @@ export function fakeScriptingProvider(options: FakeScriptingOptions = {}): Scrip
           ? `${target!.name} failed this request on purpose: it fails ${Math.round(simulation.failRate * 100)}% of them`
           : null);
       if (failure) {
-        // a refusal, as a provider that answered with an error would report it: nothing was used
+        // a refusal: nothing was used
         sent?.({
           startedAt,
           finishedAt: Date.now(),
@@ -188,7 +152,7 @@ export function fakeScriptingProvider(options: FakeScriptingOptions = {}): Scrip
           simulated: true,
           usage: null,
         });
-        // what a server error is, so a simulated one is retried as a real one would be
+        // a 500, so it is retried like a real one
         throw options.failWith ? new Error(failure) : new ProviderError(failure, 500, true);
       }
       const paragraphs = text

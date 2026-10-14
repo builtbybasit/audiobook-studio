@@ -116,8 +116,7 @@ test("per-request billing has no per-character equivalent for the run estimator"
   expect(perMillionChars({ unit: "chars", rate: 12 })).toBe(12);
   expect(perMillionChars({ unit: "tokens", rate: 12 })).toBe(3);
   expect(perMillionChars({ unit: "minute", rate: 0.3 })!).toBeGreaterThan(0);
-  // a byte rate is a different quantity over non-ASCII text, not a different scale, so it has no
-  // honest per-character equivalent at all
+  // a byte rate is a different quantity over non-ASCII text, so it has no per-character equivalent
   expect(perMillionChars({ unit: "bytes", rate: 15 })).toBeNull();
   expect(perMillionChars({ unit: "audio-tokens", rate: 1, audioRate: 20 })).toBeNull();
 });

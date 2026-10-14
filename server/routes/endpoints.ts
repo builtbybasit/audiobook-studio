@@ -1,5 +1,5 @@
-// The endpoints over HTTP: the configuration the Endpoints page edits, read whole and saved whole.
-// Both routes are one call on `server/endpoints/ops.ts`, where the rules are.
+// The endpoints over HTTP: the Endpoints page's configuration, read and saved whole.
+// The rules are in `server/endpoints/ops.ts`.
 import { Hono, type HonoRequest } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { Env as PinoEnv } from "hono-pino";
@@ -38,12 +38,12 @@ import * as samples from "~/voices/ops";
 const Config = v.object({
   endpoints: v.array(EndpointSchema),
   profiles: v.array(ProfileSchema),
-  /** left out keeps the ones stored, for a page from before there were any */
+  /** left out keeps the ones stored */
   transcribers: v.optional(v.array(TranscriberSchema)),
   credentials: v.array(CredentialSchema),
-  /** the library's default scripting prompt: left out keeps it, null goes back to the built-in one */
+  /** left out keeps it; null goes back to the built-in one */
   prompt: v.optional(v.nullable(PromptTemplateSchema)),
-  /** which profile scripting runs go to: left out keeps what is stored */
+  /** left out keeps what is stored */
   script: v.optional(ScriptSettingsSchema),
 });
 
@@ -67,7 +67,6 @@ const SampleParam = v.object({ ...VoiceParam.entries, file: v.string() });
 
 type Form = FormData;
 
-/** A form's body, or the refusal that says it was not one. */
 const formOf = (req: HonoRequest): Promise<Form> =>
   req.formData().catch(() => fail(400, "The request was not a form"));
 
@@ -77,10 +76,7 @@ const textOf = (form: Form, name: string): string => {
   return typeof value === "string" ? value.trim() : "";
 };
 
-/**
- * The files under `samples`, and what is said in each under `transcripts`, one per file in the
- * same order; what each file is, and whether the provider takes it, is `readSamples`'.
- */
+/** `transcripts` holds one entry per file under `samples`, in the same order. */
 const samplesOf = (form: Form): { files: File[]; transcripts: string[] } => ({
   files: form.getAll("samples").filter((f): f is File => f instanceof File),
   transcripts: form.getAll("transcripts").map((t) => (typeof t === "string" ? t : "")),
@@ -110,12 +106,10 @@ export function endpointRoutes(
   app.get("/", (c) => c.json(ops.endpointSettings(db)));
 
   /**
-   * What this process has seen of each speech endpoint it has sent to: lines out and waiting, rate
-   * limits, the end of a cooldown. An endpoint nothing has been sent to is not in it.
+   * Per speech endpoint sent to by this process: lines out and waiting, rate limits, cooldown end,
+   * plus the clips it rendered that the library plays (for every book).
    */
   app.get("/live", (c) => {
-    // what the gate has seen, with the clips each endpoint rendered that the library plays counted
-    // beside it — the Queue's pool shows those for every book, not the chapters it has read
     const live = gate.live();
     for (const [id, counts] of clipsByEndpoint(db))
       live[id] = {
@@ -125,7 +119,6 @@ export function endpointRoutes(
     return c.json({ endpoints: live });
   });
 
-  /** The whole configuration, in place of what is stored. */
   app.put("/", validate("json", Config), (c) => {
     const saved = ops.saveEndpoints(db, c.req.valid("json"), voiceFiles);
     // a concurrency raised or an endpoint resumed applies to the lines already waiting on it
@@ -137,7 +130,7 @@ export function endpointRoutes(
     return c.json(saved);
   });
 
-  /** One small real request to a saved endpoint, with its saved key: the Test button. */
+  /** The Test button: one small real request with the saved key. */
   app.post("/test", validate("json", Probe), async (c) => {
     const { kind, id } = c.req.valid("json");
     const answer = await ops.testEndpoint(db, providers, kind, id, c.req.raw.signal);
@@ -146,9 +139,8 @@ export function endpointRoutes(
   });
 
   /**
-   * What is said in one recording, heard by a transcription endpoint: a multipart form of the
-   * `file` and, optionally, the endpoint's `id` — the first one switched on when it is left out.
-   * The clone form's Transcribe button. Answers `{ text }`.
+   * The clone form's Transcribe button: a multipart `file` and optional `id` (default: the first
+   * transcription endpoint switched on). Answers `{ text }`.
    */
   app.post("/transcribe", samplesLimit, async (c) => {
     const form = await formOf(c.req);
@@ -160,7 +152,7 @@ export function endpointRoutes(
     return c.json(heard);
   });
 
-  /** What a saved speech endpoint's server says about batches: the Requests tab's Batches. */
+  /** What a speech endpoint's server says about batches. */
   app.post("/batch", validate("json", Saved), async (c) => {
     const { id } = c.req.valid("json");
     const answer = await ops.batchLimits(db, providers, id, c.req.raw.signal);
@@ -168,17 +160,15 @@ export function endpointRoutes(
   });
 
   /**
-   * One voice of a saved speech endpoint, heard: the audio itself, in the format it was made in.
-   * Kept from before, or the provider's own recording of the voice, or the endpoint saying the
-   * sample sentence — a real request, priced into the ledger, made once and kept (`sampleVoice`).
-   * `x-sample-source` says which of the last two it is, `x-sample-kept` whether nothing was asked
-   * of the provider this time, and `x-audio-duration` how long it plays when that is known.
+   * A voice's sample audio, made once, billed and kept (`sampleVoice`). `x-sample-source` says
+   * where it came from, `x-sample-kept` that nothing was asked of the provider this time, and
+   * `x-audio-duration` how long it plays when known.
    */
   app.post("/sample", validate("json", Sample), async (c) => {
     const { id, voice } = c.req.valid("json");
     const sample = await ops.sampleVoice(db, providers, voiceFiles, id, voice, c.req.raw.signal);
     c.var.logger.info({ id, voice, source: sample.source, kept: sample.kept }, "voice sampled");
-    // copied onto a plain ArrayBuffer, which is what a response body is typed to take
+    // copied onto a plain ArrayBuffer, which a response body is typed to take
     return c.body(new Uint8Array(sample.bytes), 200, {
       "content-type": sample.mime,
       "cache-control": "no-store",
@@ -189,23 +179,14 @@ export function endpointRoutes(
   });
 
   /**
-   * A voice made from samples, on a saved endpoint whose provider can keep one: a multipart form
-   * of the endpoint's `id`, the voice's `title`, 1 to 20 files under `samples` with what is said
-   * in each under `transcripts` (one per file, "" for none). Answers with the new voice, which the
-   * page then adds to the endpoint.
-   *
-   * The samples are kept once the provider has answered — never before, so a failed clone keeps
-   * nothing — so the voice can travel with a book's script. The voice already exists on the account by then, so a failure to keep them is not a
-   * failure to clone: the answer says `samplesKept: false`, and the page says so.
-   *
-   * The form is read by hand, where the book uploads go through `validate("form", …)`: the
-   * validator hands back a lone file for one sample and an array for several, and answers every
-   * refusal as "the form was not valid" — where each refusal here has its own words for the page.
+   * Multipart: `id`, `title`, 1–20 `samples` and a `transcripts` entry per file ("" for none).
+   * Samples are kept only after the provider answers; failing to keep them is not a failed clone
+   * (`samplesKept: false`). Read by hand, not `validate("form")`, which hands back a lone file for
+   * one sample and words every refusal the same.
    */
   app.post("/voices/clone", samplesLimit, async (c) => {
-    // Fish takes its time over an upload this size, and Bun closes a request whose answer has not
-    // started within ten seconds. This one is left open, for as long as the cloner's own clock
-    // allows; under a test there is no Bun server, and nothing to lift.
+    // Bun closes a request with no answer within 10 s, and Fish is slow over an upload this size.
+    // Under a test there is no Bun server.
     (c.env as { timeout?(request: Request, seconds: number): void } | undefined)?.timeout?.(
       c.req.raw,
       0,
@@ -238,18 +219,17 @@ export function endpointRoutes(
     return c.json(voice satisfies ClonedVoice, 201);
   });
 
-  /** Every voice of a saved endpoint that has the samples it was made from kept. */
+  /** Every voice of the endpoint that has its samples kept. */
   app.get("/:id/samples", validate("param", v.object({ id: VoiceParam.entries.id })), (c) =>
     c.json(samples.keptFor(db, c.req.valid("param").id) satisfies KeptVoiceSamples[]),
   );
 
-  /** One voice's kept samples. */
   app.get("/:id/voices/:voice/samples", validate("param", VoiceParam), (c) => {
     const { id, voice } = c.req.valid("param");
     return c.json(samples.keptOf(db, id, voice) satisfies KeptVoiceSamples);
   });
 
-  /** One kept sample, as it was picked. Named by its bytes, so it may be cached for good. */
+  /** Named by its bytes, so it may be cached for good. */
   app.get("/:id/voices/:voice/samples/:file", validate("param", SampleParam), async (c) => {
     const { id, voice, file } = c.req.valid("param");
     const { path, type } = samples.sampleFile(db, voiceFiles, id, voice, file);
@@ -259,11 +239,7 @@ export function endpointRoutes(
     });
   });
 
-  /**
-   * Keep these samples for a voice already on the saved endpoint, in place of any it had: for a
-   * voice cloned before samples were kept. The same form and limits as a clone, and
-   * nothing is sent to the provider.
-   */
+  /** Replace a voice's kept samples; the same form as a clone, and nothing goes to the provider. */
   app.post("/:id/voices/:voice/samples", validate("param", VoiceParam), samplesLimit, async (c) => {
     const { id, voice } = c.req.valid("param");
     const form = await formOf(c.req);
@@ -276,7 +252,7 @@ export function endpointRoutes(
     return c.json(kept satisfies KeptVoiceSamples);
   });
 
-  /** Forget one voice's samples; the voice stays, and the forget can be taken back for a while. */
+  /** The voice stays, and the forget can be taken back for a while. */
   app.delete("/:id/voices/:voice/samples", validate("param", VoiceParam), (c) => {
     const { id, voice } = c.req.valid("param");
     samples.forgetSampleFiles(db, id, voice);
@@ -284,7 +260,7 @@ export function endpointRoutes(
     return c.json({ voiceId: voice });
   });
 
-  /** Take back a forget whose samples no save has removed yet; answers with them. */
+  /** Works until a save removes the forgotten files. */
   app.post("/:id/voices/:voice/samples/restore", validate("param", VoiceParam), (c) => {
     const { id, voice } = c.req.valid("param");
     const kept = samples.restoreSampleFiles(db, id, voice);
@@ -292,10 +268,7 @@ export function endpointRoutes(
     return c.json(kept satisfies KeptVoiceSamples);
   });
 
-  /**
-   * The voices a saved speech endpoint offers: its own library, or a page of a public search.
-   * Only an answer — adding one to the endpoint is the whole-configuration PUT above.
-   */
+  /** An endpoint's own voices, or a page of a public search. Adding one is the PUT above. */
   app.post("/voices", validate("json", VoiceList), async (c) => {
     const { id, ...query } = c.req.valid("json");
     const answer = await ops.listVoices(db, providers, id, query, c.req.raw.signal);

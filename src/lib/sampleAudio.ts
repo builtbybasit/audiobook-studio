@@ -1,10 +1,6 @@
-// A voice sample's audio as the clone form works on it, in the browser: decoded once, its speech
-// found, cut to a start and an end, and written back out as a WAV every cloning provider takes.
-//
-// Nothing here leaves the page until the form sends the trimmed file; the pure parts (finding
-// speech, cutting, writing the WAV) take plain samples so they are tested without a browser.
+// A voice sample as the clone form trims it in the browser: decoded, speech found, cut, and
+// written back as a WAV every cloning provider takes. The pure parts need no DOM.
 
-/** The decoded audio of one sample, mixed down to one channel. */
 export interface SampleAudio {
   /** mono samples, -1…1 */
   samples: Float32Array;
@@ -14,19 +10,14 @@ export interface SampleAudio {
 }
 
 /**
- * Web Audio resamples whatever it decodes to its context's rate and cannot ask a file for its own,
- * so the rate is read off the file's header (music-metadata, which the server reads audio with too)
- * and the context set to it: a trimmed 16 kHz recording stays 16 kHz rather than tripling in size,
- * and a 44.1 kHz one is not resampled. A header that does not say, or says something Web Audio will
- * not take, falls back to 48 kHz: at or above what any voice is recorded at, so nothing is lost.
+ * Web Audio resamples to its context's rate, so the context is set to the file's own rate (read
+ * from its header). Fallback when the header is silent: at or above any voice recording.
  */
 export const DECODE_RATE = 48_000;
 const RATES = { min: 8_000, max: 96_000 };
 
-/** The rate the file was recorded at, from its header; `DECODE_RATE` when it does not say. */
 export async function sampleRateOf(file: Blob): Promise<number> {
   try {
-    // loaded with the first sample picked, and only the reader for that file's format with it
     const { parseBlob } = await import("music-metadata");
     const { format } = await parseBlob(file, { duration: false, skipCovers: true });
     const rate = format.sampleRate;
@@ -36,8 +27,7 @@ export async function sampleRateOf(file: Blob): Promise<number> {
   }
 }
 
-// `src/lib` is also checked with the server's code, which has no DOM, so the one piece of Web Audio
-// used here is named as far as it is used. In the browser it is the real `OfflineAudioContext`.
+// `src/lib` is also type-checked with the server's code, which has no DOM.
 declare const OfflineAudioContext: new (
   channels: number,
   length: number,
@@ -52,9 +42,9 @@ declare const OfflineAudioContext: new (
   }>;
 };
 
-/** Decode a picked file and mix it to mono. Rejects when the browser cannot decode it. */
+/** Mixed to mono. Rejects when the browser cannot decode it. */
 export async function decodeSample(file: File): Promise<SampleAudio> {
-  // An offline context needs no user gesture and plays nothing; its length is only a placeholder.
+  // an offline context needs no user gesture; its length is only a placeholder
   const ctx = new OfflineAudioContext(1, 1, await sampleRateOf(file));
   const buffer = await ctx.decodeAudioData(await file.arrayBuffer());
   const samples = new Float32Array(buffer.length);
@@ -65,21 +55,18 @@ export async function decodeSample(file: File): Promise<SampleAudio> {
   return { samples, sampleRate: buffer.sampleRate, duration: buffer.duration };
 }
 
-/** Length of one loudness window, in seconds. */
+/** seconds */
 const WINDOW = 0.02;
-/** Loud windows in a row that count as speech, so a lone click or pop is not taken for it. */
+/** Loud windows in a row that count as speech, so a lone click is not. */
 const RUN = 3;
 /** A window is speech when it is within 26 dB of the loudest one… */
 const RELATIVE = 0.05;
 /** …and the loudest is above about -46 dBFS; below that the whole clip is taken as silence. */
 const FLOOR = 0.005;
-/** Room kept either side of the speech found, in seconds. */
+/** Seconds kept either side, so a breath-in or trailing consonant is not clipped. */
 export const SPEECH_PADDING = 0.2;
 
-/**
- * Where speech starts and ends, in seconds, with a little room kept either side so a breath-in or a
- * trailing consonant is not clipped. Null when the whole clip is silence.
- */
+/** Where speech starts and ends, in seconds, padded. Null when the whole clip is silence. */
 export function speechBounds(audio: SampleAudio): { start: number; end: number } | null {
   const { samples, sampleRate, duration } = audio;
   const size = Math.max(1, Math.round(WINDOW * sampleRate));
@@ -93,7 +80,6 @@ export function speechBounds(audio: SampleAudio): { start: number; end: number }
   const loudest = rms.reduce((a, b) => Math.max(a, b), 0);
   if (loudest < FLOOR) return null;
   const loud = rms.map((r) => r >= loudest * RELATIVE);
-  // The first and last windows of a run of RUN loud ones; a clip shorter than a run needs all of it.
   const need = Math.min(RUN, loud.length);
   let first = -1;
   let last = -1;
@@ -140,18 +126,14 @@ export function encodeWav(samples: Float32Array, sampleRate: number): ArrayBuffe
 export const trimmedName = (name: string): string =>
   `${name.replace(/\.[^./]*$/, "").replace(/-trimmed$/, "")}-trimmed.wav`;
 
-/** How long the cut's edges fade in and out, in seconds: too short to hear, long enough to stop a click. */
+/** Seconds: too short to hear, long enough to stop the click of a cut mid-wave. */
 export const EDGE_FADE = 0.01;
 
-/**
- * The part of the sample between `start` and `end` seconds, as a WAV file named after the original.
- * A cut made mid-sound starts or ends on a jump from nothing to wherever the wave was, heard as a
- * click, so the first and last `EDGE_FADE` ramp in from and out to silence.
- */
+/** `start`–`end` seconds as a WAV, its edges faded over `EDGE_FADE`. */
 export function trimSample(audio: SampleAudio, start: number, end: number, name: string): File {
   const from = Math.min(Math.max(0, start), audio.duration);
   const to = Math.min(Math.max(from, end), audio.duration);
-  // a copy: the fade must not reach the decoded audio, which the row keeps for another cut
+  // a copy: the decoded audio is kept for another cut
   const part = audio.samples.slice(
     Math.round(from * audio.sampleRate),
     Math.round(to * audio.sampleRate),

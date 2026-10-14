@@ -162,10 +162,7 @@ describe("dictionary writes", () => {
   });
 });
 
-/**
- * Hand every action of `store` a fresh proxy of it as `this`, the way Pinia's devtools do in
- * development — a write queue that keys its state by `this` starts over on each call there.
- */
+/** Give each action a fresh proxy as `this`, as Pinia's devtools do: a queue keyed by `this` resets. */
 function proxiedAsDevtools<S extends object>(store: S): void {
   const s = store as Record<string, unknown>;
   const raw = toRaw(store) as Record<string, unknown>;

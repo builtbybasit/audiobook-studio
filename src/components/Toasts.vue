@@ -1,17 +1,8 @@
 <script setup lang="ts">
 import { useUiStore } from "@/stores/ui";
 
-// Toast stack on Toastflow's runtime (queue, timers, pause on hover, swipe, Escape, focus handling,
-// live regions) with our own card through the headless slot. Nothing from the library's CSS is
-// loaded; layout and motion live in src/toasts.css.
-//
-// UX rules baked in here:
-//  · an undoable toast is marked ↻, keeps its Undo button first, shows the ⌘Z hint on the newest one,
-//    and lives longer (10 s) with a visible time-left bar — hovering pauses it, so the user can read
-//  · warnings and errors use role="alert" (from the library) and a stronger left accent, never a
-//    full-colour background, so a run of toasts stays readable
-//  · the close button only shows on hover / focus on pointer devices, always on touch
-//  · buttons are real buttons with focus rings; Escape inside a toast dismisses it
+// Toast stack on Toastflow's runtime with our own card through the headless slot. None of the
+// library's CSS is loaded; layout and motion live in src/toasts.css.
 import { computed } from "vue";
 import { ToastContainer } from "vue-toastflow";
 import { modKey } from "@/lib/format";
@@ -84,7 +75,6 @@ const btnCls = (b: { id?: string }) =>
         "
       >
         <div class="flex items-start gap-3 py-3 pl-3.5 pr-9">
-          <!-- icon -->
           <span
             class="mt-0.5 grid h-5 w-5 shrink-0 place-items-center text-[13px] font-bold leading-none"
             :class="ICON_CLS[toast.type]"
@@ -117,7 +107,6 @@ const btnCls = (b: { id?: string }) =>
               class="icon"
             />
           </span>
-          <!-- text -->
           <div class="min-w-0 flex-1">
             <p
               class="font-medium leading-snug text-zinc-900 dark:text-zinc-100"
@@ -131,7 +120,6 @@ const btnCls = (b: { id?: string }) =>
             >
               {{ toast.description }}
             </p>
-            <!-- buttons -->
             <div
               v-if="ui.buttons.has"
               v-bind="
@@ -172,7 +160,6 @@ const btnCls = (b: { id?: string }) =>
         >
           <CloseIcon class="icon" />
         </button>
-        <!-- time left -->
         <div v-if="ui.progress.show" v-bind="ui.progress.getWrapperProps()" aria-hidden="true">
           <div v-bind="ui.progress.getTrackProps({ class: 'bg-zinc-100 dark:bg-zinc-800' })">
             <div

@@ -1,7 +1,5 @@
 <script setup lang="ts">
-// One speaker's full record — every field a speaker has but the voice, which the row above picks,
-// and who they are a persona of, or who their personas are.
-// The Cast table opens it under a row; it reads and writes the speaker through the cast store.
+// One speaker's full record, opened under a Cast table row: every field but the voice.
 import { ref, useId } from "vue";
 
 import { useCastStore } from "@/stores/cast";
@@ -31,16 +29,14 @@ const GENDERS = (["f", "m", "n", "?"] as Gender[]).map((value) => ({
   label: GENDER[value] ?? "unknown",
 }));
 
-// The description is written from the whole book, so it waits behind a button as it does on the
-// Narration cards. One that was empty when the record opened has nothing to give away and stays
-// shown while it is typed in; closing the row forgets what was revealed.
+// The description is written from the whole book, so it hides behind a button (no spoilers);
+// one empty when the record opened stays shown while typed in.
 const startsEmpty = !props.c.description;
 // the labels sit beside a "?" rather than around the field, so they point at it by id
 const nameId = useId();
 const styleId = useId();
 
-// Voice samples a script file brought for a speaker whose voice this install cannot reach: they
-// wait on the speaker's record, with the way to clone them and the way to let them go.
+// Voice samples an imported script brought for a voice this install can't reach.
 /** A speaker's waiting samples as a list of none or one, for the template to loop over. */
 const waiting = (name: string) => {
   const w = samplesStore.waitingFor(bookId, name);

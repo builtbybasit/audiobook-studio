@@ -2,7 +2,7 @@
 // path, the model in the body, keyed by `xi-api-key`.
 import { pauseSecs, type SpeechProviderShape } from "@/lib/providers/types";
 
-/** v3 and its conversational sibling: the models that take audio tags. */
+/** The models that take audio tags. */
 const isV3 = (model: string): boolean => /^eleven_v3/i.test(model.trim());
 
 export const elevenlabs: SpeechProviderShape = {
@@ -11,17 +11,15 @@ export const elevenlabs: SpeechProviderShape = {
   matches: (baseUrl) => /(^|\/\/)([a-z0-9-]+\.)*elevenlabs\.io(\/|:|$)/i.test(baseUrl),
   requestPath: (_model, voice = "<voice>") => `/text-to-speech/${voice}`,
   /**
-   * `output_format`, which names the rate and, for MP3, the bitrate. Its WAV at 44.1 kHz needs a
-   * Pro plan and its 192 kbps MP3 a Creator plan; a plan without them is refused by ElevenLabs,
-   * which says so. Its Opus is left out until its container is known to be the Ogg this app reads,
-   * and so are the MP3s at 22.05 and 24 kHz, which come at one fixed low bitrate each.
+   * `output_format`. 44.1 kHz WAV needs Pro and 192 kbps MP3 Creator. Opus is left out until its
+   * container is known to be Ogg; MP3 at 22.05/24 kHz comes at one fixed low bitrate.
    */
   formats: [
     {
       format: "wav",
       label: "WAV · 16-bit PCM, mono",
       rates: [16000, 22050, 24000, 32000, 44100, 48000],
-      // not the API's own default (that is an MP3): what this app asks for when no rate is set
+      // not the API's own default (an MP3): what this app asks for
       defaultRate: 24000,
       bitrates: [],
       defaultBitrate: null,
@@ -35,10 +33,8 @@ export const elevenlabs: SpeechProviderShape = {
       defaultBitrate: 128,
     },
   ],
-  // Eleven v3 takes audio tags in square brackets — emotions, delivery and reactions alike
-  // (`[curious]`, `[whispers]`, `[laughs]`) — and "does not support SSML break tags"; the models
-  // before it take only `<break time="1.5s" />`, a pause "up to 3 seconds", which is a sound in
-  // this app's terms (https://elevenlabs.io/docs/best-practices/prompting/controls).
+  // v3: square-bracket audio tags, no SSML breaks; earlier models only `<break time="1.5s" />`, up
+  // to 3 s (https://elevenlabs.io/docs/best-practices/prompting/controls)
   tags: (model) =>
     isV3(model)
       ? {
@@ -56,25 +52,15 @@ export const elevenlabs: SpeechProviderShape = {
           hint: "ElevenLabs' models before v3 take only pauses, as a break tag of up to 3 seconds.",
           pause: (s) => `<break time="${pauseSecs(Math.min(s, 3))}s" />`,
         },
-  // ElevenLabs bills characters of text it spoke; its docs say nothing of charging a refusal.
   billsFailures: false,
-  // Instant Voice Cloning, `POST /v1/voices/add` (https://elevenlabs.io/docs/api-reference/voices/ivc/create).
-  // Its docs set no count of samples — "the number of samples you use doesn't matter; it is the
-  // total combined length" (https://elevenlabs.io/docs/eleven-creative/voices/voice-cloning/instant-voice-cloning)
-  // — so the count is the server's own. The size is its upload box's, "audio or video files up to
-  // 10MB each", as the screenshot on https://elevenlabs.io/docs/eleven-creative/voices/voice-cloning
-  // shows it. The formats: its cloning FAQ "accept[s] a range of file types" and names MP3 and WAV
-  // (https://elevenlabs.io/docs/help-center/product/voices/voice-cloning/what-files-do-you-accept-for-voice-cloning);
-  // the one list of audio it takes from an upload, the Voice Changer's, adds M4A and FLAC
-  // (https://elevenlabs.io/docs/help-center/product/core-capabilities/voice-changer/which-formats-can-be-used-as-the-input-audio-for-voice-changer).
-  // Opus is left out: that list says "OGG", which is as likely to mean Vorbis. Cloning needs a
-  // Starter plan or above (https://elevenlabs.io/docs/overview/administration/billing) and spends no
-  // credits that the docs name, but a voice takes one of the plan's custom voice slots.
+  // Instant Voice Cloning (https://elevenlabs.io/docs/api-reference/voices/ivc/create). The docs
+  // set no sample count, so it is ours; 10 MB is the upload box's. Formats from
+  // https://elevenlabs.io/docs/help-center/product/core-capabilities/voice-changer/which-formats-can-be-used-as-the-input-audio-for-voice-changer;
+  // their "OGG" may mean Vorbis, so no Opus.
   cloning: {
     maxSamples: 20,
     maxSampleBytes: 10 * 1024 * 1024,
     formats: ["mp3", "wav", "m4a", "flac"],
-    // the IVC reference takes a name, the files, a description and labels: no transcript
     transcript: "none",
     advice:
       "ElevenLabs recommends 1–2 minutes of audio in all, and no more than 3 — how many clips does " +

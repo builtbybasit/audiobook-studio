@@ -1,10 +1,6 @@
 // The moves the effects editor makes on a chain, in place, and the names it gives.
-//
-// A stored chain has no ids — the server keeps steps as Pedalboard reads them — yet the editor has
-// to key its rows, hold a selection and move a step without losing track of it. So each step and
-// layer is given a key here, on first sight, in a WeakMap beside it: the key never reaches the
-// server, and a step dropped from every chain takes its key with it. Keys are taken off the raw
-// object, so the reactive proxy the store hands out and the object under it share one.
+// Stored steps have no ids (Pedalboard's shape), so each step and layer gets a key in a WeakMap;
+// keys never reach the server. They hang off the raw object, so a reactive proxy shares its key.
 import { toRaw } from "vue";
 
 import type { EffectUses, Layer, MixStep, Step } from "@/types";
@@ -102,9 +98,8 @@ export interface UsesSelf {
 }
 
 /**
- * Everywhere an effect is chosen, in words: "Ann", "Ann’s thoughts in Other Book", "this book’s
- * thoughts", "all books’ thoughts". `self`, when given, is left out — the choice being edited from.
- * No chapter is named: where a speaker first appears is the story's to tell.
+ * Everywhere an effect is chosen, in words: "Ann", "Ann’s thoughts in Other Book", "all books’
+ * thoughts". `self` is left out. No chapter is named (no spoilers).
  */
 export function placesOf(uses: EffectUses, here: string, self: UsesSelf | null = null): string[] {
   const out: string[] = [];

@@ -1,35 +1,31 @@
-// Chapter script history: the versions one chapter's script has been through, what made each one,
-// and the two things the panel works out from a pair of them — what changed between them, and what
-// restoring one would do.
-//
-// A version holds *script* content only. The cast, the voices, the pronunciation dictionary and the
-// endpoint settings belong to the book and are never rolled back with a chapter; neither is the
-// audio, which is carried across a restore clip by clip rather than stored twice.
+// A chapter's script versions, how each came to be, and what the history panel works out from a
+// pair: the changes between them and what a restore would do. A version holds script content only;
+// cast, voices, lexicon and endpoint settings are the book's and never roll back with a chapter.
 import type { NarrationStatus } from "@/types/book";
 import type { Segment } from "@/types/segment";
 import type { PromptOrigin } from "@/types/scripting";
 
-/** How one script came to be. A version is labelled by the operation that produced its content. */
+/** A version is labelled by the operation that produced its content. */
 export type VersionOrigin =
-  /** `again` is a run over a chapter that already had a script — a re-script rather than the first */
+  /** `again`: a re-script of a chapter that already had a script */
   | {
       kind: "scripted";
       profile?: string;
       model?: string;
       again?: boolean;
-      /** where the run's prompt came from; absent on a version scripted before it was recorded */
+      /** absent on older versions */
       prompt?: PromptOrigin;
     }
   | { kind: "edited"; edits: number }
   | { kind: "bulk"; label: string; lines: number }
   | { kind: "restored"; from: number; fromAt: number }
-  /** read in from a script file; `file` is its name, `chapters` how many the import applied */
+  /** `chapters`: how many the import applied */
   | { kind: "imported"; file?: string; chapters?: number }
-  /** `was` is how the content came to be before it was given a name */
+  /** `was`: how the content came to be before it was named */
   | { kind: "checkpoint"; name: string; was?: VersionOrigin };
 
 export interface ScriptVersion {
-  /** 1-based, stable for the life of the chapter — what the panel calls "v3" */
+  /** 1-based, stable for the life of the chapter ("v3") */
   id: number;
   /** when this content was last changed; 0 for a script that predates the session */
   at: number;
@@ -38,11 +34,10 @@ export interface ScriptVersion {
   segments: Segment[];
 }
 
-/** How the working script came to be, and whether an editing session is still collecting edits. */
 export interface HistoryHead {
   at: number;
   origin: VersionOrigin;
-  /** an editing session later edits still join, until it goes quiet */
+  /** later edits still join this session until it goes quiet */
   open?: boolean;
 }
 
@@ -55,9 +50,7 @@ export interface ChapterHistory {
 
 // ---------- comparison ----------
 
-/** One thing about a line that two versions disagree on. */
 export type ChangeField = "text" | "speaker" | "direction" | "type" | "expressions" | "pause";
-/** What happened to a line between two versions. */
 export type ChangeKind = "changed" | "added" | "removed" | "split" | "joined";
 /** How the panel groups changes for its filters: the fields, plus everything structural. */
 export type ChangeGroup = ChangeField | "structure";
@@ -66,11 +59,10 @@ export interface FieldChange {
   field: ChangeField;
   from: string;
   to: string;
-  /** a word for what moved when both sides read the same, e.g. expressions that only moved */
+  /** what moved when both sides read the same, e.g. expressions that only moved */
   detail?: string;
 }
 
-/** One run of a word-level text comparison. */
 export interface DiffRun {
   text: string;
   kind: "same" | "add" | "remove";
@@ -78,15 +70,15 @@ export interface DiffRun {
 
 export interface LineChange {
   kind: ChangeKind;
-  /** the line's ids on the older side and on the newer side; a split or join has two on one */
+  /** a split or join has two ids on one side */
   fromIds: number[];
   toIds: number[];
   fromText: string;
   toText: string;
-  /** the lines each side reads as, kept apart so a split or a join shows where the cut falls */
+  /** kept apart so a split or a join shows where the cut falls */
   fromParts: string[];
   toParts: string[];
-  /** whom the line belongs to now (or belonged to, for one that is gone) */
+  /** whom the line belongs to now (or belonged to, if removed) */
   speaker: string;
   fields: FieldChange[];
   groups: ChangeGroup[];
@@ -124,24 +116,22 @@ export interface ScriptComparison {
 
 /** What restoring a version would do, worked out without touching anything. */
 export interface RestorePlan {
-  /** the script as it would stand, with every clip that still belongs to it carried across */
+  /** the script as it would stand, with every clip that still belongs carried across */
   segments: Segment[];
-  /** the current script compared with the one being restored */
   comparison: ScriptComparison;
   /** rendered clips that still match the restored line */
   kept: number;
-  /** rendered clips carried across that the restored line no longer agrees with */
+  /** carried across, but the restored line no longer agrees with them */
   stale: number;
   /** rendered clips whose line this version does not have; they go with it */
   dropped: number;
-  /** restored lines with no clip at all, in a chapter that has audio */
+  /** restored lines with no clip, in a chapter that has audio */
   unrendered: number;
-  /** superseded takes and pending retakes that travel with the clips they belong to */
+  /** superseded takes and pending retakes travel with their clips */
   takes: number;
   candidates: number;
-  /** what the chapter's narration becomes */
   narration: NarrationStatus;
-  /** what the chapter's scripting status becomes, when it changes */
+  /** null when it doesn't change */
   scripting: "done" | "fallback" | null;
   /** speakers this version uses that the book's cast no longer has */
   missingSpeakers: { name: string; lines: number }[];

@@ -1,12 +1,7 @@
-// Breeze-TTS-2.cpp's `breeze-server`, a server you run yourself
-// (https://github.com/HoppouAI/Breeze-TTS-2.cpp/blob/main/docs/server.md). Not BreezeBlue's hosted
-// API (`breezeblue.ts`), which is another product.
-//
-// Its address is any local one, so it is never recognised by its base URL: an endpoint names it
-// (`Endpoint.server`), as the preset does. It takes OpenAI's `/audio/speech` body and answers at
-// 24 kHz in MP3 or WAV — Opus it is sent as WAV, so it is not offered. Its vocal events are free-form
-// words in round brackets, `(laugh)`; delivery goes in `instructions`. Voices are made from one WAV
-// and its exact transcript, which it requires, and kept on the server.
+// Breeze-TTS-2.cpp's `breeze-server`, self-hosted
+// (https://github.com/HoppouAI/Breeze-TTS-2.cpp/blob/main/docs/server.md); not BreezeBlue's API.
+// Any local address, so an endpoint names it (`Endpoint.server`). It answers Opus requests with
+// WAV, so Opus is not offered.
 import type { SpeechProviderShape } from "@/lib/providers/types";
 
 export const breezecpp: SpeechProviderShape = {
@@ -22,7 +17,7 @@ export const breezecpp: SpeechProviderShape = {
   ).map(([format, label]) => ({
     format,
     label,
-    // the OpenAI body takes no rate; the model answers at its own
+    // the OpenAI body takes no rate
     rates: null,
     defaultRate: 24000,
     bitrates: [],
@@ -37,7 +32,6 @@ export const breezecpp: SpeechProviderShape = {
       "Breeze's README: (laugh), (sigh), (cough) and (clears throat) are the reliable ones, and " +
       "any descriptive words often work. At its default cfg_scale of 1 it often ignores them.",
   }),
-  // a server you run yourself bills nothing
   billsFailures: false,
   models: [],
   cloning: {

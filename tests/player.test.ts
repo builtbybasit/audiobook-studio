@@ -1,7 +1,6 @@
-// The app-wide player. A chapter is not a file: it is clips with stitched silence between them, so
-// the queue, the gaps and the playhead are the player's own. Bun has no audio element, so every clip
-// here but one is given no file and is timed rather than heard — the same timeline real audio takes,
-// minus the element. The clock and setInterval are faked, and each test drives the tick by hand.
+// The app-wide player: a chapter is clips with stitched silence, so queue, gaps and playhead are
+// its own. Bun has no audio element, so all clips but one are timed rather than heard; the clock
+// and setInterval are faked and each test drives the tick by hand.
 import { test, expect, beforeEach, afterEach, spyOn, describe } from "bun:test";
 import { usePlayer, type Queue } from "@/composables/usePlayer";
 

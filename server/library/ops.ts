@@ -1,11 +1,5 @@
-// What the library does, as operations.
-//
-// Routes turn a request into one of these calls and its result into a response; jobs and tests
-// call them directly. The rules live here — a volume goes onto a book with nothing waiting in its
-// review, removing the last volume removes the book, a discard means one thing for a new book and
-// another for a new volume — so there is one statement of each, and none of them knows what a
-// status code is. A rule that does not hold is thrown as an `AppError`, which `app.onError` turns
-// into the API's one error shape.
+// The library's operations and their rules (volumes, imports, removal). Routes, jobs and tests
+// call them; a broken rule throws an `AppError`, which `app.onError` turns into the API's error.
 import type {
   Book,
   BookUpdated,
@@ -36,19 +30,15 @@ import { slugify } from "~/lib/http";
 import { inBackground } from "~/lib/background";
 import { narrationInProgress, settleChapter } from "~/narration/chapter";
 
-/**
- * Enough of a logger to say what an import found. The request logger `hono-pino` puts on the
- * context is not a pino `Logger`, and the import does not need one to be.
- */
+/** Enough of a logger for an import; `hono-pino`'s context logger is not a pino `Logger`. */
 export interface ImportLog {
   info(obj: object, msg: string): void;
   warn(obj: object, msg: string): void;
 }
 
-/** Every book, importing ones included. */
+/** Includes books still importing. */
 export const listBooks = (db: Db): Book[] => library.listBooks(db);
 
-/** The book, or the refusal that says there is none. */
 export function requireBook(db: Db, bookId: string): Book {
   const book = library.getBook(db, bookId);
   if (!book) throw notFound("No such book");
@@ -60,7 +50,7 @@ export function bookWithChapters(db: Db, bookId: string): ImportedBook {
   return { book, chapters: library.listChapters(db, book.id) };
 }
 
-/** A chapter's prose in the form asked for. See `LibraryService.chapterText` for why there are two. */
+/** See `LibraryService.chapterText` for why there are two forms. */
 export function chapterText(
   db: Db,
   bookId: string,
@@ -88,7 +78,7 @@ export function chapterTexts(
   return texts;
 }
 
-/** For each of `names`, the chapters whose text names it as written (`library.chaptersMentioning`). */
+/** For each name, the chapters whose text contains it as written. */
 export function chaptersMentioning(
   db: Db,
   bookId: string,
@@ -102,11 +92,11 @@ export function chaptersMentioning(
 
 export interface ImportInput {
   bytes: ArrayBuffer;
-  /** the uploaded file's name, which becomes the volume's `file` */
+  /** becomes the volume's `file` */
   fileName: string;
   /** override the title the EPUB declares */
   title?: string;
-  /** set to add this file to an existing book as one more volume */
+  /** add the file to this book as one more volume */
   bookId?: string;
   /** the volume's name; only read when `bookId` is set */
   name?: string;
@@ -115,18 +105,14 @@ export interface ImportInput {
 }
 
 export interface Imported extends ImportedBook {
-  /** the volume the file became, when it was added to an existing book */
+  /** set when the file was added to an existing book */
   volumeId?: number;
-  /** what the file turned out to hold */
   read: { chapters: number; words: number; unreadable: number; ms: number };
 }
 
 /**
- * The book an uploaded volume is going onto, or the refusal that stops the upload.
- *
- * Asked twice by `importEpub`: once before the file is parsed, to refuse in milliseconds rather
- * than after the work, and once at the point of inserting, because a review could have been
- * started in between and the second ask is the one that decides.
+ * The book an uploaded volume is going onto, or a refusal. `importEpub` asks before parsing (to
+ * refuse fast) and again at insert, since a review could have started in between.
  */
 export function volumeTarget(db: Db, bookId: string): Book {
   const book = requireBook(db, bookId);
@@ -135,12 +121,7 @@ export function volumeTarget(db: Db, bookId: string): Book {
   return book;
 }
 
-/**
- * Read an EPUB that would not parse for the reason a person can act on.
- *
- * The parser says what stopped it; EPUBCheck says what is wrong with the file. It runs only here,
- * on a failure, never as a gate.
- */
+/** Refuse an unparseable EPUB with the parser's reason plus EPUBCheck's, which runs only here. */
 async function refused(bytes: ArrayBuffer, e: EpubParseError, log?: ImportLog): Promise<never> {
   const why = await diagnose(bytes);
   log?.warn({ reason: e.message, epubcheck: why }, "refused the file");
@@ -151,25 +132,17 @@ async function refused(bytes: ArrayBuffer, e: EpubParseError, log?: ImportLog): 
   );
 }
 
-/**
- * Read an uploaded EPUB into a book, or into one more volume of a book already in the library.
- *
- * The result is the book and its chapters exactly as the contents review needs them, so the client
- * does not have to fetch again to show what it just imported.
- */
+/** Read an uploaded EPUB into a new book, or into one more volume of an existing book. */
 export async function importEpub(db: Db, input: ImportInput, log?: ImportLog): Promise<Imported> {
   const { bytes, fileName, title, bookId, name, covers } = input;
 
-  // A volume goes onto a book that exists and has nothing already waiting in its review. Asked
-  // before the file is read, because a thousand-chapter EPUB is several seconds of parsing to throw
-  // away — and asked again below, since nothing holds the book still in between.
+  // Refuse before parsing: a thousand-chapter EPUB is seconds of work. Asked again below.
   if (bookId) volumeTarget(db, bookId);
 
   const started = performance.now();
   let parsed: ParsedEpub;
   try {
-    // Measured before it is read: an upload is a zip, and what it unzips to is what costs memory.
-    // A refusal here is a 413 and skips the diagnosis below, which would unzip it all again.
+    // Unzipped size is what costs memory. A refusal is a 413 and skips the diagnosis below.
     await checkArchive(bytes, {
       total: env.MAX_UNZIPPED_MB * 1024 * 1024,
       document: env.MAX_DOCUMENT_MB * 1024 * 1024,
@@ -180,8 +153,7 @@ export async function importEpub(db: Db, input: ImportInput, log?: ImportLog): P
     return refused(bytes, e, log);
   }
 
-  // What the file turned out to hold. `unreadable` is the count worth seeing without being asked
-  // for: an import that half worked looks exactly like one that worked, from the outside.
+  // Warn on `unreadable`: a half-worked import otherwise looks like one that worked.
   const unreadable = parsed.chapters.filter((ch) => ch.unreadable).length;
   const read = {
     chapters: parsed.chapters.length,
@@ -207,9 +179,7 @@ export async function importEpub(db: Db, input: ImportInput, log?: ImportLog): P
 
   const id = library.freeBookId(db, slugify(title?.trim() || parsed.title || fileName));
   const assembled = assembleBook(parsed, id, fileName, { title });
-  // A new book's cover is its first file's. A volume added later brings its own, which is a
-  // different edition's cover as often as it is the same one, and replacing the book's with it
-  // unasked would be a surprise on the shelf; so a volume's is not read.
+  // Only a new book takes the EPUB's cover; a later volume's is often another edition's.
   const cover = covers && parsed.cover ? await keepCover(covers, id, parsed.cover, log) : null;
   if (cover) assembled.book.coverImage = cover;
   library.insertBook(db, assembled.book, assembled.chapters, assembled.bodies);
@@ -220,11 +190,7 @@ export async function importEpub(db: Db, input: ImportInput, log?: ImportLog): P
   return { ...bookWithChapters(db, id), read };
 }
 
-/**
- * Keep the EPUB's cover when it is one a player would show — a JPEG or a PNG of a sane size — and
- * say why not when it is not. A book without a usable cover is still a book: the shelf draws its
- * gradient, and an audiobook built from it carries no picture unless one is chosen for it.
- */
+/** Keep the EPUB's cover if it is a JPEG or PNG of a sane size; otherwise log why not. */
 async function keepCover(
   covers: CoverFiles,
   bookId: string,
@@ -243,10 +209,8 @@ async function keepCover(
 }
 
 /**
- * Keep an image chosen for a book's audiobook, and say where it is.
- *
- * It does not replace the book's own cover: it is what an export's settings name, so one build can
- * carry it and the next the EPUB's. The same image twice is the same file and the same url.
+ * Keep an image for a book's audiobook and return its url. It does not replace the book's own
+ * cover; an export's settings name it. The same image twice is the same file and url.
  */
 export async function uploadCover(
   db: Db,
@@ -272,11 +236,7 @@ export async function uploadCover(
   return { cover: (await covers.write(bookId, bytes, type)).url };
 }
 
-/**
- * Make an image the book's own cover: the one the shelf and the overview show, and the one an
- * audiobook carries when its export names none. Kept the way an export's cover is, so the image
- * the EPUB brought stays on disk under its own url.
- */
+/** Make an image the book's own cover. The EPUB's image stays on disk under its own url. */
 export async function changeBookCover(
   db: Db,
   covers: CoverFiles,
@@ -299,7 +259,7 @@ export type Discarded =
   | { discarded: "book" }
   | { discarded: "volume"; volumeId: number; chapters: number };
 
-/** Cancel an import: a book never added goes entirely; a new volume comes off its book. */
+/** Cancel an import: a new book goes entirely; a new volume comes off its book. */
 export function discardImport(db: Db, bookId: string): Discarded {
   const book = requireBook(db, bookId);
   if (book.importing) {
@@ -308,7 +268,7 @@ export function discardImport(db: Db, bookId: string): Discarded {
   }
   const vol = book.volumes.find((x) => x.importing);
   if (!vol) throw conflict("Nothing is waiting in this book’s contents review");
-  // A volume still in its review has had nothing run on it, so nothing on disk to remove.
+  // Nothing has run on a volume in review, so there is nothing on disk to remove.
   const { chapters } = library.deleteVolume(db, bookId, vol.id);
   return { discarded: "volume", volumeId: vol.id, chapters };
 }
@@ -317,11 +277,7 @@ export function discardImport(db: Db, bookId: string): Discarded {
 
 export type ReviewDecision = "skip" | "include" | "keep";
 
-/**
- * Skip chapters for the audiobook, put them back, or keep a noted one and stop the suggestion
- * asking. Nothing is deleted by any of the three. Returns how many chapters the decision changed,
- * and the chapters as they now stand.
- */
+/** Skip chapters, include them again, or keep a noted one (no more suggestion). Deletes nothing. */
 export function reviewChapters(
   db: Db,
   bookId: string,
@@ -336,10 +292,7 @@ export function reviewChapters(
   return { changed, chapters: library.listChapters(db, bookId) };
 }
 
-/**
- * Put chapters' review decisions to exactly these. The undo primitive: what a batch of decisions
- * changed is put back as it was, not re-derived through a rule that only runs forwards.
- */
+/** Set review decisions to exactly these: the undo primitive, restoring rather than re-deriving. */
 export function setDecisions(
   db: Db,
   bookId: string,
@@ -353,19 +306,10 @@ export function setDecisions(
 // ---------- removal ----------
 
 /**
- * Remove a book and everything it owns.
- *
- * Its work goes first. A narration or a build still running writes into the book's directories as
- * it goes — `mkdir` and all — so removing them under it only has the job put them back, holding
- * files no book owns. Every live job of the book is cancelled, and the one running is waited for:
- * a handler honours a cancel at its next step, and its `onSettled` clears up what it had half
- * written while the rows it needs are still there.
- *
- * Its files on disk go after the rows have — the clips it was narrated from and the audiobooks it
- * was built into, which are kept in two places and both belong to the book. A directory that
- * outlives its book is a leak, and a book whose rows outlive its files is a chapter that plays
- * nothing, so the order is the one that can only ever leave the first. The removal is not waited
- * for, because nothing that follows depends on it and a slow disk must not hold the response.
+ * Remove a book and everything it owns. Live jobs are cancelled and awaited first: a running job
+ * would recreate the directories, and its `onSettled` needs the rows. Files go after the rows (a
+ * leaked directory beats a chapter that plays nothing), in the background so a slow disk can't
+ * hold the response.
  */
 export async function removeBook(
   db: Db,
@@ -387,7 +331,6 @@ export async function removeBook(
 
 export type Removed = { removed: "book" } | { removed: "volume"; chapters: number };
 
-/** What removing a volume reaches beyond the database: the queue, and the files on disk. */
 export interface VolumePorts {
   runner?: Runner;
   files?: AudioFiles;
@@ -395,20 +338,9 @@ export interface VolumePorts {
 }
 
 /**
- * Remove a volume; its chapters go and the rest are renumbered.
- *
- * Removing the last volume removes the book: a book with no chapters is not a library entry, it is
- * a row nothing can be done with.
- *
- * The rest is the demo's rule, kept on the server. Work queued or running on the chapters that go
- * is cancelled first, so a provider stops being paid for lines nobody will hear; work on the
- * chapters that stay carries on under their new numbers. An audiobook keeps the chapters it still
- * has and one left with none goes. The clips those chapters rendered, and the files of any
- * audiobook that went, are removed from disk after the rows, without waiting.
- *
- * Refused while an audiobook of this book is being built, as removing that audiobook is: a build
- * reads its chapters' clips and records where each landed by chapter number, and both are what a
- * removal changes under it.
+ * Remove a volume; the rest are renumbered and the last one takes the book with it. Jobs on its
+ * chapters are cancelled; others carry on under new numbers. Refused mid-build: a build records
+ * where each chapter landed by number. Files go after the rows, in the background.
  */
 export async function removeVolume(
   db: Db,
@@ -458,21 +390,10 @@ export async function removeVolume(
 // ---------- a book's settings, and its volumes' names and order ----------
 
 /**
- * Write a book's budget, script budget, pacing, prompt or whether it reads its notes, and answer
- * with the book and its chapters.
- *
- * A pacing is stitched between clips rather than rendered, so changing it re-times every chapter
- * that has been narrated — `settleChapter`'s sum, clips plus the silence between them — and
- * invalidates nothing. A chapter nobody has narrated has no clips to put silence between and keeps
- * the length it has. The pauses inside a line are the exception: they are sent with the line, so a
- * new length for one makes stale every clip whose line holds a pause of that length
- * (`stalePauses`), and the answer names them. The budget is stored and not yet enforced here:
- * nothing the fake provider does costs anything to hold against it.
- *
- * Reading the notes aloud changes which lines want a clip (`isSpoken`), so every narrated chapter is
- * settled again: switched on, a chapter whose notes were never rendered is partly narrated until
- * they are; switched off, it is narrated again, and a note's clip is kept but no longer heard. A
- * chapter a run holds is the run's to settle when it ends.
+ * Write a book's settings. Pacing is stitched between clips, so a change only re-times narrated
+ * chapters, except inline pause lengths, which are rendered and stale their clips (`stalePauses`).
+ * Toggling `readNotes` changes which lines are spoken, so narrated chapters are settled again
+ * (a chapter a run holds is settled by the run).
  */
 export function updateBook(db: Db, bookId: string, settings: library.BookSettings): BookUpdated {
   const before = requireBook(db, bookId);
@@ -501,9 +422,8 @@ export function updateBook(db: Db, bookId: string, settings: library.BookSetting
 }
 
 /**
- * Mark stale every rendered clip whose line holds a pause of the book's length for its word, where
- * `after` gives that word another length than `before` — a pause with a length of its own, or one
- * omitted, is sent as it was. By chapter, with the revision each script is at now.
+ * Mark stale every rendered clip holding a book-length pause whose length changed. A pause with its
+ * own length, or omitted, is unaffected.
  */
 function stalePauses(tx: Tx, bookId: string, before: Pacing, after: Pacing): RevisedLines[] {
   const moved = new Set([
@@ -528,7 +448,6 @@ function stalePauses(tx: Tx, bookId: string, before: Pacing, after: Pacing): Rev
   return stale;
 }
 
-/** Rename a volume. Nothing is renumbered; the name is what an audiobook cut by volume is called. */
 export function renameVolume(db: Db, bookId: string, volumeId: number, name: string): Book {
   const book = requireBook(db, bookId);
   if (!book.volumes.some((x) => x.id === volumeId)) throw notFound("No such volume");
@@ -537,19 +456,8 @@ export function renameVolume(db: Db, bookId: string, volumeId: number, name: str
 }
 
 /**
- * Read a book's volumes in this order, and number its chapters to follow it.
- *
- * `order` names every volume of the book once. Work queued or running carries on under the new
- * numbers — a job finds its chapter by uid at every write — so nothing is cancelled. Refused while
- * an audiobook of the book is being built, for the reason a removal is: the build records where
- * each chapter landed by number. And refused while a volume is still in review, which is added at
- * the end and has no place in the order until it is.
- */
-/**
- * Cut the book into these volumes (`library.setVolumes`): a list of where each begins, in reading
- * order, starting at chapter 1, every chapter named once, every name non-empty. Refused mid-build,
- * because a build files each chapter under its volume; and while one volume of a shelved book is
- * still in review, since the review adds or discards that volume whole.
+ * Cut the book into volumes by where each begins. Refused mid-build (a build files each chapter
+ * under its volume) and while a shelved book's volume is in review (the review takes it whole).
  */
 export function setVolumes(db: Db, bookId: string, starts: readonly VolumeStart[]): ImportedBook {
   const book = requireBook(db, bookId);
@@ -583,6 +491,10 @@ export function setVolumes(db: Db, bookId: string, starts: readonly VolumeStart[
   return bookWithChapters(db, bookId);
 }
 
+/**
+ * Reorder volumes and renumber chapters. Jobs carry on (they find chapters by uid). Refused
+ * mid-build and while a volume is in review.
+ */
 export function reorderVolumes(db: Db, bookId: string, order: readonly number[]): ImportedBook {
   const book = requireBook(db, bookId);
   const ids = book.volumes.map((x) => x.id);

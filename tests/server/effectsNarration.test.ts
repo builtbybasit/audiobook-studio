@@ -1,12 +1,7 @@
-// Voice effects as narration applies them, and the two routes that run them for the editor.
-//
-// A line with effects lands as two files — the voice's own, kept as the clip's raw, and the one its
-// chains made, which the clip plays — and records the fingerprint of those chains as its sound. A
-// line with none is one file and no sound. Where Pedalboard cannot run, a thought line is given the
-// ffmpeg thought effect and a speaker's own effect and a line's own are left off, said once.
-//
-// The speech is the tone-rendering fake, the runner the fake one (`tests/support/effects.ts`), and
-// the ffmpeg thought effect a stand-in that counts its calls.
+// Voice effects as narration applies them, and the two editor routes that run them. A line with
+// effects lands as two files (the raw voice, and the processed clip it plays) and records its
+// chains' fingerprint as its sound. Without Pedalboard, a thought line gets the ffmpeg thought
+// effect and the other effects are left off, said once.
 import { describe, expect, test } from "bun:test";
 
 import type { Cast, ChapterScript, Effect, Endpoint, Job, Segment, Step } from "@/types";

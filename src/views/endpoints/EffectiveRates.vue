@@ -1,14 +1,6 @@
 <script setup lang="ts">
-// What this endpoint charges right now, why, and when that changes.
-//
-// The compact line is the headline — "Input: $0.50 / 1M tokens · 50% promotion applied · ends
-// tomorrow" — and the table under it is the working: base, what the schedule made it, what a
-// promotion made it. Every step is shown because the question people actually have is not "what is
-// the price" but "why is it that, and is it about to move".
-//
-// `components` says which rows this endpoint has — the four token rates, or the one speech rate —
-// and `unit` says what the speech rate is written in, since that endpoint may bill per character,
-// per token, per audio minute or per request.
+// What this endpoint charges right now, why, and when that changes: a headline per component, then
+// the working (base → schedule → promotion).
 import { computed } from "vue";
 import { UiTooltip } from "@/ui";
 import { Clock as ClockIcon, TriangleAlert as WarnIcon } from "@lucide/vue";
@@ -28,13 +20,12 @@ const props = defineProps<{
   now: number;
   /** which rows this endpoint has: `TOKEN_COMPONENTS` or `SPEECH_COMPONENTS` */
   components: RateComponent[];
-  /** the unit a speech rate is written in; absent on a token card */
+  /** absent on a token card */
   unit?: TtsBillingUnit;
 }>();
 
-/** A token component with no rate of its own is not a row: it says where it is charged instead.
- *  The speech row is always shown, because an endpoint with no known rate is the case that most
- *  needs saying out loud. */
+/** A token component with no rate of its own isn't a row. The speech row always shows: an unknown
+ *  rate most needs saying. */
 const rows = computed(() =>
   props.components
     .map((c) => ({ c, e: props.snapshot.components[c] }))
@@ -47,7 +38,7 @@ const suffix = (c: RateComponent) => rateSuffix(c, props.unit);
 
 <template>
   <div class="space-y-2">
-    <!-- the headline: one line per component, in the form the endpoint card uses too -->
+    <!-- the headline, in the form the endpoint card uses too -->
     <ul class="space-y-1">
       <li
         v-for="r in rows"

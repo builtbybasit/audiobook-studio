@@ -1,15 +1,9 @@
 <script setup lang="ts">
 import { useNarrationStore } from "@/stores/narration";
 
-// The ⚑ on a ledger row and what it opens: say what is wrong with a clip, and either leave the flag
-// for later or retake the line now. A mispronunciation is fixed in the dictionary rather than by a
-// retake, which would read the same spelling, so that kind offers the likely word straight to it;
-// the others point at the line in the reader, where a wrong direction or voice is fixed.
-//
-// Opening is the page's to decide — `f` on a focused ledger row or on the line playing on the Listen
-// page opens it as the button does — so `open` is a model; the form is filled from the line's flag
-// each time it opens. Whether the button shows only on hover is the page's too (the ledger's cell
-// carries `row-tool`); here it is always drawn.
+// The ⚑ on a ledger row: say what is wrong with a clip, then flag it or retake now. A
+// mispronunciation goes to the dictionary instead, since a retake would read the same spelling.
+// `open` is a model because pages open it by key (`f`) too.
 import { computed, ref, watch } from "vue";
 import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
 import { BookA as DictionaryIcon, Flag as FlagIcon } from "@lucide/vue";
@@ -53,7 +47,6 @@ watch(
   { immediate: true },
 );
 
-/** the check by ear's flag is open, and no kind of a person's own has been picked over it */
 const heard = computed(() => kind.value === "heard");
 function save(alsoRetake: boolean) {
   // a heard flag stays the check's until a person says what is wrong in their own words
@@ -68,7 +61,6 @@ function save(alsoRetake: boolean) {
   open.value = false;
   if (alsoRetake) narrationStore.retakeSegment(props.bookId, props.chapterId, props.segment.id);
 }
-/** flag it, then jump to the dictionary with the word already in the box */
 function toDictionary() {
   save(false);
   if (word.value.trim()) emit("pronounce", word.value.trim());

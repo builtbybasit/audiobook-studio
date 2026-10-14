@@ -1,6 +1,5 @@
 <script setup lang="ts">
-// One foldable settings block. The summary line carries what the section is currently set to, so a
-// folded section still answers its own question and only has to be opened to change the answer.
+// One foldable settings block; the summary line shows the current setting while folded.
 import { ref } from "vue";
 import { ChevronDown as ChevronDownIcon } from "@lucide/vue";
 import type { Component } from "vue";

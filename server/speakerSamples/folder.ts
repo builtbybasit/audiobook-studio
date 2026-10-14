@@ -1,13 +1,6 @@
-// One voice's folder in a script file — `voices/<slug>/`, its recordings and their `samples.json` —
-// judged whole: usable, or refused saying why.
-//
-// **Held to the clone route's own limits.** These recordings exist to be cloned from, and the clone
-// route refuses more than it takes (`server/routes/endpoints.ts`); a folder it would refuse is one
-// that could never become a voice, so it is refused here, before a byte of it is kept. Every file
-// is checked by its first bytes (`sniffSample`) — a name ending `.wav` is a claim, not a format.
-//
-// **Refused whole, and alone.** One file that is not audio, or one too many, refuses that voice's
-// recordings and nothing else: the lines, the cast and every other voice still import.
+// One voice's folder in a script file (`voices/<slug>/` and its `samples.json`), judged whole. Held
+// to the clone route's limits, since a folder it would refuse can never become a voice. A refusal
+// rejects that voice's recordings only; the lines, cast and other voices still import.
 import * as v from "valibot";
 
 import type { ScriptFileVoice, VoiceRowSamples } from "@/types";
@@ -17,15 +10,15 @@ import { sniffSample, type SampleFormat } from "~/providers/clone";
 const MB = 1024 * 1024;
 
 export interface SampleLimits {
-  /** any one recording, in bytes */
+  /** bytes, one recording */
   clip: number;
-  /** one voice's recordings together, in bytes */
+  /** bytes, one voice's recordings together */
   voice: number;
-  /** how many recordings one voice may have */
+  /** recordings per voice */
   clips: number;
 }
 
-/** The clone route's: 20 MB a recording, 100 MB a voice, and `MAX_VOICE_SAMPLES` of them. */
+/** The clone route's. */
 export const SAMPLE_LIMITS: SampleLimits = {
   clip: 20 * MB,
   voice: 100 * MB,
@@ -34,9 +27,8 @@ export const SAMPLE_LIMITS: SampleLimits = {
 
 export const VOICE_SAMPLES_FORMAT = "audiobook-studio/voice-samples";
 
-/** The file in a voice's folder that lists its recordings. */
 export const SAMPLES_MANIFEST = "samples.json";
-/** What an older export called it; read the same, and its consent fields left unread. */
+/** Older exports' name; its consent fields are ignored. */
 const OLD_SAMPLES_MANIFEST = "consent.json";
 
 const ScriptFileVoiceSchema = v.object({
@@ -55,22 +47,18 @@ const ScriptFileVoiceSchema = v.object({
   ),
 }) satisfies v.GenericSchema<unknown, ScriptFileVoice>;
 
-/**
- * One entry of a voice's folder, as the zip guard measured it: `bytes` when it was kept, and
- * `partial` when only its first bytes were — enough to judge it by, not enough to keep.
- */
+/** As the zip guard measured it; `partial`: only the head was kept, enough to judge, not keep. */
 export interface FolderEntry {
   size: number;
   bytes?: Uint8Array;
   partial?: boolean;
 }
 
-/** A recording that passed, as it will be kept — or, from a read that held only heads, judged. */
 export interface JudgedClip {
   name: string;
   format: SampleFormat;
   bytes: Uint8Array;
-  /** only the head of the recording is in `bytes`: judged, and not to be kept */
+  /** only the head is in `bytes`: not to be kept */
   partial?: boolean;
 }
 
@@ -78,10 +66,7 @@ export type JudgedVoice =
   | { ok: true; voice: ScriptFileVoice; clips: JudgedClip[]; bytes: number }
   | { ok: false; reason: string };
 
-/**
- * The folder a cast entry names, as a path inside the zip relative to the manifest — `voices/vex/`
- * — or null when it names nothing that could be one: an absolute path, a `..`, or nothing at all.
- */
+/** Relative to the manifest (`voices/vex/`); null for an absolute path, a `..`, or nothing. */
 export function folderOf(samples: unknown): string | null {
   if (typeof samples !== "string") return null;
   const path = samples.trim().replace(/^\.\//, "");
@@ -91,11 +76,7 @@ export function folderOf(samples: unknown): string | null {
 
 const decoder = new TextDecoder("utf-8");
 
-/**
- * Judge the recordings in `folder`: `entries` holds every file of the zip under the manifest's
- * folder, by its path relative to it. A folder is usable when its `samples.json` (an older file's
- * `consent.json`) reads, and every recording it names is there, is audio, and fits the limits.
- */
+/** `entries` is keyed by path relative to the manifest's folder. Formats are sniffed, not named. */
 export function judgeVoiceFolder(
   folder: string,
   entries: ReadonlyMap<string, FolderEntry>,
@@ -153,7 +134,6 @@ export function judgeVoiceFolder(
   return { ok: true, voice, clips, bytes: total };
 }
 
-/** What a voice row says of a judged folder. */
 export function rowSamples(judged: JudgedVoice): VoiceRowSamples {
   if (!judged.ok) return { kind: "refused", reason: judged.reason };
   return {

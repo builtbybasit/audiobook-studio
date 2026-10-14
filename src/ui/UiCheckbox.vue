@@ -1,10 +1,7 @@
 <script setup lang="ts">
-// modelValue: true | false | 'indeterminate'
-// A native box, not reka's: lists tick hundreds of rows, and a reka checkbox is four components.
-// The box flips itself on a click before anyone hears of it, so once the click has been told and the
-// page has re-rendered, it is set back to what `modelValue` says — a tick the caller does not take
-// is not left drawn. Callers must not preventDefault the click: the browser would undo the flip
-// after this has already put it right.
+// modelValue: true | false | 'indeterminate'. A native box, not reka's: lists tick hundreds of rows.
+// The browser flips it on click, so after the re-render it is reset to `modelValue`: a tick the
+// caller does not take is not left drawn. Callers must not preventDefault the click.
 import { nextTick } from "vue";
 
 const props = withDefaults(

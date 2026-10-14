@@ -1,23 +1,7 @@
-// Speech to text: a recording sent to a transcription endpoint, and the words that came back.
-//
-// One wire, OpenAI's `POST /audio/transcriptions`, which the local servers copy — Fermion's Phonon
-// among them (`fermion serve phonon-2`). A multipart form of the file and the model; asked for
-// `verbose_json` with `timestamp_granularities[]=word` when the caller wants the time of each word,
-// which a server that has none answers without (`gpt-4o-transcribe` answers only `json`), and the
-// caller then has the words without their times. `prompt` carries names the audio is likely to
-// hold, which Whisper reads as context and Phonon as words to favour — by `hotword_lambda` when the
-// endpoint sets one, since Phonon's own default of 2 changes nothing it hears. A server that drops the
-// connection for a request with a prompt (Fermion 0.2.9, whose hotwords fail to load) and answers
-// the same request without one is sent none from then on, until restart, and each transcript
-// heard so says it was `unhinted`.
-//
-// The recording goes as 16 kHz mono WAV, made by ffmpeg (`SpeechRate`), unless the endpoint says to
-// send it as rendered (`resample16k: false`) or the transcriber was made without one (a test's): the rate every
-// speech-to-text model hears at, and the only one Phonon's CUDA build takes.
-//
-// Every request that reached the wire is reported through `sent`, as speech is (`sent.ts`), so the
-// ledger prices it by the minute of audio sent — a cancelled one too, at a cost nobody knows. A simulated endpoint answers here with a fixed
-// sentence and no times, after its latency, and nothing is sent.
+// Speech to text over OpenAI's `POST /audio/transcriptions`, which local servers copy (Fermion's
+// Phonon). Hints go as `prompt` (Phonon: favoured words, weighted by `hotword_lambda`, whose
+// default of 2 changes nothing). Audio goes as 16 kHz mono WAV, the only rate Phonon's CUDA build
+// takes. Requests are reported through `sent` and priced per minute of audio.
 import type { SpeechRate } from "~/audio/ffmpeg";
 import { sleep } from "~/providers/fake";
 import {
@@ -31,7 +15,7 @@ import {
 import type { SentTranscription } from "~/providers/sent";
 import type { ProviderTarget } from "~/providers/target";
 
-/** One word as the server heard it, in seconds from the start of the file. */
+/** Seconds from the start of the file. */
 export interface HeardWord {
   word: string;
   start: number;
@@ -39,15 +23,14 @@ export interface HeardWord {
 }
 
 export interface TranscriptionInput {
-  /** the recording, typed so the server can tell its format */
   audio: Blob;
-  /** a file name with the right extension, which some servers read the format from */
+  /** with the right extension: some servers read the format from it */
   name: string;
-  /** how long it plays, in seconds — what the ledger prices when the server does not say */
+  /** what the ledger prices */
   seconds: number;
-  /** ask for the time of every word */
+  /** ask for the time of every word (`gpt-4o-transcribe` gives none) */
   words: boolean;
-  /** names and words the audio is likely to hold; never more than a hint */
+  /** names the audio is likely to hold */
   hints?: readonly string[];
   signal: AbortSignal;
   sent?: (request: SentTranscription) => void;
@@ -55,13 +38,11 @@ export interface TranscriptionInput {
 
 export interface Transcript {
   text: string;
-  /** absent when the server gave no times, or was not asked for them */
   words?: HeardWord[];
-  /** heard without the hints, because the server gives no answer to a request that has them */
+  /** heard without the hints, because the server gives no answer to a request with them */
   unhinted?: true;
 }
 
-/** A transcription endpoint as a request needs it: a target, and how hard to favour the hints. */
 export interface TranscriptionTarget extends ProviderTarget {
   /** sent as `hotword_lambda` beside a prompt; absent sends none */
   hotwordLambda?: number;
@@ -74,10 +55,9 @@ export interface TranscriptionProvider {
   transcribe(input: TranscriptionInput, target: TranscriptionTarget): Promise<Transcript>;
 }
 
-/** What a simulated endpoint hears, whatever it is sent. */
 export const SIMULATED_TRANSCRIPT = "A simulated endpoint hears this sentence in every recording.";
 
-/** Words a prompt may carry: Whisper reads 224 tokens of it, so a long cast is cut, never refused. */
+/** Whisper reads 224 tokens of prompt, so a long cast is cut, never refused. */
 const HINT_CHARS = 800;
 
 const promptOf = (hints: readonly string[]): string => {
@@ -100,10 +80,9 @@ const wordsOf = (body: { words?: unknown }): HeardWord[] | undefined =>
         .map((w) => ({ word: w.word.trim(), start: w.start, end: w.end }))
     : undefined;
 
-/** Servers that answer a request only without its prompt, by endpoint and address, until restart. */
+/** Servers that only answer without a prompt (Fermion 0.2.9), until restart. */
 const promptHurts = new Set<string>();
 
-/** One request to the server, with `prompt` when it is not empty. */
 async function send(
   input: TranscriptionInput,
   target: TranscriptionTarget,
@@ -143,16 +122,16 @@ async function send(
       { signal, stats, ...inject },
     );
     body = (await res.json().catch(() => null)) ?? {};
-    // an answer cut short by a cancel is the cancel's, not a server that sent no transcript
+    // a body cut short by a cancel is the cancel's
     if (signal.aborted) throw signal.reason;
   } catch (e) {
     if (signal.aborted) {
-      // out at the server, which may have heard it and billed it: nobody here can say
+      // the server may have billed it: nobody here can say
       if (stats.attempts) report({ status: "cancelled", billed: null });
       throw e;
     }
     const error = e instanceof ProviderError ? e : new ProviderError(String(e), 0, true);
-    // a refusal is not billed; a request no answer came back for is not knowable, and is not either
+    // neither a refusal nor no answer is billed
     report({
       status: "failed",
       error: { code: error.status, message: error.message },
@@ -170,10 +149,7 @@ async function send(
   return { text: body.text.trim(), ...(words?.length ? { words } : {}) };
 }
 
-/**
- * The recording as 16 kHz mono WAV, under a name that says so — or as it came when ffmpeg cannot
- * read it, for the server to say what is wrong with it.
- */
+/** As it came when ffmpeg cannot read it, for the server to say what is wrong. */
 async function atSpeechRate(
   input: TranscriptionInput,
   speechRate: SpeechRate,
@@ -192,7 +168,7 @@ export function endpointTranscriber({
   speechRate,
   ...inject
 }: Pick<CallOptions, "fetch" | "backoffMs"> & {
-  /** what a recording is turned into before it is sent; absent sends it as it came */
+  /** absent sends the recording as it came */
   speechRate?: SpeechRate;
 } = {}): TranscriptionProvider {
   return {
@@ -216,8 +192,7 @@ export function endpointTranscriber({
         return await send(input, target, prompt, inject);
       } catch (e) {
         if (signal.aborted || !(e instanceof ProviderError) || e.status !== 0) throw e;
-        // no answer at all: the prompt may be what it cannot take (Fermion 0.2.9 drops the
-        // connection for one) — and when the same request without it is answered, it was
+        // no answer: Fermion 0.2.9 drops the connection over a prompt; retry without one
         const heard = await send(input, target, "", inject).catch(() => {
           throw e;
         });

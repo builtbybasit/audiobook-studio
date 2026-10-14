@@ -1,15 +1,6 @@
-// What the ⌘K palette can do, worked out from the stores and nothing else.
-//
-// The palette used to be one component: seven stores and every derivation it needed to decide which
-// rows exist, wrapped around a reka Dialog. The two halves have nothing to say to each other — this
-// half knows the domain and no DOM, `CommandPalette.vue` knows the widget and no domain — and only
-// the first one is worth reading on its own, or checking without mounting a dialog and seven stores.
-//
-// Read-only over the stores, like `reviewInbox`: nothing here decides anything, and a row's `run` is
-// a call into the store that owns the work. The rules the rows are offered by are the owners' —
-// a chapter skipped from the audiobook is skipped by every run, and "retry all failed" is whatever
-// the queue says it would actually re-run — because a palette with its own copy of either offers a
-// count the button then does not honour.
+// What the ⌘K palette can offer, derived from the stores; `CommandPalette.vue` is the widget.
+// Read-only: a row's `run` calls the store that owns the work, and which rows exist follows that
+// store's rules (skipped chapters, `retryableFailures`) so a count never differs from what runs.
 import { useCastStore } from "@/stores/cast";
 import { numberCell } from "@/lib/chapterNumber";
 import { plural } from "@/lib/contents";
@@ -37,12 +28,7 @@ export interface Command {
   run: () => void;
 }
 
-/**
- * Every row the palette can show right now, in the order they are offered.
- *
- * `mod` is the modifier key legend this machine uses; it appears in a hint and is the one thing
- * here that depends on the browser the palette is open in.
- */
+/** Every row the palette can show right now. `mod` is this machine's modifier-key legend. */
 export function paletteCommands(router: Router, mod: string): Command[] {
   const castStore = useCastStore();
   const endpointsStore = useEndpointsStore();
@@ -144,8 +130,7 @@ export function paletteCommands(router: Router, mod: string): Command[] {
   }
   // actions on the open book
   if (b) {
-    // a chapter skipped from the audiobook is skipped by every run that reaches the store, so it is
-    // not offered here either: counting it made "Script all pending chapters — 4 ch" script two
+    // skipped chapters are skipped by every run, so a count that included them would overstate it
     const runnable = chs.filter((c) => !c.excluded);
     const pending = runnable
       .filter((c) => !isScripted(c) && !["running", "queued"].includes(c.scripting))
@@ -189,9 +174,8 @@ export function paletteCommands(router: Router, mod: string): Command[] {
         label: `Re-narrate changed segments`,
         hint: `${stale.length} ch stale`,
         keywords: "edited",
-        // One run over every stale chapter, never a loop of single-chapter calls: the expression
-        // guard holds one pending review at a time, so chapter 2 overwrote chapter 1's and only the
-        // last blocked chapter ever got a dialog — the rest returned having queued nothing.
+        // One run over every stale chapter, not a loop: the expression guard holds one pending
+        // review at a time, so a loop dropped every blocked chapter's dialog but the last.
         run: () => {
           void narrationStore.startRun(
             b,
@@ -243,8 +227,7 @@ export function paletteCommands(router: Router, mod: string): Command[] {
         run: go(`/book/${b}/cast`),
       });
   }
-  // what "retry all failed" would actually re-run — the store's own answer, so the row is offered
-  // exactly when there is work and the number on it is the number of chapters that get re-run
+  // the store's own answer, so the count is the number of chapters that get re-run
   const retryable = jobsStore.retryableFailures();
   if (retryable.length)
     out.push({
@@ -338,9 +321,7 @@ export function paletteCommands(router: Router, mod: string): Command[] {
         keywords: bk.author,
         run: go(`/book/${bk.id}`),
       });
-  // chapters of the open book → the stage they're at. A row is labelled, and found by typing, by its
-  // reading number ("chapter 2" is the book's Chapter 2, whatever cover pages come before it); a
-  // skipped chapter has none and is found by its title.
+  // chapters, labelled and found by reading number; a skipped one has none and is found by title
   const numbers = b ? libraryStore.chapterNumbers[b] : undefined;
   for (const c of chs) {
     const n = numbers?.get(c.id);
@@ -414,11 +395,8 @@ export function paletteCommands(router: Router, mod: string): Command[] {
 type Contains = (value: string, query: string) => boolean;
 
 /**
- * The rows to show for a query, capped.
- *
- * Without a query the list stays short — everything you can go to and everything you can do, plus a
- * few of each long group — because a palette that opens on 200 rows is a list, not a shortcut.
- * With one, the whole script is searchable too, and that row goes first.
+ * The rows to show for a query, capped. Without a query only a few of each long group show;
+ * with one, a script search row goes first.
  */
 export function filterCommands(
   commands: Command[],

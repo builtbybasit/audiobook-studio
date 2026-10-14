@@ -1,7 +1,6 @@
 <script setup lang="ts">
-// "+ Add step": the catalog in a popover, grouped by what a plugin does. Type to narrow, ↑↓ to
-// move, Enter to add; the foot says where the step goes (`where`, from whoever mounts it — after
-// the selected step, or at the end of a layer). A Mix is offered only where one can go (`mix`).
+// "+ Add step": the catalog in a popover, grouped by what a plugin does. A Mix is offered only
+// where one can go (`mix`).
 import { computed, nextTick, ref, watch } from "vue";
 import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
 import { Plus as AddIcon, Search as SearchIcon } from "@lucide/vue";

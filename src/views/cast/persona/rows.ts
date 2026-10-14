@@ -1,16 +1,13 @@
-// Where a persona's row goes in the Cast table: right under its character's, whatever the order
-// and filter put the rest in. Nothing here reads a store.
+// Where a persona's row goes in the Cast table: right under its character's.
 import { personaOwner } from "@/lib/cast";
 import type { Character } from "@/types";
 
 type Speaker = Pick<Character, "name" | "personaOf" | "masked">;
 
 /**
- * The rows as sorted and filtered, with each linked persona moved to sit under its character, in
- * the order the personas came; `nested` marks the ones that moved. A persona whose character is
- * not among the rows (a search found only the persona) keeps its own place, unnested, and so does
- * one the scripting model linked (`masked`): a row under Sunny's would say who wears the mask.
- * `cast` is the whole book's, so a link is the one `personaOwner` reads, filtered or not.
+ * Each linked persona moved under its character; `nested` marks the moved ones. A persona whose
+ * character is filtered out stays put, as does a `masked` one (nesting would spoil the wearer).
+ * `cast` is the whole book's, so links resolve whatever the filter.
  */
 export function nestPersonas<R extends { c: Speaker }>(
   rows: readonly R[],

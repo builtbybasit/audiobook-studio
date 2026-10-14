@@ -1,14 +1,7 @@
 <script setup lang="ts">
-// The peak/off-peak schedule: a timezone, and recurring windows in the order they are tried.
-//
-// Two things this has to get right, because they are the two that are wrong everywhere else:
-//
-//   · the timezone is explicit and shown, never the browser's assumed one silently
-//   · a window whose end is at or before its start runs *past midnight*, and says so — the day list
-//     then names the day the window starts on, so Fri 22:00–02:00 is Friday night, not Friday dawn
-//
-// Windows never stack: the first one in this list that covers the moment wins, and the list can be
-// reordered, so precedence is something you can see rather than something you have to derive.
+// The peak/off-peak schedule: an explicit timezone and recurring windows. A window ending at or
+// before its start runs past midnight, and its days name the start day (Fri 22:00–02:00 is Friday
+// night). Windows never stack: the first covering one wins, and the list can be reordered.
 import { computed } from "vue";
 import { UiNumber, UiSelect, UiTooltip } from "@/ui";
 import {
@@ -32,17 +25,15 @@ const props = defineProps<{
   config: PricingConfig;
   base: RateSet;
   now: number;
-  /** the components this endpoint prices — the four token rates, or the one speech rate */
+  /** the token rates, or the one speech rate */
   components: RateComponent[];
-  /** the unit a speech rate is written in; absent on a token card */
+  /** absent on a token card */
   unit?: TtsBillingUnit;
 }>();
 
-/** The rates an explicit-rate window can set: only what this endpoint actually prices. */
 const editable = computed(() => props.components.filter((c) => props.base[c] != null));
 
-/** A short list rather than the full IANA set: this is a prototype, and a free-text box for a
- *  timezone is a way to silently break a schedule. The current value is always offered. */
+/** A short list, not free text (a typo silently breaks a schedule); the current value is kept. */
 const ZONES = computed(() => {
   const common = [
     "UTC",
@@ -68,7 +59,6 @@ const ZONES = computed(() => {
 const here = computed(() => localClock(props.now, props.config.timezone));
 
 const active = (w: RateWindow) => windowCovers(w, here.value.day, here.value.minutes);
-/** The first covering window is the one in force; later ones are covered but outranked. */
 const inForce = computed(() => props.config.windows.find(active) ?? null);
 
 function addWindow() {
@@ -91,14 +81,8 @@ function move(i: number, by: number) {
   props.config.windows.splice(j, 0, w);
 }
 /**
- * An empty day list is the "every day" sentinel, and every one of the seven buttons reads as
- * selected while it is empty. Clicking one of them therefore means *deselect this day* — so the
- * sentinel is expanded to the six days that are left rather than collapsed to the one clicked,
- * which is the opposite of what the button said it would do.
- *
- * Taking the last remaining day out leaves the list empty, which reads as "every day" again. That
- * is the sentinel doing what it says rather than a hidden state: a window that applies on no day
- * at all is not something the schedule can express, and would apply to nothing if it could.
+ * An empty day list means "every day" and shows all seven selected, so clicking one deselects it:
+ * the sentinel expands to the other six. Removing the last day empties the list, i.e. every day.
  */
 function toggleDay(w: RateWindow, day: number) {
   if (!w.days.length) {
@@ -108,14 +92,14 @@ function toggleDay(w: RateWindow, day: number) {
   const i = w.days.indexOf(day);
   if (i >= 0) w.days.splice(i, 1);
   else w.days.push(day);
-  // all seven selected one at a time is the same window as the sentinel; keep one spelling of it
+  // one spelling for "every day"
   if (w.days.length === 7) w.days = [];
 }
 function setTime(w: RateWindow, edge: "from" | "to", text: string) {
   const v = parseClock(text);
   if (v != null) w[edge] = v;
 }
-/** A window charges either a percentage off the card or explicit rates — never a mix per field. */
+/** A percentage off the card or explicit rates, never a mix. */
 function setKind(w: RateWindow, kind: "percent" | "rates") {
   if (kind === "percent") {
     delete w.rates;
@@ -126,7 +110,6 @@ function setKind(w: RateWindow, kind: "percent" | "rates") {
   }
 }
 
-/** What a percentage window does to every rate this endpoint has, at today's card. */
 function discountPreview(w: RateWindow): string {
   const off = 1 - (w.percent ?? 0) / 100;
   const parts = editable.value.map(

@@ -1,20 +1,15 @@
-// The notices a web-novel EPUB carries between its chapters, as the import would find them: what
-// each kind is called, the titles it tends to have, what gives it away, and a few bodies to read.
-//
-// These are predetermined fixtures. Nothing here classifies text — the import samples say which
-// chapter carries which note, and this file supplies the words. The reasons are written the way
-// the review shows them, short enough to read beside a title.
+// Fixture words for each kind of web-novel notice: reason, typical titles, evidence and bodies.
+// Nothing here classifies text; the import samples say which chapter carries which note.
 import type { ChapterNote, DemoNoticeKind } from "@/types";
 
 export interface NoticeSpec {
   verdict: "skip" | "review";
   /** the one line beside the title */
   reason: string;
-  /** titles such a chapter tends to have */
   titles: string[];
   /** what the check saw */
   evidence: string[];
-  /** two or three bodies, so repeated notices read as related rather than identical */
+  /** two or three, so repeated notices differ */
   bodies: string[];
 }
 
@@ -200,7 +195,6 @@ export const NOTICES: Record<DemoNoticeKind, NoticeSpec> = {
   },
 };
 
-/** A note as a chapter carries it, from the fixture for its kind. */
 export function noteOf(kind: DemoNoticeKind, at?: "start" | "end", variant?: number): ChapterNote {
   const spec = NOTICES[kind];
   const reason =
@@ -219,13 +213,11 @@ export function noteOf(kind: DemoNoticeKind, at?: "start" | "end", variant?: num
   };
 }
 
-/** The body a notice reads with — `n` picks among the variants so repeats do not all read alike. */
 export function noticeBody(kind: DemoNoticeKind, n = 0): string {
   const bodies = NOTICES[kind].bodies;
   return bodies.length ? bodies[Math.abs(n) % bodies.length] : "";
 }
 
-/** A title for a notice chapter, from the fixture's list. */
 export function noticeTitle(kind: DemoNoticeKind, n = 0): string {
   const titles = NOTICES[kind].titles;
   return titles.length ? titles[Math.abs(n) % titles.length] : NOTICES[kind].reason;

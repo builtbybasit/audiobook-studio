@@ -1,10 +1,5 @@
-// Provider presets: what "Start from a preset…" fills in on an endpoint's Connection tab.
-//
-// A preset is a starting point, so what these guard is that every one of them is a configuration
-// the app would accept as it stands — a scripting profile its queue can send a chapter to, with a
-// rate card the Pricing tab can read — and that applying one hands over a copy: a preset's billing
-// or pricing object that became an endpoint's own would be edited by the Pricing tab, and every
-// endpoint made from that preset afterwards would start from the edited rates.
+// Provider presets: every one is a configuration the app accepts as it stands, and applying one
+// hands over a copy, or a Pricing tab edit would change every later endpoint made from it.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { baseRates, effectiveRates, pricingProblems, speechRates } from "@/lib/pricing";
@@ -29,7 +24,6 @@ import type { Endpoint } from "@/types";
 import { testPinia, type TestPinia } from "./support/pinia";
 
 const LOCAL = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/)/;
-/** A server of your own, or this one's simulated provider: neither is a hosted account. */
 /** A server of your own, the simulated one, or a command-line tool your subscription pays for. */
 const unhosted = (baseUrl = ""): boolean =>
   LOCAL.test(baseUrl) || isSimulated(baseUrl) || !!cliOf(baseUrl);
@@ -58,8 +52,7 @@ describe("scripting presets", () => {
   });
 
   test("each is listed under a provider, and a provider's presets sit together", () => {
-    // the picker makes a heading per group in the order groups first appear, so one split in two
-    // would show the same heading twice
+    // the picker makes a heading per group as groups first appear, so a split group shows twice
     const groups = SCRIPTING_PRESETS.map((p) => p.group);
     expect(groups.every(Boolean)).toBe(true);
     const runs = groups.filter((g, i) => g !== groups[i - 1]);

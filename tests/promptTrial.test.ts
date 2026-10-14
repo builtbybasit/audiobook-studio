@@ -1,6 +1,5 @@
-// Trying a prompt on one chunk, and the notes a prompt would drop: what the trial sends and how
-// its answer reads (`src/lib/promptTrial.ts`), and what the book's panel warns about beside its
-// notes (`src/lib/promptNotes.ts`). The components themselves are not mounted here.
+// Trying a prompt on one chunk, and the notes a prompt would drop (`src/lib/promptTrial.ts`,
+// `src/lib/promptNotes.ts`). The components are not mounted here.
 import { describe, expect, test } from "bun:test";
 
 import { BUILT_IN_PROMPT, resolvePrompt } from "@/lib/prompt";

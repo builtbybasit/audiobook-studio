@@ -1,6 +1,4 @@
-// Reading an actual EPUB into a book. The prototype never parsed a file; everything here is the
-// part that was missing, so the cases are about what real files contain rather than what the
-// samples declared.
+// Reading real EPUB files into a book: the cases are about what real files contain.
 import { describe, expect, spyOn, test } from "bun:test";
 
 import { EpubCheck } from "@likecoin/epubcheck-ts";
@@ -20,9 +18,8 @@ interface ImportResult {
 }
 
 describe("the EPUBs these tests are built on", () => {
-  // The fixtures are the only EPUBs this suite ever sees. One that is quietly invalid is a blind
-  // spot exactly where the code under test is meant to be strict — and this caught two, an
-  // identifier that was not a UUID and a missing `dcterms:modified`, which EPUB 3 requires.
+  // The only EPUBs this suite sees, so each must itself be valid EPUB 3 (UUID identifier,
+  // `dcterms:modified`): an invalid fixture is a blind spot exactly where the code must be strict.
   const shapes: [string, Parameters<typeof buildEpub>[0]][] = [
     ["a plain book", { chapters: [{ title: "One", paragraphs: story() }] }],
     [
@@ -183,8 +180,7 @@ describe("importing an EPUB", () => {
     );
     expect(status).toBe(415);
     expect(body.error.message).toBe("That file could not be read as an EPUB");
-    // The parser can only say what stopped it. EPUBCheck says what is wrong with the file, which
-    // is the half somebody holding a broken book can actually act on.
+    // EPUBCheck says what is wrong with the file, which the parser's own error cannot.
     expect(body.error.detail).toContain("EPUBCheck");
     expect(body.error.detail).toContain("PKG-004");
   });
@@ -220,9 +216,8 @@ describe("importing an EPUB", () => {
         chapters: [{ title: "Chapter One", navTitle: "1. The Ledger Opens", paragraphs: story() }],
       }),
     );
-    // The navigation is a second file and is still loading when `open` resolves. Read too early it
-    // is simply absent, and every chapter silently falls back to its own heading — which looks
-    // close enough to be believed and is not what the book's contents call it.
+    // The navigation is a second file, still loading when `open` resolves. Read too early it is
+    // absent and every chapter silently falls back to its own heading.
     expect(body.chapters[0].title).toBe("1. The Ledger Opens");
   });
 
@@ -237,8 +232,8 @@ describe("importing an EPUB", () => {
         ],
       }),
     );
-    // Its links read `../text/c1.xhtml`, the spine's read `text/c1.xhtml`: the same file, spelled
-    // against two different documents. Compared as written, every label is lost.
+    // Nav links read `../text/c1.xhtml`, the spine `text/c1.xhtml`: the same file, resolved against
+    // different documents.
     expect(body.chapters.map((c) => c.title)).toEqual(["The Ledger Opens", "Salt Tax"]);
   });
 
@@ -253,8 +248,7 @@ describe("importing an EPUB", () => {
         ],
       }),
     );
-    // The navigation is awaited on its own so that losing it cannot take the import with it: the
-    // chapters are all still there, titled by their own headings.
+    // Losing the navigation must not lose the import: chapters keep their own headings.
     expect(status).toBe(201);
     expect(body.chapters.map((c) => c.title)).toEqual(["The Ledger Opens", "Salt Tax"]);
   });
@@ -308,8 +302,7 @@ describe("importing an EPUB", () => {
         ],
       }),
     );
-    // One chapter per file would have made this one row: skipping the notice would take the story
-    // either side of it with it, and keeping the story would keep the notice.
+    // One chapter per file would make this one row, and the notice could not be skipped alone.
     expect(body.chapters).toHaveLength(3);
     expect(body.chapters[1].note?.kind).toBe("hiatus");
     expect(body.chapters[0].note).toBeUndefined();
@@ -345,8 +338,7 @@ describe("importing an EPUB", () => {
         ],
       }),
     );
-    // A series title above the first chapter belongs to no navigation entry. Merging it forward
-    // keeps it in the book; a part of its own would be a chapter nobody named.
+    // A series title above the first chapter merges forward rather than becoming an unnamed chapter.
     expect(body.chapters.map((c) => c.title)).toEqual(["The Ledger Opens", "Salt Tax"]);
     const first = await api.request<{ text: string }>(`/api/books/${body.book.id}/chapters/1/text`);
     expect(first.body.text).toBe("The Moonlight Ledger\n\n## The Ledger Opens\n\nRain fell.");
@@ -368,9 +360,8 @@ describe("importing an EPUB", () => {
         ],
       }),
     );
-    // Both anchors sit one level down, under a volume entry that names no file. The shallowest
-    // level that reaches this document is the one that decides, so they are still two chapters —
-    // what must not happen is reading *every* level and turning a scene list into chapters.
+    // Both anchors sit under a volume entry that names no file. The shallowest level reaching this
+    // document decides; reading every level would turn a scene list into chapters.
     expect(body.chapters.map((c) => c.title)).toEqual(["The Ledger Opens", "Salt Tax"]);
   });
 
@@ -391,9 +382,8 @@ describe("importing an EPUB", () => {
         ],
       }),
     );
-    // The volume's own entry names the file and the chapters name places inside it. Read as the
-    // shallowest entry that reaches the file, it is the boundary and both chapters arrive as one —
-    // where a notice packed in with them could not be skipped without the story either side of it.
+    // The volume's entry names the file and the chapters name places in it. Taking the shallowest
+    // entry would merge both chapters, and a notice packed among them could not be skipped.
     expect(body.chapters.map((c) => c.title)).toEqual(["The Ledger Opens", "Salt Tax"]);
   });
 
@@ -411,8 +401,7 @@ describe("importing an EPUB", () => {
         ],
       }),
     );
-    // Old conversions lay prose out in a single-cell table. Losing a chapter to its layout is the
-    // kind of silent emptiness the review cannot even tell you about.
+    // Old conversions lay prose out in a single-cell table.
     expect(body.chapters[0].words).toBeGreaterThan(8);
     const text = await api.request<{ text: string }>(`/api/books/${body.book.id}/chapters/1/text`);
     expect(text.body.text).toContain("Rain fell on the counting house");
@@ -456,8 +445,7 @@ describe("importing an EPUB", () => {
         ],
       }),
     );
-    // One entry per file rather than per chapter hides the second one entirely: the review is
-    // never told it existed, and the book is quietly a chapter short.
+    // One entry per file would hide the second chapter: the book silently a chapter short.
     expect(body.chapters.map((c) => c.title)).toEqual(["The Ledger Opens", "Salt Tax", "Arrears"]);
     expect(body.chapters.slice(1).map((c) => c.note?.kind)).toEqual(["unreadable", "unreadable"]);
   });
@@ -488,9 +476,8 @@ describe("importing an EPUB", () => {
         ],
       }),
     );
-    // The EPUB is not kept, so import is the last moment this exists. The marker rides in the
-    // string because the string is going to be edited, split and joined — an offset beside it
-    // would be pointing at the wrong words after the first edit.
+    // The EPUB is not kept, so import is the last chance to record this. The marker rides in the
+    // string, which gets edited, split and joined; an offset beside it would drift.
     const row = api.db
       .select()
       .from(chapterTexts)
@@ -515,8 +502,7 @@ describe("importing an EPUB", () => {
       .from(chapterTexts)
       .where(eq(chapterTexts.bookId, body.book.id))
       .get();
-    // A scene break is three stars, not emphasised whitespace — which is what an unescaped `*`
-    // would make of it the moment anything read the markers back.
+    // A scene break is three escaped stars; an unescaped `*` would read back as emphasis.
     expect(row?.body).toBe("\\* \\* \\*\n\nA 5 \\* 3 sum.\n\nHe said *never*.");
     expect(plainText(row?.body ?? "")).toBe("* * *\n\nA 5 * 3 sum.\n\nHe said never.");
   });
@@ -711,8 +697,7 @@ describe("extracting a section's text", () => {
       "<body><table><tr><th>Day</th><th>Chapter</th></tr>" +
         "<tr><td>Monday</td><td>Ch 1</td></tr></table></body>",
     );
-    // Dropping the element took everything in it: a character list, a release timetable, or a
-    // paragraph an old conversion laid out in cells.
+    // Dropping a table loses character lists, timetables, and prose old conversions laid out in cells.
     expect(text).toBe("| Day | Chapter |\n| --- | --- |\n| Monday | Ch 1 |");
     // and what a narrator would be given is the rows, never the pipes or the rule under them
     expect(plainText(text)).toBe("Day, Chapter\n\nMonday, Ch 1");
@@ -731,9 +716,7 @@ describe("extracting a section's text", () => {
         '<section id="b"><h2>Two</h2><p>Beta.</p></section></body>',
       ["a", "b"],
     );
-    // The text above the first anchor is reported as its own part rather than folded into one:
-    // "the file had nothing there" and "the file had a series title there" are different, and the
-    // import is what decides which chapter that line belongs to.
+    // Text above the first anchor is its own part: the import decides which chapter it joins.
     expect(parts.map((p) => p.id)).toEqual([null, "a", "b"]);
     expect(parts.map((p) => p.text)).toEqual(["A series.", "## One\n\nAlpha.", "## Two\n\nBeta."]);
   });
@@ -754,9 +737,8 @@ describe("extracting a section's text", () => {
       '<body><p><em>Rain fell. <a id="b"></a>He signed twice.</em></p></body>',
       ["b"],
     );
-    // The walk descends into an element an anchor sits inside, and what it emits is that element's
-    // children. Emitted bare, the `<em>` is gone from both sides of the cut — and the EPUB, which
-    // is the only other place that mark existed, is not kept.
+    // An anchor inside an element: the walk emits the element's children, so the `<em>` must survive
+    // on both sides of the cut (the EPUB is not kept).
     expect(parts.map((p) => p.text)).toEqual(["*Rain fell.*", "*He signed twice.*"]);
   });
 
@@ -804,8 +786,8 @@ describe("the entities an XHTML file names", () => {
   });
 
   test("a chapter written with them imports as the characters, not the names", async () => {
-    // EPUB 2 and Calibre books with an XHTML 1.1 doctype write these everywhere, and an XML parser
-    // that does not read the DTD left them as text for the narrator to spell out.
+    // EPUB 2 and Calibre XHTML 1.1 books use HTML named entities; an XML parser without the DTD left
+    // them as text for the narrator to spell out.
     const api = testApi();
     const { body } = await api.import<ImportResult>(
       await epubFile({

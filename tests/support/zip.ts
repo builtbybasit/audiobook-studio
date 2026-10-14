@@ -1,12 +1,9 @@
 // Zips that lie, for the tests of what the server refuses before it inflates anything.
 
 /**
- * The same zip, claiming the named entry unzips to `size` bytes.
- *
- * Both copies of the claim are rewritten — the local header's and the central directory's — so the
- * archive agrees with itself and only inflating it shows the lie. What a zip says it holds is what
- * a guard refuses on first, so a claim too big is refused without inflating, and one too small is
- * caught inflating. Hands back the same kind of bytes it was given.
+ * The same zip, claiming the named entry unzips to `size` bytes. Both the local and central headers
+ * are rewritten so only inflating shows the lie: too big is refused up front, too small is caught
+ * inflating. Returns the same kind of bytes it was given.
  */
 export function claiming(bytes: ArrayBuffer, name: string, size: number): ArrayBuffer;
 export function claiming(bytes: Uint8Array, name: string, size: number): Uint8Array;

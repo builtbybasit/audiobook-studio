@@ -1,8 +1,5 @@
-// The domain model, split by feature, shared by the server and the page: the server stores and
-// answers in these shapes, and the page's stores hold them. `api.ts` has the answers that wrap them.
-//
-// This barrel is the only import path the app uses — `@/types` — so a type can move between the
-// files below without touching a single consumer.
+// The domain model by feature, shared by the server and the page; `api.ts` has the answer wrappers.
+// The app imports only `@/types`, so types can move between these files freely.
 export type * from "@/types/common";
 export type * from "@/types/voice";
 export type * from "@/types/expression";

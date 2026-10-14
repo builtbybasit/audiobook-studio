@@ -1,31 +1,22 @@
-// What a preset is, shared by every kind's catalogue.
 import type { Endpoint, PricingConfig, Profile, Transcriber } from "@/types";
 import { newPricing } from "@/lib/pricing";
 
-/** What a provider's "add this endpoint" form should be filled in with. Everything here is a
- *  starting point the user can still edit; only fields a provider genuinely pins down are set.
- *  Prices are the provider's published card on the date beside them — check them against your
- *  own plan, since a budget is held to them. */
+/** A starting point the user can edit; only fields a provider pins down are set. */
 export interface Preset<T> {
   id: string;
   label: string;
   hint: string;
-  /** shown under the picker once chosen — the caveat that belongs with this choice */
+  /** shown under the picker once chosen */
   note?: string;
-  /** the heading it is listed under in the picker, when a kind has enough presets to need them */
+  /** the picker heading */
   group?: string;
   apply: Partial<T>;
 }
 export type TtsPreset = Preset<Endpoint>;
-/** A chat model the scripting queue can send a chapter to: anything serving OpenAI's
- *  `/chat/completions`, or Codex or Claude Code run on this computer. */
 export type ScriptingPreset = Preset<Profile>;
-/** A speech-to-text server: anything answering OpenAI's `/audio/transcriptions`. */
 export type TranscriptionPreset = Preset<Transcriber>;
-/** A preset of any kind, as the picker offers them. */
 export type AnyPreset = TtsPreset | ScriptingPreset | TranscriptionPreset;
 
-/** A preset's rate card. Its windows and dates are read in UTC, and a card with none records UTC
- *  too, rather than the timezone of whichever machine happened to load the catalogue. */
+/** In UTC, not the timezone of whichever machine loaded the catalogue. */
 export const presetPricing = (over: Partial<PricingConfig> = {}): PricingConfig =>
   newPricing({ timezone: "UTC", ...over });

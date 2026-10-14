@@ -1,11 +1,6 @@
 // How fast the demo's simulated work runs, and what it sets going on its own (`server/demo/pace.ts`).
-//
-// The Demo drawer sets one speed for the demo library, and every simulated wait there — a line on
-// a simulated endpoint, a chunk on a simulated profile, a chapter of a build — is divided by it. The
-// real library is never paced, whatever the demo is set to. The libraries are the ones the server
-// boots, over private databases; their providers' `fetch` fails the test. The tests that only set
-// the speed and time a request share one demo, put back to 1× after each; the world it holds is
-// none of their business.
+// The Demo drawer's one speed divides every simulated wait in the demo library; the real library is
+// never paced. Tests that only time a request share one demo, reset to 1× after each.
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 
 import type { Job } from "@/types";

@@ -1,8 +1,6 @@
 // The real speech provider against the real Fish Audio, opt-in: `LIVE=1 bun test tests/live`
-// with `FISHAUDIO_TOKEN` and `FISHAUDIO_VOICE_ID` in `.env`. It spends a handful of short requests
-// on the free tier: one test of the key, one sentence at the model's own rate and at 24 kHz, one
-// each as MP3 and Opus, and five short lines through the speech gate at the preset's concurrency. Set `LIVE_WAV_DIR` to keep the 24 kHz clip, the MP3 and the Opus for a
-// listen.
+// with `FISHAUDIO_TOKEN` and `FISHAUDIO_VOICE_ID` in `.env`. A handful of short free-tier requests.
+// Set `LIVE_WAV_DIR` to keep the 24 kHz clip, the MP3 and the Opus for a listen.
 import { join } from "node:path";
 
 import { describe, expect, test } from "bun:test";
@@ -69,8 +67,7 @@ describe.skipIf(!env.LIVE || !env.FISHAUDIO_TOKEN)("Fish Audio, for real", () =>
         await Bun.write(join(env.LIVE_WAV_DIR, "fish-live.wav"), clip.bytes);
     }, 120_000);
 
-  // Fish's MP3 is a bare frame stream and its Opus is Ogg; both are kept as they came, their
-  // length read from the file rather than taken from a header that is not there
+  // Fish's MP3 is a bare frame stream and its Opus is Ogg: kept as they came, length read from the file
   for (const [encoding, rate] of [
     [{ format: "mp3", bitrate: 64 }, 44100],
     [{ format: "opus" }, 48000],
@@ -91,9 +88,8 @@ describe.skipIf(!env.LIVE || !env.FISHAUDIO_TOKEN)("Fish Audio, for real", () =>
         );
     }, 120_000);
 
-  // Five lines at once through the gate, at what the fish-free preset allows, as a narration run
-  // sends them: every one answers, and any rate limit Fish sends back is told to the gate rather
-  // than failing a line.
+  // Five lines at once through the gate, as a narration run sends them: every one answers, and a rate
+  // limit is told to the gate rather than failing a line.
   test("five lines go out through the gate at the preset's concurrency, and every one answers", async () => {
     const preset = TTS_PRESETS.find((p) => p.id === "fish-free");
     const concurrency = preset?.apply.concurrency ?? 1;

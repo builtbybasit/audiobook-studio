@@ -1,15 +1,7 @@
-// The Contents page's state and actions, gathered once for the page and the tabs it is made of.
-//
-// Contents review: what goes in the audiobook, and how it is cut into volumes. Reached twice —
-// straight after an EPUB is read, when confirming is what adds the book to the library, and any
-// time later from the overview, when every change applies at once. It is one page either way, so
-// a chapter skipped on import is restored in the same place, with the same words.
-//
-// Nothing here removes content. A skipped chapter keeps its text, its number and its place, and
-// leaves every stage and the audiobook; the suggestions the import attached are a reason beside a
-// title until the person acts on them. A volume boundary is a line between two chapters: moving
-// it, cutting one or joining two renumbers nothing — the store writes the whole list of starts and
-// the toast's Undo writes back the one before.
+// The Contents page's state and actions: what goes in the audiobook, and how it is cut into
+// volumes. Used right after an EPUB import (confirming adds the book) and later from the overview.
+// Nothing here removes content: a skipped chapter keeps its text and place, and moving a volume
+// boundary renumbers nothing.
 import { computed, watch } from "vue";
 import { useRouter } from "vue-router";
 import { useMediaQuery } from "@vueuse/core";
@@ -48,7 +40,6 @@ export function useContents() {
 
   const book = computed(() => libraryStore.bookById(bookId));
   const chapters = computed(() => libraryStore.chaptersOf(bookId));
-  /** reading numbers, which the search finds a chapter by and the rows and preview show */
   const numbers = computed(() => libraryStore.chapterNumbers[bookId]);
   const volumes = computed(() => libraryStore.volumesOf(bookId));
   const multi = computed(() => volumes.value.length > 1);
@@ -64,7 +55,7 @@ export function useContents() {
     book.value?.importing ? undefined : libraryStore.importingVolume(bookId),
   );
 
-  // ---- page state, kept in the URL so leaving and coming back finds the same view
+  // ---- page state, kept in the URL
   const tab = useQueryParam<ContentsTab>(
     "tab",
     enumParam(
@@ -91,9 +82,7 @@ export function useContents() {
   const opened = useQueryParam("ch", idParam());
   // the first thing worth reading is the first chapter still to decide — on a clean book, nothing
   if (opened.value == null && wide.value) opened.value = undecided.value[0]?.id ?? null;
-  // Reading a chapter here makes it the book's current chapter, so Scripting opens on the one you
-  // were just reading. Contents keeps its own first pick — the chapter still to decide — because
-  // that is the job this page is for.
+  // Reading a chapter here makes it the book's current chapter, so Scripting opens on it.
   watch(
     opened,
     (id) => {
@@ -127,22 +116,19 @@ export function useContents() {
   const openedChapter = computed(() =>
     opened.value == null ? undefined : libraryStore.chapter(bookId, opened.value),
   );
-  // The opened chapter's prose, read from the server the first time it is opened.
   const { parts: openedParts } = useChapterText(bookId, () => openedChapter.value?.id);
   const undecidedAfter = computed(
     () => undecided.value.filter((c) => c.id !== opened.value).length,
   );
 
-  // ---- decisions. Every one goes through the store's two actions, so the row, the preview, the
-  // inbox and the volume header leave a chapter in exactly the same state.
-  // a run over what is on screen, not over the whole book — the list you can see is the list
+  // ---- decisions, all through the store's two actions so every surface agrees.
+  // a range covers what is on screen, not the whole book
   const range = useRangeSelect(() => visible.value.map((x) => x.id));
   function toggle(c: Chapter, e?: MouseEvent | KeyboardEvent) {
     const run = range.span(c.id, e);
     // one row is its own undo; a run toasts, with Undo, naming the chapters it covered
     const skip = !c.excluded;
-    // the toast names the run by the reading numbers its chapters have while kept: the ones they
-    // held before a skip, the ones they are given by an include
+    // name the run by the reading numbers its chapters have while kept
     const ids = new Set(run);
     const span = numberSpan(
       run,
@@ -212,8 +198,7 @@ export function useContents() {
     return after;
   }
 
-  // ---- volumes. Every change is the whole list of starts, written through the store, which
-  // installs the server's answer and toasts with Undo.
+  // ---- volumes. Every change writes the whole list of starts; the store toasts with Undo.
   const chapterIds = computed(() => chapters.value.map((c) => c.id));
   const starts = computed(() => libraryStore.volumeStartsOf(bookId));
   const volumeRows = computed(() => vol.volumeRows(volumes.value, chapters.value, numbers.value));

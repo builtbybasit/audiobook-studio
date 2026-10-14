@@ -1,9 +1,5 @@
-// Saying a request failed, the one way every store says it.
-//
-// A change the server refused changes nothing here: the store that asked says so in a toast, in
-// the server's own words when it gave any and otherwise as what was being tried, and reads back
-// whatever it had already moved. Applying the change locally anyway would show a library the
-// server does not have.
+// Saying a request failed, the one way every store says it. A refused change is never applied
+// locally; the store toasts (in the server's words when given) and reads back what it moved.
 import { ApiError } from "@/services/http";
 import { useUiStore } from "@/stores/ui";
 

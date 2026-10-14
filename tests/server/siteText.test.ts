@@ -1,10 +1,6 @@
-// Site text on the server: marked, never stripped, and never read.
-//
-// A chapter's script keeps every word of the prose, so a site's boilerplate and a translator's note
-// are lines of their own (`watermark`, `note`) rather than words taken out. What that has to mean
-// on the server is tested here: the detector's second opinion after a chapter is scripted, the
-// suggestion kept and cleared by an edit, and — the rule everything else follows — a line the book
-// does not read has no clip to want, is never sent, counts as no gap and is not in the audiobook.
+// Site text on the server: marked, never stripped, never read. Boilerplate and translator's notes
+// are `watermark` and `note` lines; a line the book does not read wants no clip, is never sent,
+// counts as no gap and is not in the audiobook.
 import { describe, expect, test } from "bun:test";
 
 import type { Book, Chapter, Job, Segment, SegmentType } from "@/types";

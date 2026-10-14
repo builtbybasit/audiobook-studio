@@ -1,20 +1,7 @@
-// The queue, read into the jobs store and kept moving while anything is live.
-//
-// One query for every job, shared by whoever asks (`defineQuery`): the shell's indicator, the
-// Queue page and a book's overview all read the same poll rather than three. It polls while a job
-// is queued or running and goes quiet when the queue does. Nothing edits the queue in the browser,
-// so the read is not copied anywhere: the jobs store's `jobs` is this query's data.
-//
-// A job that moved is a chapter that moved. The server does not push events, so the poll is where
-// a change is noticed: a job whose status or progress changed has its book read again, a
-// scripting job that finished has its chapter's script, history and the book's cast invalidated —
-// the run wrote all three on the server — an export job has its book's audiobooks read again,
-// because the row it is writing is one of them, and a check by ear has what it heard of its
-// chapter and the chapter's script read again, since it flags the lines it heard wrong; and every
-// move has the book's spending read again, since a request was priced or a reservation let go.
-// While narration is queued or running, and once more when the last of it ends, what the speech
-// endpoints are doing is read again too (`@/queries/endpointLive`): a line held in a cooldown
-// moves no job, so this is not left to a job moving. Nothing here decides what a chapter holds; it only says what to ask for again.
+// The queue, read into the jobs store and polled while anything is live. One shared query for
+// every reader. The server pushes nothing, so the poll is where a moved job is noticed: it
+// invalidates whatever that job wrote (scripts, cast, history, exports, spending, endpoint live
+// counts). It only says what to ask for again.
 import { computed, toValue, watch, type MaybeRefOrGetter } from "vue";
 import { defineQuery, useQuery } from "@pinia/colada";
 
@@ -47,7 +34,7 @@ const useJobsQuery = defineQuery(() => {
     autoRefetch: (state) => (state.data?.some(live) ? POLL_MS : false),
   });
 
-  // A poll that finds the server down says so once, not every tick until it is back.
+  // a poll that finds the server down says so once, not every tick
   watch(
     () => !!query.error.value,
     (failing) => {
@@ -55,10 +42,8 @@ const useJobsQuery = defineQuery(() => {
     },
   );
 
-  // On the first read a job the store has never heard of is history, not change — reading every
-  // book and every finished script the server mentions would be a startup fan-out that grows
-  // with the history. From then on a job that moved has its book read again, and one that just
-  // finished scripting has what it wrote asked for again.
+  // On the first read an unknown job is history, not change: reading everything it mentions
+  // would be a startup fan-out that grows with the history.
   watch(query.data, (next, prev) => {
     if (!next || !prev) return;
     const before = new Map(prev.map((j) => [j.id, j]));
@@ -79,24 +64,19 @@ const useJobsQuery = defineQuery(() => {
             void invalidate({ key: keys.cast(j.bookId) }, "all");
           }
           break;
-        // a narration job writes clips as they land, and every clip is on a line of the script: the
-        // chapter is read again on each move, so the Narration page shows them landing rather than
-        // waiting for the run to finish
+        // reread the chapter on each move, so clips show landing during the run
         case "narration":
           if (j.chapterId != null)
             void invalidate({ key: keys.chapterScript(j.bookId, j.chapterId) }, "all");
           break;
-        // a check writes what it heard of each line as it hears it, and raises or takes down the
-        // line's flag with it: both are read again on each move, so a flag shows up as it is raised
+        // a check updates heard text and flags as it goes, so reread both on each move
         case "check":
           if (j.chapterId != null) {
             void invalidate({ key: keys.chapterHeard(j.bookId, j.chapterId) }, "all");
             void invalidate({ key: keys.chapterScript(j.bookId, j.chapterId) }, "all");
           }
           break;
-        // an export job is writing the export row it was started with — its progress, then the files
-        // and the size it finished with, or the failure, or nothing at all, since a cancelled build
-        // takes its row with it. Every move of one is therefore a change to the Audiobooks tab.
+        // an export job writes its own row (progress, files, failure, or removal on cancel)
         case "export":
           void invalidate({ key: keys.exports(j.bookId) }, "all");
           break;
@@ -104,13 +84,11 @@ const useJobsQuery = defineQuery(() => {
         case "effects":
           void invalidate({ key: keys.scripts(j.bookId) }, "all");
       }
-      // a narration or a Re-apply that ended made clips with the sound their lines now have, or
-      // gave up leaving some old: the book's old-sound count is read again either way
+      // a finished narration or Re-apply changes the book's old-sound count
       if ((j.kind === "narration" || j.kind === "effects") && !live(j) && (!was || live(was)))
         void staleMoved(j.bookId);
     }
-    // a job that moved sent a request, finished or let go of what it held: the book's spending is
-    // read again, the way its chapters are
+    // any move priced a request or released a reservation: reread the book's spending
     for (const id of books) {
       // through the book's query, so a slow read overtaken by the next tick's installs nothing
       void fetchBook(id).catch(() => {});
@@ -118,19 +96,14 @@ const useJobsQuery = defineQuery(() => {
     }
     // and each request it sent is a row on the Endpoints page
     if (books.size) void invalidate({ key: keys.endpointRequests });
-    // the lines out and held at each speech endpoint, for as long as narration is live and once
-    // after, so the counts go back to nothing rather than staying on the last busy read
+    // while narration is live and once after, so the counts go back to zero
     if (narrating(next) || narrating(prev)) void invalidate({ key: keys.endpointLive });
   });
 
   return query;
 });
 
-/**
- * The jobs of one book, or every job when no book is named.
- *
- * `jobs` reads the store, whose `jobs` is the poll's own data.
- */
+/** The jobs of one book, or every job when no book is named. */
 export function useBookJobs(bookId?: MaybeRefOrGetter<string | null | undefined>) {
   const jobsStore = useJobsStore();
   const query = useJobsQuery();

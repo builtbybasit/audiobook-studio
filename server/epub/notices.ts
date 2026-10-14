@@ -1,15 +1,6 @@
-// Deciding which chapters of an EPUB are not story.
-//
-// A web-novel EPUB carries the author's announcements inline with the fiction: hiatus notices,
-// release schedules, vote reminders, afterwords. They are chapters as far as the file is
-// concerned, and narrating them produces an audiobook that stops mid-arc to ask the listener to
-// vote on a website.
-//
-// The prototype never did this. `server/demo/seed/fixtures/notices.ts` supplies the words for a note whose
-// kind the sample already declared; this file is the part that was missing — reading a chapter and
-// deciding. It never removes anything: it attaches a `ChapterNote`, and the contents review is
-// where the person decides. That division is the whole safety argument for guessing at all, so a
-// wrong guess costs a click rather than a missing chapter.
+// Flags EPUB chapters that are not story (hiatus notices, vote reminders, afterwords). It never
+// removes anything: it attaches a `ChapterNote`, and the contents review decides, so a wrong guess
+// costs a click rather than a chapter.
 import type { ChapterNote, NoticeKind } from "@/types";
 import type { ParsedChapter } from "~/epub/parse";
 import { plainText } from "~/epub/markdown";
@@ -21,12 +12,8 @@ const SHORT_WORDS = 600;
 const FULL_WORDS = 900;
 
 /**
- * What gives a kind away, most specific first. The first kind to match names the note.
- *
- * Phrases, not words. A story uses "vote", "health" and "drafted" as freely as an announcement
- * does — a council votes, a soldier is drafted — and a short chapter of narration that happened to
- * say one would be suggested for skipping. What gives a notice away is the word aimed at the
- * reader or the writing: "please vote", "health reasons", "drafted the next chapter".
+ * What gives a kind away, most specific first; the first match names the note. Phrases, not
+ * words: a story says "vote" too, a notice says "please vote".
  */
 const KINDS: { kind: NoticeKind; test: RegExp; saw: string }[] = [
   {
@@ -90,11 +77,7 @@ const KINDS: { kind: NoticeKind; test: RegExp; saw: string }[] = [
 const NOTICE_TITLE =
   /^\s*(?:author'?s? note|a? ?note (?:from|to) (?:the )?(?:author|readers?)|not a chapter|announcement|notice|update|hiatus|afterword|translator'?s? notes?|schedule|please vote|vote reminder|support|thank you|sorry|apolog\w*)\b/i;
 
-/**
- * Titles of the pages a book carries before and after its story: the cover, the title page, the
- * copyright, the table of contents, a dedication. A reader's EPUB has them as spine items like
- * any chapter, and an audiobook has no use for a page that says "Cover".
- */
+/** Titles of front and back matter: cover, title page, copyright, contents, dedication. */
 const FRONT_TITLE =
   /^\s*(?:cover|title ?page|copyright|colou?phon|contents|table of contents|toc|dedication|epigraph|acknowledg(?:e)?ments|about the author|also by\b)[\s.:!]*$/i;
 
@@ -108,12 +91,8 @@ const URL_RE = /https?:\/\/\S+|\bwww\.\S+/gi;
 const DIALOGUE = /[“”"]|[「」『』]|^\s*[—–]\s*\p{Lu}/mu;
 
 /**
- * Speech in single quotes, as British books print it: ‘Hello,’ she said.
- *
- * Not simply any ‘ or ’, because those are apostrophes too — every notice says "I'm" or "don’t".
- * A quote here is a pair: one that opens a line or follows a space, bracket or dash and is followed
- * by a letter, and one that closes right after the sentence's punctuation. "don't", "’tis" and
- * "readers' comments" have only half of that.
+ * Speech in single quotes, as British books print it: ‘Hello,’ she said. Needs an opening quote
+ * before a letter and a closing one after punctuation, so apostrophes ("don’t") don't count.
  */
 const SINGLE_QUOTED = /(?:^|[\s([—–])[‘']\p{L}[^\n]*?[,.!?…—–][’'](?=[\s)\]—–]|$)/mu;
 
@@ -134,9 +113,7 @@ function read(text: string, title: string): Signals {
   const heading = straight(title);
   const hit = KINDS.find((k) => k.test.test(words) || k.test.test(heading));
   return {
-    // The same count the import puts on the chapter, rather than a second one that disagrees with
-    // it. Splitting on whitespace reads a chapter of Chinese prose as a single word, which makes
-    // 689 words of story a one-word notice and suggests skipping it.
+    // The import's own count; splitting on whitespace reads Chinese prose as one word.
     words: countWords(text),
     links,
     hasDialogue: DIALOGUE.test(text) || SINGLE_QUOTED.test(text),
@@ -193,22 +170,16 @@ function blockIsNote(block: string): boolean {
 }
 
 /**
- * Judge every chapter of a book together.
- *
- * Together, because two of the decisions need the neighbours: a notice is a duplicate only
- * relative to one posted earlier, and both need a stable reading order. `null` means the chapter
- * read as story and carries no note.
+ * Judge every chapter of a book together (a duplicate is relative to an earlier notice). `null`
+ * means the chapter reads as story.
  */
 export function detectNotices(chapters: readonly ParsedChapter[]): (ChapterNote | null)[] {
-  // A duplicate names the notice it repeats by its title, which the contents review lists beside
-  // it, and not by number: the file's position counts the cover and contents pages, and a reading
-  // number does not exist yet — the earlier notice is itself one the review suggests skipping.
+  // Fingerprint → title. A duplicate names its original by title: no reading number exists yet.
   const seen = new Map<string, string>();
 
   return chapters.map((chapter) => {
     const { title } = chapter;
-    // Judged on the prose, not on the markers in it. A keyword the author italicised is the same
-    // keyword, and a fingerprint taken over `*` would make two postings of one notice differ.
+    // Judged on the prose, so `*` markers don't hide keywords or split fingerprints.
     const text = plainText(chapter.text);
     const s = read(text, title);
     const titleLooksLikeNotice = NOTICE_TITLE.test(straight(title));
@@ -226,9 +197,7 @@ export function detectNotices(chapters: readonly ParsedChapter[]): (ChapterNote 
       ...(kind === "mixed" ? { at: at ?? "start" } : {}),
     });
 
-    // The file said this chapter was here and it could not be read. That is the one case where the
-    // review has to speak up rather than guess: narrating it would produce silence, and skipping it
-    // by default would quietly drop a chapter nobody has looked at.
+    // Neither narrate (silence) nor skip by default (a chapter nobody looked at): ask.
     if (chapter.unreadable)
       return note("unreadable", [
         "the file could not be read",
@@ -236,10 +205,7 @@ export function detectNotices(chapters: readonly ParsedChapter[]): (ChapterNote 
         `the book lists it as “${title}”`,
       ]);
 
-    // The cover, the title page, the copyright page: a spine item with nothing to narrate. Judged
-    // on the title, so a cover that carries the book's name and author is still a cover, and
-    // only while short — a chapter someone titled "Contents" is story if there is a chapter's
-    // worth of it.
+    // Judged on the title, and only while short: a long chapter titled "Contents" is story.
     const front = FRONT_TITLE.test(straight(title)) && s.words < SHORT_WORDS && !s.hasDialogue;
     if (front)
       return note("front", [
@@ -247,9 +213,7 @@ export function detectNotices(chapters: readonly ParsedChapter[]): (ChapterNote 
         s.words ? `${s.words} words` : "no text at all",
       ]);
 
-    // Nothing to read, and nothing went wrong reading it: an empty page in the file. Suggested
-    // for skipping with the reason in plain sight, so a blank chapter is never narrated as a
-    // silence and never hidden behind the word "notice" either.
+    // An empty page in the file, labelled as such rather than as a notice.
     if (!s.words)
       return note("empty", ["no text at all", `the book lists it as “${title.trim()}”`]);
 
@@ -268,8 +232,7 @@ export function detectNotices(chapters: readonly ParsedChapter[]): (ChapterNote 
           ...evidenceFor(s).filter((e) => e !== "no dialogue"),
         ]);
       seen.set(print, title);
-      // A notice with no keyword in it is still a notice — it is short, addressed to readers and
-      // has no dialogue. `progress` is the least specific kind, which is the honest label for it.
+      // No keyword: `progress` is the least specific kind.
       return note(s.kind?.kind ?? "progress", evidenceFor(s));
     }
 

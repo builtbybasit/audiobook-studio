@@ -1,11 +1,6 @@
-// Many one-chapter reads as a few requests.
-//
-// A page that prices, searches or narrates hundreds of chapters asks for each one's text or script
-// as its own query, which is what keeps each one cached and invalidated on its own. Sent as asked,
-// a long book is thousands of requests at once — more than a browser holds open, so some fail —
-// and thousands of answers landing one by one, each re-running whatever reads them. So the reads
-// asked for in the same tick go out together, `MAX` chapters to a request, and each request's
-// answers land together.
+// Many one-chapter reads as a few requests. Each chapter stays its own query (cached and
+// invalidated alone), but reads asked in the same tick go out together, `MAX` to a request: a long
+// book read one by one is thousands of requests, more than a browser holds open.
 import { ApiError } from "@/services/http";
 
 /** Chapters to one request: well under the server's limit, and a few requests for a long book. */
@@ -13,10 +8,8 @@ const MAX = 200;
 
 type Waiter<T> = { resolve: (value: T) => void; reject: (cause: unknown) => void };
 
-/**
- * One chapter's read through `load`, which reads several chapters of one `group` (a book, or a book
- * and a format) at once and leaves out a chapter it does not have.
- */
+/** One chapter's read through `load`, which reads several chapters of one `group` at once and
+ *  leaves out ones it does not have. */
 export function batchReads<T>(
   load: (group: string, ids: number[]) => Promise<Record<number, T>>,
 ): (group: string, id: number) => Promise<T> {

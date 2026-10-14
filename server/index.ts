@@ -1,10 +1,5 @@
-// The server, started.
-//
-// Two libraries in one process (`server/libraries.ts`): the real one under `/api`, and the demo
-// under `/demo/api` with a database and folders of its own. Each library's migrations run as it is
-// opened, before the first request is served. The queues start after them and before the
-// listener, so a job the last process was holding is back in its queue before anything can ask
-// about it.
+// Starts the server: the real library and the demo in one process (`server/libraries.ts`).
+// Queues start before the listener, so a job the last process held is requeued before any request.
 import { join } from "node:path";
 
 import { pedalboardRunner } from "~/audio/effects";
@@ -17,10 +12,7 @@ import { ffmpegAvailable, ffmpegEncoders } from "~/providers/ffmpegEncoder";
 
 const boot = log.child({ name: "boot" });
 
-// ffmpeg is the one thing here outside this process — the audiobook encoder, the thought effect and
-// the 16 kHz a transcriber is sent — so it is checked now rather than at the first build: a server
-// without it says so at boot, naming the binary, instead of queueing work that was always going to
-// fail.
+// ffmpeg is required (encoding, thought effect, transcription input), so fail at boot without it.
 const ffmpeg = await ffmpegAvailable(env.FFMPEG_BIN);
 if (!ffmpeg)
   throw new Error(
@@ -29,9 +21,8 @@ if (!ffmpeg)
   );
 boot.debug({ ffmpeg }, "ffmpeg found");
 const encoders = ffmpegEncoders(env.FFMPEG_BIN);
-// uv is not required, unlike ffmpeg: without it a thought line is given the ffmpeg effect and a
-// speaker's own effect is left off. It is asked now, in the background, so the first run on a fresh
-// machine does not wait on Pedalboard's download, and the log says which of the two this server has.
+// uv is optional: without it thought lines fall back to the ffmpeg effect and speaker effects are
+// skipped. Probed now in the background so the first run doesn't wait on Pedalboard's download.
 const effects = pedalboardRunner({ ffmpeg: env.FFMPEG_BIN });
 void effects
   .available()
@@ -72,10 +63,8 @@ for (const library of libraries) await library.start();
 const server = Bun.serve({
   hostname: env.HOST,
   port: env.PORT,
-  // A long web novel is a big upload, and so are a voice's recordings and a script that carries them; Bun's default body limit is
-  // well under either. Set a megabyte above the larger of the two routes' own limits, so that the
-  // route is the one that answers — in the API's error shape, before the body is read — and this
-  // only catches what gets past it.
+  // Above every route's own limit, so the route answers in the API's error shape; Bun's default
+  // is too small for big EPUBs and voice samples.
   maxRequestBodySize:
     Math.max(importBodyBytes(), scriptBodyBytes(), CLONE_BODY_BYTES) + 1024 * 1024,
   fetch: serveLibraries(real, demo),
@@ -101,8 +90,7 @@ boot.info(
   "audiobook-studio api is listening",
 );
 
-// A running job is handed back to its queue rather than abandoned mid-write, and the listener
-// closes after both queues have, so a `pnpm dev:server` restart loses nothing.
+// Running jobs go back to their queue before the listener closes, so a restart loses nothing.
 for (const signal of ["SIGINT", "SIGTERM"] as const)
   process.once(signal, () => {
     boot.info({ signal }, "stopping");

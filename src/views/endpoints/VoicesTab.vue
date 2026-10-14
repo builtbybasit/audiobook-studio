@@ -5,18 +5,9 @@ import { useEndpointsStore } from "@/stores/endpoints";
 import { SAMPLE_TITLE, sampleId, useVoiceSample } from "@/composables/useVoiceSample";
 import { useLibraryStore } from "@/stores/library";
 
-// The voice catalogue of one speech endpoint — the only place voices are added, edited or removed.
-//
-// A voice is the one part of an endpoint that a book's cast points *at*: a character stores
-// `<endpoint>/<voice>`, so removing a voice here unroutes speakers in every book that used it. That
-// is why usage is counted across the whole library and shown next to each voice, rather than for
-// whichever book happens to be open — this page has no book.
-//
-// Two ways in, because providers differ: fetch the server's list where there is one (Fish Audio's
-// catalogue is per account and needs the key first), or type an id by hand for a server that has no
-// list endpoint at all. A Fish endpoint has a third: search Fish's public catalogue and add a voice
-// from the results (`FishVoiceSearch`). Where the provider clones, a fourth makes one from samples
-// (`CloneVoicePanel`).
+// One speech endpoint's voice catalogue, the only place voices are added, edited or removed.
+// Characters store `<endpoint>/<voice>`, so removing one unroutes speakers in every book; usage is
+// counted library-wide. Voices come from the server's list, by hand, Fish search or cloning.
 import { computed, reactive, ref, watch } from "vue";
 import { keyInPlace } from "@/services/endpointSettings";
 import {
@@ -51,7 +42,7 @@ const castStore = useCastStore();
 const endpointsStore = useEndpointsStore();
 const libraryStore = useLibraryStore();
 
-/** Who is using each voice, across every book — `voice id → book title → speaker names`. */
+/** `voice id → book title → speaker names`, across every book. */
 const usage = computed(() => {
   const out: Record<string, { book: string; speakers: string[] }[]> = {};
   for (const book of libraryStore.books) {
@@ -82,7 +73,6 @@ const shown = computed(() => {
   return props.endpoint.voices.filter((v) => `${v.label} ${v.id}`.toLowerCase().includes(needle));
 });
 
-// ---------- adding by hand ----------
 const draft = reactive({ id: "", label: "", gender: "n" as Gender, open: false });
 const duplicate = computed(
   () => !!draft.id.trim() && props.endpoint.voices.some((v) => v.id === draft.id.trim()),
@@ -94,23 +84,20 @@ function add() {
   }
 }
 
-// ---------- fetching ----------
 const fish = computed(() => isFishAudio(props.endpoint));
 const needsKeyFirst = computed(() => props.endpoint.needsKey && !keyInPlace(props.endpoint));
 const fetchBlocked = computed(() => fish.value && needsKeyFirst.value);
 
-// what the provider takes as a voice's samples, which keeping them is held to as cloning is
+// keeping samples is held to the same provider limits as cloning
 const cloning = computed(() => cloningOf(props.endpoint));
 const clonable = computed(() => !!cloning.value);
-// a compatible server may or may not make voices, and nothing says which until it is asked to
+// a compatible server may or may not clone; nothing says until it is asked
 const cloningOptIn = computed(() => !!speechProviderOf(props.endpoint).cloning?.optIn);
 
 // ---------- kept samples ----------
-// Which voices here have the samples they were made from kept on the server. A voice cloned before
-// samples were kept has none, and the server cannot tell it from any other voice on the account —
-// so every voice without them offers to keep them, under the same provider limits as a clone. Removing a voice from this list keeps its samples for a day, so the removal's
-// Undo brings them back with it; a save after that takes them. The list is asked again whenever the
-// voices change, which is how a voice put back by an Undo shows its samples again.
+// The server can't tell a cloned voice without kept samples from any other, so every voice without
+// them offers to keep them. A removed voice's samples last a day so Undo restores them; the list
+// is re-read whenever the voices change.
 const kept = ref<Record<string, KeptVoiceSamples>>({});
 async function loadKept() {
   const list = clonable.value ? await endpointsStore.keptSamples(props.endpoint) : [];
@@ -132,7 +119,6 @@ const keep = reactive({
   busy: false,
 });
 const keepVoice = computed(() => props.endpoint.voices.find((v) => v.id === keep.voiceId));
-/** Why the picked samples cannot be kept, naming the file; null when nothing stops them. */
 const keepProblem = computed(() =>
   cloning.value
     ? pickProblem(
@@ -180,10 +166,7 @@ async function forgetKept(v: Voice) {
 }
 
 // ---------- samples ----------
-// Play is the provider's own recording of the voice where it keeps one, or else the saved endpoint
-// saying a sentence in it: a real, priced request, made once and kept by the server from then on
-// (`endpointsStore.sampleVoice`).
-/** the sample being fetched, if any — one at a time */
+// The provider's own recording, or else a real, priced request made once and kept by the server.
 const { loading: sampling, play: playSample, playingId } = useVoiceSample();
 const idOf = (v: Voice) => sampleId(props.endpoint.id, v.id);
 const sampleTitle = computed(() =>

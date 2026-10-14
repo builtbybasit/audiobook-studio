@@ -1,8 +1,5 @@
-// Drawing a chapter that came out of a file somebody uploaded.
-//
-// The contents review shows the chapter as the EPUB laid it out, tables included. That means book
-// text reaches a template, so the two things worth testing are what a link is allowed to point at
-// and that a run of stress arrives as something the template can draw without unpicking it.
+// Drawing an uploaded chapter as the EPUB laid it out. Book text reaches a template, so what is
+// tested is what a link may point at and that stress arrives drawable without unpicking.
 import { describe, expect, test } from "bun:test";
 
 import { blocksOf, inlineOf, piecesOf, rowsOf, safeHref, type Piece } from "@/lib/markdown";
@@ -129,9 +126,8 @@ describe("blocks the review has to draw", () => {
   });
 
   test("plain prose parses to itself, so the review draws one way and not two", () => {
-    // The seeded demo produces prose and the backend produces Markdown. They go through the same
-    // renderer because plain prose *is* Markdown: paragraphs split on the blank line, and nothing
-    // in it means anything else.
+    // The demo produces prose and the backend Markdown; one renderer serves both because plain prose
+    // *is* Markdown.
     const prose = "He signed the line twice.\n\nRain fell on the counting house.";
     expect(blocksOf(prose).map((b) => b.type)).toEqual(["paragraph", "space", "paragraph"]);
     expect(
@@ -157,8 +153,7 @@ describe("blocks the review has to draw", () => {
   });
 
   test("a scene break is a break, not three stars to read out", () => {
-    // Parsed, `* * *` is a rule and narration drops it. Left as literal text it would be three
-    // asterisks handed to a speech provider — so parsing is the safer reading, not the risky one.
+    // Parsed, `* * *` is a rule and narration drops it; as text it would be three asterisks spoken.
     expect(blocksOf("He signed.\n\n* * *\n\nRain fell.").map((b) => b.type)).toContain("hr");
   });
 });

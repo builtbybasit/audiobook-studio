@@ -1,37 +1,7 @@
-// A line spoken by Alibaba's Qwen-Audio 3.0 TTS models, through Model Studio (DashScope).
-//
-// The request is Model Studio's own (https://www.alibabacloud.com/help/en/model-studio/non-realtime-tts-user-guide):
-// `POST {host}/api/v1/services/audio/tts/SpeechSynthesizer` with a bearer key and a body of the
-// model and an `input` holding the words, the voice, the format and the rate. The answer does not
-// carry the audio: `output.audio.url` is a link to it, valid for a day, which is fetched at once —
-// no key, it is signed — and read as every other body of audio is (`audioAnswer`). The request
-// counts as one; the download is part of it, and its attempts are counted with the request's.
-// Beside the link the answer counts the characters it billed (`usage.characters`, per the API
-// reference), which is reported to the ledger.
-//
-// The host is either the long-standing `dashscope-intl.aliyuncs.com` or a workspace's own
-// `{WorkspaceId}.ap-southeast-1.maas.aliyuncs.com`; Alibaba recommends the second and says the
-// first remains fully functional. Only the words are sent. Alibaba's realtime guide says these
-// models take instructions, through the realtime API's `instruction`; the HTTP API's reference
-// documents no such field for them, so none is sent and none is billed.
-//
-// A model of the Qwen-TTS family (`qwen3-tts-*`) is spoken at `POST {host}/api/v1/services/aigc/
-// multimodal-generation/generation` instead (https://www.alibabacloud.com/help/en/model-studio/qwen-tts-api),
-// with only the words and the voice: that API takes no format or rate, and answers WAV at 24 kHz
-// with the same link and the same character count. It is here for the one voice-cloning model
-// this app speaks, `qwen3-tts-vc-2026-01-22`.
-//
-// A voice is cloned for it with `POST {host}/api/v1/services/audio/tts/customization`
-// (https://www.alibabacloud.com/help/en/model-studio/voice-cloning-user-guide, and the HTTP
-// reference https://www.alibabacloud.com/help/doc-detail/3027318.html): model
-// `qwen-voice-enrollment`, action `create`, the endpoint's model as `target_model` — the voice
-// works with that model and no other — a `preferred_name` made from the title, the sample itself
-// as a base64 data URL under `audio.data`, and its transcript as `text` when the person gave one
-// ("used to improve cloning quality"). The answer's `output.voice` is the id a line is
-// spoken with. The Qwen-Audio 3.0 models are cloned for through the older `voice-enrollment`, which
-// takes a sample only as a public link, so for them the clone is refused before anything is
-// sent. The sample's language is sent as English: Model Studio assumes Chinese when none is
-// named, and the books this app reads are English.
+// Alibaba Model Studio TTS (https://www.alibabacloud.com/help/en/model-studio/non-realtime-tts-user-guide).
+// The answer links to signed audio, fetched as part of the same request; `usage.characters` is
+// billed. No documented instructions field. `qwen3-tts-*` models use the multimodal-generation
+// route (https://www.alibabacloud.com/help/en/model-studio/qwen-tts-api).
 import type { SpeechUsage } from "@/types";
 import { AUDIO_MIME } from "@/lib/endpointShapes";
 import { normalizeSpeechUsage } from "@/lib/pricing";
@@ -45,17 +15,16 @@ import { onePage, type SpeechWire } from "~/providers/speech/wire";
 
 const apiRoot = (baseUrl: string): string => `${new URL(baseUrl).origin}/api/v1`;
 
-/** Where voices are made, listed and removed, for every model family. */
 const customizationUrl = (baseUrl: string): string =>
   `${apiRoot(baseUrl)}/services/audio/tts/customization`;
 
-/** The request body for one line. Exported for the tests, which check it against the docs. */
+/** Exported for the tests. */
 export function qwenBody(
   input: Pick<SpeechInput, "text" | "sampleRate">,
   model: string,
   voice: string,
 ): Record<string, unknown> {
-  // the Qwen-TTS API takes the words and the voice, and answers at its own format and rate
+  // the Qwen-TTS API takes no format or rate; it answers 24 kHz WAV
   if (isQwenTts(model)) return { model, input: { text: input.text, voice } };
   return {
     model,
@@ -68,11 +37,7 @@ export function qwenBody(
   };
 }
 
-/**
- * What a voice is asked for as: letters, digits and underscores, at most 16 — the rule the HTTP
- * reference gives `preferred_name`, which it calls a prefix for the voice's name: the id itself is
- * Model Studio's, and comes back in the answer. The title stays the voice's label here.
- */
+/** `preferred_name`: `[A-Za-z0-9_]`, at most 16; only a prefix, the id comes back in the answer. */
 export function qwenPreferredName(title: string): string {
   const name = title
     .normalize("NFKD")
@@ -84,7 +49,10 @@ export function qwenPreferredName(title: string): string {
   return name || "voice";
 }
 
-/** Why a voice cannot be cloned for the endpoint's model; empty when it can. */
+/**
+ * Empty when the model can be cloned for. The Qwen-Audio 3.0 models' `voice-enrollment` takes a
+ * sample only as a public link, so they are refused.
+ */
 function uncloneableModel(target: ProviderTarget): string {
   if ((QWEN_CLONE_MODELS as readonly string[]).includes(target.model)) return "";
   return (
@@ -94,13 +62,12 @@ function uncloneableModel(target: ProviderTarget): string {
   );
 }
 
-/** A voice in `qwen-voice-enrollment`'s `list` answer. */
 interface EnrolledVoice {
   voice?: unknown;
   target_model?: unknown;
 }
 
-/** The HTTP reference's own page size; it documents no larger one. A list is read up to a cap. */
+/** The documented page size; read up to a cap of pages. */
 const ENROLLED_PAGE = 10;
 const ENROLLED_PAGES = 30;
 
@@ -111,10 +78,7 @@ interface QwenAnswer {
   message?: string;
 }
 
-/**
- * Each model's system voices, from Alibaba's voice list: a voice belongs to one model and cannot be
- * used with the other. Both models also take over 500 base voices, which can be added by id.
- */
+/** From Alibaba's voice list; each voice works with one model only. 500+ more can be added by id. */
 export const QWEN_VOICES: Record<
   string,
   readonly { id: string; label: string; gender: "m" | "f" }[]
@@ -140,10 +104,13 @@ export const QWEN_VOICES: Record<
 };
 
 export const qwenWire: SpeechWire = {
+  // https://www.alibabacloud.com/help/en/model-studio/voice-cloning-user-guide and
+  // https://www.alibabacloud.com/help/doc-detail/3027318.html. The voice works only with
+  // `target_model`. Language is sent as English: Model Studio assumes Chinese otherwise.
   async clone(target, request, signal, options) {
     const problem = uncloneableModel(target);
     if (problem) throw new ProviderError(problem, 0, false);
-    // one sample: the route holds a clone to `cloning.maxSamples`, which is 1
+    // the route enforces `cloning.maxSamples` (1)
     const [sample] = request.samples;
     const data = Buffer.from(await sample.blob.arrayBuffer()).toString("base64");
     const res = await call(
@@ -158,7 +125,7 @@ export const qwenWire: SpeechWire = {
             action: "create",
             target_model: target.model,
             preferred_name: qwenPreferredName(request.title),
-            // the blob is typed by its bytes: audio/wav, audio/mpeg or audio/mp4, as the docs list
+            // typed by its bytes: audio/wav, audio/mpeg or audio/mp4, as the docs list
             audio: { data: `data:${sample.blob.type};base64,${data}` },
             ...(sample.transcript ? { text: sample.transcript } : {}),
             language: "en",
@@ -195,11 +162,11 @@ export const qwenWire: SpeechWire = {
       },
       format: "wav",
       text: input.text,
-      // no documented instructions field on this API (see the header), so none are billed
+      // no documented instructions field, so none are billed
       instructions: "",
       async read(res, context) {
         const body = await jsonAnswer<QwenAnswer>(target, res, context.signal);
-        // a count of 0 is a model that counted tokens instead, which says nothing about characters
+        // 0 means the model counted tokens instead
         const characters = body.usage?.characters;
         const reported: SpeechUsage | null =
           typeof characters === "number" && characters > 0
@@ -214,7 +181,7 @@ export const qwenWire: SpeechWire = {
             res.status,
             false,
           );
-        // the link is signed: fetched with nothing but the job's clock and retries
+        // the link is signed: no key
         const file = await context.call({ ...target, apiKey: null }, url, {
           method: "GET",
           headers: { accept: AUDIO_MIME.wav },
@@ -224,10 +191,7 @@ export const qwenWire: SpeechWire = {
     };
   },
 
-  /**
-   * One page of the account's cloned voices, which needs the key and renders nothing. An empty
-   * page is still an accepted key.
-   */
+  /** Lists one cloned voice: needs the key, renders nothing. */
   async probe(target, signal, options) {
     const started = Date.now();
     await call(
@@ -247,12 +211,7 @@ export const qwenWire: SpeechWire = {
     return { ok: true, message: `Answered in ${ms} ms; the key was accepted`, ms };
   },
 
-  /**
-   * A Qwen-Audio model's system voices, written down in Alibaba's voice list: nothing to ask for.
-   * A voice-cloning model has none, only the voices made for it, which are asked of
-   * `qwen-voice-enrollment` a page at a time and kept to those made for this model — another
-   * model cannot speak them. The list names each by its id alone, so that is its label too.
-   */
+  /** Qwen-Audio: `QWEN_VOICES`. A cloning model: only the voices enrolled for it. */
   async voices(target, signal, options) {
     if (!isQwenTts(target.model)) return onePage([...(QWEN_VOICES[target.model] ?? [])]);
     const voices: { id: string; label: string; gender: "?" }[] = [];
@@ -285,7 +244,7 @@ export const qwenWire: SpeechWire = {
           ? (page + 1) * ENROLLED_PAGE < total
           : items.length === ENROLLED_PAGE);
     }
-    // `hasMore` here means the cap was reached with the list still going
+    // `hasMore`: the cap was reached with the list still going
     return { voices, total: voices.length, page: 1, hasMore: more };
   },
 };

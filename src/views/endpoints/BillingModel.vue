@@ -1,18 +1,7 @@
 <script setup lang="ts">
-// How a speech endpoint bills, and what that makes one request cost.
-//
-// Three things this panel has to get right, because each of them is a way a cost display starts
-// lying:
-//
-//   1. Only the fields this model actually uses are on screen. A per-request endpoint has no
-//      character rate and a per-character one has no audio-token rate; offering them invites
-//      somebody to fill one in and wonder why it changes nothing.
-//   2. Blank is not zero. A rate nobody has typed in is unknown, and requests through the endpoint
-//      are then counted and never priced. Zero is a real answer — a model you host yourself — and
-//      the two read differently everywhere.
-//   3. Changing the model never reinterprets a rate. $15 per million characters is not $15 per
-//      million audio tokens, so switching parks the old rates rather than carrying them across, and
-//      switching back restores them instead of asking for them again.
+// How a speech endpoint bills, and what that makes one request cost. Only the fields this model
+// uses are shown. Blank is unknown (counted, never priced), not zero (free). Switching model parks
+// the old rates rather than reinterpreting them; switching back restores them.
 import { computed } from "vue";
 import { UiHint, UiNumber, UiSelect, UiSwitch } from "@/ui";
 import { TriangleAlert as WarnIcon } from "@lucide/vue";
@@ -43,13 +32,7 @@ import type { Endpoint, TtsBilling, TtsBillingUnit } from "@/types";
 
 const props = defineProps<{ endpoint: Endpoint; billing: TtsBilling; now: number }>();
 
-/**
- * The sample the preview is worked out from.
- *
- * Non-ASCII on purpose: a preview over plain English would show the byte count equalling the
- * character count and quietly teach the wrong thing about the one model whose whole point is that
- * they differ.
- */
+/** Non-ASCII on purpose, so the preview's byte count differs from its character count. */
 const SAMPLE = "“时候到了,” the elder said, and did not look up from his scroll.";
 
 const components = computed(() => speechComponents(props.billing.unit));
@@ -65,7 +48,6 @@ const snapshot = computed(() =>
 const emit = defineEmits<{ update: [TtsBilling] }>();
 const patch = (over: Partial<TtsBilling>) => emit("update", { ...props.billing, ...over });
 
-/** Switching model parks the old rates rather than reinterpreting them — see `switchBillingUnit`. */
 const setUnit = (unit: TtsBillingUnit) => emit("update", switchBillingUnit(props.billing, unit));
 
 /** What was configured under a model this endpoint is not on right now. */
@@ -80,7 +62,7 @@ const parkedNote = computed(() => {
     .join(", ");
 });
 
-/** Which rate field belongs to which component, so the labels and the arithmetic cannot drift. */
+/** One table for labels and arithmetic, so they can't drift. */
 const fields = computed(() =>
   components.value.map((component) => ({
     component,
@@ -94,10 +76,7 @@ const fields = computed(() =>
 );
 
 // ---------- the calculation preview ----------
-//
-// One line, counted exactly the way a real request is counted, then priced component by component
-// at the rates in force *now* — so a discount running today shows up here and the arithmetic on
-// screen is the arithmetic the receipt will show.
+// Counted like a real request and priced at the rates in force now, so it matches the receipt.
 const preview = computed(() => {
   const seconds = 4.2;
   const units = measureSpeech({ text: SAMPLE, requests: 1, audioSeconds: seconds }, props.billing);
@@ -152,7 +131,6 @@ const free = computed(() => components.value.every((c) => snapshot.value.compone
 
 <template>
   <div class="space-y-3">
-    <!-- the model. Everything below it depends on this one choice, so it leads. -->
     <div class="grid gap-3 sm:grid-cols-[minmax(0,260px)_minmax(0,1fr)]">
       <label class="space-y-1 text-xs font-medium"
         ><span>Billing model</span>
@@ -167,7 +145,6 @@ const free = computed(() => components.value.every((c) => snapshot.value.compone
         }}</span></label
       >
       <div class="space-y-2">
-        <!-- one field per component this model prices, and no others -->
         <!-- a div, not a label: the hint is a button, and the field names itself (`label`) -->
         <div v-for="f in fields" :key="f.component" class="block space-y-1 text-xs font-medium">
           <span
@@ -189,7 +166,7 @@ const free = computed(() => components.value.every((c) => snapshot.value.compone
       </div>
     </div>
 
-    <!-- the audio-token conversion: an assumption, so it is editable and labelled as one -->
+    <!-- the audio-token conversion is an assumption, so editable and labelled as one -->
     <div
       v-if="billsAudioTokens(billing.unit)"
       class="rounded-md border border-zinc-200 p-2.5 dark:border-zinc-800"
@@ -215,7 +192,7 @@ const free = computed(() => components.value.every((c) => snapshot.value.compone
       </div>
     </div>
 
-    <!-- instructions: submitted content, so a provider that meters what it receives meters these -->
+    <!-- instructions are submitted content, so a provider metering input meters these -->
     <div
       class="flex items-center gap-1.5 rounded-md border border-zinc-200 p-2.5 dark:border-zinc-800"
     >
@@ -230,7 +207,6 @@ const free = computed(() => components.value.every((c) => snapshot.value.compone
       />
     </div>
 
-    <!-- what the rates make one request cost. The working, not just the answer. -->
     <div class="rounded-md border border-zinc-200 p-2.5 dark:border-zinc-800">
       <div class="mb-1 flex items-baseline justify-between gap-2">
         <span class="text-xs font-medium"
@@ -296,7 +272,6 @@ const free = computed(() => components.value.every((c) => snapshot.value.compone
       </p>
     </div>
 
-    <!-- what was configured under another model, kept rather than thrown away -->
     <p v-if="parkedNote" class="text-[11px] leading-relaxed text-zinc-500">
       Rates kept from another billing model: {{ parkedNote }} — switch back and they return.
     </p>

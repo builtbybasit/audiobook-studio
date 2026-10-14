@@ -1,9 +1,6 @@
-// Site text as the stores handle it: a suggestion accepted or dismissed, saved and undone like any
-// other edit; the lines a book does not read left out of every count of who speaks; and the book's
-// "read the notes aloud" setting, saved and read back.
-//
-// A server of this file's own holds one short scripted book. Each test writes the chapter's script
-// the way it needs it, straight into the database, and reads the book into fresh stores.
+// Site text in the stores: a suggestion accepted or dismissed, saved and undone like any edit;
+// lines the book does not read left out of who-speaks counts; and the "read the notes aloud"
+// setting. Each test writes the chapter's script straight into this file's own server.
 import { beforeAll, beforeEach, expect, test } from "bun:test";
 
 import { useCastStore } from "@/stores/cast";

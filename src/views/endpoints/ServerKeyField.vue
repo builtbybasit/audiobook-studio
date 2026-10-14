@@ -1,12 +1,7 @@
 <script setup lang="ts">
-// The API key field when a server answers: the server keeps the key, and this page only ever
-// learns *that* it does (`hasKey`).
-//
-// So the field can never show the key back, and it does not pretend to: with a key held it says
-// so and offers to replace or remove it. What is typed lives in this component and nowhere else —
-// not the store, which the write-behind sends over and over, and not the page state that outlives
-// the route — until Save sends it once (`saveKey`), after which it is dropped. Removing sends `""`,
-// which is the server's word for "forget it"; every other write leaves the key alone.
+// The API key field: the server keeps the key and the page only learns `hasKey`. A typed key lives
+// only here (not the write-behind store) until Save sends it once (`saveKey`). Removing sends `""`,
+// the server's "forget it"; every other write leaves the key alone.
 import { ref, watch } from "vue";
 import { Check as OkIcon, TriangleAlert as WarnIcon } from "@lucide/vue";
 import { UiHint } from "@/ui";
@@ -25,13 +20,11 @@ const props = defineProps<{
 const endpointsStore = useEndpointsStore();
 const uiStore = useUiStore();
 const typed = ref("");
-/** replacing a held key: the input shows even though one is held */
 const replacing = ref(false);
 const confirmingRemove = ref(false);
 const saving = ref(false);
 
-// The same component is handed the next endpoint when the selection moves, and a key typed for one
-// must never be saved against another.
+// Reused across endpoints: a key typed for one must never be saved against another.
 watch(
   () => `${props.kind}:${props.id}`,
   () => reset(),

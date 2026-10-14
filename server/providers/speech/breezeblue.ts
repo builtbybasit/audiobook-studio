@@ -1,24 +1,6 @@
-// A line spoken by BreezeBlue's hosted API (https://docs.breezeblue.ai), which copies ElevenLabs'
-// shape — path, key header, `output_format`, the model list the Test button reads — and adds an
-// `instructions` field for delivery, which it is sent when the line has some. Everything but the
-// instructions, the voice list and cloning is ElevenLabs' module (`elevenlabs.ts`).
-//
-// Its instructions guide says to "keep `instructions` within 1,000 characters", so a line whose
-// speaker's style and direction together run longer fails before a request, saying so, rather than
-// being refused or cut by BreezeBlue after the credit is spent.
-//
-// A voice is cloned in two requests, as its voice-clone guide gives it
-// (https://docs.breezeblue.ai/guides/voice-clone): `POST /v1/voice-previews/clone`, multipart, with
-// the voice's `name` and the one sample under `files`, which answers a `generated_voice_id` — a
-// preview, not yet a voice — and then `POST /v1/voice-previews/{generated_voice_id}/save`, JSON,
-// which answers the saved voice and its `voice_id`. The first is the one billed, 100 credits; the
-// second only takes a voice slot. So a save that fails says the preview was made, and its id,
-// for the person to save it on BreezeBlue rather than pay for another.
-//
-// The save requires a `language_code` for the sample's language, which BreezeBlue detects but does
-// not answer with; it is sent as English, which is what this app's books are read in. A sample in
-// another language is refused at the save with BreezeBlue's own words. A name is held to its 80
-// characters before anything is sent, since BreezeBlue rejects a longer one — after the upload.
+// BreezeBlue (https://docs.breezeblue.ai) copies ElevenLabs' shape (`elevenlabs.ts`) and adds an
+// `instructions` field, kept "within 1,000 characters" per its guide, so a longer one fails before
+// any credit is spent.
 import type { Voice } from "@/types";
 import { BREEZE_INSTRUCTION_CHARS, breezeblue } from "@/lib/providers/breezeblue";
 import { call, ProviderError } from "~/providers/http";
@@ -33,12 +15,14 @@ import {
 } from "~/providers/speech/elevenlabs";
 import type { SpeechWire } from "~/providers/speech/wire";
 
-/** Its save reference: a voice's name is "up to 80 characters", and a longer one is rejected. */
+/** "Up to 80 characters", rejected only after the paid upload, so checked first. */
 const BREEZE_NAME_CHARS = 80;
-/** The language a cloned voice is saved as; see the top of this file. */
+/** Required by the save; BreezeBlue detects but does not answer the language. */
 const BREEZE_CLONE_LANGUAGE = "en";
 
 export const breezeBlueWire: SpeechWire = {
+  // Two requests (https://docs.breezeblue.ai/guides/voice-clone): the paid preview (100 credits),
+  // then a save. A failed save names the preview id so the person can save it rather than pay again.
   async clone(target, request, signal, options) {
     const chars = Array.from(request.title).length;
     if (chars > BREEZE_NAME_CHARS)
@@ -128,10 +112,7 @@ export const breezeBlueWire: SpeechWire = {
   },
   probe: modelsProbe,
 
-  /**
-   * An account's voices, `GET /v1/voices` a page at a time, up to ten pages. Unlike ElevenLabs it
-   * gives a voice's gender as a field of its own.
-   */
+  /** Unlike ElevenLabs, gender is a field of its own. */
   async voices(target, signal, options) {
     const voices: Voice[] = [];
     let token: string | null = null;

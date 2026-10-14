@@ -1,13 +1,11 @@
-// The speech-to-text presets: what "Start from a preset…" offers a transcription endpoint. Every
-// one is a server answering OpenAI's `POST /audio/transcriptions`, the only request the server's
-// transcription provider makes, priced per minute of audio sent. A hosted rate is the provider's
-// published card on the date its note gives.
+// Speech-to-text presets: servers answering OpenAI's `POST /audio/transcriptions`, priced per
+// minute of audio sent.
 import { presetPricing, type TranscriptionPreset } from "@/lib/presets/preset";
 import { SIMULATED_BASE_URL, SIMULATED_TRANSCRIPTION_MODEL } from "@/lib/providers";
 
 export const TRANSCRIPTION_PRESETS: TranscriptionPreset[] = [
   {
-    // first, as on the other kinds: the one that works without a server or an account
+    // first: works without a server or an account
     id: "simulated",
     group: "Simulated",
     label: "Simulated (free)",

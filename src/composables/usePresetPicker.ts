@@ -1,13 +1,6 @@
-// "Start from a preset…": the picker, the note under it, and what choosing one does.
-//
-// Two pages offer it — an endpoint's Connection tab, for every kind, and the scripting page's
-// endpoint editor — and
-// they differ only in where a preset's fields go: the Connection tab stages them in its draft, so
-// Save applies them and Discard drops them, and the scripting editor binds every field straight
-// onto the profile. Everything else is the same here: the options, grouped by provider; the note,
-// which belongs to the endpoint it was chosen for and is forgotten when another is selected; and
-// the copy, so a preset's billing or pricing object never becomes an endpoint's own — editing
-// prices on one endpoint would otherwise change the preset and every endpoint made from it after.
+// "Start from a preset…": the picker, its note, and what choosing one does. The Connection tab
+// stages a preset's fields in its draft and the scripting editor binds them to the profile; only
+// `fill` differs. Fields are copied, so editing one endpoint's prices never changes the preset.
 import { useUiStore } from "@/stores/ui";
 
 import { computed, ref, toValue, watch, type MaybeRefOrGetter, type WatchSource } from "vue";
@@ -22,8 +15,8 @@ export interface PresetPickerOptions {
   kind: MaybeRefOrGetter<EndpointKind>;
   /** the endpoint being edited: when it changes, the choice and its note are forgotten */
   endpoint: WatchSource<unknown>;
-  /** puts a preset's fields where they belong. They are a copy, the caller's to keep. `false` when
-   *  there is nothing to fill in, and nothing is said. */
+  /** Puts a preset's fields (a copy, the caller's to keep) where they belong. `false` when there
+   *  is nothing to fill in, and nothing is said. */
   fill: (fields: AnyPreset["apply"], preset: AnyPreset) => void | false;
   /** the toast's second line: what to check, and when it takes effect */
   next: string;

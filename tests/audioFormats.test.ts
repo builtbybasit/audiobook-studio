@@ -1,8 +1,5 @@
-// What a speech endpoint can be asked for, and why a combination cannot.
-//
-// The table is Fish Audio's and OpenAI's documentation turned into data, and `encodingProblems` is
-// the one judgement the page shows beside the fields and the server refuses a line with — so a
-// request the provider would refuse, or quietly answer at another rate, never goes out.
+// What a speech endpoint can be asked for (Fish Audio's and OpenAI's docs as data), and why a
+// combination cannot: `encodingProblems` is what the page shows and the server refuses a line with.
 import { describe, expect, test } from "bun:test";
 
 import type { Endpoint } from "@/types";

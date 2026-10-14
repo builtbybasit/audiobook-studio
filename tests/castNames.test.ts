@@ -60,7 +60,7 @@ describe("the names a line is written with", () => {
 describe("the cast member a scripting model meant", () => {
   const cast = [
     { name: NARRATOR, aliases: [] },
-    // seen in a real run: lines written by "Hero" became a second character beside him
+    // lines written by "Hero" must not become a second character beside him
     { name: "Young Soldier", aliases: ["Hero"] },
     { name: "Gentle-Voiced Slave", aliases: ["Scholar"] },
     // that run's leftover: a character of the alias's name, until it is merged by hand
@@ -88,8 +88,7 @@ describe("the cast member a scripting model meant", () => {
     expect(meant("Heroes")).toBe("Heroes");
   });
 
-  // A guard, not a habit: no run so far has copied the cast list's "(male; also called Hero)" into
-  // a speaker, but one that did would otherwise make a new character.
+  // A guard: a speaker copied with the cast list's "(male; also called Hero)" must not be new.
   test("by a cast name with a bracket note after it", () => {
     expect(meant("Young Soldier (male)")).toBe("Young Soldier");
     expect(meant("Hero (male)")).toBe("Young Soldier");

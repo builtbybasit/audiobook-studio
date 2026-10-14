@@ -2,14 +2,10 @@
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
 
-// Voice picker for a character: a popover with search, gender filter, voices grouped by endpoint
-// (paused ones listed but disabled), "used by N" and an inline demo button. Built on reka Popover +
-// Listbox so arrows/Enter work. v-model is the voice ref (`endpointId/voiceId`) or null.
-//
-// Given an `anchor` — even a null one, before the first open — it draws no trigger of its own, and
-// one picker serves a whole list, as the Cast page's: the list opens it with `v-model:open` and
-// moves it to another row by changing `anchor`. A click on any `[data-voice-anchor]` button is that
-// move, not a click outside. Closing hands focus back to the anchor, unless a click elsewhere took it.
+// Voice picker: reka Popover + Listbox, v-model is `endpointId/voiceId` or null. Given an `anchor`
+// (even null) it draws no trigger, and one picker serves a whole list: the list moves it by
+// changing `anchor`, and a click on any `[data-voice-anchor]` is that move, not a click outside.
+// Closing hands focus back to the anchor unless a click elsewhere took it.
 import { computed, ref, watch } from "vue";
 
 import { SAMPLE_TITLE, useVoiceSample } from "@/composables/useVoiceSample";
@@ -66,7 +62,7 @@ watch(open, (o) => {
   }
 });
 
-/** The empty choice: what this speaker is read in with no voice of their own, unless told. */
+/** The empty choice: how this speaker is read with no voice of their own. */
 const emptyLabel = computed(
   () =>
     props.nullLabel ??

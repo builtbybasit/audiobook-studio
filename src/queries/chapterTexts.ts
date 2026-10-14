@@ -1,10 +1,6 @@
-// The prose of several chapters at once, for a page that prices or cuts chapters it does not show.
-//
-// The Scripting page's plan and estimate count each selected chapter's plain text, cut the way
-// the chosen endpoint cuts it. A chapter no query has read would otherwise count as no text at all
-// — no requests, nothing to pay — and a run over it would pass every budget check. So the page
-// reads what it selects, and the store asks `chapterTextRead`, which tells a chapter not read yet
-// from one that is empty.
+// The prose of several chapters at once, for pages that price or cut chapters they do not show.
+// An unread chapter would otherwise count as no text and pass every budget check, so the page reads
+// what it selects and the store asks `chapterTextRead`, which tells unread from empty.
 import { computed, toValue, watch, type MaybeRefOrGetter } from "vue";
 import { useQuery, useQueryCache } from "@pinia/colada";
 
@@ -14,8 +10,8 @@ import { keys } from "@/queries/keys";
 import { libraryService, type TextFormat } from "@/services/library";
 
 /**
- * Read every chapter in `chapterIds` as the list changes. A chapter already read is not read again:
- * prose does not change under the app, and a renumbering invalidates everything under the book.
+ * Read every chapter in `chapterIds` as the list changes, once each: prose does not change under
+ * the app, and a renumbering invalidates everything under the book.
  */
 export function useChapterTexts(
   bookId: MaybeRefOrGetter<string>,
@@ -27,7 +23,7 @@ export function useChapterTexts(
     () => [...toValue(chapterIds)],
     (ids) => {
       for (const id of ids)
-        // a read that fails stays in its entry's error state, and is read again when next asked for
+        // a failed read stays in its entry's error state and is retried when next asked for
         void queryCache
           .refresh(queryCache.ensure(textQuery(toValue(bookId), id, format)))
           .catch(() => {});
@@ -44,10 +40,7 @@ export function useChapterTexts(
   };
 }
 
-/**
- * Read these chapters' prose, and resolve once every one is in — for an action that is about to
- * price them. A chapter that could not be read is left unread, and the caller's check says so.
- */
+/** Read these chapters' prose; resolves once all are in. A failed one stays unread. */
 export async function loadChapterTexts(
   bookId: string,
   chapterIds: readonly number[],
@@ -62,9 +55,8 @@ export async function loadChapterTexts(
 }
 
 /**
- * A chapter's prose as the query cache holds it, or null when nothing has read it yet — unlike
- * `chapterTextNow`, which cannot tell that from an empty chapter. Reactive: a getter that asks
- * before the read lands asks again when it does.
+ * A chapter's cached prose, or null when unread (`chapterTextNow` cannot tell that from empty).
+ * Reactive: a getter that asks before the read lands asks again when it does.
  */
 export function chapterTextRead(
   bookId: string,
@@ -81,17 +73,14 @@ export function chapterTextRead(
 }
 
 /**
- * Each read's prose, joined once. A getter over hundreds of chapters runs again each time one more
- * lands, and would otherwise join every chapter's text anew; the same string each time also lets
- * the scripting store tell that a chapter's text has not changed without comparing it. Keyed by
- * what the cache holds, so a read the cache lets go of is let go of here too.
+ * Each read's prose, joined once: getters over hundreds of chapters rerun per landed read, and the
+ * stable string lets the scripting store compare by reference. Weakly keyed by the cached parts.
  */
 const joined = new WeakMap<ContentPart[], string>();
 
 /**
- * For each of `names`, the ids of the chapters whose text names it as written, in book order;
- * empty until the read lands, and for no names. Read once per set of names: prose does not change
- * under the app, and a renumbering invalidates everything under the book.
+ * For each of `names`, the ids of chapters whose text names it as written, in book order; empty
+ * until the read lands. Read once per set of names.
  */
 export function useMentions(
   bookId: MaybeRefOrGetter<string>,

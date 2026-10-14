@@ -1,8 +1,6 @@
-// The Pedalboard plugins the effects editor offers, with the range and unit of each number it
-// takes, and the few words a step is shown in. The server reads any plugin Pedalboard offers that
-// takes only numbers (`server/audio/effects.py`, `plugins()`); a pasted chain may hold one this
-// catalog has no entry for, and the editor then shows its numbers without sliders rather than
-// refusing it.
+// The Pedalboard plugins the effects editor offers, with each number's range and unit.
+// The server takes any numbers-only plugin (`plugins()` in server/audio/effects.py); one missing
+// here shows its numbers without sliders.
 import type { Layer, MixStep, PluginStep, Step } from "@/types";
 
 export interface Param {

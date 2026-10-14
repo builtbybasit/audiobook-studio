@@ -3,13 +3,8 @@ import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 import { plural } from "@/lib/contents";
 
-// The book's review inbox: every decision waiting on a person, wherever it lives, with the link
-// that lands on it. The counts on the stage pages are unchanged — this is the one place that can
-// say how many there are altogether, and the only page that shows them side by side.
-//
-// It decides nothing itself. Every row leaves for the page that owns the decision, which is also
-// the page that owns the undo for it — except a site-text suggestion, a yes or no about one line,
-// which can be accepted or dismissed here through the scripts store's own actions and their Undo.
+// The book's review inbox (`reviewInbox`): every decision waiting on a person, with a link that
+// lands on it. It decides nothing, except site-text suggestions (with the reader's Undo).
 import { computed, ref } from "vue";
 import { relative } from "@/lib/endpoints";
 import { bookFacts } from "@/views/library/bookFacts";
@@ -38,18 +33,15 @@ const libraryStore = useLibraryStore();
 const scriptsStore = useScriptsStore();
 const bookId = useBookId();
 useCast(bookId);
-// retakes, flags and unverified chunks are on the lines: until every scripted chapter's are in,
-// "nothing waiting" is not an answer
+// until every scripted chapter's lines are in, "nothing waiting" is not an answer
 const { failed: unread, loading: reading, retry: readAgain } = useBookScripts(bookId);
-// the router only reaches this view with a real book id
 const book = computed(() => libraryStore.bookById(bookId)!);
 const groups = useReviewInbox(bookId);
 const total = computed(() => groups.value.reduce((n, g) => n + g.items.length, 0));
 
-/** One kind at a time, when the list is long enough that scanning it stops working. */
 const only = ref<DecisionKind | null>(null);
 const shown = computed(() => groups.value.filter((g) => !only.value || g.kind === only.value));
-// a group opens to its first few rows: a book with sixty flagged clips should still be readable
+// a book with sixty flagged clips should still be readable
 const FIRST = 6;
 const expanded = ref(new Set<DecisionKind>());
 function expand(kind: DecisionKind) {
@@ -68,11 +60,8 @@ const ICON: Record<DecisionKind, Component> = {
   retake: RetakeIcon,
 };
 /**
- * The stripe down the left edge of a row, and the tint behind the group's icon.
- *
- * The stripe is its own element rather than a `border-l-*` on the row: the row already carries a
- * `dark:border-*` for its divider, and in dark mode that variant sorts after the un-varianted
- * left-colour and painted the stripe out.
+ * The stripe is its own element, not a `border-l-*` on the row: the row's `dark:border-*` divider
+ * sorts after it in dark mode and paints it out.
  */
 const BAR: Record<DecisionTone, string> = {
   red: "bg-red-400",
@@ -89,11 +78,10 @@ const TINT: Record<DecisionTone, string> = {
   zinc: "bg-zinc-500/10 text-zinc-500",
 };
 
-// when there is nothing to decide, the page still answers "so what now?" — with the same chain the
-// shelf card and the overview banner read, not a second opinion
+// with nothing to decide, the same next step the shelf card and overview banner show
 const next = computed(() => bookFacts(bookId).next);
 
-/** A group of lines is read chapter by chapter: a row opens a new chapter when it is in another. */
+/** a row opens a new chapter heading when it is in another chapter */
 const opensChapter = (items: Decision[], i: number): boolean =>
   items[i].chapterId != null && items[i].chapterId !== items[i - 1]?.chapterId;
 const now = Date.now();
@@ -170,7 +158,6 @@ const now = Date.now();
         v-for="(d, i) in expanded.has(g.kind) ? g.items : g.items.slice(0, FIRST)"
         :key="d.id"
       >
-        <!-- site text is read chapter by chapter, under the chapter's name -->
         <div
           v-if="g.kind === 'sitetext' && opensChapter(g.items, i)"
           class="border-b border-zinc-100 bg-zinc-50 px-4 py-1 text-[11px] font-medium text-zinc-500 dark:border-zinc-800/70 dark:bg-zinc-800/30"
@@ -194,7 +181,6 @@ const now = Date.now();
               <NextIcon class="icon-sm" />
             </span>
           </RouterLink>
-          <!-- settled here, with the Undo the reader's buttons give -->
           <div v-if="d.siteCheck" class="flex shrink-0 items-center gap-1 py-2.5 pr-4">
             <button
               class="btn-ghost btn-xs"

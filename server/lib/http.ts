@@ -1,8 +1,4 @@
-// Small things about being on the wire.
-//
-// The error shape and the helpers that raise one live in `errors.ts`, so a domain operation can
-// refuse something without knowing it is being served over HTTP. This file keeps what is only ever
-// about a URL or a request.
+// URL and request helpers. The error shape lives in `errors.ts`, so domain code needn't know HTTP.
 import { bodyLimit } from "hono/body-limit";
 import * as v from "valibot";
 
@@ -11,10 +7,7 @@ import { fail } from "~/lib/errors";
 
 export { fail, type ApiError } from "~/lib/errors";
 
-/**
- * Latin letters that are not an ASCII letter with a mark on it, so taking the marks off leaves them
- * as they were. Spelled out the way English writes them when it has no such letter.
- */
+/** Latin letters that NFKD doesn't reduce to ASCII, spelled out as English writes them. */
 const LETTERS: Record<string, string> = {
   æ: "ae",
   œ: "oe",
@@ -28,15 +21,8 @@ const LETTERS: Record<string, string> = {
 };
 
 /**
- * `moonlight-ledger` from `Moonlight Ledger.epub` — a readable id, not a UUID.
- *
- * **ASCII, always.** The id is a directory name and part of every clip's and audiobook's url, and
- * the file modules refuse anything else — so an id that kept the `ß` of a title was a book whose
- * audio was written and then could never be fetched or removed. Accents come off (`Pokémon` →
- * `pokemon`, where the combining mark used to become a hyphen: `poke-mon`), the few letters
- * without a base letter are spelled out, and anything left that is not a letter or a digit is a
- * separator; an apostrophe is dropped. A title with nothing ASCII in it at all is a `book`, or
- * whatever `empty` names.
+ * `moonlight-ledger` from `Moonlight Ledger.epub`. Always ASCII: the id is a directory name and
+ * part of every clip url, and the file modules refuse anything else.
  */
 export function slugify(s: string, empty = "book"): string {
   const slug = s
@@ -45,7 +31,7 @@ export function slugify(s: string, empty = "book"): string {
     .normalize("NFKD")
     .replace(/\p{M}/gu, "")
     .replace(/[æœøłßđðþı]/g, (ch) => LETTERS[ch])
-    // `philosophers-stone`, not `philosopher-s-stone`: an apostrophe joins a word, it does not end one.
+    // `philosophers-stone`, not `philosopher-s-stone`
     .replace(/['’]/g, "")
     .replace(/[^a-z0-9]+/g, "-")
     .slice(0, 48)
@@ -53,18 +39,10 @@ export function slugify(s: string, empty = "book"): string {
   return slug || empty;
 }
 
-/**
- * What a book id in a file path may be: everything `slugify` makes, and the ids books were given
- * before it was ASCII-only, as long as they were ASCII too. Nothing in it can climb a directory.
- */
+/** A book id safe in a file path: nothing in it can climb a directory. */
 export const BOOK_ID = /^[A-Za-z0-9_-]+$/;
 
-/**
- * A whole number in a path segment.
- *
- * Path parameters arrive as strings. `Number("3x")` is `NaN` and `Number("")` is `0`, and either
- * one handed to a query looks up nothing and answers 404 for a request that was never well formed.
- */
+/** A whole number in a path segment: a 400, not the 404 `Number("3x")` or `Number("")` gives. */
 export const IntParam = v.pipe(
   v.string(),
   v.regex(/^-?\d+$/, "must be a whole number"),
@@ -75,13 +53,10 @@ export const IntParam = v.pipe(
 /** A chapter number or a volume id in a path: whole and positive. */
 export const IdParam = v.pipe(IntParam, v.minValue(1, "must be positive"));
 
-/** Most chapters one batch read names: a page asks for a long book in several. */
+/** Most chapters one batch read names; a long book is asked for in several. */
 export const MAX_BATCH = 500;
 
-/**
- * The chapters a batch read names: `?id=…`, repeated for each. A query string carries one as a
- * string and several as a list, so both are read as a list.
- */
+/** `?id=…` repeated; one arrives as a string, several as a list. */
 export const ChapterIds = v.pipe(
   v.union([v.string(), v.array(v.string())]),
   v.transform((ids) => [ids].flat()),
@@ -90,20 +65,11 @@ export const ChapterIds = v.pipe(
   v.maxLength(MAX_BATCH, `at most ${MAX_BATCH} chapters`),
 );
 
-/** A route under `/api/books/:id`: the book's id, which the operation looks up and refuses. */
 export const BookParam = v.object({ id: v.string() });
 
 /**
- * A route's limit on a file upload of up to `mb` megabytes, in two halves with one refusal (a 413
- * that names `setting` as the way to raise it).
- *
- * `body` refuses the request as it arrives — from its `content-length` when it says, and by
- * counting when it does not — rather than after the whole of it has been buffered to be looked at.
- * It has to allow a megabyte more than the file, for the multipart envelope (`uploadBodyBytes`),
- * so it is not the limit itself: `file` is, asked of the file once the form is read, so a file a
- * few bytes over is refused and not let through by the envelope's allowance. The server's own
- * ceiling (`maxRequestBodySize`) sits just above every such limit, as a backstop that answers in
- * Bun's words; these are what answer in the API's.
+ * A 413 naming `setting`, in two halves: `body` refuses early as the request streams in (allowing
+ * the multipart envelope), and `file` is the exact limit, checked once the form is read.
  */
 export function uploadLimit(mb: number, setting: string, what: "file" | "script" = "file") {
   const refuse = (detail = ""): never =>

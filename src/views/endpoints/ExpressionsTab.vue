@@ -24,7 +24,6 @@ const dirty = computed(() => expressionDirty(props.endpoint));
 const typed = ref("");
 const attempted = ref(false);
 const error = ref("");
-// what the provider's docs say, for the model and base URL on the page now
 const syntax = computed(() => tagSyntaxOf(props.endpoint));
 const BRACKET_LABELS: Record<TagBracket, string> = { round: "( )", square: "[ ]", angle: "< >" };
 const BRACKET_OPTIONS = Object.entries(BRACKET_LABELS).map(([value, label]) => ({
@@ -38,7 +37,7 @@ const example = computed(() =>
     : tagToken("laughs", draft.value.brackets),
 );
 const status = computed(() => (draft.value.brackets.length ? "supported" : "unsupported"));
-// held to the model it will be saved for, which is the endpoint's now, not the one it was drafted for
+// checked against the endpoint's current model, not the one it was drafted for
 const errors = computed(() =>
   configErrors({
     ...draft.value,
@@ -51,7 +50,7 @@ const modelChanged = computed(
   () =>
     draft.value.model !== props.endpoint.model || draft.value.baseUrl !== props.endpoint.baseUrl,
 );
-// never saved: the provider's brackets are only a starting point until confirmed
+// the provider's brackets are only a starting point until confirmed
 const unconfirmed = computed(() => !props.endpoint.expressions);
 const affected = computed(() =>
   Object.entries(scriptsStore.segments).reduce(

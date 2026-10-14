@@ -1,16 +1,7 @@
-// The library's voice effects, its thought effect, and the actions on them.
-//
-// The effects are the library's, not a book's: `useEffects` in `@/queries` reads them in, and
-// every change here is a request whose refusal is said in a toast and read back over. An editor
-// moves an effect on every step of a slider, so an edit is not a request each: `update` changes
-// the effect here at once and writes it behind, a short while after the last change, one write of
-// an effect out at a time — an edit made while one is out is sent once it lands, as the effect
-// then stands. A read landing meanwhile keeps the edited copy (`_install`), so a slider never
-// jumps back.
-//
-// A book's thought effect and a speaker's choices are their owners': `library.setBookThoughts`,
-// `cast.setEffect` and `cast.setThoughts`. Removing an effect clears every choice of it on the
-// server in one go, and here through each owner's `_dropEffect`.
+// The library's voice effects, its thought effect, and the actions on them. Read by `useEffects`;
+// refusals are toasted and read back over. `update` applies at once and writes behind (one write
+// per effect out at a time), and a read meanwhile keeps the edited copy so a slider never jumps.
+// Book and speaker choices are their owners' (`library.setBookThoughts`, `cast.setEffect`).
 import { toRaw } from "vue";
 import { defineStore } from "pinia";
 
@@ -27,7 +18,7 @@ import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { toastFailure } from "@/stores/toastFailure";
 
-/** How long an edited effect sits still before it is sent: a slider dragged sends its last value. */
+/** How long an edited effect sits still before sending; a dragged slider sends its last value. */
 export const EFFECT_WRITE_MS = 300;
 
 /** What removing an effect took, so the page can say who lost it. */
@@ -37,7 +28,7 @@ export interface EffectTaken {
   library: boolean;
   /** books whose thought effect it was; they follow the library now */
   books: string[];
-  /** speakers who wore it (`effect`) or thought in it (`thoughts`), of the casts this page has read */
+  /** speakers who wore it (`effect`) or thought in it (`thoughts`), of the casts read here */
   speakers: SpeakerEffectUse[];
 }
 
@@ -46,7 +37,6 @@ interface EffectsState {
   effects: Effect[];
   /** the library's thought effect: an effect's id, or "none" */
   libraryThoughts: ThoughtChoice;
-  /** whether they have been read from the server yet */
   loaded: boolean;
 }
 
@@ -58,10 +48,7 @@ interface Behind {
   again: boolean;
 }
 
-/**
- * Writes waiting or out, per store instance, kept out of the reactive state. Keyed by the raw
- * store, as the cast store's are: devtools hand each action a fresh proxy as `this`.
- */
+/** Writes waiting or out, per store, outside reactive state. Keyed by the raw store (see cast). */
 const pending = new WeakMap<object, { edits: Map<string, Behind>; thoughtsOut: number }>();
 
 function pendingOf(store: object) {
@@ -81,7 +68,6 @@ function duplicateName(name: string, taken: ReadonlySet<string>): string {
 }
 
 export const useEffectsStore = defineStore("effects", {
-  // Nothing is here until it has been read from the server.
   state: (): EffectsState => ({ effects: [], libraryThoughts: "none", loaded: false }),
   getters: {
     /** Every effect by id; also what a line's `EffectContext.effects` is. */
@@ -111,9 +97,8 @@ export const useEffectsStore = defineStore("effects", {
   },
   actions: {
     /**
-     * What the server holds, in place of what was here. What `useEffects` installs. An effect with
-     * an edit waiting or out keeps the copy here, which is newer than any read of it; the library's
-     * thought effect too, while a write of it is out.
+     * Install the server's effects (`useEffects`). An effect with an edit waiting or out keeps its
+     * newer local copy; so does the library's thought effect while its write is out.
      */
     _install(effects: Effect[], thoughts: ThoughtChoice): void {
       const p = pendingOf(this);
@@ -123,8 +108,8 @@ export const useEffectsStore = defineStore("effects", {
       this.loaded = true;
     },
     /**
-     * A new effect at the end of the list, or right after `after`, once the server has given it its
-     * id; offered as a line effect when given a `useWhen`. Null if refused.
+     * A new effect at the end, or right after `after`, once the server gives it an id; offered as
+     * a line effect when given a `useWhen`. Null if refused.
      */
     async create(
       name: string,
@@ -146,9 +131,8 @@ export const useEffectsStore = defineStore("effects", {
       }
     },
     /**
-     * Change an effect's name, chain or `useWhen` (blank = none) here at once, and write it behind
-     * (`EFFECT_WRITE_MS`), whole. Call it as often as a slider moves; `flush` sends what is waiting
-     * now.
+     * Change an effect here at once and write it behind whole (`EFFECT_WRITE_MS`); `useWhen`
+     * blank = none. Call it per slider move; `flush` sends now.
      */
     update(id: string, patch: { name?: string; chain?: Step[]; useWhen?: string }): void {
       const e = this.byId.get(id);
@@ -208,10 +192,8 @@ export const useEffectsStore = defineStore("effects", {
       await Promise.all([...edits].filter(([, w]) => busy(w)).map(([id]) => this._send(id)));
     },
     /**
-     * Remove an effect, and every choice of it: the library's thought effect goes to "none", a
-     * book's to following the library, a speaker's to none or to following the book — here at
-     * once, as the server does. Resolves with what it took, or null when the server refused and
-     * everything was read back.
+     * Remove an effect and every choice of it (library to "none", books to the library, speakers
+     * to none or the book), as the server does. Null when refused and read back.
      */
     async remove(id: string): Promise<EffectTaken | null> {
       const libraryStore = useLibraryStore();
@@ -245,21 +227,14 @@ export const useEffectsStore = defineStore("effects", {
       void staleMoved();
       return taken;
     },
-    /**
-     * A copy of an effect named "<name> Duplicated" — " (2)" on, only while that is taken — placed
-     * right after it, here and on the server, so a reload finds it there too. Its `useWhen` is
-     * copied with its chain.
-     */
+    /** Copy an effect, chain and `useWhen`, right after it, here and on the server. */
     async duplicate(id: string): Promise<Effect | null> {
       const source = this.byId.get(id);
       if (!source) return null;
       const name = duplicateName(source.name, new Set(this.effects.map((e) => e.name)));
       return await this.create(name, source.chain, { after: id, useWhen: source.useWhen });
     },
-    /**
-     * Everywhere an effect is chosen, in every book — what a delete or a shared edit names before it
-     * goes ahead. Null after a toast when the server could not say.
-     */
+    /** Everywhere an effect is chosen, in every book. Null after a toast when the server could not say. */
     async usesOf(id: string): Promise<EffectUses | null> {
       try {
         return await effectsService().uses(id);
@@ -287,10 +262,7 @@ export const useEffectsStore = defineStore("effects", {
       void staleMoved();
       return true;
     },
-    /**
-     * Queue a Re-apply of a book's clips whose sound is old. Effect edits still waiting are sent
-     * first, so it applies what the page shows. True when it was queued.
-     */
+    /** Queue a Re-apply of a book's old-sound clips, flushing edits first. True when queued. */
     async reapply(bookId: string): Promise<boolean> {
       await this.flush();
       try {
@@ -311,10 +283,7 @@ export const useEffectsStore = defineStore("effects", {
         return null;
       }
     },
-    /**
-     * The chain a piece of Pedalboard code builds, or why it builds none (`error`, for the page to
-     * show beside the code). A failure to ask at all is a toast, and null.
-     */
+    /** The chain some Pedalboard code builds, or its `error` to show. Null (and a toast) if the ask failed. */
     async parse(code: string): Promise<{ chain: Step[] } | { error: string } | null> {
       try {
         return { chain: await effectsService().parse(code) };

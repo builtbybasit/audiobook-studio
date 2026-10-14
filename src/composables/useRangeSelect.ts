@@ -1,9 +1,5 @@
-// Shift-click across a list of checkboxes: a click ticks one row, a shift-click the run from the
-// row clicked last to this one. The run is taken over the ids the list shows now — what is on
-// screen is the list, so a search or a filter narrows what a range can reach.
-//
-// What a tick means is the page's (a chapter chosen for a run, a chapter skipped, a chapter to
-// import, a speaker to merge or remove), so this only answers which rows a click covers and remembers where the last one was.
+// Shift-click across checkboxes: a shift-click ticks the run from the last clicked row, over the
+// ids shown now, so a filter narrows what a range can reach. What a tick means is the page's.
 import { ref, toValue, type MaybeRefOrGetter } from "vue";
 
 export function useRangeSelect<T>(ids: MaybeRefOrGetter<readonly T[]>) {
@@ -12,7 +8,7 @@ export function useRangeSelect<T>(ids: MaybeRefOrGetter<readonly T[]>) {
 
   /**
    * The rows a click on `id` covers, in list order: the run from the anchor when shift is held and
-   * both rows are on screen, otherwise the one row. The click becomes the next anchor either way.
+   * both rows are shown, otherwise the one row. The click becomes the next anchor either way.
    */
   function span(id: T, e?: { shiftKey?: boolean }): T[] {
     const list = toValue(ids);

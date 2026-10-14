@@ -28,10 +28,7 @@ export const onClip = (id: string): boolean => {
   return p.clipId === id && p.playing;
 };
 
-/**
- * What a failed request's status says: the provider's HTTP status when it answered with one. A
- * failure with none never had an answer — refused before it went out, or no response came back.
- */
+/** No code means no answer: refused before it went out, or no response came back. */
 export const errorStatus = (e: ReqError): string => (e.code ? `HTTP ${e.code}` : "no HTTP status");
 
 export interface ChapterProps {
@@ -39,8 +36,7 @@ export interface ChapterProps {
   chapterId: number;
 }
 
-/** The line itself, in the reader — where a wrong speaker, direction or word is fixed before a
- *  retake would read the same request again. The same deep link Search uses. */
+/** The line in the reader, where a wrong speaker, direction or word is fixed. Search uses it too. */
 export const lineLink = (props: ChapterProps, s: Segment) => ({
   path: `/book/${props.bookId}/scripting`,
   query: { ch: String(props.chapterId), seg: String(s.id) },

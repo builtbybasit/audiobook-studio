@@ -1,10 +1,6 @@
-// A chapter's script, read into the scripts store.
-//
-// The scripts store is the working copy: every edit and every undo act on `scripts.segments`, and
-// the pages read it. This query is how that copy is filled and kept fresh — what comes back is
-// installed into the store with the revision a later edit has to name. It is invalidated by the
-// things that change a script elsewhere: a scripting job landing, a rename moving lines, a book
-// being renumbered.
+// A chapter's script, read into the scripts store (the working copy), with the revision the next
+// edit names. Invalidated by whatever changes a script elsewhere: a job landing, a rename, a
+// renumber.
 import { computed, toValue, watch, type MaybeRefOrGetter } from "vue";
 import { useQuery, useQueryCache } from "@pinia/colada";
 
@@ -30,19 +26,16 @@ async function readScript(
 // a page reading every script of a long book reads them a few requests at a time
 const readScripts = batchReads((bookId, ids) => libraryService().chapterScripts(bookId, ids));
 
-/** One chapter's script as a query: what `useChapterScript` watches and `useChapterScripts` reads. */
+/** One chapter's script query: what `useChapterScript` watches and `useChapterScripts` reads. */
 const scriptQuery = (bookId: string, chapterId: number) => ({
   key: keys.chapterScript(bookId, chapterId),
-  // A script changes under the app only through the queue or another tab, and the queue
-  // invalidates it when a job lands; a re-read on every focus would replace an edit in progress.
+  // Only the queue or another tab changes a script, and the queue invalidates it; a refetch on
+  // focus would replace an edit in progress.
   staleTime: Infinity,
   query: ({ signal }: { signal: AbortSignal }) => readScript(bookId, chapterId, signal),
 });
 
-/**
- * A chapter's script read from the server now and installed, whether or not a page has the
- * chapter open — for a store that needs the server's script, like one whose write was refused.
- */
+/** Read a chapter's script now and install it, open or not (say, after a refused write). */
 export function fetchScript(bookId: string, chapterId: number): Promise<ChapterScript> {
   return fetchQuery(scriptQuery(bookId, chapterId));
 }
@@ -60,20 +53,15 @@ export function useChapterScript(
     const ch = toValue(chapterId);
     return ch == null ? [] : scriptsStore.segmentsOf(toValue(bookId), ch);
   });
-  /** Whether the script has been read yet: `segments` is empty both before and for a chapter with none. */
+  /** Whether the script has been read: `segments` is empty both before and for none. */
   const loaded = computed(() => query.status.value === "success");
   return { ...query, segments, loaded };
 }
 
 /**
- * The scripts of every chapter in `chapterIds`, read into the scripts store as the list changes —
- * for a page that counts lines across chapters it does not show, like the Narration page's run plan
- * over the chapters picked. A script already read is not read again; the queue's invalidation keeps
- * each one fresh after that, as it does the chapter a page has open.
- *
- * A read that fails stays in its entry's error state rather than reading as a chapter with no
- * lines: `failed` names those chapters and `error` says why, so the page can say its counts are
- * short, and `retry` reads them again.
+ * The scripts of every chapter in `chapterIds`, read into the store as the list changes, for
+ * counts across chapters a page does not show. A failed read stays an error, not an empty
+ * chapter: `failed`, `error` and `retry` let the page say its counts are short.
  */
 export function useChapterScripts(
   bookId: MaybeRefOrGetter<string>,
@@ -82,7 +70,7 @@ export function useChapterScripts(
   const queryCache = useQueryCache();
   const read = (ids: readonly number[]) => {
     for (const id of ids)
-      // the entry holds the failure, which `failed` reads; the rejection itself has nobody to tell
+      // the entry holds the failure, which `failed` reads
       void queryCache.refresh(queryCache.ensure(scriptQuery(toValue(bookId), id))).catch(() => {});
   };
   watch(() => [...toValue(chapterIds)], read, { immediate: true });
@@ -111,16 +99,11 @@ export function useChapterScripts(
     loading: computed(() =>
       entries.value.some(({ entry }) => entry?.asyncStatus.value === "loading"),
     ),
-    /** read the chapters that failed again */
     retry: () => read(failed.value),
   };
 }
 
-/**
- * Every scripted chapter's script of the book, for a page that reads lines across all of them —
- * Search, the review inbox, a speaker's line count, the dictionary's uses. A chapter scripted
- * while the page is open is read as it becomes one.
- */
+/** Every scripted chapter's script, for pages reading lines across the book. */
 export function useBookScripts(bookId: MaybeRefOrGetter<string>) {
   const libraryStore = useLibraryStore();
   return useChapterScripts(bookId, () =>

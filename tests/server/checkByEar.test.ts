@@ -1,11 +1,7 @@
-// Checking by ear through the queue: a narrated chapter's clips heard back by a transcription
-// endpoint, each set against its line — the finding kept by the clip's file and served by line,
-// a clip heard saying something else flagged, one heard right taking a `heard` flag down, and a
-// person's flag left alone — priced into the ledger by the minute, and queued by itself after a
-// narration when the book asks.
-//
-// The speech is the tone-rendering fake; what the transcription endpoint hears is chosen per line
-// by the test (`ears`), which finds the line a clip belongs to by the clip's file name.
+// Checking by ear: a narrated chapter's clips transcribed and set against their lines. The finding
+// is kept by clip file; a mismatch flags the line, a match clears a `heard` flag, a person's flag is
+// left alone; priced by the minute; queued after narration when the book asks. `ears` picks what
+// the transcription endpoint hears per line, finding the line by the clip's file name.
 import { describe, expect, test } from "bun:test";
 
 import type {
@@ -46,9 +42,8 @@ const timed = (text: string) =>
   text.split(/\s+/).map((word, i) => ({ word, start: i / 3, end: i / 3 + 0.3 }));
 
 /**
- * A transcription endpoint that hears whatever `say` makes of the line a clip belongs to — the line
- * itself, word times and all, unless a test says otherwise — and fails the lines `fail` picks out.
- * Every request it answers is reported, billed, as the real one reports it.
+ * A transcription endpoint that hears what `say` makes of a clip's line (the line itself by
+ * default) and fails the lines `fail` picks. Every answer is reported and billed like the real one.
  */
 interface Ears {
   asked: TranscriptionInput[];
@@ -99,10 +94,7 @@ const saveTranscribers = (api: TestApi, ...transcribers: Transcriber[]) =>
     method: "PUT",
   });
 
-/**
- * A book with two scripted chapters, the first narrated — through `lexicon` when one is given — and
- * a transcription endpoint on.
- */
+/** Two scripted chapters, the first narrated (through `lexicon` if given), transcription on. */
 async function narrated(
   e = ears(),
   { transcribers = [transcriber()], lexicon = [] as { term: string; say: string }[] } = {},

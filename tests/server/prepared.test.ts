@@ -1,8 +1,6 @@
-// `insertRows` stands in for drizzle's own insert on the writes that repeat by the thousand — a
-// script, an import, the demo's seed — so it has to write exactly what drizzle would: the same
-// values, the same SQLite types, the same defaults for a key left out. The seed's round trip in
-// `schema.test.ts` reads rows back through the mappers, which would not notice a null JSON column
-// written as the text `null` or a boolean stored as text; this compares what SQLite holds.
+// `insertRows` stands in for drizzle's insert on writes that repeat by the thousand, so it must
+// write exactly what drizzle would: values, SQLite types and defaults. The mappers would not notice
+// a null JSON column stored as the text `null` or a boolean as text, so this reads what SQLite holds.
 import { describe, expect, test } from "bun:test";
 import { sql } from "drizzle-orm";
 import type { SQLiteInsertValue } from "drizzle-orm/sqlite-core";

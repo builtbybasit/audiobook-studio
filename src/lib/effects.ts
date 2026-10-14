@@ -3,29 +3,26 @@
 import type { Character, Effect, SegmentType, Step, ThoughtChoice } from "@/types";
 import { personaOwner } from "@/lib/cast";
 
-/** What a line's effects are read from. */
 export interface EffectContext {
-  /** in the library's order, which is the order a line's own effects run in */
+  /** in the library's order, which a line's own effects run in */
   effects: ReadonlyMap<string, Effect>;
   /** the library's thought effect (settings `thoughts`) */
   library: ThoughtChoice;
   /** the book's own; null = follow the library */
   book: ThoughtChoice | null;
-  /** by speaker name; a speaker not in it follows the book, wears nothing and is nobody's persona */
+  /** by speaker name */
   cast: ReadonlyMap<string, Pick<Character, "effect" | "thoughts" | "personaOf">>;
 }
 
-/** The thought effect a speaker's thought lines get: speaker → book → library. */
+/** Speaker → book → library. */
 export function thoughtEffectOf(speaker: string, ctx: EffectContext): Effect | null {
   const choice = ctx.cast.get(speaker)?.thoughts ?? ctx.book ?? ctx.library;
   return choice === "none" ? null : (ctx.effects.get(choice) ?? null);
 }
 
 /**
- * The effects a line is run through, in order: a persona's character's own (the one its
- * `personaOf` names, when that is someone else in the cast), the speaker's own, the line's own
- * (`Segment.effects`) in the library's order, then (thoughts) the thought effect — always last.
- * An id no effect has is passed over.
+ * In order: a persona's character's effect, the speaker's, the line's own in library order, then
+ * for thoughts the thought effect. Unknown ids are skipped.
  */
 export function chainsFor(
   line: { type: SegmentType; speaker: string; effects?: readonly string[] },
@@ -49,7 +46,7 @@ export function chainsFor(
   return out;
 }
 
-/** The steps that run: off steps, off layers and mixes with no layer left are dropped. */
+/** Drops off steps, off layers and mixes with no layer left. */
 export function runnable(steps: Step[]): Step[] {
   const out: Step[] = [];
   for (const s of steps) {
@@ -64,10 +61,7 @@ export function runnable(steps: Step[]): Step[] {
   return out;
 }
 
-/**
- * The fingerprint of what these effects do to a clip, or null when they do nothing — so a clip
- * whose `sound` differs from its line's has the old sound. Names, ids and off steps don't count.
- */
+/** Null when they do nothing. Names, ids and off steps don't count. */
 export function soundOf(effects: Effect[]): string | null {
   const chains = effects.map((e) => runnable(e.chain)).filter((c) => c.length);
   if (!chains.length) return null;
@@ -76,7 +70,7 @@ export function soundOf(effects: Effect[]): string | null {
       ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b)))
       : v,
   );
-  // FNV-1a, 32-bit: enough to tell chains apart, and the same in Bun and the browser
+  // FNV-1a, 32-bit: the same in Bun and the browser
   let h = 0x811c9dc5;
   for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193);
   return (h >>> 0).toString(16).padStart(8, "0");

@@ -1,16 +1,6 @@
-// Every read and write the queue makes.
-//
-// The `jobs` table was laid out to hold the frontend's `Job`, and this file keeps it that way: a
-// row goes out through `toJob` and the Queue page reads it exactly as it reads a simulated one.
-// What the server adds is discipline the browser never needed — a row cannot be queued twice for
-// the same work, a claim moves a row to `running` in the same statement that reads it, and a job
-// the process died holding is found again at the next boot.
-//
-// **`active_key` is the duplicate-request rule, and the database enforces it.** While a job is
-// queued or running its key is `kind:book:chapter`; the moment it finishes the key is cleared. A
-// unique index over the column means a second request for the same work cannot insert a second
-// row whatever order the requests arrive in — SQLite treats NULLs as distinct, so finished jobs
-// never collide with each other or with the one that is live.
+// Every read and write the queue makes; a row goes out as the frontend's `Job` through `toJob`.
+// `active_key` is the duplicate-request rule: `kind:book:chapter` while live, NULL once finished,
+// under a unique index (SQLite treats NULLs as distinct), so the same work cannot be queued twice.
 import { and, asc, desc, eq, inArray, isNotNull, max, sql } from "drizzle-orm";
 
 import type { Job, JobEvent, JobKind, JobStatus } from "@/types";
@@ -18,10 +8,9 @@ import type { Db, Tx } from "~/db/client";
 import { jobEvents, jobs } from "~/db/schema";
 import { toJob } from "~/db/rows";
 
-/** Events kept per job; the frontend keeps the same number, so the two agree on what a full log is. */
+/** Events kept per job; the frontend keeps the same number. */
 export const MAX_JOB_EVENTS = 1000;
 
-/** A job that has not finished is holding its key; one that has is holding nothing. */
 export const activeKey = (kind: JobKind, bookId: string, chapterId: number | null): string =>
   `${kind}:${bookId}:${chapterId ?? "book"}`;
 
@@ -30,15 +19,11 @@ export interface EnqueueInput {
   bookId: string;
   chapterId: number | null;
   label: string;
-  /** the bulk run this job is part of, when several were asked for in one press */
   bulk?: Job["bulk"];
-  /** the live detail the Queue page opens up, and what a handler needs to run it */
   run?: Pick<Job, "scriptRun" | "narrationRun" | "exportRun" | "checkRun">;
   /**
-   * Run in the same transaction, only when the job is created.
-   *
-   * For whatever has to change alongside the row — a chapter marked `queued` — so it cannot land
-   * after the worker has already picked the job up and marked it something else.
+   * Runs in the same transaction, only when the job is created, so a change like a chapter marked
+   * `queued` cannot land after the worker has picked the job up.
    */
   onCreated?(tx: Tx, id: number): void;
 }
@@ -68,7 +53,7 @@ export function getJob(db: Db | Tx, id: number): Job | undefined {
   return row ? withEvents(db, [row])[0] : undefined;
 }
 
-/** Every job, oldest first — the order the Queue page sorts for itself. */
+/** Oldest first. */
 export function listJobs(db: Db | Tx, { bookId }: { bookId?: string } = {}): Job[] {
   const rows = db
     .select()
@@ -80,14 +65,9 @@ export function listJobs(db: Db | Tx, { bookId }: { bookId?: string } = {}): Job
 }
 
 /**
- * Write a book's live jobs' duplicate keys again, from the chapter numbers they now have.
- *
- * A job's `chapter_id` follows a renumbering through its foreign key; `active_key` is a string
- * built from the number and follows nothing. Left alone, a job queued for chapter 7 that became
- * chapter 4 still says `narration:b:7` — so a second request for chapter 4 is not seen as a
- * duplicate and is paid for twice, and the new chapter 7 reads as busy when nothing is running on
- * it. Every key is parked on the job's own id first: `active_key` is unique, and writing chapter
- * 10's new key while chapter 7's job still holds it would collide mid-way.
+ * Rewrite a book's live `active_key`s after a renumbering: `chapter_id` follows by foreign key,
+ * but the key string does not. Keys are parked on the job's own id first, since the column is
+ * unique and rewriting in place would collide mid-way.
  */
 export function rekeyActive(tx: Tx, bookId: string): void {
   const live = tx
@@ -107,7 +87,6 @@ export function rekeyActive(tx: Tx, bookId: string): void {
       .run();
 }
 
-/** The live job for this work, if there is one. */
 export function activeJob(
   db: Db | Tx,
   kind: JobKind,
@@ -122,7 +101,6 @@ export function activeJob(
   return row ? withEvents(db, [row])[0] : undefined;
 }
 
-/** The next run id: one more than any run the queue has seen. */
 export function nextRunId(db: Db | Tx): number {
   return (
     (db
@@ -132,13 +110,7 @@ export function nextRunId(db: Db | Tx): number {
   );
 }
 
-/**
- * Put a job in the queue, or hand back the one already doing this work.
- *
- * Idempotent on purpose: a double click, a retried request or two tabs asking for the same chapter
- * get the same job, and the unique index is what makes that true even if the two requests were to
- * interleave. The caller learns which it got through `created`.
- */
+/** Put a job in the queue, or hand back the live one already doing this work (`created: false`). */
 export function enqueueJob(db: Db, input: EnqueueInput, at = Date.now()): Enqueued {
   return db.transaction((tx) => {
     const existing = activeJob(tx, input.kind, input.bookId, input.chapterId);
@@ -163,8 +135,7 @@ export function enqueueJob(db: Db, input: EnqueueInput, at = Date.now()): Enqueu
         bulkTotal: input.bulk?.total ?? null,
         bulkScope: input.bulk?.scope ?? null,
         run: input.run ?? {},
-        // what the run holds against the book's cap, in the column the budget gate sums, from the
-        // moment the job exists
+        // held against the book's cap from the moment the job exists
         reserved: input.run?.scriptRun?.reserved ?? input.run?.narrationRun?.reserved ?? 0,
       })
       .returning({ id: jobs.id })
@@ -176,11 +147,8 @@ export function enqueueJob(db: Db, input: EnqueueInput, at = Date.now()): Enqueu
 }
 
 /**
- * Move these queued jobs ahead of everything else waiting, keeping their order among themselves.
- *
- * They all take one priority above the highest any queued job has, so moving a whole run moves it
- * as a block, and moving another job after it puts that one ahead again. Jobs that are no longer
- * queued are left alone. Returns the ids that moved.
+ * Move these queued jobs ahead of everything waiting, as a block keeping their own order; returns
+ * the ids that moved.
  */
 export function runNext(db: Db, ids: readonly number[]): number[] {
   if (!ids.length) return [];
@@ -202,12 +170,8 @@ export function runNext(db: Db, ids: readonly number[]): number[] {
 }
 
 /**
- * Take the next queued job — the highest priority, then the oldest — and mark it running, in one
- * transaction. The Queue page lists "Up next" by the same rule (`byRunOrder`).
- *
- * Nothing here looks at `cancelled`: `requestCancel` is the only writer of that flag and it
- * finishes a queued job on the spot, so a queued row is never a cancelled one. Settling a row
- * here instead would do so behind the runner's back, without the handler's `onSettled`.
+ * Claim the next queued job (highest priority, then oldest; `byRunOrder` on the page) and mark it
+ * running. `cancelled` is not checked: `requestCancel` finishes a queued job on the spot.
  */
 export function claimNext(db: Db, at = Date.now()): Job | undefined {
   return db.transaction((tx) => {
@@ -246,12 +210,8 @@ export function claimNext(db: Db, at = Date.now()): Job | undefined {
 }
 
 /**
- * Give back the start a clean stop interrupted.
- *
- * `attempts` is what `recoverInterrupted` weighs against its limit, and it is meant to count the
- * starts that ended with the process dying. A stop is the server being asked to go — a restart to
- * pick up a change, a laptop lid — and a long job interrupted by two of them is not a job that
- * takes the process down. The row stays `running`, so the next start still finds it the one way.
+ * Give back the attempt a clean stop interrupted: `attempts` counts only starts that ended with
+ * the process dying. The row stays `running` for `recoverInterrupted` to find.
  */
 export function handBack(db: Db, id: number): void {
   db.update(jobs)
@@ -267,13 +227,7 @@ export function setProgress(db: Db | Tx, id: number, progress: number): void {
     .run();
 }
 
-/**
- * Replace the live detail the Queue page opens up.
- *
- * A narration job's `run` is settled when it is queued and never moves. A build's does, and so do
- * a scripting job's request counts (`setScriptRun`): which file it is writing and how many chapters it has laid down are the only account of a
- * run that can last minutes, and the Queue reads them by polling the row.
- */
+/** Replace a build's live detail, which the Queue reads by polling the row. */
 export function setRun(db: Db | Tx, id: number, run: NonNullable<Job["exportRun"]>): void {
   db.update(jobs)
     .set({ run: { exportRun: run } })
@@ -281,11 +235,7 @@ export function setRun(db: Db | Tx, id: number, run: NonNullable<Job["exportRun"
     .run();
 }
 
-/**
- * Replace a scripting job's request counts. The profile it was queued with does not move; how
- * many of its chunks are out and how many have come back do, and the Queue and the Scripting page
- * read them off the row the way they read a build's progress.
- */
+/** Replace a scripting job's request counts, and its reservation with them. */
 export function setScriptRun(db: Db | Tx, id: number, run: NonNullable<Job["scriptRun"]>): void {
   db.update(jobs)
     .set({ run: { scriptRun: run }, reserved: run.reserved })
@@ -293,7 +243,6 @@ export function setScriptRun(db: Db | Tx, id: number, run: NonNullable<Job["scri
     .run();
 }
 
-/** Replace a check by ear's counts, which the Queue reads off the row as it reads a build's. */
 export function setCheckRun(db: Db | Tx, id: number, run: NonNullable<Job["checkRun"]>): void {
   db.update(jobs)
     .set({ run: { checkRun: run } })
@@ -301,18 +250,13 @@ export function setCheckRun(db: Db | Tx, id: number, run: NonNullable<Job["check
     .run();
 }
 
-/**
- * Change what a job holds against its book's cap, in the column the budget gate sums and in the
- * run detail the Queue shows. A narration job's reservation moves as its lines settle; a scripting
- * job's moves with its request counts, through `setScriptRun`.
- */
+/** Change what a job holds against its book's cap, in the column and in the run detail. */
 export function setReserved(db: Db | Tx, id: number, reserved: number): void {
   const row = db.select({ run: jobs.run }).from(jobs).where(eq(jobs.id, id)).get();
   if (!row) return;
   db.update(jobs).set(holding(row.run, reserved)).where(eq(jobs.id, id)).run();
 }
 
-/** The columns that say a job holds `reserved`: the one the budget sums, and the run detail's. */
 function holding(run: (typeof jobs.$inferSelect)["run"], reserved: number) {
   const r = run ?? {};
   return {
@@ -325,12 +269,7 @@ function holding(run: (typeof jobs.$inferSelect)["run"], reserved: number) {
   };
 }
 
-/**
- * Record one thing that happened, and keep the log bounded.
- *
- * The oldest events go first once a job has more than `MAX_JOB_EVENTS`, and `dropped_events`
- * counts what is no longer there, so a trimmed log stays honest about it.
- */
+/** Log an event; past `MAX_JOB_EVENTS` the oldest go and `dropped_events` counts them. */
 export function appendEvent(
   db: Db | Tx,
   jobId: number,
@@ -339,7 +278,7 @@ export function appendEvent(
   detail?: JobEvent["detail"],
   at = Date.now(),
 ): void {
-  // A job whose book was removed while it ran is gone, and there is nothing left to say it to.
+  // the job's book may have been removed while it ran
   if (!db.select({ id: jobs.id }).from(jobs).where(eq(jobs.id, jobId)).get()) return;
   const last = db
     .select({ n: max(jobEvents.id) })
@@ -365,11 +304,7 @@ export function appendEvent(
       .run();
 }
 
-/**
- * Settle a job. Its key is released, so the same work can be asked for again, and it holds nothing
- * against its book however it ended: the budget already leaves a finished job out, and the Queue's
- * detail would otherwise show a hold a cancelled or failed run no longer has.
- */
+/** Settle a job: its key is released and its reservation zeroed, however it ended. */
 export function finishJob(
   db: Db | Tx,
   id: number,
@@ -400,10 +335,7 @@ export function finishJob(
   );
 }
 
-/**
- * Ask for a job to stop. Says what state it was in, so the caller knows whether anything is
- * still running that has to notice.
- */
+/** Ask for a job to stop; a queued one finishes now. Returns the state it was in. */
 export function requestCancel(
   db: Db,
   id: number,
@@ -428,13 +360,9 @@ export function requestCancel(
 export type SettledStatus = Extract<JobStatus, "done" | "failed" | "cancelled">;
 
 /**
- * Put a job the process died holding back in the queue — or give up on it.
- *
- * A row still `running` when nothing is running is a job that was interrupted: the server was
- * stopped or crashed with it in flight. It is queued again so the work is not silently lost, up
- * to `maxAttempts` starts in all, because a job that takes the process down every time must not
- * be allowed to do so forever. One that was already being cancelled is finished as cancelled. The
- * jobs settled here are returned so the runner can give their handlers the last word.
+ * At boot, requeue each job still `running`, up to `maxAttempts` starts so a job that crashes the
+ * process cannot loop forever; past that, or if it was being cancelled, settle it. Settled jobs
+ * are returned so the runner can call their handlers.
  */
 export function recoverInterrupted(
   db: Db,
@@ -479,7 +407,7 @@ export function recoverInterrupted(
   });
 }
 
-/** Take a finished job out of the history. A live one stays: cancel it first. */
+/** Finished jobs only; a live one must be cancelled first. */
 export function removeJob(db: Db, id: number): boolean {
   return (
     db
@@ -490,12 +418,11 @@ export function removeJob(db: Db, id: number): boolean {
   );
 }
 
-/** Clear the history. Returns how many went. */
 export function clearFinished(db: Db): number {
   return db.delete(jobs).where(isNotNull(jobs.finishedAt)).returning({ id: jobs.id }).all().length;
 }
 
-/** The most recent jobs first, for a summary line. */
+/** Newest first. */
 export function recentJobs(db: Db, limit: number): Job[] {
   return withEvents(db, db.select().from(jobs).orderBy(desc(jobs.id)).limit(limit).all());
 }

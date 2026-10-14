@@ -1,18 +1,13 @@
-// The contents review, as pure functions over a book's chapters: what state a chapter is in, the
-// counts kept on screen, and the groups a batch decision covers. The store and the page both read
-// these, so the header, the filters and the import button cannot disagree about a number.
+// The contents review, pure over a book's chapters, so the store and page agree on every count.
 import type { Chapter, ContentState, ContentsSummary, NoticeGroup, NoticeKind } from "@/types";
 
-/** A run of a chapter's text, marked when it is an author's note rather than the story. */
 export interface ContentPart {
   text: string;
   notice?: boolean;
 }
 
-/** The parts read as one text, a blank line between each. */
 export const partsText = (parts: ContentPart[]): string => parts.map((p) => p.text).join("\n\n");
 
-/** What each kind of note is called when several are decided together. */
 export const NOTICE_LABEL: Record<NoticeKind, string> = {
   hiatus: "Hiatus announcements",
   health: "Personal updates",
@@ -65,7 +60,7 @@ export function summarize(chapters: Chapter[]): ContentsSummary {
   return out;
 }
 
-/** Notes grouped by kind, largest first, suggested skips before the ones that need a look. */
+/** Largest first, suggested skips before the ones that need a look. */
 export function noticeGroups(chapters: Chapter[]): NoticeGroup[] {
   const by = new Map<NoticeKind, NoticeGroup>();
   for (const c of chapters) {
@@ -95,7 +90,6 @@ export function noticeGroups(chapters: Chapter[]): NoticeGroup[] {
   );
 }
 
-/** The first line of a chapter, for the row under its title. */
 export function excerptOf(text: string, max = 140): string {
   const flat = text.replace(/\s+/g, " ").trim();
   if (flat.length <= max) return flat;
@@ -104,12 +98,12 @@ export function excerptOf(text: string, max = 140): string {
   return (at > max * 0.6 ? cut.slice(0, at) : cut) + "…";
 }
 
-/** “Add to library · 208 chapters”, “Add volume · 34 chapters” — the label says what goes in. */
+/** “Add to library · 208 chapters”, “Add volume · 34 chapters” */
 export function importLabel(kind: "book" | "volume", included: number): string {
   const n = `${included} chapter${included === 1 ? "" : "s"}`;
   return kind === "book" ? `Add to library · ${n}` : `Add volume · ${n}`;
 }
 
-/** “1 chapter”, “1,204 chapters” — grouped, so a long web novel's count still reads at a glance. */
+/** “1 chapter”, “1,204 chapters” */
 export const plural = (n: number, one: string, many = one + "s"): string =>
   `${n.toLocaleString()} ${n === 1 ? one : many}`;

@@ -1,9 +1,7 @@
 <script setup lang="ts">
-// Compact numeric field. No spinner arrows: at this size they eat a third of the box, fire on a
-// stray scroll, and every one of these values is typed or nudged with ↑/↓ anyway (shift = ×10).
-// The field holds a draft while it is being typed and commits on blur or Enter, so a half-typed
-// "0." never reaches the store; an out-of-range or unreadable value snaps back on commit.
-// `empty` makes a blank field mean something (null = "no cap"); without it, clearing reverts.
+// Compact numeric field with no spinner (it eats the box and fires on stray scrolls; ↑/↓ nudge,
+// shift = ×10). Holds a draft until blur or Enter, so a half-typed "0." never reaches the store;
+// out-of-range values snap back. `empty` makes blank commit a value; without it, blank reverts.
 import { computed, ref, watch } from "vue";
 const props = withDefaults(
   defineProps<{
@@ -11,11 +9,11 @@ const props = withDefaults(
     min?: number;
     max?: number;
     step?: number;
-    /** what a blank field commits; leave unset to make blank invalid */
+    /** what a blank field commits; unset makes blank invalid */
     empty?: number | null;
-    /** sits inside the field, before the number ($) */
+    /** e.g. $ */
     prefix?: string;
-    /** sits inside the field, after the number (s, ×, per 1M) */
+    /** e.g. s, ×, per 1M */
     unit?: string;
     placeholder?: string;
     label?: string;

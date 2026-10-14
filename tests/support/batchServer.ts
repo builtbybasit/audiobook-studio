@@ -1,20 +1,12 @@
-// A speech server that speaks the batch speech API (`docs/speech-batch-api.md`), as a `fetch` a
-// provider can be handed: its capabilities, its voices, its batch route answered as a stream of JSON
-// lines, and the one-line `/audio/speech` beside them. Every line is rendered as the fake provider
-// renders one — a tone at the voice's pitch, as long as the words take to say — at 24 kHz.
-//
-// The knobs are the ways a real server behaves that a client has to cope with: limits, an item that
-// fails (for good or for now), the whole batch refused as busy or unreadable, a stream cut off
-// part-way or ended without its `done`, items finished out of order, a slow render with or without
-// `ping`s, and audio that is not what was asked for. Every request is recorded, and the stream stops
-// when the client closes the request, as a real connection would.
+// A fake server for the batch speech API (`docs/speech-batch-api.md`), as a `fetch`. Lines render
+// as the fake provider's tones at 24 kHz. The knobs are what a client must cope with: limits, item
+// failures, whole-batch refusals, cut or `done`-less streams, out-of-order items, pings and wrong
+// audio. Streams stop when the client closes the request.
 import { sleep } from "~/providers/fake";
 import { fakeDuration, toneOf, toneWav } from "~/providers/fakeSpeech";
 
-/** The rate every line is rendered at, as a model's own rate is. */
 export const BATCH_RATE = 24000;
 
-/** An item as the client sent it. */
 export interface SentItem {
   id: string;
   input: string;
@@ -23,7 +15,6 @@ export interface SentItem {
   [field: string]: unknown;
 }
 
-/** A batch request as the client sent it. */
 export interface SentBatch {
   model: string;
   response_format?: string;
@@ -31,7 +22,6 @@ export interface SentBatch {
   [field: string]: unknown;
 }
 
-/** An item's failure, as the stream carries it. */
 export interface ItemFailure {
   code: string;
   message: string;
@@ -39,42 +29,37 @@ export interface ItemFailure {
 }
 
 export interface BatchServerOptions {
-  /** the model it serves; `omnivoice` */
+  /** default `omnivoice` */
   model?: string;
-  /**
-   * What its capabilities say of the model's batches: `max_items` and `max_input_chars`, 16 and
-   * 12000 unless given; null for a model it serves one line at a time. `max_item_chars` beside it.
-   */
+  /** Capabilities' batch limits (default 16 items, 12000 chars); null serves one line at a time. */
   batch?: { max_items?: number | null; max_input_chars?: number | null } | null;
   maxItemChars?: number | null;
-  /** answer the capabilities route with this status and nothing else: 404 for a server without it */
+  /** answer the capabilities route with only this status: 404 for a server without it */
   capabilitiesStatus?: number;
-  /** the voices it has; an item naming another fails `voice_not_found`. Any voice when absent. */
+  /** an item naming another fails `voice_not_found`; any voice when absent */
   voices?: string[];
   /** an item's failure, or null to render it */
   failItem?(item: SentItem, index: number): ItemFailure | null;
   /**
-   * Refuse the first `times` batches whole with `status` — 429 or 503 as busy, 400 as unreadable —
-   * in OpenAI's error shape, naming `retryAfter` seconds when given.
+   * Refuse the first `times` batches whole (429/503 busy, 400 unreadable), in OpenAI's error shape.
    */
   refuse?: { status: number; times: number; retryAfter?: string; code?: string };
   /** cut the connection after this many item lines, without a `done` */
   dropAfter?: number;
   /** end the stream cleanly after every item, but never write `done` */
   noDone?: boolean;
-  /** the places of items it never writes a line for, as a server with a bug would not */
+  /** item places it never writes a line for, as a buggy server would */
   forget?: number[];
-  /** the order items are finished in; the order they were sent unless `reversed` */
   order?: "sent" | "reversed";
-  /** how long each item takes to render, in ms */
+  /** ms */
   itemDelayMs?: number;
-  /** while an item renders, a `ping` this often, in ms */
+  /** ms between `ping`s while an item renders */
   pingEveryMs?: number;
   /** the `format` an item line claims, whatever was asked */
   answerFormat?: string;
   /** base64 to send for an item in place of its tone */
   audioFor?(item: SentItem, index: number): string | null;
-  /** the `usage` an item line carries; the characters and the seconds unless given */
+  /** defaults to the characters and the seconds */
   usageFor?(item: SentItem, duration: number): Record<string, unknown> | undefined;
 }
 
@@ -96,7 +81,6 @@ const refusal = (status: number, code: string, message: string, headers = {}): R
 
 const base64 = (bytes: Uint8Array): string => Buffer.from(bytes).toString("base64");
 
-/** The tone a line is rendered as, and how long it plays. */
 function rendered(item: SentItem): { bytes: Uint8Array; duration: number } {
   const duration = fakeDuration(item.input);
   return { bytes: toneWav(toneOf(item.voice), duration, BATCH_RATE), duration };
@@ -190,8 +174,7 @@ export function batchServer(options: BatchServerOptions = {}) {
           if (options.itemDelayMs) await wait(options.itemDelayMs);
           if (gone()) return;
           if (options.dropAfter !== undefined && n >= options.dropAfter) {
-            // what was written reaches the client before the reset, as it would over a socket;
-            // an errored stream would otherwise throw away what is still queued
+            // what was written reaches the client before the reset, as over a socket
             while ((controller.desiredSize ?? 1) < 1 && !gone())
               await new Promise((r) => setTimeout(r, 1));
             controller.error(new Error("connection reset by peer"));

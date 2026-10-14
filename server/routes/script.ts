@@ -1,11 +1,5 @@
-// A chapter's script, its history and its retakes over HTTP.
-//
-// Reading a script, editing it, naming a checkpoint and forgetting a version each turn into one
-// call on `server/script/ops.ts`. The revision rule and the history rule are there; here a stale
-// `ifRevision` is simply the 409 `app.onError` makes of the refusal. A line's flag is written on its
-// own, naming no revision (`ops.flagLine`). A retake of a line and the verdict on it are the two
-// calls on `server/narration/ops.ts`, addressed under the chapter because a retake is something
-// done to one line of its script.
+// A chapter's script, history and retakes over HTTP. The revision and history rules are in
+// `server/script/ops.ts`; retakes are `server/narration/ops.ts`. A flag names no revision.
 import { Hono } from "hono";
 import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
@@ -38,7 +32,6 @@ const Edit = v.object({
 const Checkpoint = v.object({
   name: v.pipe(v.string(), v.trim(), v.nonEmpty("must not be empty")),
 });
-/** Lines to render another take of, by number. */
 const Retakes = v.object({
   ids: v.pipe(v.array(v.pipe(v.number(), v.integer(), v.minValue(1))), v.minLength(1)),
 });
@@ -52,16 +45,13 @@ const Flag = v.object({
 export function scriptRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
 
-  /** A chapter's script as it stands, and the revision a later write has to name. */
+  /** The script and the revision a later write has to name. */
   app.get("/:id/chapters/:chapterId/script", validate("param", ChapterParam), (c) => {
     const { id, chapterId } = c.req.valid("param");
     return c.json(ops.chapterScript(db, id, chapterId) satisfies ChapterScript);
   });
 
-  /**
-   * Several chapters' scripts at once: `{ scripts: { [chapter]: { segments, revision } } }`, for a
-   * page that reads every script of a long book. A chapter the book does not have is left out.
-   */
+  /** `{ scripts: { [chapter]: { segments, revision } } }`; a chapter not in the book is left out. */
   app.get(
     "/:id/scripts",
     validate("param", BookParam),
@@ -72,7 +62,7 @@ export function scriptRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
     },
   );
 
-  /** Replace the script with what a person made of it, naming the revision they read. */
+  /** Replace the script, naming the revision it was read at. */
   app.put(
     "/:id/chapters/:chapterId/script",
     validate("param", ChapterParam),
@@ -88,7 +78,7 @@ export function scriptRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
     },
   );
 
-  /** What a check by ear heard of the chapter's clips in the book, by line (`HeardLine`). */
+  /** What a check by ear heard, by line (`HeardLine`). */
   app.get("/:id/chapters/:chapterId/heard", validate("param", ChapterParam), (c) => {
     const { id, chapterId } = c.req.valid("param");
     return c.json({ lines: chapterHeard(db, id, chapterId) satisfies ChapterHeard });
@@ -99,7 +89,6 @@ export function scriptRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
     return c.json({ history: ops.chapterHistory(db, id, chapterId) });
   });
 
-  /** Name the script as it stands and keep a copy of it. */
   app.post(
     "/:id/chapters/:chapterId/history/checkpoints",
     validate("param", ChapterParam),
@@ -110,7 +99,7 @@ export function scriptRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
     },
   );
 
-  /** Forget one version. What an Undo of a checkpoint sends. */
+  /** What an Undo of a checkpoint sends. */
   app.delete(
     "/:id/chapters/:chapterId/history/versions/:versionId",
     validate("param", VersionParam),
@@ -121,7 +110,7 @@ export function scriptRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
   );
 
   // ---------- flags ----------
-  /** Raise or replace one line's flag. Answers with the flag as written and the new revision. */
+  /** Answers with the flag as written and the new revision. */
   app.put(
     "/:id/chapters/:chapterId/lines/:segmentId/flag",
     validate("param", LineParam),
@@ -134,7 +123,6 @@ export function scriptRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
     },
   );
 
-  /** Take one line's flag down. */
   app.delete(
     "/:id/chapters/:chapterId/lines/:segmentId/flag",
     validate("param", LineParam),
@@ -145,11 +133,7 @@ export function scriptRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
   );
 
   // ---------- retakes ----------
-  /**
-   * Render another take of these lines, as one job. Answers with the job, the lines it queued and
-   * the ones it left out and why, and the chapters as they now stand, since the one retaken reads
-   * as queued from here on.
-   */
+  /** One job; answers with it, the lines queued and skipped, and the chapters as they now stand. */
   app.post(
     "/:id/chapters/:chapterId/retakes",
     validate("param", ChapterParam),
@@ -170,7 +154,7 @@ export function scriptRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
     },
   );
 
-  /** Keep or drop a line's retake. Answers with the line and the chapter as they now stand. */
+  /** Answers with the line and the chapter as they now stand. */
   app.post(
     "/:id/chapters/:chapterId/lines/:segmentId/verdict",
     validate("param", LineParam),

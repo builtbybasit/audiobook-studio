@@ -1,7 +1,5 @@
-// What one request cost: usage × the rates in force when it completed, kept as a receipt.
-//
-// A receipt is worked out once and kept, never recalculated: the same inputs always give the same
-// figure, and a rate that changes afterwards does not reach a request that was already charged.
+// What one request cost: usage × the rates in force when it completed. A receipt is worked out
+// once and kept, never recalculated, so a later rate change never reaches it.
 import type {
   BillableUnits,
   CostBasis,
@@ -30,25 +28,18 @@ import { USAGE_PROBLEM, uncachedInput, usageTrustworthy } from "./usage";
 
 // ---------- pricing one request ----------
 
-/**
- * Which instant a request is priced at.
- *
- * One rule, stated in one place, and recorded on every receipt: a request is priced at the moment
- * it **completed**. A provider that bills at dispatch, or at the start of the batch, would change
- * this function and nothing else — which is why the rule travels with the receipt rather than being
- * implied by whoever happened to call it.
- */
+/** Recorded on every receipt, so the rule travels with the figure. */
 export const PRICING_RULE = "priced at the rates in force when the request completed";
 
 export interface PriceOptions {
-  /** the instant to read rates at; the caller decides, and says so with `rule` */
+  /** the caller decides, and says so with `rule` */
   at: number;
   rule?: string;
   /** trust a charge the provider reported over our own arithmetic */
   preferReported?: boolean;
 }
 
-/** Usage × the rates in force at one instant. The result is a receipt: keep it, never redo it. */
+/** The result is a receipt: keep it, never redo it. */
 export function priceRequest(
   base: RateSet,
   config: PricingConfig,
@@ -80,18 +71,14 @@ export function priceRequest(
   const ordinary = uncachedInput(usage);
 
   if (cached == null) {
-    // Never present an assumed cache miss as a fact. The whole input is charged at the ordinary
-    // rate because that is the usual reading, and the figure is labelled an estimate.
+    // an assumed cache miss is labelled an estimate, never presented as fact
     push(
       "input",
       usage.inputTokens - written,
       r.input.rate,
       "the provider did not report cached tokens, so all of it is charged at the ordinary rate",
     );
-    // …and that is only an *upper* bound where the ordinary rate is the dearest an input token can
-    // be charged at. An endpoint whose cached rate is higher than its input rate could have cost
-    // more than this, so the sentence says which way the uncertainty runs rather than claiming the
-    // reassuring direction on every card.
+    // only an upper bound when the cached rate is not dearer than the ordinary one
     const cachedDearer =
       r.cachedInput.rate != null && r.input.rate != null && r.cachedInput.rate > r.input.rate;
     unknowns.push(
@@ -162,11 +149,9 @@ export function priceRequest(
 // ---------- pricing one speech request ----------
 
 export interface SpeechPriceOptions extends PriceOptions {
-  /** what the provider reported for this request, when it reported anything */
   reported?: SpeechUsage | null;
 }
 
-/** What the provider said about the quantity this component is charged on, or `null`. */
 function reportedQuantity(
   component: RateComponent,
   unit: TtsBillingUnit,
@@ -189,23 +174,9 @@ function reportedQuantity(
 }
 
 /**
- * What one rendered clip cost, at the rates in force when it landed.
- *
- * The same rule as the LLM side and for the same reason: a bulk run over a book takes minutes, and
- * an off-peak window closing or a promotion expiring part-way through has to charge the clips
- * either side of it differently.
- *
- * Three things are kept apart in the answer, because they are three different claims:
- *
- *   provider-reported  the provider told us what it charged, and that is the figure
- *   calculated         every quantity charged was either reported by the provider or is exactly
- *                      known here — the characters we submitted, the requests we split it into
- *   estimated          a charged quantity had to be worked out rather than counted: audio tokens
- *                      from a duration, text tokens from a character count
- *
- * `audioSeconds` is `0` for a clip that failed — a per-minute or audio-token endpoint therefore
- * charges it nothing, while a per-character, per-byte or per-request one still charges for what was
- * sent, which is what those providers actually do.
+ * What one clip cost, at the rates in force when it landed. "calculated" means every quantity was
+ * reported or counted exactly; "estimated" means one was derived (audio tokens from duration, text
+ * tokens from characters). A failed clip has 0 audio seconds but still pays for what was sent.
  */
 export function priceSpeechRequest(
   billing: TtsBilling,
@@ -217,8 +188,6 @@ export function priceSpeechRequest(
   const reported = opts.reported ?? null;
   const unknowns: string[] = [];
   const lines: SpeechChargeLine[] = [];
-  // an audio quantity is a measurement of what came back; everything else is a count of what we
-  // sent, which we know exactly
   const estimatedHere = (c: RateComponent): boolean => c === "audioTokens" || c === "textTokens";
 
   for (const c of speechComponents(billing.unit)) {
@@ -296,7 +265,7 @@ export function priceSpeechRequest(
   };
 }
 
-/** Every step that moved any of this charge's rates off the card, in order. */
+/** Every step that moved this charge's rates off the card, in order. */
 export const speechWhy = (charge: SpeechCharge): string[] => [
   ...new Set(charge.lines.flatMap((l) => l.why)),
 ];

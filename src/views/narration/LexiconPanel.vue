@@ -3,11 +3,9 @@ import { useCastStore } from "@/stores/cast";
 import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 
-// How this book is *said*: the pronunciation dictionary on the left, the pacing defaults on the right.
-// Neither one edits the book — a term is swapped on its way to the endpoint and silence is stitched
-// between clips — but they differ in cost: a respelling needs the line rendered again, a pause
-// between lines does not (a pause inside one does).
-// Click a term for its preview against a real line, plus match-case and a note.
+// How this book is *said*: the pronunciation dictionary and the pacing defaults. Neither edits the
+// book, but a respelling or a pause inside a line needs the line rendered again; a pause between
+// lines does not.
 import { computed, nextTick, ref } from "vue";
 
 import { UiCheckbox, UiHint, UiNumber, UiSwitch } from "@/ui";
@@ -33,7 +31,7 @@ const term = ref("");
 const say = ref("");
 const termBox = ref<HTMLInputElement | null>(null);
 const rows = ref<HTMLElement | null>(null);
-// one column template for the add form and every row, so the two fields line up down the list
+// shared by the add form and every row, so the fields line up
 const GRID =
   "grid grid-cols-[minmax(0,1fr)_0.75rem_minmax(0,1fr)_2.75rem_1.75rem_1.25rem] items-center gap-1.5";
 const unused = computed(() => list.value.filter((e) => !uses.value[e.id]).length);
@@ -72,17 +70,14 @@ const said = (e: LexEntry) => speak(sample(e), [{ ...e, enabled: true }]).text;
 const staleChapters = computed(() =>
   libraryStore.chaptersOf(props.bookId).filter((c) => c.narration === "stale"),
 );
-// The count is the store's own list, not a second copy of it: `changedSegments` is the stale clips
-// *and*, in a chapter that has been narrated, the lines that were never rendered — both of which
-// the run below re-renders — so counting only the stale ones here promised N and rendered more.
+// `changedSegments` also holds never-rendered lines, which the run below renders too.
 const staleLines = computed(() =>
   staleChapters.value.reduce(
     (a, c) => a + narrationStore.changedSegments(props.bookId, c.id).length,
     0,
   ),
 );
-// One run over every stale chapter at the "missing & changed" scope, which is what
-// `renarrateStale` asks of one chapter: the server works out the lines from the clips it holds.
+// The "missing & changed" scope, as `renarrateStale`; the server picks the lines.
 function renarrate() {
   void narrationStore.startRun(
     props.bookId,
@@ -101,7 +96,6 @@ const INLINE = [
 
 <template>
   <div class="grid min-w-0 grid-cols-1 md:grid-cols-[minmax(0,1fr)_270px]">
-    <!-- dictionary -->
     <div class="min-w-0 p-3 sm:p-4">
       <div class="mb-2 flex flex-wrap items-baseline gap-x-2">
         <span class="label">Dictionary</span>
@@ -263,7 +257,6 @@ const INLINE = [
       </div>
     </div>
 
-    <!-- pacing -->
     <div
       class="min-w-0 border-t border-zinc-200 p-3 sm:p-4 md:border-l md:border-t-0 dark:border-zinc-800"
     >

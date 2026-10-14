@@ -1,13 +1,6 @@
-// A cover image: kept from the EPUB, chosen for an audiobook, and written into the file — with
-// the book's title, author and narrator beside it, which go into the file the same way.
-//
-// Until this slice a book's cover was two colours, and the Export page's picture travelled inside
-// the build's JSON as a data URL that nothing ever wrote anywhere. Here the EPUB's own cover is
-// kept when the book is imported, an image chosen for an audiobook is uploaded and named by the
-// address it was given, and a build hands whichever applies to the encoder. The ffmpeg half is
-// read back out of the file it wrote, with ffprobe, because "embedded" is a claim about bytes. So
-// are the tags: the Export page has asked for a title, an author and a narrator since it was
-// drawn, and until this slice they were kept on the export's row and written nowhere.
+// A cover image (kept from the EPUB, or chosen for an audiobook) and the title, author and
+// narrator, written into the built file. The ffmpeg half is read back with ffprobe, because
+// "embedded" is a claim about bytes.
 import { describe, expect, test } from "bun:test";
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -27,8 +20,7 @@ interface Failure {
   error: { code: string; message: string; detail?: string };
 }
 
-// Two chapters of one line each, a few seconds of audio: the length of the audio is an ffmpeg
-// build's cost, and nothing here is about how long a chapter is.
+// Two chapters of one line each: audio length is an ffmpeg build's cost, and irrelevant here.
 const TWO: [string, string][] = [
   ["One", line("One")],
   ["Two", line("Two")],

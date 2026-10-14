@@ -1,11 +1,5 @@
-// A shelf with more books than a glance can hold. The four seeded books never made the Library
-// cope with twenty, so this is the set the "A full shelf" demo row adds: each borrows an import
-// sample's chapters and is left at one point in the pipeline, so the search, filters and sort on
-// the shelf have something to work against.
-//
-// The states are the ones the shelf tells apart: nothing run, part scripted, part narrated,
-// failed scripting, stale audio, everything narrated but no audiobook, an audiobook that matches
-// the book, and one the book has moved on from.
+// The books the "A full shelf" demo row adds, each borrowing an import sample's chapters and left
+// in one of the pipeline states the shelf tells apart, for its search, filters and sort.
 export type ShelfState =
   | "fresh"
   | "scripting"
@@ -24,7 +18,7 @@ export interface ShelfBook {
   /** which import sample supplies the chapters */
   sample: string;
   state: ShelfState;
-  /** ISO date, so the shelf can sort by it */
+  /** ISO date */
   addedAt: string;
 }
 

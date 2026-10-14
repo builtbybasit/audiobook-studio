@@ -10,7 +10,7 @@ interface UiState {
   /** the desktop sidebar widened to show labels; icons only otherwise */
   railExpanded: boolean;
   currentBookId: string | null;
-  /** the chapter each book is open on — see `openChapter` */
+  /** the chapter each book is open on; see `openChapter` */
   currentChapter: Record<string, number>;
 }
 export const useUiStore = defineStore("ui", {
@@ -29,16 +29,13 @@ export const useUiStore = defineStore("ui", {
   },
   actions: {
     // ---------- which chapter the book is open on ----------
-    // Each stage used to choose its own chapter — scripting opened the first unverified one,
-    // narration the first stale one — so walking from Scripting to Narration landed you somewhere
-    // else and you had to find your place again. The book remembers one chapter instead, and every
-    // stage opens on it; `?ch=` in the URL still wins, and a stage only falls back to its own pick
-    // when the book has no chapter yet.
+    // Every stage opens on the book's one remembered chapter, so moving between stages keeps your
+    // place. `?ch=` wins; a stage falls back to its own pick only when there is none.
     /** Remember the chapter this book is being worked on. */
     openChapter(bookId: string, chapterId: number): void {
       this.currentChapter[bookId] = chapterId;
     },
-    /** That chapter, if it is still one of `chapters` — a book can lose one to a re-import. */
+    /** That chapter, if it is still one of `chapters`; a re-import can remove one. */
     chapterIn(bookId: string, chapters: { id: number }[]): number | null {
       const id = this.currentChapter[bookId];
       return id && chapters.some((c) => c.id === id) ? id : null;
@@ -136,7 +133,7 @@ export const useUiStore = defineStore("ui", {
       result.catch(() => {}); // the error toast is the handling; callers decide what else to do with `promise`
       return result;
     },
-    /** Take one specific undo — the batch's own — rather than whatever is latest. */
+    /** Take one specific undo (the batch's own) rather than whatever is latest. */
     revertEntry(entry: UndoEntry): void {
       this._revert(entry);
     },

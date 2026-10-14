@@ -1,12 +1,8 @@
-// The hand-authored source for every book in the mock library: its cast, its chapter titles, and
-// the pools of narration, thought and dialogue the script generator draws lines from.
-//
-// These seeds are read-only. Everything built from them copies what it takes (`makeCharacters`
-// clones each cast entry's aliases, `generateSegments` only ever reads strings), so no scenario can
-// reach back and change what the next call to `makeWorld()` produces.
+// Hand-authored source for every demo book: cast, chapter titles, and the line pools the script
+// generator draws from. Read-only: everything built from them copies what it takes.
 import type { Gender } from "@/types";
 
-/** One character as written in the seed data, before voices and colours are assigned. */
+/** Before voices and colours are assigned. */
 export interface CastSeed {
   name: string;
   aliases: string[];
@@ -14,7 +10,6 @@ export interface CastSeed {
   description: string;
 }
 
-/** The hand-authored source for one book; `makeWorld` expands it into the real entities. */
 export interface BookSeed {
   id: string;
   title: string;
@@ -142,8 +137,7 @@ export const BOOK_SEEDS: BookSeed[] = [
         "The path of cultivation is not a path of shortcuts, child.",
         "Three days. Not an hour more.",
         "You remind me of someone I once buried.",
-        // the dictionary rewrites "outer sect" into Hanzi on the way to the endpoint, so this
-        // speaker's requests are measurably more UTF-8 bytes than characters
+        // "outer sect" becomes Hanzi via the dictionary: more UTF-8 bytes than characters
         "The outer sect has kept worse than you, and buried better.",
       ],
       "Xiao Lan": [
@@ -158,9 +152,7 @@ export const BOOK_SEEDS: BookSeed[] = [
       ],
     },
   },
-  // A long-running web serial: the case the Export page has to survive. 214 chapters over six
-  // volumes, so the chapter list, the plan, the file names and the update analysis are all exercised
-  // at a scale a three-volume novel never reaches.
+  // A long web serial (214 chapters, six volumes) to exercise the Export page at scale.
   {
     id: "gates",
     title: "Thousand Gates of the Ninth Heaven",
@@ -500,8 +492,7 @@ export const MINOR_LINES: string[] = [
   "Careful. The steps are wet.",
 ];
 
-/** The seed one book was written from. Throws rather than returning undefined: every id the app
- *  can reach a mock generator with came from this list in the first place. */
+/** Throws for an unknown id: every id a generator gets came from this list. */
 export function bookSeed(id: string): BookSeed {
   const seed = BOOK_SEEDS.find((b) => b.id === id);
   if (!seed) throw new Error(`no mock book seed for “${id}”`);

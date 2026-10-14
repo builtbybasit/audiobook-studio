@@ -1,26 +1,7 @@
-// A scripting provider that asks a chat-completions model to attribute the prose.
-//
-// Most hosted models, and most gateways in front of them, speak the OpenAI `POST
-// /chat/completions` shape, so one provider reaches all of them: the profile the run was queued
-// with names the base URL, the model and the key, and this file names nothing. One request per
-// chunk — the job has already cut the chapter into the pieces the profile allows.
-//
-// What comes back is not trusted. A model asked for JSON may wrap it in a Markdown fence (the
-// gateway this was first run against does, `response_format` or not), call a line "speech" rather
-// than "dialogue", or run out of output tokens halfway through a line. Worse, it may tidy the
-// prose: drop a sentence it thought redundant, summarise a paragraph, fix a word. An audiobook
-// that silently skips text is the worst thing this app could make, so every answer is checked word
-// for word against what was sent (`fidelity`) and refused, saying how much went missing, when it
-// does not match — except for a prompt trial (`input.lenient`), which is shown the lines and the
-// check beside them rather than the refusal. Every other refusal holds for a trial too.
-//
-// Every request that reaches the wire is reported through `input.sent` with the usage the answer
-// carried, whether its script was accepted or refused: a model that was cut off or dropped a
-// sentence was still billed for it. One cancelled once it was out is reported too, as `cancelled`,
-// with the usage its answer carried if it had already come back. See `sent.ts`.
-//
-// The profile's reasoning level is added as its host spells it (`@/lib/reasoning`), and
-// `temperature` is left out where that host refuses or ignores it beside a reasoning level.
+// Scripting through any OpenAI-shaped `POST /chat/completions`, one request per chunk. Answers are
+// not trusted (fenced JSON, odd types, truncation, tidied prose): each is checked word for word
+// (`fidelity`) and refused on a mismatch, except in a prompt trial (`input.lenient`). Every request
+// on the wire is reported through `input.sent`, refused or not, since it was billed (`sent.ts`).
 import * as v from "valibot";
 
 import type {
@@ -63,16 +44,12 @@ import type {
 import type { SentScript } from "~/providers/sent";
 
 export interface ChatScriptingOptions {
-  /** injected by tests; the real one otherwise */
   fetch?: typeof fetch;
-  /** the wait before a retry that the answer named none for; tests make it 0 */
+  /** the wait before a retry the answer named none for; tests make it 0 */
   backoffMs?: CallOptions["backoffMs"];
 }
 
-/**
- * The built-in prompt for one request, for a caller that rendered none: the chapter's title, the
- * cast and the text, with nothing known of the book.
- */
+/** The built-in prompt for a caller that rendered none, knowing nothing of the book. */
 export function builtInPrompt(
   title: string,
   cast: readonly string[],
@@ -94,25 +71,21 @@ export function builtInPrompt(
 
 /** How much of the prose sent came back as the script's words, and how much was made up. */
 export interface Fidelity {
-  /** the words the input had */
   words: number;
-  /** input words the answer did not have, counted with repeats */
+  /** counted with repeats */
   missing: number;
-  /** words the answer had that the input did not */
   added: number;
   /** a few of the missing words, for the message */
   examples: string[];
-  /** within tolerance: at most 2% of the words either way, and never less than one */
+  /** at most TOLERANCE of the words either way, and never less than one */
   ok: boolean;
 }
 
-/** The share of words that may differ either way before an answer is refused. */
 const TOLERANCE = 0.02;
 
 /**
- * Whether `lines` read out `input`: every word once, nothing invented. Compared as a count of
- * each word rather than in order — cheap on a long chunk, and what goes wrong in practice is a
- * sentence dropped or rewritten, which a count sees.
+ * Whether `lines` read out `input`: every word once, nothing invented. Compares word counts, not
+ * order: cheap, and a dropped or rewritten sentence still shows.
  */
 export function fidelity(input: string, lines: readonly { text: string }[]): Fidelity {
   const want = wordsOf(input);
@@ -150,12 +123,12 @@ const Line = v.object({
   speaker: v.optional(v.nullable(v.string()), ""),
   text: v.optional(v.nullable(v.string()), ""),
   direction: v.optional(v.nullable(v.string())),
-  // read apart, like the notes below: a malformed list must not cost a good script
+  // read apart: a malformed list must not cost a good script
   effects: v.optional(v.unknown()),
 });
 const Answer = v.object({
   lines: v.array(Line),
-  // read apart from the lines, item by item: a malformed note must not cost a good script
+  // read apart, item by item: a malformed note must not cost a good script
   cast: v.optional(v.unknown()),
   recap: v.optional(v.unknown()),
 });
@@ -168,10 +141,8 @@ const CastNote = v.object({
   personaOf: v.optional(v.unknown()),
 });
 
-/** The longest a line effect's name can be; anything longer is not one of the names offered. */
 const EFFECT_NAME_MAX = 80;
 
-/** The line effects a line names, each once: what is not a short string is passed over. */
 function effectsOf(said: unknown): string[] {
   if (!Array.isArray(said)) return [];
   const names = said
@@ -181,12 +152,10 @@ function effectsOf(said: unknown): string[] {
   return [...new Set(names)];
 }
 
-/** The longest description kept from a model, which a chatty one can run to a paragraph. */
 const DESCRIPTION_MAX = 300;
 
 const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
 
-/** A gender as a model may spell it. */
 function genderOf(said: string | null | undefined): Gender {
   const g = (said ?? "").trim().toLowerCase();
   if (/^(?:non[- ]?binary|nb|enby|n)$/.test(g)) return "n";
@@ -195,10 +164,7 @@ function genderOf(said: string | null | undefined): Gender {
   return "?";
 }
 
-/**
- * What an answer says of its speakers, the entries that can be read: one with no name, or naming
- * the Narrator or "Unknown", says nothing about anyone, and an alias that is the name is none.
- */
+/** The readable cast notes, skipping the Narrator, "Unknown" and aliases equal to the name. */
 function castOf(said: unknown): PromptCastMember[] {
   if (!Array.isArray(said)) return [];
   const out: PromptCastMember[] = [];
@@ -210,7 +176,7 @@ function castOf(said: unknown): PromptCastMember[] {
     const aliases = [
       ...new Set((read.output.aliases ?? []).map(oneLine).filter((a) => a && a !== name)),
     ];
-    // a disguise: whose it is, or that nobody knows yet; what is not a name says neither
+    // a disguise: whose it is, or that nobody knows yet
     const of = typeof read.output.personaOf === "string" ? oneLine(read.output.personaOf) : "";
     const unknown = /^(?:unknown|someone unknown|\?)$/i.test(of);
     out.push({
@@ -237,12 +203,8 @@ const Completion = v.object({
 });
 
 /**
- * The `usage` block of a completion, read on its own: a gateway that sends a malformed one must not
- * cost a good script, so it is checked apart from the answer and simply read as not reported.
- *
- * It is a loose object on purpose. OpenRouter adds `usage.cost` to every answer, unasked — what the
- * request was charged, in its credits, which are US dollars, at whichever provider served it — and
- * that rides through to `normalizeUsage`, which keeps it as the reported cost beside the tokens.
+ * `usage`, read apart from the answer so a malformed one cannot cost a good script. Loose on
+ * purpose: OpenRouter's unasked `usage.cost` (US dollars) rides through to `normalizeUsage`.
  */
 const Metered = v.looseObject({
   usage: v.looseObject({
@@ -254,16 +216,13 @@ const Metered = v.looseObject({
   }),
 });
 
-/** What a completion says it used, normalized; null when it said nothing readable. */
+/** null when the completion said nothing readable. */
 export function usageOf(body: unknown): TokenUsage | null {
   const read = v.safeParse(Metered, body);
   return read.success ? normalizeUsage(read.output.usage, "openai") : null;
 }
 
-/**
- * `usage.completion_tokens_details.reasoning_tokens`: the thinking a completion was billed for, where
- * OpenAI, OpenRouter and DeepSeek document it. Read as loosely as `Metered`, and apart from it.
- */
+/** Billed thinking, where OpenAI, OpenRouter and DeepSeek document it; read apart from `Metered`. */
 const Reasoned = v.looseObject({
   usage: v.looseObject({
     completion_tokens_details: v.looseObject({
@@ -272,21 +231,16 @@ const Reasoned = v.looseObject({
   }),
 });
 
-/** The reasoning tokens a completion says it spent; null when it said nothing readable. */
 function reasoningTokensOf(body: unknown): number | null {
   const read = v.safeParse(Reasoned, body);
   return read.success ? read.output.usage.completion_tokens_details.reasoning_tokens : null;
 }
 
-/**
- * How a model may spell the two types that are not the story. Site text first, since "site note"
- * is still the site's; a note is anything that says it is one, or names who wrote it.
- */
+// Site text is tested first: "site note" is still the site's.
 const WATERMARK_SPELLING = /^(?:watermark|site\b|site[-_ ]?text|boilerplate|ads?\b|advert)/;
 const NOTE_SPELLING =
   /^(?:(?:t\/?l|tn|translator'?s?|author'?s?|editor'?s?)(?:[-_ ]?notes?)?\b|a\/n\b|notes?\b)/;
 
-/** A type as a model may spell it, read as the one it means. */
 function typeOf(said: string, speaker: string): SegmentType {
   const t = said.trim().toLowerCase();
   if (t.startsWith("narrat")) return "narration";
@@ -298,14 +252,13 @@ function typeOf(said: string, speaker: string): SegmentType {
   return speaker === NARRATOR || !speaker ? "narration" : "dialogue";
 }
 
-/** Types a character speaks, whose words a model may have left in their quotation marks. */
 const voiced = (type: SegmentType): boolean => type === "dialogue" || type === "thought";
 
-/** Quotation marks a model left around a spoken line, and the space after the opening ones. */
+/** Quotation marks a model left around a spoken line. */
 const WRAPPING_QUOTES = /^["“”]+|["“”]+$/gu;
 const OPENING_QUOTES = /^["“”]+\s*/u;
 
-/** A fenced or chatty answer's JSON object: the span from its first `{` to its last `}`. */
+/** A fenced or chatty answer's JSON: from its first `{` to its last `}`. */
 function jsonIn(content: string): unknown {
   const unfenced = content.replace(/```(?:json)?/gi, "");
   const from = unfenced.indexOf("{");
@@ -315,9 +268,8 @@ function jsonIn(content: string): unknown {
 }
 
 /**
- * The script an answer's content holds, normalised, with the expression tags read out of each
- * line's text in the marker `excerpt` was told; throws a readable `ProviderError` otherwise — for
- * a marker left in a line too, which only the model can have written and nothing could read.
+ * The normalised script, tags read in the marker `excerpt` was given. Throws a `ProviderError`
+ * otherwise, and for a marker left in a line (the model wrote one nothing can read).
  */
 export function answerOf(content: string, who: string, excerpt?: string): ScriptAnswer {
   const marker = excerpt === undefined ? null : scriptMarkerFor(excerpt);
@@ -356,13 +308,13 @@ export function answerOf(content: string, who: string, excerpt?: string): Script
       text = text.replace(WRAPPING_QUOTES, "").trim();
       tags = shiftTags(tags, lead, text.length);
     }
-    // a line with no words — a stray dash, an ellipsis — has nothing to read out
+    // a stray dash or ellipsis has nothing to read out
     if (!wordsOf(text).length) continue;
     const direction = (l.direction ?? "").trim();
     const effects = effectsOf(l.effects);
     out.push({
       type,
-      // site text and notes are nobody's lines but the page's, whoever the model said
+      // site text and notes are the page's, whoever the model said
       speaker: voiced(type) ? speaker || UNKNOWN_SPEAKER : NARRATOR,
       text,
       ...(direction ? { direction } : {}),
@@ -375,9 +327,8 @@ export function answerOf(content: string, who: string, excerpt?: string): Script
 }
 
 /**
- * The script a model's final message holds, checked against the prose it was sent: something
- * there, a script of some lines, and every word copied — or, `lenient`, the lines whatever the
- * word check says. Throws what is wrong, as a `ProviderError` with `status` and naming `who`.
+ * The script in a model's final message, checked against the prose sent (`lenient` skips only the
+ * word check). Throws a `ProviderError` with `status`.
  */
 export function checkedScript(
   who: string,
@@ -388,7 +339,7 @@ export function checkedScript(
 ): ScriptAnswer {
   if (!content.trim())
     throw new ProviderError(`${who} answered with no script at all`, status, false);
-  // the excerpt names the marker, as it did for the prompt this answers
+  // the excerpt picks the marker, as it did for the prompt
   const answer = answerOf(content, who, text);
   const { lines } = answer;
   if (!lines.length)
@@ -412,13 +363,11 @@ export function checkedScript(
 // ---------------------------------------------------------------------------------------------
 // The Test button
 
-/** Two sentences and one quote: what the Test button sends. */
 const PROBE_TEXT = "The lamp guttered in the draught. “Is someone there?” Mara whispered.";
 
 /**
- * The Test button for any provider that sends a rendered prompt: the template the profile's runs
- * would be sent, filled in around two sentences, through `send`, and what came back said in one
- * line. Never throws but for a cancel: a refusal is an answer that is not ok.
+ * The Test button for any provider that sends a rendered prompt: the profile's template around
+ * PROBE_TEXT, through `send`. Throws only on cancel; a refusal comes back as not ok.
  */
 export async function probeWith(
   target: ScriptTarget,
@@ -461,22 +410,17 @@ export async function probeWith(
 // ---------------------------------------------------------------------------------------------
 // The provider
 
-/** What an answer said: its message's content, or the whole body when it is not a completion. */
+/** The message's content, or the whole body when it is not a completion. */
 function said(raw: unknown): string {
   const read = v.safeParse(Completion, raw);
   const content = read.success ? read.output.choices[0].message?.content : null;
   return content || (raw === undefined ? "" : JSON.stringify(raw, null, 2));
 }
 
-/** Said to a run that reached a real provider with no profile to send it to. */
 export const NO_PROFILE =
   "This run named no scripting profile; choose one on the Scripting page and run it again";
 
-/**
- * The provider that sends each chunk to `{baseUrl}/chat/completions` of the profile the run was
- * queued with. Refuses a run with no profile, and a profile that needs a key with none saved,
- * before any request.
- */
+/** Refuses a run with no profile, or a keyed profile with no key, before any request. */
 export function chatScriptingProvider(options: ChatScriptingOptions = {}): ScriptingProvider {
   async function request(
     target: ScriptTarget,
@@ -501,7 +445,6 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
     };
     const stats: CallStats = { attempts: 0, rateLimited: false };
     const startedAt = Date.now();
-    /** The one report for this request: what it used, and how it ended. */
     const report = (
       usage: TokenUsage | null,
       error?: ProviderError,
@@ -518,10 +461,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
         simulated: false,
         usage,
       });
-    /**
-     * Stopped by the job: reported once the request went out, since the provider may have started
-     * on it and billed it, with whatever its answer said it used if that had come back.
-     */
+    // Reported only once the request went out: the provider may have billed it.
     const cancelled = (usage: TokenUsage | null = null): never => {
       if (stats.attempts) report(usage, undefined, undefined, "cancelled");
       throw signal.reason;
@@ -541,7 +481,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
       throw e;
     }
 
-    // From here the request was answered, and whatever is refused below was billed as it stands.
+    // From here the request was billed, whatever is refused below.
     let raw: unknown;
     try {
       raw = await res.json();
@@ -556,16 +496,12 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
       report(usage);
       return { answer, reasoningTokens };
     } catch (e) {
-      // the answer was refused for what it said, so keep what it said for the Activity tab
+      // keep what a refused answer said, for the Activity tab
       if (e instanceof ProviderError) report(usage, e, said(raw));
       throw e;
     }
   }
 
-  /**
-   * The script an answer holds, checked against the prose it was sent; throws what is wrong. A
-   * lenient read hands back lines that fail the word check instead of refusing them.
-   */
   function readAnswer(
     target: ScriptTarget,
     text: string,
@@ -584,7 +520,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
     const [choice] = completion.choices;
     if (choice.finish_reason === "length") {
       const cap = target.maxOutputTokens || "the model’s own limit";
-      // a level other than off asked the model to think, and its thinking counts against the cap
+      // thinking counts against the cap
       const remedy =
         target.reasoning && target.reasoning !== "off"
           ? "raise it or lower the reasoning level on the Endpoints page (the model’s thinking counts against it)"

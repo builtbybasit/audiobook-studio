@@ -1,9 +1,5 @@
-// What the server writes down, and what it must never write down.
-//
-// The redaction list is the reason the logger is a module rather than a bare `pino()` call, so it
-// is the part with the most tests: a credential reaching a log line is in a file, a scrollback and
-// possibly a log shipper, and no amount of care at the call site is a guarantee the way a rule at
-// the logger is.
+// What the server writes down, and what it must never write down. Redaction lives in the logger:
+// a credential in a log line reaches files and shippers, and a rule there beats care at call sites.
 import { describe, expect, test } from "bun:test";
 
 import { createLogger } from "~/log";

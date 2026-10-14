@@ -1,6 +1,5 @@
 <script setup lang="ts">
-// The shelf as a grid of covers; everything a book has to say sits under its cover. Best when
-// the shelf is short and books are told apart by sight.
+// The shelf as a grid of covers.
 import type { Book } from "@/types";
 import type { PickedFile } from "@/components/addEpub";
 import BookCard from "@/views/library/BookCard.vue";

@@ -1,8 +1,4 @@
-// The GFM plugin ships no types, and its whole surface is one function.
-//
-// Declared here rather than pulled from DefinitelyTyped, which has no entry for the maintained
-// Joplin fork. `gfm` is the bundle of the four rules — tables, strikethrough, task lists and
-// fenced code — applied to a Turndown instance by `service.use(gfm)`.
+// The Joplin GFM plugin ships no types and DefinitelyTyped has none for this fork.
 declare module "@joplin/turndown-plugin-gfm" {
   import type TurndownService from "turndown";
   export const gfm: TurndownService.Plugin;

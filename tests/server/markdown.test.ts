@@ -1,10 +1,6 @@
-// The chapter text, as Markdown, and the two ways back out of it.
-//
-// Two things are worth a test of their own here. The converter is loaded through a bracket that
-// hides `window` — because Turndown chooses its HTML parser once, from `window.DOMParser`, and this
-// repository contains both halves of that trap. And `plainText` is what stands between the stored
-// Markdown and a speech provider that would otherwise read a heading's `##` out loud and bill for
-// it, so what it drops and what it keeps is a contract rather than a detail.
+// The chapter text as Markdown, and the two ways back out. The converter loads behind a bracket
+// that hides `window`: Turndown picks its HTML parser once, from `window.DOMParser`. `plainText`
+// keeps a speech provider from reading (and billing) a heading's `##`, so its output is a contract.
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { DOMParser } from "linkedom";
@@ -26,9 +22,8 @@ afterEach(() => {
 
 describe("loading the converter", () => {
   test("a window stub carrying a DOMParser does not change what a table converts to", async () => {
-    // Bound to linkedom instead of the DOM it ships with, Turndown's table plugin stops matching
-    // and this collapses to "DayChapterMondayCh 1" — the exact `textContent` damage the extractor
-    // exists to avoid, arriving silently and only in some import orders.
+    // Bound to linkedom's DOM, Turndown's table plugin stops matching and this collapses to
+    // "DayChapterMondayCh 1", silently and only in some import orders.
     globals.window = { DOMParser };
     expect(await toMarkdown(TABLE)).toBe("| Day | Chapter |\n| --- | --- |\n| Monday | Ch 1 |");
   });
@@ -95,8 +90,7 @@ describe("loading the converter", () => {
   });
 });
 
-// A heading, a link, a table and an escaped star are read back beside the conversion that writes
-// them, in epubImport.test.ts ("extracting a section's text"); these are the cases only this end has.
+// The conversion's own round-trips are in epubImport.test.ts.
 describe("reading the stored Markdown back", () => {
   test("a list loses its bullets and keeps its items apart", () => {
     expect(plainText("-   Monday\n-   Friday")).toBe("Monday\n\nFriday");
@@ -141,11 +135,8 @@ describe("reading the stored Markdown back", () => {
 
 describe("reading a long chapter back", () => {
   test("a single-file novel reads back in time proportional to its length", () => {
-    // Under Bun, `marked`'s lexer took 30 seconds over 4,000 paragraphs, and asking the growing
-    // prose whether it ended in a blank line was quadratic on its own. 16,000 paragraphs — a long
-    // novel in one file, four times the length that took half a minute — now read in well under a
-    // second; quadratic, they would take many minutes. The bound is loose enough for a machine
-    // running the suite on every core, and far below either of those.
+    // `marked`'s lexer took 30 s over 4,000 paragraphs under Bun, and the blank-line check was
+    // quadratic. 16,000 paragraphs now read in well under a second; the bound allows a busy machine.
     const md = Array.from(
       { length: 16_000 },
       (_, i) => `Paragraph ${i} has *stress* and **more** in it, as prose does.`,

@@ -1,12 +1,7 @@
 <script setup lang="ts">
-// A book's clips whose sound is older than their lines' effects, and the one way to bring them up
-// to date. Re-apply is always asked for, never run on a change: an effect is tuned by ear over many
-// small edits, and every one of them would otherwise set the whole book's clips going again.
-//
-// Clips made before an effect was kept apart from the voice's own file cannot be re-applied — the
-// old effect is in the only file there is — so they are said on their own, and a book whose old
-// sound is all of that kind has no button at all. Nor does a server that cannot run effects at all
-// (`ready`): a Re-apply there could only fail, so the bar says why instead.
+// A book's clips whose sound is older than their lines' effects, and Re-apply to update them.
+// Re-apply is explicit: an effect is tuned over many small edits, each of which would re-run the
+// book. Baked clips (effect in the only file) can't be re-applied and are counted apart.
 import { computed, ref } from "vue";
 
 import { plural } from "@/lib/contents";

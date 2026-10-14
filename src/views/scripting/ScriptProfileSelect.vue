@@ -1,9 +1,6 @@
 <script setup lang="ts">
-// Which scripting endpoint runs go to: the one picker every part of the Scripting page uses, so
-// they all list the same endpoints the same way. Every profile is listed, a paused one or one whose
-// settings need checking said as such beside its name, since picking it is allowed and the run's
-// blockers then say what stands in the way. What it shows is the profile a run would actually go
-// to (`runProfile`) — never an id that names nothing.
+// The Scripting page's one endpoint picker. Paused or unchecked profiles stay pickable (the run's
+// blockers explain); it shows `runProfile`, never a dangling id.
 import { computed } from "vue";
 import { keyInPlace } from "@/services/endpointSettings";
 import { profileErrors } from "@/lib/scripting";
@@ -19,7 +16,7 @@ withDefaults(defineProps<{ size?: "xs" | "sm"; block?: boolean }>(), {
 const endpointsStore = useEndpointsStore();
 const scriptingStore = useScriptingStore();
 
-/** What stands out about a profile in the list: why it cannot run, or else its model. */
+/** why it cannot run, or else its model */
 function state(p: Profile): string {
   if (!p.enabled) return "Paused";
   if (profileErrors(p).length) return "Check settings";

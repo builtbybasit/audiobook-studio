@@ -1,12 +1,6 @@
 // The one thing worth doing on this book, as a verb and where it happens.
-//
-// Both surfaces that answer "what next" read this: the shelf card next to its cover, and the book
-// overview's banner. They used to each walk their own chain, so the same book could be told to
-// re-narrate a stale chapter on the shelf and to review a new speaker on its own overview — two
-// answers, both true, neither complete. One chain, two renderings: `label` is the button, `text`
-// is the sentence the overview has room for.
-//
-// Pure over the counts, so the card, the overview and the test can agree on the words.
+// One chain for the shelf card and the overview banner, so they agree: `label` is the button,
+// `text` the sentence where there is room.
 import { plural } from "@/lib/contents";
 import type { BookProgress, ExportUpdate } from "@/types";
 
@@ -170,10 +164,7 @@ export const coverStyle = (cover: [string, string]) => ({
   background: `linear-gradient(160deg, ${cover[0]}, ${cover[1]})`,
 });
 
-/**
- * Why a finished audiobook no longer matches the book, in one short phrase a card can carry:
- * the most consequential reason first, and the count with it. "" when it still matches.
- */
+/** Why a finished audiobook no longer matches the book, worst reason first; "" when it matches. */
 export function updateReason(
   u: Pick<ExportUpdate, "added" | "changed" | "stale" | "missing" | "settings">,
 ): string {

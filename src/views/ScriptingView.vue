@@ -1,40 +1,44 @@
 <script setup lang="ts">
 import { chapterName } from "@/lib/chapterNumber";
-import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptingStore } from "@/stores/scripting";
 
-// Scripting stage: chapter picker + run settings on the left, script reader on the right.
-import { computed, nextTick, ref } from "vue";
+// Scripting stage: one bar — chapters, prev/next, the endpoint, the estimate, run — over the
+// chapter rail and the script reader. The rail hides for reading; the reader's focus mode hides both.
+import { computed, ref } from "vue";
+import { useStorage } from "@vueuse/core";
+import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
 import { isScripted } from "@/lib/scriptReview";
 import { runActionLabel, runSummary, skipSummary } from "@/lib/runPlan";
+import { money } from "@/lib/pricing";
+import { aboutDuration } from "@/lib/time";
 import ChapterPicker from "@/components/ChapterPicker.vue";
 import EmptyState from "@/components/EmptyState.vue";
-import { PencilLine as ScriptingIcon, TriangleAlert as WarnIcon } from "@lucide/vue";
+import {
+  ChevronDown as OpenIcon,
+  ChevronLeft as PrevIcon,
+  ChevronRight as NextIcon,
+  ListChecks as ChaptersIcon,
+  PencilLine as ScriptingIcon,
+  Play as RunIcon,
+  TriangleAlert as WarnIcon,
+} from "@lucide/vue";
 import ScriptReader from "@/views/scripting/ScriptReader.vue";
-import ScriptSettings from "@/views/scripting/ScriptSettings.vue";
+import ScriptEstimate from "@/views/scripting/ScriptEstimate.vue";
 import ScriptEndpoints from "@/views/scripting/ScriptEndpoints.vue";
 import { useBookId } from "@/composables/useBookId";
 import { useOpenedChapter } from "@/composables/useOpenedChapter";
-import { plural } from "@/lib/contents";
 import { useCast, useChapterScript, useChapterTexts } from "@/queries";
 import type { Chapter } from "@/types";
 import { scriptExportUrl } from "@/services/library";
 
-const endpointsStore = useEndpointsStore();
 const libraryStore = useLibraryStore();
 const scriptingStore = useScriptingStore();
 const bookId = useBookId();
 useCast(bookId);
 const selected = ref<number[]>([]);
-const showEndpoints = ref(false);
+const rail = useStorage("audiobook-ui.scripting-rail", true);
 const focusReader = ref(false);
-const endpointPanel = ref<HTMLElement | null>(null);
-async function configure() {
-  showEndpoints.value = true;
-  await nextTick();
-  endpointPanel.value?.scrollIntoView({ behavior: "smooth", block: "start" });
-}
 const { opened, open: openChapter } = useOpenedChapter(
   bookId,
   (chapters) =>
@@ -63,57 +67,130 @@ const runNote = computed(() => {
     (plan.value.replace ? " · each replaced script is kept in its chapter's history" : "")
   );
 });
+const runDisabled = computed(() => !plan.value.chapters.length || !!estimate.value.blockers.length);
+const estimateLabel = computed(() =>
+  !plan.value.chapters.length
+    ? "Estimate"
+    : estimate.value.reading
+      ? "counting…"
+      : `${money(estimate.value.cost)} · ${aboutDuration(estimate.value.seconds)}`,
+);
+const profile = computed(() => scriptingStore.runProfile);
+
 const chapter = computed(() => libraryStore.chapter(bookId, opened.value));
-const openedName = computed(() => chapterName(libraryStore.numberOf(bookId, opened.value)));
+const number = computed(() => libraryStore.numberOf(bookId, opened.value));
+const openedName = computed(() => chapterName(number.value));
+// Imported titles often start with their own number ("12: Chapter 12 …"); the bar already says it.
+const title = computed(() => chapter.value?.title.replace(/^\d+:\s*/, "") ?? "");
+const kept = computed(() => libraryStore.chaptersOf(bookId).filter((c) => !c.excluded));
+const at = computed(() => kept.value.findIndex((c) => c.id === opened.value));
+const prev = computed(() => kept.value[at.value - 1]);
+const next = computed(() => kept.value[at.value + 1]);
 const hasScript = computed(() => chapter.value && isScripted(chapter.value));
 /** scripts and texts still on their way, which the reader and the buttons wait for */
 const waiting = computed(() => (hasScript.value && !loaded.value) || unread.value > 0);
 const anyScripted = computed(() => libraryStore.chaptersOf(bookId).some(isScripted));
 function scriptFirst() {
-  const ids = libraryStore
-    .chaptersOf(bookId)
-    .filter((c) => !c.excluded)
-    .slice(0, 3)
-    .map((c) => c.id);
+  const ids = kept.value.slice(0, 3).map((c) => c.id);
   selected.value = ids;
   void scriptingStore.startRun(bookId, ids);
 }
 </script>
 
 <template>
-  <div class="space-y-4 p-4">
-    <section v-if="!focusReader" ref="endpointPanel" class="card overflow-hidden">
+  <div class="flex h-[calc(100dvh-88px)] flex-col gap-3 p-4">
+    <div v-if="!focusReader" class="card flex flex-wrap items-center gap-2 px-3 py-2">
       <button
-        class="flex w-full flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-left"
-        :aria-expanded="showEndpoints"
-        aria-controls="script-endpoints"
-        @click="showEndpoints = !showEndpoints"
+        class="btn-ghost btn-xs"
+        :class="rail && 'bg-zinc-200 dark:bg-zinc-800'"
+        :aria-pressed="rail"
+        :title="rail ? 'Hide the chapter list' : 'Show the chapter list'"
+        @click="rail = !rail"
       >
+        <ChaptersIcon class="icon-sm" /> Chapters
         <span
-          ><span class="text-sm font-semibold">Scripting endpoints</span
-          ><span class="ml-3 text-xs text-zinc-500"
-            >{{ plural(endpointsStore.profiles.length, "endpoint") }} ·
-            {{ scriptingStore.runProfile?.name ?? "none can run" }}</span
-          ></span
+          v-if="selected.length"
+          class="rounded-full bg-violet-600 px-1.5 text-[10px] font-semibold text-white"
+          >{{ selected.length }}</span
         >
-        <span class="text-xs text-violet-600 dark:text-violet-400">{{
-          showEndpoints ? "Hide settings ↑" : "Configure endpoints ↓"
-        }}</span>
       </button>
-      <div
-        v-show="showEndpoints"
-        id="script-endpoints"
-        class="max-h-[65vh] overflow-y-auto border-t border-zinc-200 md:max-h-[min(440px,55vh)] dark:border-zinc-800"
+      <button
+        class="btn-ghost btn-xs"
+        :disabled="!prev"
+        title="Previous chapter"
+        @click="prev && openChapter(prev.id)"
       >
-        <ScriptEndpoints :book-id="bookId" :selected="selected" />
-      </div>
-    </section>
+        <PrevIcon class="icon-sm" />
+      </button>
+      <span class="min-w-0 flex-1 truncate text-sm">
+        <span class="font-medium">{{ number ? `Chapter ${number}` : "Skipped chapter" }}</span>
+        <span class="text-zinc-500"> · {{ title }}</span>
+      </span>
+      <button
+        class="btn-ghost btn-xs"
+        :disabled="!next"
+        title="Next chapter"
+        @click="next && openChapter(next.id)"
+      >
+        <NextIcon class="icon-sm" />
+      </button>
+
+      <PopoverRoot>
+        <PopoverTrigger class="btn-ghost btn-xs" title="The endpoint runs go to, and its health">
+          <span
+            class="h-1.5 w-1.5 rounded-full"
+            :class="profile?.enabled ? 'bg-emerald-500' : 'bg-zinc-400'"
+          ></span>
+          {{ profile?.name ?? "No endpoint" }}
+          <OpenIcon class="icon-sm opacity-60" />
+        </PopoverTrigger>
+        <PopoverPortal>
+          <PopoverContent align="end" :side-offset="6" class="ui-popup w-[660px] max-w-[95vw] p-0">
+            <div class="max-h-[70vh] overflow-auto"><ScriptEndpoints /></div>
+          </PopoverContent>
+        </PopoverPortal>
+      </PopoverRoot>
+      <PopoverRoot>
+        <PopoverTrigger class="btn-ghost btn-xs font-mono" title="What this run would cost">
+          {{ estimateLabel }}
+          <OpenIcon class="icon-sm opacity-60" />
+        </PopoverTrigger>
+        <PopoverPortal>
+          <!-- focus stays on the trigger: the first field is the budget cap, and a stray key would edit it -->
+          <PopoverContent
+            align="end"
+            :side-offset="6"
+            class="ui-popup w-80 p-0"
+            @open-auto-focus.prevent
+          >
+            <div class="max-h-[70vh] overflow-auto">
+              <ScriptEstimate :book-id="bookId" :plan="plan" :est="estimate" />
+            </div>
+          </PopoverContent>
+        </PopoverPortal>
+      </PopoverRoot>
+      <button
+        class="btn-primary btn-xs"
+        :disabled="runDisabled"
+        :title="runNote"
+        @click="scriptingStore.startRun(bookId, selected)"
+      >
+        <RunIcon class="icon-sm icon-fill" /> {{ runActionLabel(plan) }} ({{
+          plan.chapters.length
+        }})
+      </button>
+    </div>
+
     <div
-      class="grid grid-cols-1 gap-4"
-      :class="!focusReader && 'lg:grid-cols-[320px_minmax(0,1fr)]'"
+      class="grid min-h-0 flex-1 gap-3"
+      :class="
+        rail &&
+        !focusReader &&
+        'grid-rows-[420px_minmax(0,1fr)] lg:grid-cols-[320px_minmax(0,1fr)] lg:grid-rows-1'
+      "
     >
-      <div v-if="!focusReader" class="flex min-h-0 flex-col gap-3">
-        <div class="h-[420px] min-h-0">
+      <div v-if="rail && !focusReader" class="flex min-h-0 flex-col gap-2">
+        <div class="min-h-0 flex-1">
           <ChapterPicker
             :book-id="bookId"
             stage="scripting"
@@ -128,9 +205,6 @@ function scriptFirst() {
             @open="openChapter"
             @run="(ids) => scriptingStore.startRun(bookId, ids)"
           />
-        </div>
-        <div class="card shrink-0 p-3">
-          <ScriptSettings :book-id="bookId" :plan="plan" :est="estimate" @configure="configure" />
         </div>
         <div class="flex shrink-0 items-center gap-3 px-1 text-xs text-zinc-500">
           <span>Script file</span>
@@ -148,10 +222,7 @@ function scriptFirst() {
         </div>
       </div>
 
-      <div
-        class="min-h-0 min-w-0 lg:sticky lg:top-4"
-        :class="focusReader ? 'h-[calc(100dvh-88px)]' : 'lg:h-[calc(100vh-140px)]'"
-      >
+      <div class="min-h-0 min-w-0">
         <div
           v-if="hasScript && !loaded"
           class="card grid h-full place-content-center p-8 text-sm text-zinc-500"
@@ -182,7 +253,7 @@ function scriptFirst() {
           title="Nothing scripted yet"
           body="Scripting reads each chapter with the LLM, splits it into speaker runs, and verifies nothing was dropped. Start with the first few chapters to discover the cast."
           :steps="[
-            'Configure an endpoint, model, and token rates above',
+            'Pick an endpoint in the bar above',
             'Tick chapters (or use Pending) and run',
             'Review the cast and merge aliases before narrating',
           ]"
@@ -229,7 +300,7 @@ function scriptFirst() {
           v-else
           :icon="ScriptingIcon"
           :title="chapter?.title"
-          body="Not scripted yet. Tick it on the left and run scripting, or script just this one."
+          body="Not scripted yet. Tick it in the list and run scripting, or script just this one."
         >
           <button
             class="btn-primary"

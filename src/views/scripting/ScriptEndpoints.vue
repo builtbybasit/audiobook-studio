@@ -1,218 +1,138 @@
 <script setup lang="ts">
-// The Scripting page's endpoint panel: which endpoint runs use, its health, and how it would chunk
-// the next chapter. Its settings are edited on the Endpoints page.
-import { useEndpointsStore } from "@/stores/endpoints";
-import { useLibraryStore } from "@/stores/library";
-import { useScriptingStore } from "@/stores/scripting";
-
-import { computed, ref, watch } from "vue";
+// The Scripting page's endpoint picker: every scripting endpoint as a row with its rates, chunking
+// and health, and a latency sparkline so a flaky one shows before it is picked. Settings are
+// edited on the Endpoints page.
+import { computed } from "vue";
 import { useNow } from "@vueuse/core";
+import { ArrowUpRight as ArrowIcon, Check as PickedIcon } from "@lucide/vue";
+import LatencySparkline from "@/components/LatencySparkline.vue";
 import { keyInPlace } from "@/services/endpointSettings";
-import {
-  ChevronLeft as ChevronLeftIcon,
-  ChevronRight as ChevronRightIcon,
-  ArrowUpRight as ArrowIcon,
-} from "@lucide/vue";
-import {
-  profileErrors,
-  reasoningEstimateNote,
-  scriptParts,
-  tokenEstimate,
-  scriptingHealth,
-} from "@/lib/scripting";
+import { profileErrors, scriptingHealth } from "@/lib/scripting";
 import { money } from "@/lib/pricing";
-import { plural } from "@/lib/contents";
-import { resolvePrompt } from "@/lib/prompt";
 import { scriptTelemetry } from "@/lib/scriptActivity";
-import { isSimulated } from "@/lib/providers";
-import { useChapterText } from "@/queries";
-import { useScriptActivity } from "@/queries/scriptActivity";
-import EndpointActivity from "@/views/scripting/EndpointActivity.vue";
-import ScriptProfileSelect from "@/views/scripting/ScriptProfileSelect.vue";
+import { useScriptActivity, useScriptTotals } from "@/queries/scriptActivity";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useScriptingStore } from "@/stores/scripting";
+import type { Profile } from "@/types";
 
-const props = defineProps<{ bookId: string; selected: number[] }>();
 const endpointsStore = useEndpointsStore();
-const libraryStore = useLibraryStore();
 const scriptingStore = useScriptingStore();
-const clock = useNow({ interval: 500 });
-const now = computed(() => clock.value.getTime());
 const activity = useScriptActivity();
-const p = computed(() => scriptingStore.runProfile);
-const health = computed(() =>
-  p.value && activity.data.value === undefined
-    ? { label: "Reading its requests…", tone: "muted" }
-    : p.value
-      ? scriptingHealth(
-          p.value,
-          scriptTelemetry(activity.rowsOf(p.value.id), p.value),
-          keyInPlace(p.value),
-          now.value,
-        )
-      : null,
+const totals = useScriptTotals();
+const clock = useNow({ interval: 1000 });
+const current = computed(() => scriptingStore.runProfile?.id);
+const DOT: Record<string, string> = {
+  good: "bg-emerald-500",
+  warn: "bg-amber-500",
+  muted: "bg-zinc-400",
+};
+const rows = computed(() =>
+  endpointsStore.profiles.map((p) => {
+    const t = scriptTelemetry(activity.rowsOf(p.id), p);
+    const health =
+      activity.data.value === undefined
+        ? { label: "…", tone: "muted" }
+        : scriptingHealth(p, t, keyInPlace(p), clock.value.getTime());
+    const week = totals.totalsOf(p.id);
+    const ok = t.history.filter((x) => x.ok);
+    const latency = ok.length ? ok.reduce((n, x) => n + x.ms, 0) / ok.length / 1000 : null;
+    const success =
+      week && week.eventualOk + week.failures
+        ? Math.round((week.eventualOk / (week.eventualOk + week.failures)) * 100) + "%"
+        : "—";
+    return {
+      p,
+      picked: p.id === current.value,
+      health,
+      errors: profileErrors(p),
+      week,
+      ok,
+      latency,
+      success,
+    };
+  }),
 );
-const tone = computed(
-  () =>
-    ({ good: "bg-emerald-500", warn: "bg-amber-500", muted: "bg-zinc-400" })[
-      health.value?.tone ?? "muted"
-    ],
-);
-const errors = computed(() => (p.value ? profileErrors(p.value) : []));
-
-// ---------- the chunk preview: the run's first chapter, cut the way the endpoint cuts it
-const sampleChapter = computed(
-  () =>
-    libraryStore
-      .chaptersOf(props.bookId)
-      .find((c) => props.selected.includes(c.id) && !c.excluded) ??
-    libraryStore.chaptersOf(props.bookId).find((c) => !c.excluded),
-);
-/** a kept chapter, so it has a reading number */
-const sampleNumber = computed(
-  () => sampleChapter.value && libraryStore.numberOf(props.bookId, sampleChapter.value.id),
-);
-const sample = useChapterText(
-  () => props.bookId,
-  () => sampleChapter.value?.id,
-  "plain",
-);
-/** until then "no chunks" would be wrong */
-const sampleRead = computed(() => sample.data.value !== undefined);
-const parts = computed(() => (p.value ? scriptParts(sample.text.value, p.value) : []));
-const previewPart = ref(0);
-watch([p, sampleChapter], () => (previewPart.value = 0));
-const preview = computed(
-  () => parts.value[Math.min(previewPart.value, parts.value.length - 1)] ?? "",
-);
-/** thinking tokens seen in recent requests at its reasoning level */
-const reasoningSeen = computed(() =>
-  p.value && !isSimulated(p.value.baseUrl)
-    ? scriptTelemetry(activity.rowsOf(p.value.id), p.value).reasoning
-    : undefined,
-);
-const tokens = computed(() =>
-  p.value && preview.value
-    ? tokenEstimate(preview.value, p.value, now.value, {
-        // the prompt this book's run would send, as the estimate uses
-        prompt: resolvePrompt({
-          library: endpointsStore.prompt,
-          profile: p.value.prompt,
-          book: libraryStore.bookById(props.bookId)?.prompt,
-        }),
-        reasoningPerInputToken: reasoningSeen.value?.perInputToken,
-      })
-    : null,
-);
-const thinkingNote = computed(() =>
-  p.value && tokens.value && !isSimulated(p.value.baseUrl)
-    ? reasoningEstimateNote(p.value.reasoning, reasoningSeen.value, tokens.value.reasoningTokens)
-    : null,
-);
+const pick = (p: Profile) => (scriptingStore.scriptSettings.profile = p.id);
 </script>
+
 <template>
-  <div class="min-w-0 space-y-3 p-3 sm:p-4">
-    <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+  <div class="text-xs">
+    <div
+      class="flex items-center justify-between border-b border-zinc-200 px-3 py-2 dark:border-zinc-800"
+    >
       <span class="label">Runs go to</span>
-      <ScriptProfileSelect class="w-72 max-w-full" :block="false" size="sm" />
-      <span
-        v-if="health"
-        class="flex items-center gap-1.5 text-[11px]"
-        :class="
-          health.tone === 'good'
-            ? 'text-emerald-600 dark:text-emerald-400'
-            : health.tone === 'warn'
-              ? 'text-amber-700 dark:text-amber-400'
-              : 'text-zinc-500'
-        "
-        ><span class="h-1.5 w-1.5 rounded-full" :class="tone"></span>{{ health.label }}</span
-      >
       <RouterLink
         :to="
-          p
-            ? { path: '/endpoints', query: { endpoint: `scripting:${p.id}`, tab: 'connection' } }
+          current
+            ? { path: '/endpoints', query: { endpoint: `scripting:${current}`, tab: 'connection' } }
             : '/endpoints'
         "
-        class="ml-auto inline-flex items-center gap-1 whitespace-nowrap text-xs text-violet-600 hover:underline dark:text-violet-400"
+        class="inline-flex items-center gap-1 text-violet-600 hover:underline dark:text-violet-400"
         :title="
-          p
-            ? `${p.name}'s connection, limits and pricing, with its request history`
+          rows.length
+            ? 'connection, limits and pricing, with the request history'
             : 'Add a scripting endpoint'
         "
-        >{{ p ? "Edit on the Endpoints page" : "Add one on the Endpoints page" }}
+        >{{ rows.length ? "Edit on the Endpoints page" : "Add one on the Endpoints page" }}
         <ArrowIcon class="icon-sm"
       /></RouterLink>
     </div>
-    <p v-if="!p" class="text-sm text-zinc-500">
-      {{ scriptingStore.runBlockers[0] }}
-    </p>
-    <template v-else>
-      <p class="font-mono text-[11px] text-zinc-500">
-        {{ p.model || "Model required" }} · {{ money(p.inPrice) }} in / {{ money(p.outPrice) }} out
-        per 1M tokens ·
-        {{ p.maxChars ? `${p.maxChars.toLocaleString("en")} chars / chunk` : "whole chapters" }}
-      </p>
-      <EndpointActivity
-        :profile="p"
-        :rows="activity.rowsOf(p.id)"
-        :loaded="activity.data.value !== undefined"
-        :now="now"
-      />
-      <div
-        v-if="errors.length"
-        class="rounded-lg bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300"
-        role="status"
-      >
-        <p v-for="error in errors" :key="error">{{ error }}</p>
-      </div>
-      <div
-        class="min-w-0 rounded-lg border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-950/50"
-      >
-        <div class="label">Chunk preview</div>
-        <p class="my-2 text-xs text-zinc-500">
-          <template v-if="!sampleChapter">No chapter to preview.</template>
-          <template v-else-if="!sampleRead">Reading chapter {{ sampleNumber }}’s text…</template>
-          <template v-else-if="errors.length"
-            >Chapter {{ sampleNumber }} · fix the settings above to see how it is cut</template
+    <p v-if="!rows.length" class="p-4 text-zinc-500">{{ scriptingStore.runBlockers[0] }}</p>
+    <button
+      v-for="r in rows"
+      :key="r.p.id"
+      class="flex w-full items-center gap-3 border-b border-zinc-100 px-3 py-2 text-left last:border-0 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-800/50"
+      :class="r.picked && 'bg-violet-50 dark:bg-violet-500/10'"
+      :aria-pressed="r.picked"
+      @click="pick(r.p)"
+    >
+      <span
+        class="grid h-4 w-4 shrink-0 place-content-center rounded-full border"
+        :class="
+          r.picked
+            ? 'border-violet-600 bg-violet-600 text-white'
+            : 'border-zinc-300 dark:border-zinc-600'
+        "
+        ><PickedIcon v-if="r.picked" class="h-3 w-3"
+      /></span>
+      <span class="min-w-0 flex-1">
+        <span class="flex items-center gap-2">
+          <span class="truncate text-sm font-medium">{{ r.p.name || "Untitled endpoint" }}</span>
+          <span class="truncate font-mono text-zinc-500">{{ r.p.model || "model required" }}</span>
+        </span>
+        <span class="mt-0.5 block truncate text-[11px] text-zinc-500">
+          {{ money(r.p.inPrice) }} in / {{ money(r.p.outPrice) }} out per 1M ·
+          {{ r.p.maxChars ? r.p.maxChars.toLocaleString() + " chars / request" : "whole chapters" }}
+          · {{ r.p.concurrency }} at once<template v-if="r.p.reasoning">
+            · thinks {{ r.p.reasoning }}</template
           >
-          <template v-else
-            >Chapter {{ sampleNumber }} · {{ plural(parts.length, "request") }}</template
+        </span>
+        <span
+          v-for="e in r.errors"
+          :key="e"
+          class="block text-[11px] text-amber-700 dark:text-amber-400"
+          >{{ e }}</span
+        >
+      </span>
+      <span class="shrink-0 text-right">
+        <span
+          class="flex items-center justify-end gap-1.5 text-[11px]"
+          :class="r.health.tone === 'warn' ? 'text-amber-700 dark:text-amber-400' : 'text-zinc-500'"
+        >
+          <span class="h-1.5 w-1.5 rounded-full" :class="DOT[r.health.tone]"></span
+          >{{ r.health.label }}
+        </span>
+        <span
+          class="mt-0.5 flex items-center justify-end gap-1.5 font-mono text-[11px] text-zinc-500"
+          title="success rate this week · average latency"
+        >
+          <template v-if="r.week"
+            >{{ r.success }} · {{ r.latency === null ? "—" : r.latency.toFixed(1) + "s" }}</template
           >
-        </p>
-        <template v-if="parts.length">
-          <div class="mb-3 flex items-center justify-between gap-2">
-            <button
-              class="btn-ghost btn-xs"
-              :disabled="previewPart <= 0"
-              aria-label="Previous chunk"
-              @click="previewPart = Math.max(0, previewPart - 1)"
-            >
-              <ChevronLeftIcon class="icon-sm" /></button
-            ><span class="text-xs"
-              >Chunk {{ Math.min(previewPart + 1, parts.length) }} of {{ parts.length }} ·
-              {{ preview.length.toLocaleString() }} chars</span
-            ><button
-              class="btn-ghost btn-xs"
-              :disabled="previewPart >= parts.length - 1"
-              aria-label="Next chunk"
-              @click="previewPart++"
-            >
-              <ChevronRightIcon class="icon-sm" />
-            </button>
-          </div>
-          <pre
-            class="max-h-48 overflow-auto whitespace-pre-wrap break-words font-serif text-sm leading-relaxed"
-            >{{ preview }}</pre>
-          <p
-            v-if="tokens"
-            class="mt-3 border-t border-zinc-200 pt-3 text-[11px] text-zinc-500 dark:border-zinc-700"
-          >
-            ~{{ tokens.inputTokens.toLocaleString() }} input + ~{{
-              tokens.outputTokens.toLocaleString()
-            }}
-            output tokens · {{ money(tokens.cost) }}
-            <span v-if="thinkingNote" class="block text-zinc-400">{{ thinkingNote }}</span>
-          </p>
-        </template>
-      </div>
-    </template>
+          <template v-else>quiet this week</template>
+          <LatencySparkline :points="r.ok" />
+        </span>
+      </span>
+    </button>
   </div>
 </template>

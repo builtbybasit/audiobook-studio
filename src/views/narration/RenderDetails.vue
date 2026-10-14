@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { Segment } from "@/types";
+import type { Segment, SplitMode } from "@/types";
 
 /** Is there an audit trail to open? The row and the `i` key both ask this. */
 export const hasDetails = (s: Segment): boolean => !!(s.audio.at || s.audio.error || s.audio.cuts);
@@ -31,7 +31,13 @@ const endpointsStore = useEndpointsStore();
 const uiStore = useUiStore();
 const { chapter, epName, drift } = useJob(props);
 const { play } = usePlayer();
-const AT = { sentence: "sentence", clause: "clause", word: "word", char: "hard cut" };
+const AT: Record<SplitMode, string> = {
+  paragraph: "paragraph",
+  sentence: "sentence",
+  clause: "clause",
+  word: "word",
+  char: "hard cut",
+};
 /**
  * What the clip recorded about the request that made it, as JSON. The request body is not
  * recorded, so none is invented here; the endpoint's Activity tab has the requests.

@@ -119,6 +119,23 @@ test("a line of site text and a note the book does not read are no one's lines, 
   expect(counts).toEqual(libraryStore.chapter(BOOK, 1)!.lines!);
 });
 
+test("a line given to another speaker moves in every count, though the counts were read before", async () => {
+  const segs = await open();
+  const line = segs[0];
+  const from = line.speaker;
+  const to = "Someone Else";
+  // read first, so what follows is a count worked out again, not one worked out fresh
+  const before = scriptsStore.lineCounts(BOOK)[from];
+  const statsBefore = useCastStore().castStats(BOOK)[from].lines;
+
+  scriptsStore.setSpeaker(BOOK, 1, line.id, to);
+  expect(scriptsStore.lineCounts(BOOK)[from] ?? 0).toBe(before - 1);
+  expect(scriptsStore.lineCounts(BOOK)[to]).toBe(1);
+  const stats = useCastStore().castStats(BOOK);
+  expect(stats[from]?.lines ?? 0).toBe(statsBefore - 1);
+  expect(stats[to]).toMatchObject({ lines: 1, first: 1 });
+});
+
 test("reading the notes aloud is saved, read back, and makes a note a line again", async () => {
   const segs = await open({ type: "watermark" }, { type: "note" });
   const note = segs[1];

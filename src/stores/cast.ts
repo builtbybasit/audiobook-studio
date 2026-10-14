@@ -19,7 +19,6 @@ import { fetchCast } from "@/queries/cast";
 import { staleMoved } from "@/queries/effects";
 import { speechReadiness } from "@/lib/endpoints";
 import { norm } from "@/lib/scriptReview";
-import { isSpoken } from "@/lib/siteText";
 import { pronunciationMoved } from "@/lib/reading";
 import { chapterSeconds, hitsIn, pacingOrDefault, speak } from "@/lib/speech";
 import {
@@ -56,7 +55,7 @@ import type {
 import { defineStore } from "pinia";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
-import { useScriptsStore } from "@/stores/scripts";
+import { chapterTally, useScriptsStore } from "@/stores/scripts";
 import { toastFailure } from "@/stores/toastFailure";
 import { useUiStore } from "@/stores/ui";
 interface CastState {
@@ -272,17 +271,14 @@ export const useCastStore = defineStore("cast", {
     },
     castStats(): (bookId: string) => Record<string, CastStat> {
       const libraryStore = useLibraryStore();
-      const scriptsStore = useScriptsStore();
       return (bookId: string): Record<string, CastStat> => {
         const stats: Record<string, CastStat> = {};
-        const book = libraryStore.bookById(bookId);
         for (const c of libraryStore.chapters[bookId] ?? [])
-          for (const seg of scriptsStore.segments[`${bookId}:${c.id}`] ?? []) {
-            // what a speaker is given to say, as `lineCounts` counts it
-            if (!isSpoken(seg, book)) continue;
-            const st = (stats[seg.speaker] ??= newStat(c.id));
-            st.lines++;
-            if (seg.type === "thought") st.thoughts++;
+          // what a speaker is given to say, as `lineCounts` counts it, one chapter's count at a time
+          for (const [name, t] of chapterTally(bookId, c.id).spoken) {
+            const st = (stats[name] ??= newStat(c.id));
+            st.lines += t.lines;
+            st.thoughts += t.thoughts;
             st.chapters.add(c.id);
             if (c.id < st.first) st.first = c.id;
           }

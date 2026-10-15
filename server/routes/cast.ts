@@ -3,9 +3,18 @@ import { Hono } from "hono";
 import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
 
-import type { Cast, LexiconSaved, MovedLines, MovedSpeakers } from "@/types";
+import type {
+  Cast,
+  LexiconSaved,
+  MovedLines,
+  MovedSpeakers,
+  NarrationQueued,
+  OldVoice,
+} from "@/types";
 import type { Db } from "~/db/client";
+import { oldVoice, revoice } from "~/cast/oldVoice";
 import * as ops from "~/cast/ops";
+import type { Runner } from "~/jobs/runner";
 import { BookParam } from "~/lib/http";
 import { CharacterSchema, ChapterLinesSchema, LexEntrySchema } from "~/lib/schemas";
 import { validate } from "~/lib/validate";
@@ -20,13 +29,16 @@ const Remove = v.object({ names: v.pipe(v.array(Name), v.minLength(1)) });
 const Attribute = v.object({
   speakers: v.array(v.object({ character: CharacterSchema, lines: v.array(ChapterLinesSchema) })),
 });
+const Revoice = v.object({
+  chapters: v.pipe(v.array(v.pipe(v.number(), v.integer(), v.minValue(1))), v.minLength(1)),
+});
 const Lexicon = v.object({
   entries: v.array(LexEntrySchema),
   /** the lines an earlier change staled, which an Undo asks to have back */
   restore: v.optional(v.array(ChapterLinesSchema)),
 });
 
-export function castRoutes(db: Db): Hono<PinoEnv> {
+export function castRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
 
   app.get("/:id/cast", validate("param", BookParam), (c) =>
@@ -88,6 +100,27 @@ export function castRoutes(db: Db): Hono<PinoEnv> {
           c.req.valid("json").speakers,
         ) satisfies MovedSpeakers,
       ),
+  );
+
+  app.get("/:id/characters/:name/old-voice", validate("param", NameParam), (c) => {
+    const { id, name } = c.req.valid("param");
+    return c.json(oldVoice(db, id, name) satisfies OldVoice);
+  });
+
+  /** Re-narrates the old-voice lines in these chapters; chapters with none are skipped. */
+  app.post(
+    "/:id/characters/:name/revoice",
+    validate("param", NameParam),
+    validate("json", Revoice),
+    (c) => {
+      const { id, name } = c.req.valid("param");
+      const result = revoice(db, runner, id, name, c.req.valid("json").chapters);
+      c.var.logger.info(
+        { run: result.runId, jobs: result.jobs.length, skipped: result.skipped.length },
+        "old-voice lines queued",
+      );
+      return c.json(result satisfies NarrationQueued, 202);
+    },
   );
 
   app.put("/:id/lexicon", validate("param", BookParam), validate("json", Lexicon), (c) => {

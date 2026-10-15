@@ -1,9 +1,9 @@
 // The book's Character voice: what a speaker with no voice of their own is read in, before the
 // Narrator's (a linked persona: their character's). `speakerVoice` alone, then through the
-// settings route and a real run.
+// settings route and a real run; then the finished lines a voice change leaves behind.
 import { describe, expect, test } from "bun:test";
 
-import type { Book, Character, CharacterVoice, Segment } from "@/types";
+import type { Book, Character, CharacterVoice, NarrationQueued, OldVoice, Segment } from "@/types";
 import { narrator, speakerVoice } from "@/lib/cast";
 import { deliveryFor } from "~/narration/cost";
 import { story } from "../support/epub";
@@ -187,5 +187,128 @@ describe("a book's Character voice", () => {
     expect(spoken.some((s) => s.speaker !== "Narrator")).toBe(true);
     for (const s of spoken)
       expect(s.audio.voiceRef).toBe(s.speaker === "Narrator" ? "studio/ash" : "studio/bea");
+  });
+});
+
+// $15 per million characters, so every line has a price
+const twoVoices = speechEndpoint({
+  price: 15,
+  billing: { unit: "chars", rate: 15 },
+  voices: [
+    { id: "ash", gender: "m", label: "Ash" },
+    { id: "bea", gender: "f", label: "Bea" },
+  ],
+});
+
+/** Two chapters, everyone read in `studio/ash`; `narrated` chapters rendered. */
+async function heard(narrated: number[]) {
+  const api = testApi();
+  const id = await voicedBook(api, {
+    endpoints: [twoVoices],
+    paragraphs: [
+      "“We are short again,” said Mara.",
+      "“Then we count it twice,” said Tobin.",
+      "Rain ran down the shutters.",
+    ],
+    voiceOf: "studio/ash",
+    chapters: ["One", "Two"],
+  });
+  await narrateChapters(api, id, narrated);
+  return { api, id };
+}
+
+async function recast(api: TestApi, id: string, name: string, over: Partial<Character>) {
+  const cast = (await api.request<{ characters: Character[] }>(`/api/books/${id}/cast`)).body;
+  const c = cast.characters.find((x) => x.name === name)!;
+  await api.request(`/api/books/${id}/characters/${encodeURIComponent(name)}`, {
+    ...jsonBody({ ...c, ...over }),
+    method: "PUT",
+  });
+}
+
+const script = async (api: TestApi, id: string, ch: number) =>
+  (await api.request<{ segments: Segment[] }>(`/api/books/${id}/chapters/${ch}/script`)).body
+    .segments;
+const oldVoice = (api: TestApi, id: string, name: string) =>
+  api.request<OldVoice>(`/api/books/${id}/characters/${encodeURIComponent(name)}/old-voice`);
+const revoice = (api: TestApi, id: string, name: string, chapters: number[]) =>
+  api.request<NarrationQueued>(
+    `/api/books/${id}/characters/${encodeURIComponent(name)}/revoice`,
+    jsonBody({ chapters }),
+  );
+const doneBy = (segs: Segment[], speakers: readonly string[]) =>
+  segs.filter((s) => s.audio.status === "done" && speakers.includes(s.speaker)).length;
+
+describe("lines left in an old voice", () => {
+  test.each([
+    // Tobin, a voiceless persona of Mara's, is read in her voice and moves with it
+    {
+      changed: "Mara",
+      setup: { Tobin: { personaOf: "Mara", voice: null } },
+      moved: ["Mara", "Tobin"],
+    },
+    // Tobin falls back to the Narrator; Mara keeps her own
+    { changed: "Narrator", setup: { Tobin: { voice: null } }, moved: ["Narrator", "Tobin"] },
+  ])(
+    "after $changed's voice changes are the lines it moved, chapter by chapter, priced",
+    async ({ changed, setup, moved }) => {
+      const { api, id } = await heard([1, 2]);
+      for (const [name, over] of Object.entries(setup)) await recast(api, id, name, over);
+      expect((await oldVoice(api, id, changed)).body.lines).toBe(0);
+      await recast(api, id, changed, { voice: "studio/bea" });
+
+      const { body } = await oldVoice(api, id, changed);
+      const want = [
+        doneBy(await script(api, id, 1), moved),
+        doneBy(await script(api, id, 2), moved),
+      ];
+      expect(want[0]).toBeGreaterThan(0);
+      expect(body.chapters.map((c) => [c.id, c.lines])).toEqual([
+        [1, want[0]],
+        [2, want[1]],
+      ]);
+      expect(body.lines).toBe(want[0] + want[1]);
+      expect(body.cost).toBeGreaterThan(0);
+      expect(body.cost).toBeCloseTo(
+        body.chapters.reduce((n, c) => n + c.cost!, 0),
+        12,
+      );
+    },
+  );
+
+  test("re-narrate in the new voice just those lines in the chapters asked for, priced as shown", async () => {
+    const { api, id } = await heard([1]);
+    const before = await script(api, id, 1);
+    await recast(api, id, "Mara", { voice: "studio/bea" });
+    const shown = (await oldVoice(api, id, "Mara")).body;
+
+    const { status, body } = await revoice(api, id, "Mara", [1, 2]);
+    expect(status).toBe(202);
+    // two has no clips, so nothing in an old voice: its missing lines are not this run's
+    expect(body.skipped).toEqual([{ id: 2, why: "nothing" }]);
+    expect(body.jobs.map((j) => j.narrationRun?.reserved)).toEqual([shown.cost!]);
+    await api.runner.idle();
+
+    const after = await script(api, id, 1);
+    const mara = after.filter((s) => s.speaker === "Mara");
+    expect(mara.map((s) => s.audio.voiceRef)).toEqual(mara.map(() => "studio/bea"));
+    const others = (segs: Segment[]) =>
+      segs.filter((s) => s.speaker !== "Mara").map((s) => [s.id, s.audio.at]);
+    expect(others(after)).toEqual(others(before));
+    expect((await script(api, id, 2)).every((s) => s.audio.status === "none")).toBe(true);
+    expect((await oldVoice(api, id, "Mara")).body).toEqual({ lines: 0, cost: 0, chapters: [] });
+  });
+
+  test("are refused for no chapters or an unknown speaker, and over budget leave every clip as it was", async () => {
+    const { api, id } = await heard([1]);
+    await recast(api, id, "Mara", { voice: "studio/bea" });
+    expect((await revoice(api, id, "Mara", [])).status).toBe(400);
+    expect((await oldVoice(api, id, "Nobody")).status).toBe(404);
+    expect((await revoice(api, id, "Nobody", [1])).status).toBe(404);
+
+    const before = await script(api, id, 1);
+    await patch(api, id, { budget: { cap: 0.000001, paused: false } });
+    expect((await revoice(api, id, "Mara", [1])).status).toBe(409);
+    expect(await script(api, id, 1)).toEqual(before);
   });
 });

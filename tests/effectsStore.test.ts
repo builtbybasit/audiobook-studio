@@ -79,7 +79,7 @@ beforeEach(() => {
     },
     stale: async () => {
       calls.stale++;
-      return { lines: 0, unavailable: 0, ready: true };
+      return { lines: 0, unavailable: 0, ready: true, chapters: [] };
     },
   };
   setEffectsService(fake as EffectsService);

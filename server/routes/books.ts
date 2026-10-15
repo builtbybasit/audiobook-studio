@@ -21,7 +21,7 @@ import type { AudioFiles } from "~/audio/files";
 import { coverFiles, MAX_COVER_BYTES } from "~/covers/files";
 import type { AudiobookFiles } from "~/exports/files";
 import type { Db } from "~/db/client";
-import { staleSound } from "~/effects/ops";
+import { keepOldSound, staleSound } from "~/effects/ops";
 import { env } from "~/env";
 import { enqueueCheck } from "~/jobs/check";
 import { enqueueReapply } from "~/jobs/effects";
@@ -35,6 +35,7 @@ import { DEFAULT_PACING } from "@/lib/speech";
 import {
   BookPromptSchema,
   EffectIdSchema,
+  ExistingScopeSchema,
   ProfilePromptSchema,
   PromptTemplateSchema,
   refusePrompt,
@@ -459,15 +460,39 @@ export function bookRoutes(
 
   // ---------- voice effects ----------
   /** How many clips have an old sound, and whether effects can run to redo them. */
-  app.get("/:id/effects/stale", validate("param", BookParam), async (c) =>
-    c.json((await staleSound(db, c.req.valid("param").id, effects)) satisfies StaleSound),
+  app.get(
+    "/:id/effects/stale",
+    validate("param", BookParam),
+    validate("query", v.object({ speaker: v.optional(v.string()) })),
+    async (c) =>
+      c.json(
+        (await staleSound(
+          db,
+          c.req.valid("param").id,
+          c.req.valid("query"),
+          effects,
+        )) satisfies StaleSound,
+      ),
   );
 
-  /** 409 while a Re-apply is queued or running. */
-  app.post("/:id/effects/reapply", validate("param", BookParam), (c) => {
-    const job = enqueueReapply(db, runner, c.req.valid("param").id);
-    return c.json({ job }, 202);
-  });
+  /** 409 while a Re-apply is queued or running; no body = the whole book. */
+  app.post(
+    "/:id/effects/reapply",
+    validate("param", BookParam),
+    validate("json", ExistingScopeSchema),
+    (c) => {
+      const job = enqueueReapply(db, runner, c.req.valid("param").id, c.req.valid("json"));
+      return c.json({ job }, 202);
+    },
+  );
+
+  /** "Keep old sound": the stale clips in scope stop counting until their effects change again. */
+  app.post(
+    "/:id/effects/keep",
+    validate("param", BookParam),
+    validate("json", ExistingScopeSchema),
+    (c) => c.json({ kept: keepOldSound(db, c.req.valid("param").id, c.req.valid("json")) }),
+  );
 
   // ---------- removal ----------
   /** Scripts, clips and statuses go (kept in each chapter's history). */

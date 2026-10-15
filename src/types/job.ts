@@ -1,5 +1,6 @@
 // The queue: one job per chapter of work. The `*Run` fields carry the live detail the Queue page
 // shows and everything a retry needs.
+import type { ExistingScope } from "@/types/effect";
 import type { ExportSettings } from "@/types/export";
 import type { NarrationScope } from "@/types/run";
 import type { Profile, ResolvedPrompt } from "@/types/scripting";
@@ -99,6 +100,8 @@ export interface Job {
     stage: string;
     done: number;
   };
+  /** A Re-apply's reach; absent = the whole book. */
+  effectsRun?: ExistingScope;
   /** One chapter's current clips heard by a transcription endpoint. */
   checkRun?: {
     endpoint: string;

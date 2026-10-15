@@ -105,7 +105,7 @@ export function createApp(
     `${base}/books`,
     bookRoutes(db, runner, files, exports.files, providers.scripting, effects),
   );
-  app.route(`${base}/books`, castRoutes(db));
+  app.route(`${base}/books`, castRoutes(db, runner));
   app.route(`${base}/books`, scriptRoutes(db, runner));
   app.route(`${base}/books`, exportRoutes(db, runner, exports, coverFiles(files)));
   app.route(`${base}/books`, transferRoutes(db, providers, files, voiceFiles));

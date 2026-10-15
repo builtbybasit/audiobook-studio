@@ -55,6 +55,36 @@ export interface StaleSound {
   lines: number;
   unavailable: number;
   ready: boolean;
+  /** chapters holding any of `lines`, in reading order */
+  chapters: ExistingChapter[];
+}
+
+/** One chapter's share of the finished lines a voice or effect change left behind. */
+export interface ExistingChapter {
+  id: number;
+  lines: number;
+  /** effect: lines with no raw file, which only re-narrating changes */
+  unavailable?: number;
+  /** voice: worst-case dollars to re-narrate the chapter's lines; null when unpriced */
+  cost?: number | null;
+}
+
+/**
+ * `GET …/characters/:name/old-voice`: the speaker's finished lines made with a voice other than the
+ * one their line gets now (own voice, persona fallback, Character voice and Narrator included).
+ */
+export interface OldVoice {
+  lines: number;
+  /** worst-case dollars to re-narrate them all; null when any is unpriced */
+  cost: number | null;
+  chapters: ExistingChapter[];
+}
+
+/** Which chapters a Re-apply, a Keep or a re-voice reaches; absent `chapters` = all of them. */
+export interface ExistingScope {
+  chapters?: number[];
+  /** only this speaker's lines */
+  speaker?: string;
 }
 
 /**

@@ -46,7 +46,7 @@ import {
   bookDelivery,
   lineReading,
   lineWorstCase,
-  narrationCost,
+  narrationPricer,
   type Delivery,
   type NarrationCost,
 } from "~/narration/cost";
@@ -843,25 +843,37 @@ function putBackAfter(ctx: JobContext): void {
   });
 }
 
+/** A run's line list with these clips marked stale, as `enqueueNarration` writes them. */
+export const withStale = (segs: readonly Segment[], ids: ReadonlySet<number>): Segment[] =>
+  segs.map((s) => (ids.has(s.id) ? { ...s, audio: { ...s.audio, status: "stale" } } : s));
+
 /**
  * Queue one narration job per chapter as one run. Chapters with nothing to do are skipped, not
  * refused. The whole run is priced at worst case first: if it doesn't fit the book's budget,
  * nothing is queued (409). An endpoint's daily limit refuses only if it can't cover its first line.
+ * `stale` names, per chapter, done clips to mark stale with the chapter's job, so the run redoes
+ * them; a chapter it leaves out is skipped.
  */
 export function enqueueNarration(
   db: Db,
   runner: Runner,
   bookId: string,
   ids: readonly number[],
-  { scope }: { scope: NarrationScope },
+  { scope, stale }: { scope: NarrationScope; stale?: ReadonlyMap<number, ReadonlySet<number>> },
 ): NarrationQueued {
   const book = library.getBook(db, bookId);
   if (!book) throw notFound("No such book");
   if (book.importing) throw conflict("Finish the contents review before narrating this book");
   const known = new Map(library.listChapters(db, bookId).map((c) => [c.id, c]));
 
-  const at = Date.now();
-  const targets: { id: number; clips: number; replacing: boolean; cost: NarrationCost }[] = [];
+  const priceOf = narrationPricer(db, bookId);
+  const targets: {
+    id: number;
+    clips: number;
+    replacing: boolean;
+    cost: NarrationCost;
+    staled: Segment[];
+  }[] = [];
   const skipped: NarrationQueued["skipped"] = [];
   for (const id of ids) {
     const c = known.get(id);
@@ -873,7 +885,7 @@ export function enqueueNarration(
       skipped.push({ id, why: "excluded" });
       continue;
     }
-    const segs = readScript(db, bookId, id);
+    let segs = readScript(db, bookId, id);
     if (!segs.length) {
       skipped.push({ id, why: "unscripted" });
       continue;
@@ -882,6 +894,13 @@ export function enqueueNarration(
       skipped.push({ id, why: "busy" });
       continue;
     }
+    const marked = stale?.get(id);
+    if (stale && !marked?.size) {
+      skipped.push({ id, why: "nothing" });
+      continue;
+    }
+    const staled = marked ? segs.filter((s) => marked.has(s.id)) : [];
+    if (marked) segs = withStale(segs, marked);
     const { run } = narrationTargets(segs, scope, true, book);
     if (!run.length) {
       skipped.push({ id, why: "nothing" });
@@ -891,7 +910,8 @@ export function enqueueNarration(
       id,
       clips: run.length,
       replacing: c.narration === "done" || c.narration === "stale",
-      cost: narrationCost(db, bookId, run, at),
+      cost: priceOf(run),
+      staled,
     });
   }
   // each endpoint's first line, in the order the chapters were asked for
@@ -908,7 +928,7 @@ export function enqueueNarration(
 
   const runId = nextRunId(db);
   const jobs: Job[] = [];
-  targets.forEach(({ id, clips, replacing, cost }, i) => {
+  targets.forEach(({ id, clips, replacing, cost, staled }, i) => {
     const { job } = runner.enqueue({
       kind: "narration",
       bookId,
@@ -923,7 +943,12 @@ export function enqueueNarration(
       },
       run: { narrationRun: narrationRunOf(cost, clips, scope) },
       // same transaction as the row, so it can't land after the worker moved on
-      onCreated: (tx) => library.setChapterNarration(tx, bookId, id, "queued", 0),
+      onCreated: (tx) => {
+        for (const s of staled)
+          writeClip(tx, bookId, id, s.id, "current", { ...s.audio, status: "stale" });
+        if (staled.length) bumpRevision(tx, bookId, id);
+        library.setChapterNarration(tx, bookId, id, "queued", 0);
+      },
     });
     jobs.push(job);
   });

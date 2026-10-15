@@ -21,6 +21,7 @@ import {
 import Toasts from "@/components/Toasts.vue";
 import MiniPlayer from "@/components/MiniPlayer.vue";
 import ShortcutsDialog from "@/components/ShortcutsDialog.vue";
+import ExistingLinesDialog from "@/views/cast/ExistingLinesDialog.vue";
 import AppRail from "@/components/AppRail.vue";
 import BookSelector from "@/components/BookSelector.vue";
 import BookTabs from "@/components/BookTabs.vue";
@@ -177,6 +178,7 @@ const palette = ref<InstanceType<typeof CommandPalette> | null>(null);
         <BookTabs />
         <CommandPalette ref="palette" />
         <ShortcutsDialog v-model:open="shortcuts" />
+        <ExistingLinesDialog />
         <main class="relative min-h-0 flex-1 overflow-auto">
           <!-- Stage views read `:bookId` once at setup; keying on it stops a same-stage jump to
                another book from reusing the instance pointed at the old book. -->

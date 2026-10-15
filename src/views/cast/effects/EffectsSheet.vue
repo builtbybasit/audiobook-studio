@@ -9,6 +9,7 @@ import { ChevronLeft as PrevIcon, ChevronRight as NextIcon, X as CloseIcon } fro
 import { useEffects } from "@/queries";
 import { useCastStore } from "@/stores/cast";
 import { useEffectsStore } from "@/stores/effects";
+import { useExistingLinesStore } from "@/stores/existingLines";
 import { UiHint, UiSheet, UiToggleGroup } from "@/ui";
 import { useChoice, type ChoiceView } from "./choice";
 import { useTryLines } from "./lines";
@@ -112,6 +113,26 @@ watch(
     if (s?.kind === "speaker") slot.value = s.slot;
     if (!o) previews.clear();
     else if ((s?.kind === "book" || s?.kind === "line") && s.effect) edit(s.effect);
+  },
+  { immediate: true },
+);
+// Rows are tried many at a time, so lines made with the old sound are asked about once the
+// sheet closes (or moves to someone else), if the speaker's effect or thoughts changed.
+const existingLines = useExistingLinesStore();
+const choicesOf = (who: string) => {
+  const c = castStore.byName[props.bookId]?.get(who);
+  return { effect: c?.effect, thoughts: c?.thoughts };
+};
+let opened: { name: string; effect?: string; thoughts?: string } | null = null;
+watch(
+  () => [open.value, props.subject] as const,
+  ([o, s]) => {
+    if (opened) {
+      const now = choicesOf(opened.name);
+      const slots = (["effect", "thoughts"] as const).filter((k) => now[k] !== opened![k]);
+      if (slots.length) void existingLines.askEffect(props.bookId, opened.name, slots);
+    }
+    opened = o && s?.kind === "speaker" ? { name: s.name, ...choicesOf(s.name) } : null;
   },
   { immediate: true },
 );

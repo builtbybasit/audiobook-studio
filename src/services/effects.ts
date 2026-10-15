@@ -1,5 +1,13 @@
 // The seam the library's voice effects go through, as `@/services/library` is for books.
-import type { Effect, EffectUses, Job, StaleSound, Step, ThoughtChoice } from "@/types";
+import type {
+  Effect,
+  EffectUses,
+  ExistingScope,
+  Job,
+  StaleSound,
+  Step,
+  ThoughtChoice,
+} from "@/types";
 import { HttpClient, seg, type FetchLike } from "@/services/http";
 import { API_BASE } from "@/services/mode";
 
@@ -21,10 +29,12 @@ export interface EffectsService {
   preview(url: string, chains: Step[][]): Promise<Blob>;
   /** The chain a piece of Pedalboard code builds; a 400 says why it builds none. */
   parse(code: string): Promise<Step[]>;
-  /** How many of a book's clips have an old sound, and how many of those cannot be redone. */
-  stale(bookId: string): Promise<StaleSound>;
-  /** Refused (409) while one is queued or running. */
-  reapply(bookId: string): Promise<Job>;
+  /** A book's (or one speaker's) clips with an old sound, how many cannot be redone, and where. */
+  stale(bookId: string, speaker?: string): Promise<StaleSound>;
+  /** Redo the old-sound clips in scope (all of them by default). Refused (409) while one is queued or running. */
+  reapply(bookId: string, scope?: ExistingScope): Promise<Job>;
+  /** Mark the old-sound clips in scope as kept, until their lines' sound changes again; how many. */
+  keep(bookId: string, scope: ExistingScope): Promise<number>;
 }
 
 export class HttpEffectsService implements EffectsService {
@@ -72,12 +82,18 @@ export class HttpEffectsService implements EffectsService {
     return (await this.http.post<{ chain: Step[] }>("/effects/parse", { code })).chain;
   }
 
-  stale(bookId: string): Promise<StaleSound> {
-    return this.http.get<StaleSound>(`/books/${seg(bookId)}/effects/stale`);
+  stale(bookId: string, speaker?: string): Promise<StaleSound> {
+    const q = speaker == null ? "" : `?speaker=${encodeURIComponent(speaker)}`;
+    return this.http.get<StaleSound>(`/books/${seg(bookId)}/effects/stale${q}`);
   }
 
-  async reapply(bookId: string): Promise<Job> {
-    return (await this.http.post<{ job: Job }>(`/books/${seg(bookId)}/effects/reapply`)).job;
+  async reapply(bookId: string, scope: ExistingScope = {}): Promise<Job> {
+    return (await this.http.post<{ job: Job }>(`/books/${seg(bookId)}/effects/reapply`, scope)).job;
+  }
+
+  async keep(bookId: string, scope: ExistingScope): Promise<number> {
+    return (await this.http.post<{ kept: number }>(`/books/${seg(bookId)}/effects/keep`, scope))
+      .kept;
   }
 }
 

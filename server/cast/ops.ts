@@ -30,7 +30,7 @@ export function bookCast(db: Db, bookId: string): Cast {
   return { characters: cast.readCast(db, bookId), lexicon: cast.readLexicon(db, bookId) };
 }
 
-function requireCharacter(db: Db | Tx, bookId: string, name: string): Character {
+export function requireCharacter(db: Db | Tx, bookId: string, name: string): Character {
   const c = cast.getCharacter(db, bookId, name);
   if (!c) throw notFound(`“${name}” is not in this book’s cast`);
   return c;

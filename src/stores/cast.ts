@@ -46,6 +46,7 @@ import type {
 } from "@/types";
 import { defineStore } from "pinia";
 import { useEndpointsStore } from "@/stores/endpoints";
+import { useExistingLinesStore } from "@/stores/existingLines";
 import { useLibraryStore } from "@/stores/library";
 import { chapterTally, useScriptsStore } from "@/stores/scripts";
 import { toastFailure } from "@/stores/toastFailure";
@@ -873,10 +874,16 @@ export const useCastStore = defineStore("cast", {
       delete c.masked;
       await this._push(bookId, name);
     },
-    /** Give a speaker a voice, or null to fall back. Every picker writes through this: binding
-     *  `c.voice` directly would never reach the server. */
-    setVoice(bookId: string, name: string, voice: VoiceRef | null): Promise<void> {
-      return this.updateCharacter(bookId, name, { voice });
+    /**
+     * Give a speaker a voice, or null to fall back. Every picker writes through this: binding
+     * `c.voice` directly would never reach the server. Once saved, lines already made with another
+     * voice are asked about (`existingLines`).
+     */
+    async setVoice(bookId: string, name: string, voice: VoiceRef | null): Promise<void> {
+      const c = this.characters[bookId]?.find((x) => x.name === name);
+      if (!c || (c.voice ?? null) === voice) return;
+      c.voice = voice;
+      if (await this._push(bookId, name)) await useExistingLinesStore().askVoice(bookId, name);
     },
     /**
      * Put a voice effect on a speaker's lines, or null to remove it. Existing clips show in the

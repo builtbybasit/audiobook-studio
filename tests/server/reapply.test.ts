@@ -6,14 +6,14 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 
-import type { Job, StaleSound, Step } from "@/types";
+import type { ExistingScope, Job, StaleSound, Step } from "@/types";
 import { soundOf } from "@/lib/effects";
 import { newSpeaker } from "@/lib/cast";
 import { createEffect } from "~/db/effects";
 import { characterValues } from "~/db/rows/cast";
 import { listJobs } from "~/db/jobs";
-import { clips, characters, segments } from "~/db/schema";
-import { readScript } from "~/db/script";
+import { chapters, clips, characters, segments } from "~/db/schema";
+import { readScript, writeScript } from "~/db/script";
 import { and, eq } from "drizzle-orm";
 import { fakeEffectRunner, type FakeEffectRunner } from "../support/effects";
 import { line } from "../support/epub";
@@ -46,14 +46,26 @@ const lines = (api: TestApi, id: string) =>
   [1, 2].flatMap((ch) => readScript(api.db, id, ch).map((s) => ({ ch, ...s })));
 const maras = (api: TestApi, id: string) => lines(api, id).filter((s) => s.speaker === "Mara");
 
-const stale = async (api: TestApi, id: string) =>
-  (await api.request<StaleSound>(`/api/books/${id}/effects/stale`)).body;
+const stale = async (api: TestApi, id: string, query = "") =>
+  (await api.request<StaleSound>(`/api/books/${id}/effects/stale${query}`)).body;
+/** Just the counts. */
+const count = async (api: TestApi, id: string) => {
+  const { lines, unavailable } = await stale(api, id);
+  return { lines, unavailable };
+};
+const both = [
+  { id: 1, lines: 1, unavailable: 0 },
+  { id: 2, lines: 1, unavailable: 0 },
+];
+
+const keep = async (api: TestApi, id: string, scope: ExistingScope) =>
+  (await api.request<{ kept: number }>(`/api/books/${id}/effects/keep`, jsonBody(scope))).body.kept;
 
 /** Queue the book's Re-apply and wait for it; the job as it ended. */
-async function reapply(api: TestApi, id: string): Promise<Job> {
+async function reapply(api: TestApi, id: string, scope: ExistingScope = {}): Promise<Job> {
   const { status, body } = await api.request<{ job: Job }>(
     `/api/books/${id}/effects/reapply`,
-    jsonBody({}),
+    jsonBody(scope),
   );
   expect(status).toBe(202);
   await api.runner.idle();
@@ -73,26 +85,45 @@ const setClip = (
 describe("what has an old sound", () => {
   test("a clip whose line's effects changed, went, or cannot be redone", async () => {
     const { api, id } = await book();
-    expect(await stale(api, id)).toEqual({ lines: 0, unavailable: 0, ready: true });
+    expect(await stale(api, id)).toEqual({ lines: 0, unavailable: 0, ready: true, chapters: [] });
 
     // Mara wears an effect her clips were made without
     const e = createEffect(api.db, "echo", { name: "Echo", chain: echo });
     wear(api, id, e.id);
     const [a, b] = maras(api, id);
-    expect(await stale(api, id)).toEqual({ lines: 2, unavailable: 0, ready: true });
+    expect(await stale(api, id)).toEqual({ lines: 2, unavailable: 0, ready: true, chapters: both });
 
     // one is processed as she now sounds; the other as she used to
     setClip(api, a.audio.url!, { sound: soundOf([e]), raw: "/api/audio/x/raw-a.wav" });
     setClip(api, b.audio.url!, { sound: "0ld50und", raw: "/api/audio/x/raw-b.wav" });
-    expect(await stale(api, id)).toEqual({ lines: 1, unavailable: 0, ready: true });
+    expect(await count(api, id)).toEqual({ lines: 1, unavailable: 0 });
 
     // she wears nothing now: both go back to their raw files
     wear(api, id, null);
-    expect(await stale(api, id)).toEqual({ lines: 2, unavailable: 0, ready: true });
+    expect(await count(api, id)).toEqual({ lines: 2, unavailable: 0 });
 
     // an ffmpeg thought clip with no raw file cannot be undone
     setClip(api, b.audio.url!, { sound: "ffmpeg", raw: null });
-    expect(await stale(api, id)).toEqual({ lines: 2, unavailable: 1, ready: true });
+    expect(await stale(api, id)).toEqual({
+      lines: 2,
+      unavailable: 1,
+      ready: true,
+      chapters: [both[0], { id: 2, lines: 1, unavailable: 1 }],
+    });
+  });
+
+  test("by chapter, for one speaker, leaving out an excluded chapter", async () => {
+    const { api, id } = await book();
+    wear(api, id, createEffect(api.db, "echo", { name: "Echo", chain: echo }).id);
+    expect((await stale(api, id, "?speaker=Mara")).chapters).toEqual(both);
+    expect(await stale(api, id, "?speaker=Narrator")).toMatchObject({ lines: 0, chapters: [] });
+
+    api.db
+      .update(chapters)
+      .set({ excluded: true })
+      .where(and(eq(chapters.bookId, id), eq(chapters.id, 1)))
+      .run();
+    expect(await stale(api, id)).toMatchObject({ lines: 1, chapters: [both[1]] });
   });
 
   test("a clip whose line gained a line effect, or whose speaker became a persona", async () => {
@@ -104,10 +135,10 @@ describe("what has an old sound", () => {
       .set({ effects: [e.id] })
       .where(and(eq(segments.bookId, id), eq(segments.chapterId, a.ch), eq(segments.id, a.id)))
       .run();
-    expect(await stale(api, id)).toEqual({ lines: 1, unavailable: 0, ready: true });
+    expect(await count(api, id)).toEqual({ lines: 1, unavailable: 0 });
     // made as it now sounds, it is not old; its neighbour with no line effect never was
     setClip(api, a.audio.url!, { sound: soundOf([e]), raw: "/api/audio/x/raw-a.wav" });
-    expect(await stale(api, id)).toEqual({ lines: 0, unavailable: 0, ready: true });
+    expect(await count(api, id)).toEqual({ lines: 0, unavailable: 0 });
 
     // Mara becomes a persona of a speaker who wears an effect: hers go first, on every line
     const louderFx = createEffect(api.db, "louder", { name: "Louder", chain: louder });
@@ -120,10 +151,10 @@ describe("what has an old sound", () => {
       .set({ personaOf: "Ann" })
       .where(and(eq(characters.bookId, id), eq(characters.name, "Mara")))
       .run();
-    expect(await stale(api, id)).toEqual({ lines: 2, unavailable: 0, ready: true });
+    expect(await count(api, id)).toEqual({ lines: 2, unavailable: 0 });
     setClip(api, a.audio.url!, { sound: soundOf([louderFx, e]) });
     setClip(api, b.audio.url!, { sound: soundOf([louderFx]), raw: "/api/audio/x/raw-b.wav" });
-    expect(await stale(api, id)).toEqual({ lines: 0, unavailable: 0, ready: true });
+    expect(await count(api, id)).toEqual({ lines: 0, unavailable: 0 });
   });
 
   test("says whether effects can run here to redo them", async () => {
@@ -138,9 +169,40 @@ describe("what has an old sound", () => {
     expect((await stale(bare, other)).ready).toBe(false);
   });
 
-  test("an unknown book is a 404", async () => {
+  test.each([
+    ["counted", undefined],
+    ["kept", jsonBody({})],
+  ])("an unknown book's cannot be %s", async (_, init) => {
     const api = testApi();
-    expect((await api.request("/api/books/nope/effects/stale")).status).toBe(404);
+    const path = init ? "/api/books/nope/effects/keep" : "/api/books/nope/effects/stale";
+    expect((await api.request(path, init)).status).toBe(404);
+  });
+});
+
+describe("keeping the old sound", () => {
+  test("holds against the effect it was kept under, through a script save", async () => {
+    const { api, id } = await book();
+    const e = createEffect(api.db, "echo", { name: "Echo", chain: echo });
+    wear(api, id, e.id);
+    expect(await keep(api, id, { chapters: [1, 99] })).toBe(1);
+    expect((await stale(api, id)).chapters).toEqual([both[1]]);
+    // a save rewrites the chapter's clip rows
+    writeScript(api.db, id, 1, readScript(api.db, id, 1));
+    expect((await count(api, id)).lines).toBe(1);
+    expect(await keep(api, id, { chapters: [] })).toBe(0);
+
+    // another effect: both are old again
+    wear(api, id, createEffect(api.db, "louder", { name: "Louder", chain: louder }).id);
+    expect((await count(api, id)).lines).toBe(2);
+
+    // kept against no effect, which is not the same as not kept
+    for (const s of maras(api, id))
+      setClip(api, s.audio.url!, { sound: "0ld50und", raw: "/api/audio/x/raw.wav" });
+    wear(api, id, null);
+    expect(await keep(api, id, { speaker: "Mara" })).toBe(2);
+    expect((await count(api, id)).lines).toBe(0);
+    wear(api, id, e.id);
+    expect((await count(api, id)).lines).toBe(2);
   });
 });
 
@@ -163,7 +225,7 @@ describe("re-applying", () => {
     expect(first.map((s) => s.audio.url)).not.toEqual(raws);
     // the voice's files stay, beside the new ones
     expect(onDisk(api, id)).toEqual([...before, ...first.map((s) => fileOf(s.audio.url))].sort());
-    expect(await stale(api, id)).toEqual({ lines: 0, unavailable: 0, ready: true });
+    expect(await count(api, id)).toEqual({ lines: 0, unavailable: 0 });
 
     // the effect changes: made again from the raw files, the first renders gone
     wear(api, id, createEffect(api.db, "louder", { name: "Louder", chain: louder }).id);
@@ -223,6 +285,26 @@ describe("re-applying", () => {
     const job = await reapply(api, id);
     expect(job.status).toBe("failed");
     expect(job.activity?.at(-1)?.detail?.error).toContain("cannot run on this machine");
+  });
+});
+
+describe("re-applying some of the book", () => {
+  test("redoes only the chapters asked for, and remembers them", async () => {
+    const { api, id, fake } = await book();
+    wear(api, id, createEffect(api.db, "echo", { name: "Echo", chain: echo }).id);
+    const job = await reapply(api, id, { chapters: [2], speaker: "Mara" });
+    expect(job.effectsRun).toEqual({ chapters: [2], speaker: "Mara" });
+    expect(fake.calls.batch[0]).toHaveLength(1);
+    expect((await stale(api, id)).chapters).toEqual([both[0]]);
+  });
+
+  test("of no chapters is refused", async () => {
+    const { api, id } = await book();
+    const { status } = await api.request(
+      `/api/books/${id}/effects/reapply`,
+      jsonBody({ chapters: [] }),
+    );
+    expect(status).toBe(400);
   });
 });
 

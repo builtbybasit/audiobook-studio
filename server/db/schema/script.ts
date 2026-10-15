@@ -274,3 +274,20 @@ export const heard = sqliteTable(
   },
   (t) => [primaryKey({ columns: [t.bookId, t.file] })],
 );
+
+/**
+ * A clip's old sound kept on purpose ("Keep old sound"), against what its line wanted then. Keyed
+ * by file like `heard`: script saves rewrite clip rows, and a new file starts out not kept.
+ */
+export const keptSounds = sqliteTable(
+  "kept_sounds",
+  {
+    bookId: text("book_id")
+      .notNull()
+      .references(() => books.id, { onDelete: "cascade" }),
+    url: text("url").notNull(),
+    /** the line's `soundOf` when kept; null = it wanted no effect */
+    want: text("want"),
+  },
+  (t) => [primaryKey({ columns: [t.bookId, t.url] })],
+);

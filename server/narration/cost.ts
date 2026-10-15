@@ -77,57 +77,75 @@ export interface NarrationCost {
   estimatedAudio: number | null;
   /** each endpoint's first line, which its daily limit must cover to start (`~/usage/budget`) */
   firsts: { endpoint: string; cost: number }[];
+  /** false when a line's endpoint is gone or has no known price: `reserved` is then a floor */
+  priced: boolean;
 }
 
 export function bookDelivery(db: Db | Tx, bookId: string): (speaker: string) => Delivery {
   return deliveryFor(readCast(db, bookId), getBook(db, bookId)?.characterVoice);
 }
 
-/** Grouped per endpoint as the browser's estimate is, so the gate holds what the panel shows. */
-export function narrationCost(
+/**
+ * `narrationCost` with the book's cast, dictionary and pacing read once, for pricing many chapters.
+ * Grouped per endpoint as the browser's estimate is, so the gate holds what the panel shows.
+ */
+export function narrationPricer(
   db: Db | Tx,
   bookId: string,
-  segs: readonly Segment[],
   at: number = Date.now(),
-): NarrationCost {
+): (segs: readonly Segment[]) => NarrationCost {
   const deliveryOf = bookDelivery(db, bookId);
   const lexicon: LexEntry[] = readLexicon(db, bookId);
   const pacing = readPacing(db, bookId);
   const endpoints = new Map<string, Endpoint | undefined>();
-  const per = new Map<string, { ep: Endpoint; units: BillableUnits }>();
-  const firsts: NarrationCost["firsts"] = [];
-  for (const s of segs) {
-    const who = deliveryOf(s.speaker);
-    if (!who.endpoint) continue;
-    if (!endpoints.has(who.endpoint)) endpoints.set(who.endpoint, readEndpoint(db, who.endpoint));
-    const ep = endpoints.get(who.endpoint);
-    if (!ep) continue;
-    const reading = prepareReading(
-      s,
-      { endpoint: ep, voiceRef: who.voiceRef, style: who.style },
-      lexicon,
-      pacing,
-    );
-    const units = plannedSpeechUnits(reading, ep);
-    if (!per.has(ep.id)) firsts.push({ endpoint: ep.id, cost: lineWorstCase(reading, at) });
-    const group = per.get(ep.id) ?? { ep, units: noUnits() };
-    group.units = addUnits(group.units, units);
-    per.set(ep.id, group);
-  }
-  const cost: NarrationCost = {
-    reserved: 0,
-    estimated: 0,
-    estimatedInput: 0,
-    estimatedAudio: null,
-    firsts,
+  return (segs) => {
+    const per = new Map<string, { ep: Endpoint; units: BillableUnits }>();
+    const firsts: NarrationCost["firsts"] = [];
+    let priced = true;
+    for (const s of segs) {
+      const who = deliveryOf(s.speaker);
+      if (!who.endpoint) continue;
+      if (!endpoints.has(who.endpoint)) endpoints.set(who.endpoint, readEndpoint(db, who.endpoint));
+      const ep = endpoints.get(who.endpoint);
+      if (!ep) {
+        priced = false;
+        continue;
+      }
+      const reading = prepareReading(
+        s,
+        { endpoint: ep, voiceRef: who.voiceRef, style: who.style },
+        lexicon,
+        pacing,
+      );
+      const units = plannedSpeechUnits(reading, ep);
+      if (!per.has(ep.id)) firsts.push({ endpoint: ep.id, cost: lineWorstCase(reading, at) });
+      const group = per.get(ep.id) ?? { ep, units: noUnits() };
+      group.units = addUnits(group.units, units);
+      per.set(ep.id, group);
+    }
+    const cost: NarrationCost = {
+      reserved: 0,
+      estimated: 0,
+      estimatedInput: 0,
+      estimatedAudio: null,
+      firsts,
+      priced,
+    };
+    for (const { ep, units } of per.values()) {
+      const est = estimateSpeech(billingOf(ep), readPricing(ep), units, at);
+      if (est.cost == null) cost.priced = false;
+      cost.reserved += worstCaseOf(est);
+      cost.estimated += est.cost ?? 0;
+      cost.estimatedInput += est.inputCost ?? 0;
+      if (est.audioCost != null) cost.estimatedAudio = (cost.estimatedAudio ?? 0) + est.audioCost;
+    }
+    return cost;
   };
-  for (const { ep, units } of per.values()) {
-    const priced = estimateSpeech(billingOf(ep), readPricing(ep), units, at);
-    cost.reserved += worstCaseOf(priced);
-    cost.estimated += priced.cost ?? 0;
-    cost.estimatedInput += priced.inputCost ?? 0;
-    if (priced.audioCost != null)
-      cost.estimatedAudio = (cost.estimatedAudio ?? 0) + priced.audioCost;
-  }
-  return cost;
 }
+
+export const narrationCost = (
+  db: Db | Tx,
+  bookId: string,
+  segs: readonly Segment[],
+  at: number = Date.now(),
+): NarrationCost => narrationPricer(db, bookId, at)(segs);

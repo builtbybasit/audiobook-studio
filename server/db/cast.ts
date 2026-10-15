@@ -87,6 +87,24 @@ export function readChapterCast(
   return chapterCast(readSpeakers(db, bookId), text, new Set(recent));
 }
 
+/** Who speaks in each kept chapter, in reading order, so a question about some reads only theirs. */
+export function chapterSpeakers(db: Db | Tx, bookId: string): Map<number, string[]> {
+  const out = new Map<number, string[]>();
+  const rows = db
+    .selectDistinct({ chapterId: segments.chapterId, speaker: segments.speaker })
+    .from(segments)
+    .innerJoin(
+      chapters,
+      and(eq(chapters.bookId, segments.bookId), eq(chapters.id, segments.chapterId)),
+    )
+    .where(and(eq(segments.bookId, bookId), sql`coalesce(${chapters.excluded}, 0) = 0`))
+    .orderBy(asc(segments.chapterId))
+    .all();
+  for (const { chapterId, speaker } of rows)
+    out.set(chapterId, [...(out.get(chapterId) ?? []), speaker]);
+  return out;
+}
+
 export function getCharacter(db: Db | Tx, bookId: string, name: string): Character | undefined {
   const row = db
     .select()

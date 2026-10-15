@@ -1,5 +1,5 @@
 // Voice effect operations; the rules live here, routes only translate requests.
-import type { Effect, EffectUses, StaleSound, ThoughtChoice } from "@/types";
+import type { Effect, EffectUses, ExistingScope, StaleSound, ThoughtChoice } from "@/types";
 import type { EffectRunner } from "~/audio/effects";
 import type { Db, Tx } from "~/db/client";
 import * as effects from "~/db/effects";
@@ -44,10 +44,16 @@ export function deleteEffect(db: Db, id: string): void {
 export async function staleSound(
   db: Db,
   bookId: string,
+  scope: ExistingScope,
   runner?: EffectRunner,
 ): Promise<StaleSound> {
   if (!getBook(db, bookId)) throw notFound("No such book");
-  return { ...effects.staleSound(db, bookId), ready: (await runner?.available()) ?? false };
+  return { ...effects.staleSound(db, bookId, scope), ready: (await runner?.available()) ?? false };
+}
+
+export function keepOldSound(db: Db, bookId: string, scope: ExistingScope): number {
+  if (!getBook(db, bookId)) throw notFound("No such book");
+  return effects.keepOldSound(db, bookId, scope);
 }
 
 export const libraryThoughts = (db: Db): ThoughtChoice => readThoughts(db);

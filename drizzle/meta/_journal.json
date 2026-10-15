@@ -260,6 +260,13 @@
       "when": 1791989827360,
       "tag": "0036_inner_voice_reverb",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "6",
+      "when": 1792060955595,
+      "tag": "0037_kept_sounds",
+      "breakpoints": true
     }
   ]
 }

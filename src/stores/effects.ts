@@ -12,7 +12,14 @@ import { fetchBook } from "@/queries/library";
 import { fetchCast } from "@/queries/cast";
 import { ApiError } from "@/services/http";
 import { effectsService } from "@/services/effects";
-import type { Effect, EffectUses, SpeakerEffectUse, Step, ThoughtChoice } from "@/types";
+import type {
+  Effect,
+  EffectUses,
+  ExistingScope,
+  SpeakerEffectUse,
+  Step,
+  ThoughtChoice,
+} from "@/types";
 import { useCastStore } from "@/stores/cast";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
@@ -262,17 +269,28 @@ export const useEffectsStore = defineStore("effects", {
       void staleMoved();
       return true;
     },
-    /** Queue a Re-apply of a book's old-sound clips, flushing edits first. True when queued. */
-    async reapply(bookId: string): Promise<boolean> {
+    /** Queue a Re-apply of a book's old-sound clips in scope, flushing edits first. True when queued. */
+    async reapply(bookId: string, scope: ExistingScope = {}): Promise<boolean> {
       await this.flush();
       try {
-        await effectsService().reapply(bookId);
+        await effectsService().reapply(bookId, scope);
       } catch (cause) {
         toastFailure("re-apply this book's effects", cause);
         return false;
       }
       await useJobsStore()._changed();
       return true;
+    },
+    /** Let the old-sound clips in scope keep their sound; how many, or null when refused. */
+    async keep(bookId: string, scope: ExistingScope): Promise<number | null> {
+      try {
+        const kept = await effectsService().keep(bookId, scope);
+        void staleMoved(bookId);
+        return kept;
+      } catch (cause) {
+        toastFailure("keep the old sound", cause);
+        return null;
+      }
     },
     /** The clip at `url` run through these chains in order, as a WAV to play; null when refused. */
     async preview(url: string, chains: Step[][]): Promise<Blob | null> {

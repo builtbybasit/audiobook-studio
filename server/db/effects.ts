@@ -3,10 +3,10 @@
 // deleting one resets those names here, in the same transaction.
 import { and, asc, eq, gte, inArray, isNotNull, max, or, sql } from "drizzle-orm";
 
-import type { Effect, EffectUses, StaleSound } from "@/types";
+import type { Effect, EffectUses, ExistingChapter, ExistingScope, StaleSound } from "@/types";
 import { chainsFor, soundOf, type EffectContext } from "@/lib/effects";
 import type { Db, Tx } from "~/db/client";
-import { books, characters, clips, effects, segments } from "~/db/schema";
+import { books, chapters, characters, clips, effects, keptSounds, segments } from "~/db/schema";
 import { readThoughts, writeThoughts } from "~/db/settings";
 
 /** A fresh library's thought effect, as migrations 0031 and 0036 lay it down. */
@@ -214,10 +214,11 @@ export const cannotRedo = (c: Pick<StaleClip, "raw" | "sound">): boolean =>
   c.raw == null && c.sound != null;
 
 /**
- * Finished current/candidate clips whose sound is stale; takes are history and left alone.
- * Effects are worked out once per (thought?, speaker, line effects), not per line, for scale.
+ * Finished current/candidate clips whose sound is stale, in the chapters kept in the book; takes are
+ * history and left alone, and so is a clip kept against the sound its line wants now. Effects are
+ * worked out once per (thought?, speaker, line effects), not per line, for scale.
  */
-export function staleClips(db: Db | Tx, bookId: string): StaleClip[] {
+export function staleClips(db: Db | Tx, bookId: string, scope: ExistingScope = {}): StaleClip[] {
   const ctx = effectContext(db, bookId);
   const rows = db
     .select({
@@ -229,6 +230,8 @@ export function staleClips(db: Db | Tx, bookId: string): StaleClip[] {
       type: segments.type,
       speaker: segments.speaker,
       lineEffects: segments.effects,
+      kept: keptSounds.url,
+      keptWant: keptSounds.want,
     })
     .from(clips)
     .innerJoin(
@@ -239,18 +242,25 @@ export function staleClips(db: Db | Tx, bookId: string): StaleClip[] {
         eq(segments.id, clips.segmentId),
       ),
     )
+    .innerJoin(chapters, and(eq(chapters.bookId, clips.bookId), eq(chapters.id, clips.chapterId)))
+    .leftJoin(keptSounds, and(eq(keptSounds.bookId, clips.bookId), eq(keptSounds.url, clips.url)))
     .where(
       and(
         eq(clips.bookId, bookId),
         inArray(clips.role, ["current", "candidate"]),
         eq(clips.status, "done"),
         isNotNull(clips.url),
+        sql`coalesce(${chapters.excluded}, 0) = 0`,
+        scope.speaker != null ? eq(segments.speaker, scope.speaker) : undefined,
       ),
     )
+    .orderBy(asc(clips.chapterId))
     .all();
+  const within = scope.chapters && new Set(scope.chapters);
   const known = new Map<string, Pick<StaleClip, "effects" | "want">>();
   const out: StaleClip[] = [];
-  for (const { type, speaker, lineEffects, url, ...r } of rows) {
+  for (const { type, speaker, lineEffects, url, kept, keptWant, ...r } of rows) {
+    if (within && !within.has(r.chapterId)) continue;
     const key = JSON.stringify([type === "thought", speaker, lineEffects]);
     let line = known.get(key);
     if (!line) {
@@ -258,14 +268,52 @@ export function staleClips(db: Db | Tx, bookId: string): StaleClip[] {
       line = { effects, want: soundOf(effects) };
       known.set(key, line);
     }
-    if (r.sound !== line.want) out.push({ ...r, url: url!, ...line });
+    if (r.sound === line.want || (kept != null && keptWant === line.want)) continue;
+    out.push({ ...r, url: url!, ...line });
   }
   return out;
 }
 
-export function staleSound(db: Db | Tx, bookId: string): Omit<StaleSound, "ready"> {
-  const stale = staleClips(db, bookId);
-  return { lines: stale.length, unavailable: stale.filter(cannotRedo).length };
+export function staleSound(
+  db: Db | Tx,
+  bookId: string,
+  scope: ExistingScope = {},
+): Omit<StaleSound, "ready"> {
+  const stale = staleClips(db, bookId, scope);
+  const byChapter: ExistingChapter[] = [];
+  let unavailable = 0;
+  // `staleClips` comes in chapter order, so one chapter's clips are together
+  for (const c of stale) {
+    let ch = byChapter.at(-1);
+    if (ch?.id !== c.chapterId)
+      byChapter.push((ch = { id: c.chapterId, lines: 0, unavailable: 0 }));
+    ch.lines++;
+    if (cannotRedo(c)) {
+      ch.unavailable!++;
+      unavailable++;
+    }
+  }
+  return { lines: stale.length, unavailable, chapters: byChapter };
+}
+
+/**
+ * Marks the stale clips in `scope` as kept against what their lines want now, so they stop being
+ * stale until that changes. Returns how many.
+ */
+export function keepOldSound(db: Db, bookId: string, scope: ExistingScope): number {
+  return db.transaction((tx) => {
+    const stale = staleClips(tx, bookId, scope);
+    // 3 variables a row, well under SQLite's limit
+    for (let i = 0; i < stale.length; i += 500)
+      tx.insert(keptSounds)
+        .values(stale.slice(i, i + 500).map((c) => ({ bookId, url: c.url, want: c.want })))
+        .onConflictDoUpdate({
+          target: [keptSounds.bookId, keptSounds.url],
+          set: { want: sql`excluded.want` },
+        })
+        .run();
+    return stale.length;
+  });
 }
 
 /**
@@ -284,6 +332,10 @@ export function swapClipFile(
     sampleRate: number;
   },
 ): { chapterId: number; role: string }[] {
+  // neither file is kept any more: one is gone, the other has the sound its line wants
+  tx.delete(keptSounds)
+    .where(and(eq(keptSounds.bookId, bookId), inArray(keptSounds.url, [was, next.url])))
+    .run();
   return tx
     .update(clips)
     .set(next)

@@ -2,7 +2,7 @@
 // current effects, with no new voice request. A clip with effects but no raw can't be redone.
 // Each clip lands in its own transaction, only if a slot still plays the file the job read;
 // otherwise the newer work wins and the render is discarded.
-import type { Job } from "@/types";
+import type { ExistingScope, Job } from "@/types";
 import { plural } from "@/lib/contents";
 import { runnable } from "@/lib/effects";
 import { pacingOrDefault, chapterSeconds } from "@/lib/speech";
@@ -14,7 +14,7 @@ import { cannotRedo, staleClips, swapClipFile, type StaleClip } from "~/db/effec
 import * as library from "~/db/library";
 import { bumpRevision, readScript } from "~/db/script";
 import type { JobContext, JobHandler, Runner } from "~/jobs/runner";
-import { conflict, notFound } from "~/lib/errors";
+import { badRequest, conflict, notFound } from "~/lib/errors";
 
 const LABEL = "Re-apply effects";
 
@@ -26,7 +26,7 @@ export function effectsHandler(runner: EffectRunner | undefined, files: AudioFil
       const book = library.getBook(db, bookId);
       if (!book) throw notFound("The book was removed before the effects were re-applied");
 
-      const stale = staleClips(db, bookId);
+      const stale = staleClips(db, bookId, job.effectsRun);
       const stuck = stale.filter(cannotRedo).length;
       if (stuck)
         ctx.note(
@@ -163,14 +163,21 @@ export function effectsHandler(runner: EffectRunner | undefined, files: AudioFil
   };
 }
 
-/** Queue the book's Re-apply; refused while one is active. */
-export function enqueueReapply(db: Db, runner: Pick<Runner, "enqueue">, bookId: string): Job {
+/** Queue the book's Re-apply over `scope`; refused while one is active, whatever its scope. */
+export function enqueueReapply(
+  db: Db,
+  runner: Pick<Runner, "enqueue">,
+  bookId: string,
+  scope: ExistingScope = {},
+): Job {
   if (!library.getBook(db, bookId)) throw notFound("No such book");
+  if (scope.chapters?.length === 0) throw badRequest("Choose at least one chapter to re-apply");
   const { job, created } = runner.enqueue({
     kind: "effects",
     bookId,
     chapterId: null,
     label: LABEL,
+    ...(scope.chapters || scope.speaker != null ? { run: { effectsRun: scope } } : {}),
   });
   if (!created) throw conflict("This book is already re-applying its effects");
   return job;

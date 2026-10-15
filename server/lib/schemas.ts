@@ -81,6 +81,12 @@ function chainSize(steps: readonly Step[]): { depth: number; steps: number } {
   return { depth, steps: count };
 }
 
+/** `ExistingScope`; absent `chapters` = all of them, unknown ids reach nothing. */
+export const ExistingScopeSchema = v.object({
+  chapters: v.optional(v.array(v.pipe(v.number(), v.integer(), v.minValue(1)))),
+  speaker: v.optional(v.pipe(v.string(), v.nonEmpty("must not be empty"))),
+});
+
 export const ChainSchema = v.pipe(
   v.array(StepSchema),
   v.check((c) => chainSize(c).depth <= 4, "nests mixes more than four deep"),

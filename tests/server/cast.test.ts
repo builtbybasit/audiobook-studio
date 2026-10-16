@@ -12,8 +12,15 @@ import type {
   Segment,
 } from "@/types";
 import { readScript, scriptRevision } from "~/db/script";
-import { epubFile, story } from "../support/epub";
-import { jsonBody, testApi, type TestApi } from "../support/server";
+import { epubFile, line, story } from "../support/epub";
+import {
+  jsonBody,
+  narrateChapters,
+  speechEndpoint,
+  testApi,
+  voicedBook,
+  type TestApi,
+} from "../support/server";
 
 interface Failure {
   error: { code: string; message: string; detail?: string };
@@ -141,6 +148,8 @@ describe("renaming and merging", () => {
     );
     expect(status).toBe(200);
     expect(names(body.characters)).toEqual(["Narrator", "Mara Voss", "Tobin"]);
+    // the old name stays on, so a re-script that meets it still means them
+    expect(body.characters[1].aliases).toEqual(["Mara"]);
     expect(body.moved.map((m) => [m.chapterId, m.revision])).toEqual([
       [1, before[0]! + 1],
       [2, before[1]! + 1],
@@ -166,9 +175,16 @@ describe("renaming and merging", () => {
 
   test("a merge folds the name and its aliases into the speaker that stays", async () => {
     const { api, id } = await scripted();
+    const tobin = (await castOf(api, id)).characters[2];
+    await api.request(
+      `/api/books/${id}/characters/Tobin`,
+      put({ ...tobin, voice: "studio/ash", description: "A clerk." }),
+    );
     const { body } = await merge(api, id, [{ from: "Tobin", into: "Mara" }]);
     expect(names(body.characters)).toEqual(["Narrator", "Mara"]);
     expect(body.characters[1].aliases).toEqual(["Tobin"]);
+    // what Mara left blank, Tobin fills
+    expect(body.characters[1]).toMatchObject({ voice: "studio/ash", description: "A clerk." });
     expect(speakersOf(readScript(api.db, id, 1))).toEqual(["Narrator", "Mara"]);
     expect(body.speakers.map((s) => [s.name, s.moved.length])).toEqual([["Tobin", 2]]);
   });
@@ -243,6 +259,65 @@ describe("renaming and merging", () => {
       jsonBody({ to: "Somebody" }),
     );
     expect(status).toBe(404);
+  });
+});
+
+describe("a moved line's finished clip", () => {
+  /** One narrated chapter, every speaker in `voiceOf`'s voice. */
+  async function narrated(voiceOf: (name: string) => string) {
+    const api = testApi();
+    const id = await voicedBook(api, {
+      endpoints: [
+        speechEndpoint({
+          voices: [
+            { id: "ash", gender: "m", label: "Ash" },
+            { id: "bea", gender: "f", label: "Bea" },
+          ],
+        }),
+      ],
+      paragraphs: [line("One")],
+      voiceOf: (name) => `studio/${voiceOf(name)}`,
+    });
+    await narrateChapters(api, id, [1]);
+    return { api, id };
+  }
+  const statuses = (api: TestApi, id: string) =>
+    new Set(readScript(api.db, id, 1).map((s) => s.audio.status));
+
+  test.each([
+    [
+      "a rename",
+      (api: TestApi, id: string) =>
+        api.request(`/api/books/${id}/characters/Mara/rename`, jsonBody({ to: "Mara Voss" })),
+    ],
+    [
+      "a removal and its Undo",
+      async (api: TestApi, id: string) => {
+        const mara = (await castOf(api, id)).characters.find((c) => c.name === "Mara")!;
+        const { body } = await remove(api, id, "Mara");
+        const lines = body.speakers[0].moved.map(({ chapterId, ids }) => ({ chapterId, ids }));
+        return restore(api, id, [{ character: mara, lines }]);
+      },
+    ],
+  ])("stays done through %s when the speakers read alike", async (_, move) => {
+    const { api, id } = await narrated(() => "ash");
+    expect(statuses(api, id)).toEqual(new Set(["done"]));
+    expect((await move(api, id)).status).toBe(200);
+    expect(statuses(api, id)).toEqual(new Set(["done"]));
+  });
+
+  test("goes stale when the speaker it moves to reads in another voice", async () => {
+    const { api, id } = await narrated((name) => (name === "Mara" ? "bea" : "ash"));
+    await remove(api, id, "Mara");
+    const lines = readScript(api.db, id, 1);
+    const moved = lines.filter((s) => s.audio.voiceRef === "studio/bea");
+    expect(moved.length).toBeGreaterThan(0);
+    expect(new Set(moved.map((s) => s.audio.status))).toEqual(new Set(["stale"]));
+    expect(
+      lines
+        .filter((s) => s.audio.voiceRef === "studio/ash")
+        .every((s) => s.audio.status === "done"),
+    ).toBe(true);
   });
 });
 

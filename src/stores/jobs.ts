@@ -6,6 +6,7 @@ import { plural } from "@/lib/contents";
 import { usable } from "@/lib/exports";
 import { jobLabel } from "@/lib/queue";
 import { segmentFailed } from "@/lib/runPlan";
+import { fetchScript } from "@/queries/chapterScript";
 import { invalidate } from "@/queries/invalidate";
 import { keys } from "@/queries/keys";
 import { jobsService } from "@/services/jobs";
@@ -155,29 +156,56 @@ export const useJobsStore = defineStore("jobs", {
      * held to the same blockers as any run (`startRun`).
      */
     retryRunFailures(runId: number): number {
-      const narrationStore = useNarrationStore();
-      const scriptingStore = useScriptingStore();
-
       const failed = this.runJobs(runId).filter(
         (j) => j.status === "failed" && j.chapterId !== null,
       );
-      if (!failed.length) return 0;
-      const ids = [...new Set(failed.map((j) => j.chapterId!))];
-      const { kind, bookId } = failed[0]; // one press, one book, one stage
-      switch (kind) {
-        case "scripting":
-          void scriptingStore.startRun(bookId, ids, { quiet: true });
-          break;
-        case "narration":
-          void narrationStore.startRun(bookId, ids, { scope: "failed", quiet: true });
-          break;
-        case "check":
-          void this.checkChapters(bookId, ids, { quiet: true });
-          break;
-        case "export":
-          for (const j of failed) this.retryJob(j.id);
-      }
+      this._retry(failed);
       return failed.length;
+    },
+    /**
+     * Run these jobs' chapters again, one run per book and stage (a build retries from its own
+     * row). Never one request per chapter: each would be its own run and budget check.
+     */
+    _retry(jobs: readonly Job[]): void {
+      const scriptingStore = useScriptingStore();
+
+      const runs = new Map<string, { kind: JobKind; bookId: string; ids: number[] }>();
+      for (const j of jobs) {
+        if (j.kind === "export") {
+          this.retryJob(j.id);
+          continue;
+        }
+        if (j.chapterId == null) continue;
+        const k = `${j.kind}:${j.bookId}`;
+        const run = runs.get(k) ?? { kind: j.kind, bookId: j.bookId, ids: [] };
+        runs.set(k, run);
+        if (!run.ids.includes(j.chapterId)) run.ids.push(j.chapterId);
+      }
+      for (const { kind, bookId, ids } of runs.values())
+        if (kind === "scripting") void scriptingStore.startRun(bookId, ids, { quiet: true });
+        // a check hears what the chapter holds now; the server skips what was heard already
+        else if (kind === "check") void this.checkChapters(bookId, ids, { quiet: true });
+        else if (kind === "narration") void this._retryNarration(bookId, ids);
+    },
+    /**
+     * Failed lines are asked of the scripts, read first where no page has (a failed replacement
+     * leaves the chapter reading as narrated): those chapters at the failed scope, the rest (a run
+     * stopped before their lines went) at missing & changed. One run per scope.
+     */
+    async _retryNarration(bookId: string, ids: readonly number[]): Promise<void> {
+      const narrationStore = useNarrationStore();
+      const scriptsStore = useScriptsStore();
+
+      await Promise.all(
+        ids
+          .filter((id) => !scriptsStore.held(bookId, id))
+          .map((id) => fetchScript(bookId, id).catch(() => {})),
+      );
+      const failed = ids.filter((id) => scriptsStore.segmentsOf(bookId, id).some(segmentFailed));
+      const rest = ids.filter((id) => !failed.includes(id));
+      if (failed.length)
+        await narrationStore.startRun(bookId, failed, { scope: "failed", quiet: true });
+      if (rest.length) await narrationStore.startRun(bookId, rest, { scope: "fill", quiet: true });
     },
     /**
      * Check these chapters' clips by ear as one run: the server transcribes each with the first
@@ -282,9 +310,6 @@ export const useJobsStore = defineStore("jobs", {
     retryJob(id: number): void {
       const exportsStore = useExportsStore();
       const libraryStore = useLibraryStore();
-      const narrationStore = useNarrationStore();
-      const scriptingStore = useScriptingStore();
-      const scriptsStore = useScriptsStore();
 
       const job = this.jobs.find((j) => j.id === id);
       if (!job) return;
@@ -311,27 +336,7 @@ export const useJobsStore = defineStore("jobs", {
         );
         return;
       }
-      if (job.chapterId == null) return;
-      switch (job.kind) {
-        case "scripting":
-          void scriptingStore.startRun(job.bookId, [job.chapterId], { quiet: true });
-          return;
-        // a check hears what the chapter holds now; the server skips what was heard already
-        case "check":
-          void this.checkChapters(job.bookId, [job.chapterId], { quiet: true });
-          return;
-        case "narration": {
-          const c = libraryStore.chapter(job.bookId, job.chapterId);
-          if (!c) return;
-          // A failed replacement leaves the chapter reading as narrated, so look for failures on
-          // the clips, not the chapter's status.
-          const failed = scriptsStore.segmentsOf(job.bookId, c.id).some(segmentFailed);
-          void narrationStore.startRun(job.bookId, [c.id], {
-            scope: failed ? "failed" : "fill",
-            quiet: true,
-          });
-        }
-      }
+      if (job.chapterId != null) this._retry([job]);
     },
     /** Whether a later run of the same stage finished this chapter's work, making this failure old. */
     _supersededBy(job: Job): boolean {
@@ -364,7 +369,6 @@ export const useJobsStore = defineStore("jobs", {
      */
     retryableFailures(): Job[] {
       const libraryStore = useLibraryStore();
-      const scriptsStore = useScriptsStore();
 
       // One retry per chapter, from its most recent failure: walking oldest-first would let a
       // superseded failure claim the chapter and drop the current one.
@@ -381,8 +385,8 @@ export const useJobsStore = defineStore("jobs", {
         const busy = (stage: "scripting" | "narration") => ["queued", "running"].includes(c[stage]);
         const still: Record<JobKind, () => boolean> = {
           scripting: () => !busy("scripting"),
-          narration: () =>
-            scriptsStore.segmentsOf(j.bookId, c.id).some(segmentFailed) && !busy("narration"),
+          // whether lines failed or were never sent, the retry reads the script to see which
+          narration: () => !busy("narration"),
           // a chapter carries no check status, so the queue says whether one is on it
           check: () =>
             !busy("narration") &&
@@ -400,7 +404,7 @@ export const useJobsStore = defineStore("jobs", {
       return out.reverse();
     },
     retryAllFailed(): void {
-      for (const j of this.retryableFailures()) this.retryJob(j.id);
+      this._retry(this.retryableFailures());
     },
   },
 });

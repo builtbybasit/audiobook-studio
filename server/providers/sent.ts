@@ -9,6 +9,8 @@ interface SentRequest {
   finishedAt: number;
   /** 1 on a first-try answer */
   attempts: number;
+  /** of `attempts`, those the clock cut off once out: each may have been charged for */
+  timedOut?: number;
   rateLimited: boolean;
   status: "done" | "failed" | "cancelled";
   /** `code` 0 for no answer; `body` is a refused answer's content, for the Activity tab */

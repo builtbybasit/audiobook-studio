@@ -86,6 +86,21 @@ describe("an endpoint's key", () => {
     expect(readEndpointKey(api.db, "tts", "fish")).toBeNull();
   });
 
+  test("goes when the base URL changes and no new key comes with it", async () => {
+    // else a save could point the stored key at another server and Test would send it there
+    const api = testApi();
+    await save(api, [speech({ apiKey: "sk-speech" })], [profile({ apiKey: "sk-chat" })]);
+    await save(
+      api,
+      [speech({ baseUrl: "https://elsewhere.example/v1" })],
+      [profile({ baseUrl: "https://elsewhere.example/v1" })],
+    );
+    expect(readEndpointKey(api.db, "tts", "fish")).toBeNull();
+    expect(readEndpointKey(api.db, "scripting", "fish")).toBeNull();
+    await save(api, [speech({ baseUrl: "https://elsewhere.example/v1", apiKey: "sk-there" })]);
+    expect(readEndpointKey(api.db, "tts", "fish")).toBe("sk-there");
+  });
+
   test("is replaced by a new one, and goes with its endpoint", async () => {
     const api = testApi();
     await save(api, [speech({ apiKey: "sk-old" })]);

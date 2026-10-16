@@ -8,12 +8,12 @@ import { useUiStore } from "@/stores/ui";
 // Script search across the book's scripted chapters. A result opens the reader at its line, or is
 // ticked for a bulk correction; the checkbox never navigates and the link never selects. The
 // selection is a set of keys, so "select all matching" covers lines below the page.
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, ref, toRaw, watch } from "vue";
 import type { Component } from "vue";
 import { isScripted } from "@/lib/scriptReview";
 import { TYPE_LABEL } from "@/lib/siteText";
 import { UiCheckbox, UiCombobox, UiToggleGroup } from "@/ui";
-import { useFilter } from "reka-ui";
+import { refDebounced } from "@vueuse/core";
 import { useBookId } from "@/composables/useBookId";
 import { enumParam, textParam, useQueryParam } from "@/composables/useQueryParam";
 import { useBookScripts, useCast } from "@/queries";
@@ -44,14 +44,28 @@ const speaker = useQueryParam("speaker", textParam());
 // story types, then the two that are not story (`?type=watermark` lands on all site text)
 const TYPES = ["all", "dialogue", "narration", "thought", "watermark", "note"] as const;
 const type = useQueryParam("type", enumParam(TYPES, "all"));
-const { contains } = useFilter({ sensitivity: "base" });
+// Typing waits for a pause, and each line is folded once (case and accents off, as the match
+// ignores both), so a keystroke is one indexOf per line even at 900 chapters.
+const typed = refDebounced(
+  computed(() => q.value.trim()),
+  200,
+);
+const fold = (s: string) => s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+const folded = new WeakMap<Segment, string>();
+/** `\0` between the fields, so no match runs from one into the next. */
+function haystack(x: Segment): string {
+  const raw = toRaw(x);
+  let f = folded.get(raw);
+  if (f === undefined) folded.set(raw, (f = fold(`${x.text}\0${x.direction ?? ""}\0${x.speaker}`)));
+  return f;
+}
 const cast = computed(() => castStore.charactersOf(bookId));
 const speakerOpts = computed(() => [
   { value: "", label: "Any speaker" },
   ...cast.value.map((c) => ({ value: c.name, label: c.name, color: c.color })),
 ]);
 const results = computed(() => {
-  const s = q.value.trim();
+  const s = fold(typed.value);
   const out = [];
   for (const c of libraryStore.chaptersOf(bookId).filter(isScripted)) {
     const hits = scriptsStore
@@ -60,7 +74,7 @@ const results = computed(() => {
         (x) =>
           (!speaker.value || x.speaker === speaker.value) &&
           (type.value === "all" || x.type === type.value) &&
-          (!s || contains(x.text, s) || contains(x.direction ?? "", s) || contains(x.speaker, s)),
+          (!s || haystack(x).includes(s)),
       );
     if (hits.length) out.push({ chapter: c, hits });
   }
@@ -143,7 +157,7 @@ function clearSelection() {
 }
 
 // a different match set drops the selection rather than carry hidden lines into a correction
-const criteria = computed(() => JSON.stringify([q.value.trim(), speaker.value, type.value]));
+const criteria = computed(() => JSON.stringify([typed.value, speaker.value, type.value]));
 watch(criteria, () => {
   shown.value = PAGE;
   panel.value = null;
@@ -193,7 +207,7 @@ function undo() {
 }
 
 function mark(text: string): { t: string; hit?: boolean }[] {
-  const s = q.value.trim();
+  const s = typed.value;
   if (!s) return [{ t: text }];
   const parts: { t: string; hit?: boolean }[] = [];
   let i = 0;

@@ -414,7 +414,7 @@ describe("the history a scripting job writes", () => {
     expect(readHistory(api.db, id, 1).versions).toEqual([]);
   });
 
-  test("a run that was refused for landing on newer work writes no history and adds no speaker", async () => {
+  test("a run that was refused for landing on newer work is kept as a version beside the script, and adds no speaker", async () => {
     const gate = gatedProvider([{ type: "dialogue", speaker: "Stranger", text: "Late." }]);
     const { api, id, segments, revision } = await scripted();
     // a slow re-script, on a runner of its own over the same database
@@ -434,7 +434,9 @@ describe("the history a scripting job writes", () => {
     await runner.idle();
     expect(getJob(api.db, job.id)?.status).toBe("failed");
     const h = readHistory(api.db, id, 1);
-    expect(h.versions).toHaveLength(1); // the edit's, and nothing from the run
+    // the edit's, then the run's, ready to restore; the edit stays the script
+    expect(h.versions).toHaveLength(2);
+    expect(h.versions[1].segments.map((s) => s.text)).toEqual(["Late."]);
     expect(h.head.origin.kind).toBe("edited");
     const cast = (await api.request<{ characters: { name: string }[] }>(`/api/books/${id}/cast`))
       .body;

@@ -55,10 +55,11 @@ export type {
   StoredSamples,
 } from "@/types";
 
-/** A speaker as they were, and the lines to put them back on. */
+/** A speaker as they were, and the lines (and voice-sample rows) to put them back on. */
 export interface SpeakerLines {
   character: Character;
   lines: ChapterLines[];
+  samples?: number[];
 }
 
 /**
@@ -199,10 +200,12 @@ export interface LibraryService {
   mergeCharacters(bookId: string, merges: { from: string; into: string }[]): Promise<MovedSpeakers>;
   /** All or nothing; their lines go to the Narrator. */
   removeCharacters(bookId: string, names: string[]): Promise<MovedSpeakers>;
-  /** A speaker's finished lines made with another voice than they get now, by chapter. */
-  oldVoice(bookId: string, name: string): Promise<OldVoice>;
+  /** Several speakers at once, all or nothing. Returns the cast as it now stands. */
+  putCharacters(bookId: string, characters: Character[]): Promise<Character[]>;
+  /** These speakers' finished lines made with another voice than they get now, by chapter. */
+  oldVoice(bookId: string, names: string[]): Promise<OldVoice>;
   /** Re-narrate those lines in these chapters, as `oldVoice` priced them. */
-  revoice(bookId: string, name: string, chapters: number[]): Promise<NarrationQueued>;
+  revoice(bookId: string, names: string[], chapters: number[]): Promise<NarrationQueued>;
   /** Put speakers back on exactly these lines, and back in the cast: what an Undo sends. */
   attribute(bookId: string, speakers: SpeakerLines[]): Promise<MovedSpeakers>;
   /**
@@ -477,22 +480,31 @@ export class HttpLibraryService implements LibraryService {
     return this.http.post<MovedSpeakers>(`/books/${seg(bookId)}/characters/remove`, { names });
   }
 
-  oldVoice(bookId: string, name: string): Promise<OldVoice> {
-    return this.http.get<OldVoice>(`/books/${seg(bookId)}/characters/${seg(name)}/old-voice`);
+  async putCharacters(bookId: string, characters: Character[]): Promise<Character[]> {
+    return (
+      await this.http.put<{ characters: Character[] }>(`/books/${seg(bookId)}/characters`, {
+        characters,
+      })
+    ).characters;
   }
 
-  revoice(bookId: string, name: string, chapters: number[]): Promise<NarrationQueued> {
-    return this.http.post<NarrationQueued>(
-      `/books/${seg(bookId)}/characters/${seg(name)}/revoice`,
-      { chapters },
-    );
+  oldVoice(bookId: string, names: string[]): Promise<OldVoice> {
+    return this.http.post<OldVoice>(`/books/${seg(bookId)}/characters/old-voice`, { names });
+  }
+
+  revoice(bookId: string, names: string[], chapters: number[]): Promise<NarrationQueued> {
+    return this.http.post<NarrationQueued>(`/books/${seg(bookId)}/characters/revoice`, {
+      names,
+      chapters,
+    });
   }
 
   attribute(bookId: string, speakers: SpeakerLines[]): Promise<MovedSpeakers> {
     return this.http.post<MovedSpeakers>(`/books/${seg(bookId)}/characters/attribute`, {
-      speakers: speakers.map(({ character, lines }) => ({
+      speakers: speakers.map(({ character, lines, samples }) => ({
         character,
         lines: lines.map(({ chapterId, ids }) => ({ chapterId, ids })),
+        ...(samples?.length ? { samples } : {}),
       })),
     });
   }

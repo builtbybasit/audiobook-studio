@@ -4,6 +4,7 @@ import type {
   EffectUses,
   ExistingScope,
   Job,
+  RevisedLines,
   StaleSound,
   Step,
   ThoughtChoice,
@@ -20,8 +21,11 @@ export interface EffectsService {
   uses(id: string): Promise<EffectUses>;
   /** A field left out is cleared; the id stays. */
   update(effect: Effect): Promise<Effect>;
-  /** The server clears every book's and speaker's choice of it too. */
-  remove(id: string): Promise<void>;
+  /**
+   * The server clears every book's and speaker's choice of it too, and takes it off the lines it
+   * returns, at their chapters' new revisions.
+   */
+  remove(id: string): Promise<(RevisedLines & { bookId: string })[]>;
   /** The library's thought effect: an effect's id, or "none". */
   libraryThoughts(): Promise<ThoughtChoice>;
   setLibraryThoughts(choice: ThoughtChoice): Promise<ThoughtChoice>;
@@ -60,8 +64,12 @@ export class HttpEffectsService implements EffectsService {
     return (await this.http.put<{ effect: Effect }>(`/effects/${seg(id)}`, body)).effect;
   }
 
-  async remove(id: string): Promise<void> {
-    await this.http.delete(`/effects/${seg(id)}`);
+  async remove(id: string): Promise<(RevisedLines & { bookId: string })[]> {
+    return (
+      await this.http.delete<{ lines: (RevisedLines & { bookId: string })[] }>(
+        `/effects/${seg(id)}`,
+      )
+    ).lines;
   }
 
   async libraryThoughts(): Promise<ThoughtChoice> {

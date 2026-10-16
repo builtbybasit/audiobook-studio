@@ -13,8 +13,10 @@ import { HttpClient, seg, type FetchLike } from "@/services/http";
 import { API_BASE } from "@/services/mode";
 
 export interface JobsService {
-  /** Oldest first. */
-  list(): Promise<Job[]>;
+  /** Live jobs and the `history` latest finished, oldest first; a failed one keeps its first error. */
+  list(history?: number): Promise<Job[]>;
+  /** With its whole activity log. */
+  get(id: number): Promise<Job>;
   /** A queued job never starts; a running one is told to stop. */
   cancel(id: number): Promise<Job>;
   /** In the order given. Returns the ids that were live and now stop. */
@@ -45,8 +47,13 @@ export class HttpJobsService implements JobsService {
     this.http = new HttpClient(base, fetch);
   }
 
-  async list(): Promise<Job[]> {
-    return (await this.http.get<{ jobs: Job[] }>("/jobs")).jobs;
+  async list(history?: number): Promise<Job[]> {
+    const query = history === undefined ? "" : `?history=${history}`;
+    return (await this.http.get<{ jobs: Job[] }>(`/jobs${query}`)).jobs;
+  }
+
+  async get(id: number): Promise<Job> {
+    return (await this.http.get<{ job: Job }>(`/jobs/${id}`)).job;
   }
 
   async cancel(id: number): Promise<Job> {

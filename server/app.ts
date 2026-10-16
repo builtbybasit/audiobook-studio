@@ -1,5 +1,7 @@
 // The API as a value, built around a database handle so a test can drive the real routes over a
 // `:memory:` database. The demo is the same app under `/demo/api` (`server/libraries.ts`).
+import { isIP } from "node:net";
+
 import { Hono } from "hono";
 import { csrf } from "hono/csrf";
 import { HTTPException } from "hono/http-exception";
@@ -13,7 +15,7 @@ import type { Db } from "~/db/client";
 import { env } from "~/env";
 import { audiobookFiles } from "~/exports/files";
 import { createRunner, type Runner } from "~/jobs/runner";
-import { AppError, codeFor, type ApiError } from "~/lib/errors";
+import { AppError, codeFor, fail, type ApiError } from "~/lib/errors";
 import type { Logger } from "~/log";
 import { log as defaultLog } from "~/log";
 import type { ExportPorts } from "~/providers/encoder";
@@ -40,6 +42,19 @@ import { voiceFiles as voiceFilesIn, type VoiceFiles } from "~/voices/files";
 const REFUSED: Partial<Record<number, string>> = {
   403: "That request came from another site, and was refused",
 };
+
+/**
+ * DNS rebinding: a page whose own name resolves to this machine is same-origin with the API, but
+ * its `Host` still says that name. An IP or `localhost` can't be rebound (Vite's dev server allows
+ * the same set), and `HOST` is what the server was told to answer to.
+ */
+function machineHost(host: string): boolean {
+  const h = host.trim().toLowerCase();
+  const name = h.startsWith("[") ? h.slice(1, h.indexOf("]")) : h.split(":")[0];
+  return (
+    isIP(name) !== 0 || name === "localhost" || name.endsWith(".localhost") || name === env.HOST
+  );
+}
 
 export interface AppOptions {
   /** route prefix, also used in clip and cover urls: `/api` or `/demo/api` */
@@ -91,6 +106,12 @@ export function createApp(
     }),
   );
 
+  // Every browser sends `Host`; a request without one is a script on this machine already.
+  app.use(`${base}/*`, (c, next) => {
+    const host = c.req.header("host");
+    if (host && !machineHost(host)) fail(403, "That request named another host, and was refused");
+    return next();
+  });
   // Loopback keeps other machines out (`HOST`); this keeps other sites out of no-preflight
   // requests. Only browser requests (with `Origin` or `Sec-Fetch-Site`) are checked; a script or
   // `curl` is on this machine already.

@@ -37,8 +37,11 @@ export function updateEffect(db: Db, id: string, body: EffectBody): Effect {
   return effect;
 }
 
-export function deleteEffect(db: Db, id: string): void {
-  if (!effects.deleteEffect(db, id)) throw notFound("No such effect");
+/** The lines it was stripped from, with their chapters' new revisions. */
+export function deleteEffect(db: Db, id: string): effects.BookLines[] {
+  const lines = effects.deleteEffect(db, id);
+  if (!lines) throw notFound("No such effect");
+  return lines;
 }
 
 export async function staleSound(

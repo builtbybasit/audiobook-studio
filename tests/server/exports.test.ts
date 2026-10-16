@@ -2,7 +2,8 @@
 // runner and encoder and checks the file that comes out.
 import { describe, expect, test } from "bun:test";
 import { join, relative } from "node:path";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 
 import type { Book, Chapter, ExportItem, ExportSettings, Job } from "@/types";
 import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
@@ -11,7 +12,13 @@ import { exportFileToken } from "~/db/exports";
 import { fakeSpeechProvider, SAMPLE_RATE, toneOf, toneWav } from "~/providers/fakeSpeech";
 import type { SpeechProvider } from "~/providers/speech";
 import type { AudiobookEncoder } from "~/providers/encoder";
-import { ffmpegAvailable, ffmpegEncoder, ffmpegEncoders } from "~/providers/ffmpegEncoder";
+import { wavHeader } from "~/providers/wav";
+import {
+  ffmpegAvailable,
+  ffmpegEncoder,
+  ffmpegEncoders,
+  sweepWork,
+} from "~/providers/ffmpegEncoder";
 import { epubFile, line, story } from "../support/epub";
 import { writeExport } from "../support/persist";
 import { jsonBody, narratedBook, testApi, type TestApi } from "../support/server";
@@ -262,6 +269,8 @@ describe("building an audiobook", () => {
     expect(done.size).toBeGreaterThan(0);
 
     expect(fileBytes(api, id, done.id).byteLength).toBeGreaterThan(0);
+    // where it really is, for "copy path"
+    expect(done.files[0].path).toBe(filePath(api, id, done.id));
     // The running time on the row is the file's, not the plan's estimate of it.
     expect(await playsFor(api, id, done.id)).toBeCloseTo(done.duration, 1);
     // and what is in the file is every chapter, with one gap between each pair and none after
@@ -493,6 +502,48 @@ describe("building an audiobook", () => {
     expect(await untilGone(join(api.exportDir, id))).toBe(true);
   });
 
+  test("an audiobook says which chapters moved since it was built, with no script loaded", async () => {
+    // The server's reading: a page that never read the scripts gets the same answer.
+    const api = testApi();
+    const { id } = await narratedBook(api, { chapters: THREE });
+    await build(api, id, { ids: [1, 2, 3], settings: settingsFor({ grouping: "volume" }) });
+    await api.runner.idle();
+    expect((await exportsOf(api, id))[0].changed).toEqual([]);
+
+    await api.request(`/api/books/${id}/chapters/narrate`, jsonBody({ ids: [3], scope: "all" }));
+    await api.runner.idle();
+    expect((await exportsOf(api, id))[0].changed).toEqual([3]);
+
+    // a renamed volume renames the file every chapter is in, though no audio moved
+    const [volume] = (await api.request<ImportResult>(`/api/books/${id}`)).body.book.volumes;
+    await api.request(`/api/books/${id}/volumes/${volume.id}`, {
+      ...jsonBody({ name: "Renamed" }),
+      method: "PATCH",
+    });
+    expect((await exportsOf(api, id))[0].changed).toEqual([1, 2, 3]);
+  });
+
+  test("a build that lands replaces every earlier version, whichever one it was queued against", async () => {
+    // A retry names the version its failed attempt meant to replace, which a later build already has.
+    const encoder = controlledEncoder();
+    const api = testApi({ encoder });
+    const { id } = await narratedBook(api, { chapters: THREE });
+    const settings = settingsFor({ normalize: false });
+    await build(api, id, { ids: [1, 2], settings });
+    await api.runner.idle();
+    const [v1] = await exportsOf(api, id);
+    encoder.fail("The encoder ran out of disk");
+    await build(api, id, { ids: [1, 2], settings, updates: v1.id });
+    await api.runner.idle();
+    await build(api, id, { ids: [1, 2], settings });
+    await api.runner.idle();
+
+    const retry = await build(api, id, { ids: [1, 2], settings, updates: v1.id });
+    await api.runner.idle();
+    const done = (await exportsOf(api, id)).filter((e) => e.status === "done");
+    expect(done.map((e) => e.id)).toEqual([retry.body.export.id]);
+  });
+
   test("forgetting an audiobook takes its files with it", async () => {
     const api = testApi();
     const { id } = await narratedBook(api, { chapters: THREE });
@@ -511,6 +562,20 @@ describe("building an audiobook", () => {
 // The format the settings asked for, the chapter marks a player reads, and an update encoded whole.
 
 const ffmpeg = await ffmpegAvailable();
+
+test("a work folder whose server died is cleared; a live one's is left alone", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "audiobook-sweep-"));
+  try {
+    // no process has a pid this high
+    for (const name of [`audiobook-ffmpeg-${process.pid}-a`, "audiobook-ffmpeg-999999999-b"])
+      mkdirSync(join(dir, name));
+    await sweepWork(dir);
+    expect(existsSync(join(dir, `audiobook-ffmpeg-${process.pid}-a`))).toBe(true);
+    expect(existsSync(join(dir, "audiobook-ffmpeg-999999999-b"))).toBe(false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test("a machine without the ffmpeg it was told to run is told so, rather than failing a build", async () => {
   // What boot asks before the server is allowed to start: without ffmpeg it refuses to.
@@ -562,6 +627,8 @@ describe.skipIf(!ffmpeg)("building with ffmpeg", () => {
       });
       expect(clip("a.wav").path.startsWith(".audiobook-relative-")).toBe(true);
 
+      // a chapter counts as it goes in, not once the whole file is done
+      let beforeTheFile: boolean | undefined;
       const written = await ffmpegEncoder({ format: "mp3" }).encode({
         chapters: [
           {
@@ -573,7 +640,9 @@ describe.skipIf(!ffmpeg)("building with ffmpeg", () => {
         gap: 1,
         out: join(dir, "out.mp3"),
         signal: new AbortController().signal,
+        onChapter: () => (beforeTheFile ??= !existsSync(join(dir, "out.mp3"))),
       });
+      expect(beforeTheFile).toBe(true);
       expect(written.seconds).toBeCloseTo(1.25, 1);
       expect((await probe(join(dir, "out.mp3"))).seconds).toBeCloseTo(1.25, 0);
     } finally {
@@ -605,8 +674,51 @@ describe.skipIf(!ffmpeg)("building with ffmpeg", () => {
     // the loudness was measured, with the file's figure before levelling
     expect(job.activity?.some((e) => e.detail?.measured != null)).toBe(true);
     expect(job.activity?.find((e) => e.message.endsWith("is written"))?.detail?.loudness).toMatch(
-      /^-?\d+\.\d LUFS in, levelled to -\d+$/,
+      /^-?\d+\.\d LUFS in, -?\d+\.\d out · one gain/,
     );
+  }, 30_000);
+
+  test.each([true, false])(
+    "the chapter-marks switch is what the M4B gets (%p)",
+    async (markers) => {
+      const api = testApi({ encoder: ffmpegEncoders() });
+      const { id } = await narratedBook(api, { chapters: THREE });
+      await build(api, id, { ids: [1, 2], settings: settingsFor({ markers, normalize: false }) });
+      await api.runner.idle();
+      const [done] = await exportsOf(api, id);
+      const read = await probe(filePath(api, id, done.id));
+      expect(read.chapters).toHaveLength(markers ? 2 : 0);
+      expect(done.markers).toBe(read.chapters.length);
+    },
+    30_000,
+  );
+
+  test("a quiet clip with loud peaks is levelled by one gain, not a dynamic normaliser", async () => {
+    // −29 LUFS with clicks near −7 dBFS: the 11 dB gain would carry them past the ceiling, which
+    // sends loudnorm's linear mode quietly back to dynamic unless they are limited first.
+    const dir = mkdtempSync(join(tmpdir(), "audiobook-loud-"));
+    try {
+      const rate = 24_000;
+      const pcm = new Int16Array(rate * 8);
+      for (let i = 0; i < pcm.length; i++)
+        pcm[i] = Math.round(
+          1600 * Math.sin((2 * Math.PI * 440 * i) / rate) + (i % rate < 24 ? 14_000 : 0),
+        );
+      const body = new Uint8Array(pcm.buffer);
+      const head = wavHeader({ channels: 1, sampleRate: rate, bits: 16 }, body.byteLength);
+      writeFileSync(join(dir, "a.wav"), Buffer.concat([head, body]));
+      const written = await ffmpegEncoder({ loudness: -18 }).encode({
+        chapters: [{ id: 1, title: "One", parts: [{ kind: "clip", path: join(dir, "a.wav") }] }],
+        gap: 0,
+        out: join(dir, "out.m4b"),
+        signal: new AbortController().signal,
+      });
+      expect(written.levelled?.linear).toBe(true);
+      expect(written.levelled?.limited).toBeGreaterThan(0);
+      expect(written.levelled?.lufs).toBeCloseTo(-18, 0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }, 30_000);
 
   test("an update encodes the whole audiobook again, with the chapter read again in it", async () => {

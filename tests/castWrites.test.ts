@@ -10,14 +10,17 @@ import { setLibraryService, type LibraryService } from "@/services/library";
 import { useCastStore } from "@/stores/cast";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
-import type { Character, LexEntry } from "@/types";
+import { useSpeakerSamplesStore } from "@/stores/speakerSamples";
+import type { Character, LexEntry, SpeakerSamples } from "@/types";
 import { flush, testPinia, type TestPinia } from "./support/pinia";
 
 /** What the server holds, and the requests it has been told to hold back, in the order made. */
-let server: { characters: Character[]; lexicon: LexEntry[] };
+let server: { characters: Character[]; lexicon: LexEntry[]; samples: SpeakerSamples[] };
 let holds: Promise<void>[];
 /** reads of the cast held back after the server has answered them, in the order made */
 let readHolds: Promise<void>[];
+/** the speakers each old-voice ask named */
+let asked: string[][];
 let pinia: TestPinia;
 
 /** Hold the next write the server is sent until the returned function is called. */
@@ -30,9 +33,10 @@ function holdNext(queue = holds): () => void {
 beforeEach(() => {
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
   pinia = testPinia();
-  server = { characters: [narrator(), newSpeaker("Ana", 1)], lexicon: [] };
+  server = { characters: [narrator(), newSpeaker("Ana", 1)], lexicon: [], samples: [] };
   holds = [];
   readHolds = [];
+  asked = [];
   const fake: Partial<LibraryService> = {
     cast: async () => {
       const read = clone(server);
@@ -43,6 +47,16 @@ beforeEach(() => {
       await holds.shift();
       server.characters = [...server.characters.filter((x) => x.name !== c.name), clone(c)];
       return clone(server.characters);
+    },
+    renameCharacter: async (_bookId, from, to) => {
+      for (const c of server.characters) if (c.name === from) c.name = to;
+      for (const x of server.samples) if (x.speaker === from) x.speaker = to;
+      return { characters: clone(server.characters), moved: [] };
+    },
+    speakerSamples: async () => clone(server.samples),
+    oldVoice: async (_bookId, names) => {
+      asked.push(names);
+      return { lines: 0, cost: 0, chapters: [] };
     },
     putLexicon: async (_bookId, entries) => {
       await holds.shift();
@@ -212,6 +226,43 @@ describe("under development's devtools, where each action gets a fresh `this`", 
   });
 });
 
+describe("the dictionary's counts", () => {
+  test("are each entry's own, one inside a longer term too, and none for one switched off", () => {
+    const cast = useCastStore();
+    useScriptsStore()._install("b", 1, {
+      revision: 1,
+      segments: [
+        {
+          id: 1,
+          text: "Ji Ning met NING, and ji ning met Ninghai.",
+          speaker: "Narrator",
+          type: "narration",
+          direction: "",
+          audio: { status: "none", endpoint: null, duration: 0, ms: 0 },
+        },
+      ],
+    });
+    cast.lexicon.b = [
+      { id: 1, term: "Ji Ning", say: "Jee Ning", enabled: true },
+      { id: 2, term: "Ning", say: "Nin", enabled: true },
+      { id: 3, term: "Ninghai", say: "Ning Hi", enabled: false },
+    ];
+    expect(cast.lexUses("b")).toEqual({ 1: 2, 2: 3, 3: 0 });
+  });
+});
+
+describe("waiting voice samples", () => {
+  test("are read again after a rename, so they follow the speaker", async () => {
+    const samples = useSpeakerSamplesStore();
+    server.samples = [{ id: 1, speaker: "Ana", title: "Ana", source: "f.zip", samples: [] }];
+    await samples.load("b");
+    useUiStore().toast = () => "";
+    await useCastStore().renameCharacter("b", "Ana", "Anna");
+    await flush();
+    expect(samples.waitingFor("b", "Anna")).not.toBeNull();
+  });
+});
+
 describe("the scripting model's masked finding", () => {
   test("Not masked takes it off and leaves the link; a link changed by hand takes it too", async () => {
     const cast = useCastStore();
@@ -228,5 +279,7 @@ describe("the scripting model's masked finding", () => {
     expect(held("Mask").masked).toBeUndefined();
     expect(held("Veil")).toMatchObject({ personaOf: "Ana" });
     expect(held("Veil").masked).toBeUndefined();
+    // a voiceless Veil now reads in Ana's voice, so her finished lines are asked about
+    expect(asked).toEqual([["Veil"]]);
   });
 });

@@ -16,8 +16,9 @@ export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 export function openDb(url: string = env.DATABASE_URL): Db {
   if (url !== ":memory:") mkdirSync(dirname(url), { recursive: true });
   const sqlite = new Database(url, { create: true });
-  // WAL so reads don't block a long import's writes
-  if (url !== ":memory:") sqlite.exec("PRAGMA journal_mode = WAL;");
+  // WAL so reads don't block a long import's writes; NORMAL is durable under WAL but for the
+  // last commits on power loss, and skips a sync on every one
+  if (url !== ":memory:") sqlite.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;");
   return connect(sqlite);
 }
 

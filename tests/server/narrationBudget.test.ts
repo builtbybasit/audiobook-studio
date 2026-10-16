@@ -8,7 +8,8 @@ import type { Endpoint, Job, Segment } from "@/types";
 import { expressionParts, expressionPlan } from "@/lib/expressions";
 import { narrationCost } from "~/narration/cost";
 import { endpointSpeechProvider } from "~/providers/endpointSpeech";
-import { fakeSpeechProvider } from "~/providers/fakeSpeech";
+import { fakeSpeechProvider, toneWav } from "~/providers/fakeSpeech";
+import type { SpeechProvider } from "~/providers/speech";
 import { heldToday } from "~/usage/budget";
 import { bookSpend, CANCELLED, endpointRequests } from "~/usage/ledger";
 import { story } from "../support/epub";
@@ -180,6 +181,70 @@ describe("a line sent to a real provider", () => {
     expect((await jobById(api, queued.id)).narrationRun?.reserved).toBe(0);
     expect(heldToday(api.db, "tts", "studio")).toBe(0);
   });
+
+  test("an attempt the clock cut off may have been charged: a row of its own at a cost nobody knows, beside the retry that answered", async () => {
+    let calls = 0;
+    const fetch = ((_url: string, init: RequestInit) =>
+      new Promise<Response>((resolve, reject) => {
+        if (calls++ === 0)
+          init.signal!.addEventListener("abort", () => reject(init.signal!.reason), {
+            once: true,
+          });
+        else resolve(new Response(toneWav(220, 0.5), { headers: { "content-type": "audio/wav" } }));
+      })) as unknown as typeof globalThis.fetch;
+    const real = endpointSpeechProvider({ fetch, backoffMs: () => 0 });
+    // a saved timeout is whole seconds; a test should not wait one
+    const quick: SpeechProvider = {
+      ...real,
+      speak: (input) => real.speak({ ...input, target: { ...input.target!, timeoutSec: 0.02 } }),
+    };
+    const api = testApi({ speech: quick });
+    const id = await voiced(api, speech({ concurrency: 1, batch: false }));
+    await narrate(api, id);
+    await api.runner.idle();
+
+    const lines = await linesOf(api, id);
+    expect(lines.map((s) => s.audio.status)).toEqual(lines.map(() => "done"));
+    const rows = ledger(api);
+    const cut = rows.filter((r) => r.status === "cancelled");
+    expect(cut).toHaveLength(1);
+    expect(cut[0]).toMatchObject({ attempts: 1, cost: null, costBasis: "unknown" });
+    expect(rows.filter((r) => r.status === "done")).toHaveLength(lines.length);
+    expect(bookSpend(api.db, id)).toMatchObject({ reserved: 0, unpriced: 1 });
+  });
+
+  test.each([
+    ["a 402", () => new Response("Payment required", { status: 402 })],
+    [
+      "OpenAI's 429 for an empty balance",
+      () =>
+        Response.json(
+          { error: { message: "You exceeded your current quota", code: "insufficient_quota" } },
+          { status: 429, headers: { "retry-after": "0" } },
+        ),
+    ],
+  ])(
+    "%s is out of credit: the run stops on it, tried once, the gate not held",
+    async (_, answer) => {
+      let requests = 0;
+      const fetch = (async () => (requests++, answer())) as unknown as typeof globalThis.fetch;
+      const api = testApi({ speech: endpointSpeechProvider({ fetch, backoffMs: () => 0 }) });
+      const id = await voiced(api, speech({ concurrency: 1, batch: false, maxRetries: 2 }));
+      const { body } = await narrate(api, id);
+      await api.runner.idle();
+
+      expect(requests).toBe(1);
+      const job = await jobById(api, (body as Queued).jobs[0].id);
+      expect(job.status).toBe("failed");
+      // the provider's own words, once, as the run's reason
+      expect(job.activity?.at(-1)?.detail?.error).toMatch(
+        /answered 4\d\d: (Payment required|You exceeded)/,
+      );
+      const lines = await linesOf(api, id);
+      expect(lines.map((s) => s.audio.status)).toEqual(lines.map(() => "none"));
+      expect(api.gate.live().studio).toMatchObject({ rateLimits: 0, backoffUntil: 0 });
+    },
+  );
 
   test("refused, and not billed by its provider, is a row that costs nothing", async () => {
     const fetch = (async () =>

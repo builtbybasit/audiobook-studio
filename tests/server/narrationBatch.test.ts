@@ -4,7 +4,7 @@
 // passes by assuming order.
 import { describe, expect, test } from "bun:test";
 
-import type { Endpoint, ExpressionTag, Job, Segment } from "@/types";
+import type { ChapterScript, Endpoint, ExpressionTag, ImportedBook, Job, Segment } from "@/types";
 import { readScript, writeScript } from "~/db/script";
 import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import { fakeDuration, fakeSpeechProvider, type FakeSpeechOptions } from "~/providers/fakeSpeech";
@@ -261,32 +261,61 @@ describe("narrating through an endpoint that takes batches", () => {
     await api.runner.idle();
     expect(most).toBe(2);
     expect(batches.every((b) => b.length <= 3)).toBe(true);
+    // two batches filling at once never take the same line
+    const lines = (await api.request<{ segments: Segment[] }>(`/api/books/${id}/chapters/1/script`))
+      .body.segments;
+    expect(lines.map((s) => s.audio.status)).toEqual(lines.map(() => "done"));
+    const labels = endpointRequests(api.db, "tts", "local", 0).map((r) => r.label);
+    expect(labels.sort()).toEqual(lines.map((s) => `Line ${s.id} · ${s.speaker}`).sort());
   });
 
-  test("a cancel with a batch out stops it, keeps what landed, and puts the rest back", async () => {
-    const batches: string[][] = [];
+  test("a cancel with a batch out stops it, lets what was landing land, and puts the rest back", async () => {
+    // a thought line's effect still running when the cancel comes, and slow to notice it
+    let effectStarted = (): void => {};
+    const started = new Promise<void>((resolve) => (effectStarted = resolve));
+    let effectReturned = false;
     const api = testApi({
       speech: fakeSpeechProvider({
         batch: { maxItems: 4, maxInputChars: null, maxItemChars: null },
-        batches,
         delayMs: 40,
       }),
+      thoughtEffect: (bytes, _format, signal) =>
+        new Promise((resolve) => {
+          effectStarted();
+          signal.addEventListener("abort", () =>
+            setTimeout(() => resolve(((effectReturned = true), bytes)), 20),
+          );
+        }),
     });
     const id = await book(api, speech());
+    const script = (await api.request<ChapterScript>(`/api/books/${id}/chapters/1/script`)).body;
+    const first = script.segments.findIndex((s) => s.type === "dialogue");
+    await api.request(`/api/books/${id}/chapters/1/script`, {
+      ...jsonBody({
+        segments: script.segments.map((s, i) =>
+          i === first ? { ...s, type: "thought" as const } : s,
+        ),
+        ifRevision: script.revision,
+      }),
+      method: "PUT",
+    });
     const { body } = await api.request<{ jobs: Job[] }>(
       `/api/books/${id}/chapters/narrate`,
       jsonBody({ ids: [1] }),
     );
-    while (!batches.length) await Bun.sleep(2);
+    await started;
     await api.request(`/api/jobs/${body.jobs[0].id}/cancel`, { method: "POST" });
     await api.runner.idle();
 
+    expect(effectReturned).toBe(true);
     const job = (await api.request<{ job: Job }>(`/api/jobs/${body.jobs[0].id}`)).body.job;
     expect(job.status).toBe("cancelled");
     const lines = (await api.request<{ segments: Segment[] }>(`/api/books/${id}/chapters/1/script`))
       .body.segments;
     expect(lines.every((s) => s.audio.status === "none" || s.audio.status === "done")).toBe(true);
     expect(lines.some((s) => s.audio.status === "none")).toBe(true);
+    const chapter = (await api.request<ImportedBook>(`/api/books/${id}`)).body.chapters[0];
+    expect(chapter.narration).not.toBe("running");
     expect(api.gate.live().local).toMatchObject({ active: 0, waiting: 0 });
   });
 

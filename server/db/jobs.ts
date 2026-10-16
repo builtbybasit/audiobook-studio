@@ -1,7 +1,18 @@
 // Every read and write the queue makes; a row goes out as the frontend's `Job` through `toJob`.
 // `active_key` is the duplicate-request rule: `kind:book:chapter` while live, NULL once finished,
 // under a unique index (SQLite treats NULLs as distinct), so the same work cannot be queued twice.
-import { and, asc, desc, eq, inArray, isNotNull, max, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  getTableColumns,
+  inArray,
+  isNotNull,
+  isNull,
+  max,
+  sql,
+} from "drizzle-orm";
 
 import type { Job, JobEvent, JobKind, JobStatus } from "@/types";
 import type { Db, Tx } from "~/db/client";
@@ -30,38 +41,66 @@ export interface EnqueueInput {
 
 export type Enqueued = { job: Job; created: true } | { job: Job; created: false };
 
-function eventsOf(db: Db | Tx, ids: readonly number[]) {
-  if (!ids.length) return [];
-  return db.select().from(jobEvents).where(inArray(jobEvents.jobId, ids)).all();
+/** Finished jobs `GET /jobs` sends by default: one whole-book run at 900 chapters fits. */
+export const JOB_HISTORY = 1000;
+
+function eventsOf(db: Db | Tx, jobId: number) {
+  return db.select().from(jobEvents).where(eq(jobEvents.jobId, jobId)).all();
 }
 
-function withEvents(db: Db | Tx, rows: (typeof jobs.$inferSelect)[]): Job[] {
-  const events = eventsOf(
-    db,
-    rows.map((r) => r.id),
-  );
-  return rows.map((r) =>
-    toJob(
-      r,
-      events.filter((e) => e.jobId === r.id),
-    ),
-  );
-}
+const withEvents = (db: Db | Tx, row: typeof jobs.$inferSelect): Job =>
+  toJob(row, eventsOf(db, row.id));
 
 export function getJob(db: Db | Tx, id: number): Job | undefined {
   const row = db.select().from(jobs).where(eq(jobs.id, id)).get();
-  return row ? withEvents(db, [row])[0] : undefined;
+  return row ? withEvents(db, row) : undefined;
 }
 
-/** Oldest first. */
-export function listJobs(db: Db | Tx, { bookId }: { bookId?: string } = {}): Job[] {
-  const rows = db
+/** Queued and running, oldest first, without their events. */
+export function liveJobs(db: Db | Tx, bookId?: string): Job[] {
+  return db
     .select()
     .from(jobs)
-    .where(bookId ? eq(jobs.bookId, bookId) : undefined)
+    .where(and(bookId ? eq(jobs.bookId, bookId) : undefined, isNull(jobs.finishedAt)))
     .orderBy(asc(jobs.id))
+    .all()
+    .map((r) => toJob(r));
+}
+
+/**
+ * Every live job and the `history` latest finished, oldest first. Polled, so no events (`getJob`
+ * has them) except a failed job's first error, which says why it failed.
+ */
+export function listJobs(
+  db: Db | Tx,
+  { bookId, history = JOB_HISTORY }: { bookId?: string; history?: number } = {},
+): Job[] {
+  const book = bookId ? eq(jobs.bookId, bookId) : undefined;
+  const finished = db
+    .select()
+    .from(jobs)
+    .where(and(book, isNotNull(jobs.finishedAt)))
+    .orderBy(desc(jobs.finishedAt), desc(jobs.id))
+    .limit(history)
     .all();
-  return withEvents(db, rows);
+  const failed = finished.filter((r) => r.status === "failed").map((r) => r.id);
+  // one row per job: SQLite takes the bare columns from the row `min` picked
+  const firstError = new Map(
+    (failed.length
+      ? db
+          .select({ ...getTableColumns(jobEvents), id: sql<number>`min(${jobEvents.id})` })
+          .from(jobEvents)
+          .where(and(inArray(jobEvents.jobId, failed), eq(jobEvents.level, "error")))
+          .groupBy(jobEvents.jobId)
+          .all()
+      : []
+    ).map((e) => [e.jobId, e]),
+  );
+  const done = finished.map((r) => {
+    const error = firstError.get(r.id);
+    return toJob(r, error ? [error] : []);
+  });
+  return [...liveJobs(db, bookId), ...done].sort((a, b) => a.id - b.id);
 }
 
 /**
@@ -98,7 +137,7 @@ export function activeJob(
     .from(jobs)
     .where(eq(jobs.activeKey, activeKey(kind, bookId, chapterId)))
     .get();
-  return row ? withEvents(db, [row])[0] : undefined;
+  return row ? withEvents(db, row) : undefined;
 }
 
 export function nextRunId(db: Db | Tx): number {
@@ -420,9 +459,4 @@ export function removeJob(db: Db, id: number): boolean {
 
 export function clearFinished(db: Db): number {
   return db.delete(jobs).where(isNotNull(jobs.finishedAt)).returning({ id: jobs.id }).all().length;
-}
-
-/** Newest first. */
-export function recentJobs(db: Db, limit: number): Job[] {
-  return withEvents(db, db.select().from(jobs).orderBy(desc(jobs.id)).limit(limit).all());
 }

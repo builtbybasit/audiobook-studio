@@ -1,4 +1,5 @@
 // The Add EPUB dialog's draft: what was dropped, and whether it becomes a new novel or a volume.
+import type { Book } from "@/types";
 
 /** A chosen file: its name, and the EPUB the server is sent. */
 export interface PickedFile {
@@ -17,6 +18,7 @@ export interface PendingAdd {
   source: File;
   mode: "new" | "volume";
   bookId: string;
+  /** blank: the EPUB's own title */
   title: string;
   volName: string;
 }
@@ -28,7 +30,11 @@ export function pendingFor({ name, source }: PickedFile, bookId: string | null):
     source,
     mode: bookId ? "volume" : "new",
     bookId: bookId ?? "",
-    title: guess,
+    title: "",
     volName: guess,
   };
 }
+
+/** Books a file can go onto as the next volume: one already waiting in its review takes no other. */
+export const volumeTargets = (shelved: readonly Book[]): Book[] =>
+  shelved.filter((b) => !b.volumes.some((v) => v.importing));

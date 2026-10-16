@@ -79,7 +79,7 @@ export const useExportsStore = defineStore("exports", {
       const chapters = libraryStore.chaptersOf(bookId).filter((c) => ids.includes(c.id));
       return reviewOf(chapters, settings);
     },
-    /** One fingerprint per chapter, so a finished export can tell which of its chapters moved. */
+    /** The loaded scripts' audio fingerprints, which name a preview's timeline. */
     exportStateFor(bookId: string, ids: number[]): Record<number, string> {
       const castStore = useCastStore();
       const libraryStore = useLibraryStore();
@@ -122,13 +122,28 @@ export const useExportsStore = defineStore("exports", {
     },
     /**
      * Why a finished export no longer matches the book; `settings` is the form now, for "you
-     * changed the bitrate since". `added` is only what it claimed; chapters outside its scope are
+     * changed the bitrate since". `changed` is the server's reading (`ExportItem.changed`), so it
+     * needs no scripts loaded. `added` is only what it claimed; chapters outside its scope are
      * `outside`, a separate decision.
      */
     exportUpdateFor(e: ExportItem, settings?: ExportSettings): ExportUpdate {
       const libraryStore = useLibraryStore();
+      // A page that read no chapters (the Library) has only the server's answer.
+      // ponytail: added/missing need the chapters; move them to the server if the shelf must show them
+      if (!libraryStore.chapters[e.bookId]) {
+        const changed = e.changed ?? [];
+        return {
+          added: [],
+          outside: [],
+          changed,
+          stale: [],
+          missing: [],
+          settings: [],
+          needed: changed.length > 0,
+        };
+      }
 
-      const now = this.exportStateFor(e.bookId, e.chapterIds);
+      const moved = new Set(e.changed);
       const changed: number[] = [];
       const stale: number[] = [];
       const missing: number[] = [];
@@ -138,7 +153,7 @@ export const useExportsStore = defineStore("exports", {
           missing.push(id);
           continue;
         }
-        if (now[id] !== e.state?.[id]) changed.push(id);
+        if (moved.has(id)) changed.push(id);
         if (c.narration === "stale") stale.push(id);
       }
       const scope = this.exportScopeOf(e);

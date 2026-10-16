@@ -73,7 +73,7 @@ function remove() {
       ><span :id="`${kind}-${id}-key-label`">API key</span>
       <UiHint
         label="the API key"
-        text="Sent to the server once and kept there, never in this browser or in a settings export."
+        text="Sent to the server once and kept there, never in this browser or in a settings export. Changing the base URL forgets it, so a key is never sent to a new address."
     /></span>
     <div
       v-if="hasKey && !replacing"

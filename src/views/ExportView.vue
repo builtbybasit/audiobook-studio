@@ -14,7 +14,8 @@ import { useRouter } from "vue-router";
 import { isNarrated, isScripted } from "@/lib/scriptReview";
 import { useBookId } from "@/composables/useBookId";
 import { enumParam, useQueryParam } from "@/composables/useQueryParam";
-import { useBookExports, useBookScripts } from "@/queries";
+import { useBookScripts } from "@/queries";
+import { useBookExportsKeptUp } from "@/views/export/shared";
 import { DEFAULT_EXPORT_SETTINGS, usable } from "@/lib/exports";
 import { queryIds } from "@/lib/query";
 import { plural } from "@/lib/contents";
@@ -41,8 +42,8 @@ const TABS = [
   { value: "library", label: "Audiobooks" },
 ] as const;
 const tab = useQueryParam("tab", enumParam(["build", "library"], "build"));
-useBookExports(bookId);
-// the review and each audiobook's "changed since built" read every scripted chapter's lines
+useBookExportsKeptUp(bookId);
+// the review and the preview read every scripted chapter's lines
 const scripts = useBookScripts(bookId);
 
 const anyNarrated = computed(() => libraryStore.chaptersOf(bookId).some(isNarrated));

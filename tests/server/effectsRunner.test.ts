@@ -1,13 +1,13 @@
 // The voice-effect runner: how a book's clips are dealt to workers, what a render and a batch hand
 // the Python side and how its answers come back — told with a stand-in for uv, a shell script —
 // and then the real thing, Pedalboard under uv, where this machine has uv.
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setSystemTime, test } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import type { Step } from "@/types";
-import { lanes, PEDALBOARD, pedalboardRunner, SCRIPT } from "~/audio/effects";
+import { lanes, PEDALBOARD, pedalboardRunner, RETRY_MS, SCRIPT } from "~/audio/effects";
 import { probeClip } from "~/audio/probe";
 import { ffmpegAvailable } from "~/providers/ffmpegEncoder";
 import { readWavHeader, wavHeader } from "~/providers/wav";
@@ -118,6 +118,21 @@ done`);
     ]);
   });
 
+  test("a failed check says what went wrong and is asked again after a while", async () => {
+    const { uv, dir } = standIn(
+      `[ -e "$(dirname "$0")/ok" ] && exit 0\necho "no network to fetch pedalboard" >&2\nexit 1`,
+    );
+    const runner = pedalboardRunner({ uv });
+    expect(await runner.unavailable()).toContain("no network to fetch pedalboard");
+    writeFileSync(join(dir, "ok"), "");
+    setSystemTime(new Date(Date.now() + RETRY_MS + 1));
+    try {
+      expect(await runner.available()).toBe(true);
+    } finally {
+      setSystemTime();
+    }
+  });
+
   test("a cancel kills the worker and throws", async () => {
     const { uv } = standIn("sleep 30");
     const ac = new AbortController();
@@ -135,6 +150,7 @@ done`);
   test("with no uv it is not available, and a render says why", async () => {
     const runner = pedalboardRunner({ uv: "/no/such/uv" });
     expect(await runner.available()).toBe(false);
+    expect(await runner.unavailable()).toContain("uv");
     await expect(runner.render(sine(0.1), "wav", [], live())).rejects.toThrow();
     const heard: (string | null)[] = [];
     await runner.batch(

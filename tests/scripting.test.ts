@@ -357,7 +357,7 @@ describe("a run started from a button", () => {
     endpointsStore._detach();
   });
 
-  test("smaller chunks reach the server before the run that needs them, and the toast says every book is affected", async () => {
+  test("smaller chunks halve the size, reach the server before the run that needs them, and the toast says every book is affected", async () => {
     const toasts: { msg: string; description?: string }[] = [];
     useUiStore().toast = (msg: string, opts?: { description?: string }) => {
       toasts.push({ msg, description: opts?.description });
@@ -381,8 +381,8 @@ describe("a run started from a button", () => {
       }>(`/api/jobs?bookId=${book}`)
     ).body;
     const run = jobs.filter((j) => j.chapterId === 2).at(-1)!;
-    expect(run.scriptRun!.profile.maxChars).toBe(18000);
-    expect((await saved()).body.profiles.find((x) => x.id === p.id)!.maxChars).toBe(18000);
+    expect(run.scriptRun!.profile.maxChars).toBe(10000);
+    expect((await saved()).body.profiles.find((x) => x.id === p.id)!.maxChars).toBe(10000);
     expect(toasts.at(-1)!.description).toContain("for every book it scripts");
     await api.runner.idle();
     endpointsStore._detach();

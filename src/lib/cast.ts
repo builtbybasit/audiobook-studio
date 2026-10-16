@@ -141,17 +141,19 @@ function voiceOf(
 
 /**
  * Whether a line moved from `from` to `to` keeps its clip's speech: same voice and same style.
- * Only its effects may then be old, for Re-apply.
+ * Only its effects may then be old, for Re-apply. `after` is the cast `to` is read in when the
+ * move changed the cast too (a rename, merge or removal); `from` is read in `cast`.
  */
 export function sameReading(
   from: string,
   to: string,
   cast: CastLookup,
   cv: CharacterVoice | undefined,
+  after: CastLookup = cast,
 ): boolean {
   return (
-    speakerVoice(from, cast, cv).ref === speakerVoice(to, cast, cv).ref &&
-    (cast.get(from)?.style ?? "") === (cast.get(to)?.style ?? "")
+    speakerVoice(from, cast, cv).ref === speakerVoice(to, after, cv).ref &&
+    (cast.get(from)?.style ?? "") === (after.get(to)?.style ?? "")
   );
 }
 

@@ -63,6 +63,8 @@ export interface EncodedFile {
   chapters: EncodedChapter[];
   /** LUFS of the input, where it was measured before levelling */
   measuredLufs?: number;
+  /** what levelling did, as the encoder reported it: one gain or a dynamic normaliser, peaks limited by `limited` dB first */
+  levelled?: { linear: boolean; lufs: number; limited: number };
 }
 
 export interface AudiobookEncoder {

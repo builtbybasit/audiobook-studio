@@ -5,10 +5,10 @@ import { describe, expect, test } from "bun:test";
 
 import type { Book, Chapter, Job, Segment, SegmentType } from "@/types";
 import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
-import { readScript } from "~/db/script";
+import { readScript, writeScript } from "~/db/script";
 import { fakeSpeechProvider } from "~/providers/fakeSpeech";
 import type { ScriptingProvider } from "~/providers/scripting";
-import { REPEATED_IN, siteChecks, STORY_WORDS, storyWhy } from "~/script/siteCheck";
+import { checkSiteText, REPEATED_IN, siteChecks, STORY_WORDS, storyWhy } from "~/script/siteCheck";
 import { epubFile, story } from "../support/epub";
 import {
   jsonBody,
@@ -88,6 +88,28 @@ describe("the detector", () => {
     // short enough to be boilerplate, and a note that says it is one
     expect(checked[1].siteCheck).toBeUndefined();
     expect(checked[2].siteCheck).toBeUndefined();
+  });
+});
+
+describe("a line the book repeats", () => {
+  const said = "Thank you all for reading along with us tonight.";
+  test.each([
+    ["a no-break space", "Thank you all\u00a0for reading along with us tonight."],
+    ["a long run of spaces", "Thank you all        for reading along with us tonight."],
+    ["capitals, a tab and a newline", "THANK YOU ALL\tFOR READING ALONG WITH US TONIGHT.\n"],
+  ])("is found in the other chapters spelled with %s", async (_, spelled) => {
+    const api = testApi();
+    const { body } = await api.import<BookResult>(
+      await epubFile({
+        chapters: ["One", "Two", "Three", "Four"].map((title) => ({ title, paragraphs: story(1) })),
+      }),
+    );
+    const id = body.book.id;
+    for (const ch of [1, 2, 3]) writeScript(api.db, id, ch, [line(1, "narration", spelled)]);
+    const [checked] = api.db.transaction((tx) =>
+      checkSiteText(tx, id, 4, [line(1, "narration", said)]),
+    );
+    expect(checked.siteCheck?.why).toContain(`repeated in ${REPEATED_IN} chapters`);
   });
 });
 

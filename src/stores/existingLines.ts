@@ -21,8 +21,8 @@ export type ExistingOption = "all" | "from" | "pick" | "none";
 export interface ExistingAsk {
   kind: "voice" | "effect";
   bookId: string;
-  /** null: the whole book's old-sound lines, asked from the Re-apply bar */
-  name: string | null;
+  /** whose lines; none: the whole book's old-sound lines, asked from the Re-apply bar */
+  names: string[];
   /** "Ji Ning now uses Calm Male 2" */
   title: string;
   lines: number;
@@ -41,14 +41,19 @@ let asked = 0;
 export const useExistingLinesStore = defineStore("existingLines", {
   state: () => ({ ask: null as ExistingAsk | null }),
   actions: {
-    /** After a speaker's voice changed: ask, if they have lines made with another voice. */
-    async askVoice(bookId: string, name: string): Promise<void> {
+    /**
+     * After speakers' voices changed (one picked, auto-assign, the Character voice, a persona
+     * link): ask, if they have lines made with another voice. `title` defaults to the one speaker's.
+     */
+    async askVoice(bookId: string, names: string[], title?: string): Promise<void> {
       const castStore = useCastStore();
       const endpointsStore = useEndpointsStore();
+      if (!names.length) return;
       const mine = ++asked;
       try {
-        const found = await libraryService().oldVoice(bookId, name);
+        const found = await libraryService().oldVoice(bookId, names);
         if (mine !== asked || !found.lines) return;
+        const [name] = names;
         const voice = castStore.byName[bookId]?.get(name)?.voice;
         const label = voice
           ? endpointsStore.voiceLabel(voice)
@@ -56,8 +61,12 @@ export const useExistingLinesStore = defineStore("existingLines", {
         this.ask = {
           kind: "voice",
           bookId,
-          name,
-          title: `${name} now uses ${label}`,
+          names,
+          title:
+            title ??
+            (names.length === 1
+              ? `${name} now uses ${label}`
+              : `${names.length} speakers revoiced`),
           lines: found.lines,
           chapters: found.chapters,
           unavailable: 0,
@@ -91,7 +100,7 @@ export const useExistingLinesStore = defineStore("existingLines", {
         this.ask = {
           kind: "effect",
           bookId,
-          name,
+          names: name ? [name] : [],
           title: !name
             ? "Lines with the old sound"
             : slots.includes("effect")
@@ -125,16 +134,16 @@ export const useExistingLinesStore = defineStore("existingLines", {
 
 async function revoice(ask: ExistingAsk, chosen: number[]): Promise<boolean> {
   const libraryStore = useLibraryStore();
-  if (!chosen.length || !ask.name) return true;
+  if (!chosen.length || !ask.names.length) return true;
   if (libraryStore._blocked(ask.bookId, "re-narrate")) return false;
   try {
-    const { jobs, chapters } = await libraryService().revoice(ask.bookId, ask.name, chosen);
+    const { jobs, chapters } = await libraryService().revoice(ask.bookId, ask.names, chosen);
     libraryStore.chapters[ask.bookId] = chapters;
     await useJobsStore()._changed();
     const lines = linesIn(ask, chosen);
     useUiStore().toast(`Re-narrate · ${plural(lines, "line")}`, {
       kind: "info",
-      description: `${ask.name} in ${plural(jobs.length, "chapter")}. Queued on the server; progress is in the Queue.`,
+      description: `${ask.names.length === 1 ? ask.names[0] : plural(ask.names.length, "speaker")} in ${plural(jobs.length, "chapter")}. Queued on the server; progress is in the Queue.`,
       timeout: 8000,
     });
     return true;
@@ -147,7 +156,7 @@ async function revoice(ask: ExistingAsk, chosen: number[]): Promise<boolean> {
 async function reapply(ask: ExistingAsk, chosen: number[]): Promise<boolean> {
   const effectsStore = useEffectsStore();
   const uiStore = useUiStore();
-  const speaker = ask.name ? { speaker: ask.name } : {};
+  const speaker = ask.names.length ? { speaker: ask.names[0] } : {};
   const every = chosen.length === ask.chapters.length;
   if (chosen.length) {
     const queued = await effectsStore.reapply(

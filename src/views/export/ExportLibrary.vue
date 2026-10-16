@@ -111,8 +111,8 @@ function listen(e: ExportItem) {
     clips,
   });
 }
-function copyPath(e: ExportItem) {
-  navigator.clipboard?.writeText(diskPath(e.series || e.title, e.filename));
+function copyPath(path: string) {
+  navigator.clipboard?.writeText(path);
   uiStore.toast("Path copied", { kind: "success", timeout: 2500 });
 }
 /** One download per file (the server serves one at a time), each saved under its name on disk. */
@@ -302,13 +302,14 @@ const summary = (u: ExportUpdate) => {
           </div>
 
           <div
+            v-if="diskPath(e)"
             class="mt-3 flex items-center gap-1 rounded bg-zinc-50 px-2 py-1 font-mono text-[10px] text-zinc-500 dark:bg-zinc-800/60"
           >
-            <span
-              class="min-w-0 flex-1 truncate"
-              :title="diskPath(e.series || e.title, e.filename)"
-              >{{ diskPath(e.series || e.title, e.filename) }}</span
-            ><button class="shrink-0 text-violet-500 hover:underline" @click="copyPath(e)">
+            <span class="min-w-0 flex-1 truncate" :title="diskPath(e)!">{{ diskPath(e) }}</span
+            ><button
+              class="shrink-0 text-violet-500 hover:underline"
+              @click="copyPath(diskPath(e)!)"
+            >
               copy
             </button>
           </div>

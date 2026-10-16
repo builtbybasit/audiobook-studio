@@ -28,8 +28,8 @@ export interface Queue {
   /** Where the mini player links back to. A queue with an href follows you off the page; a bare
    *  audition does not. */
   href?: string;
-  /** what to play when this one runs out (usually the next chapter); null to stop */
-  next?: () => Queue | null;
+  /** what to play when this one runs out (usually the next chapter, which may need reading); null to stop */
+  next?: () => Queue | null | Promise<Queue | null>;
 }
 
 export interface PlayerState {
@@ -171,7 +171,23 @@ function tick(): void {
 /** the queue ran out: continue into whatever comes next, or stop at the end */
 function finish(): void {
   const next = p.stopAtEnd ? null : (queue.next?.() ?? null);
-  if (next) return load(next, 0, true);
+  p.pos = p.len;
+  if (!(next instanceof Promise)) return next ? load(next, 0, true) : end();
+  // the clock holds while the next chapter is read, so this runs once
+  const from = queue;
+  clearInterval(timer);
+  p.loading = true;
+  void next
+    .catch(() => null)
+    .then((q) => {
+      // paused, or another queue started, meanwhile: that wins
+      if (queue !== from || !p.playing) return;
+      if (q) load(q, 0, true);
+      else end();
+    });
+}
+
+function end(): void {
   p.pos = p.len;
   setPlaying(false);
   sync();
@@ -231,19 +247,47 @@ if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
 
 // ---------- the API the views use ----------
 
-/** Play a timeline. Pressing the same queue again toggles. */
-function playQueue(q: Queue, at?: number): void {
-  if (p.id === q.id && at == null) {
-    if (p.playing) return pause();
-    if (p.pos >= p.len) p.pos = 0;
-    return resume();
+const sameClip = (a: Clip, b: Clip): boolean =>
+  a.id === b.id && a.duration === b.duration && (a.gap ?? 0) === (b.gap ?? 0) && a.url === b.url;
+
+/**
+ * The queue already loaded under this id, brought up to date: a chapter's timeline moves as its
+ * clips land or change, and a seek must land in the new one. The playhead and play state stay.
+ */
+function refresh(q: Queue): void {
+  const same =
+    q.clips.length === queue.clips.length && q.clips.every((c, i) => sameClip(c, queue.clips[i]));
+  if (same) {
+    queue = q;
+    p.title = q.title ?? "";
+    p.subtitle = q.subtitle ?? "";
+    p.href = q.href ?? null;
+    return;
   }
-  load(q, at ?? 0, true);
+  const { pos, repeat } = p;
+  load(q, pos);
+  if (repeat && q.clips.some((c) => c.id === repeat)) p.repeat = repeat;
 }
 
-/** Load a timeline and park the playhead without starting. */
+/** Play a timeline, from `at` if given. Pressing the same queue again with no `at` toggles. */
+function playQueue(q: Queue, at?: number): void {
+  if (p.id !== q.id) return load(q, at ?? 0, true);
+  refresh(q);
+  if (at != null) {
+    seekTo(at);
+    if (!p.playing) resume();
+    return;
+  }
+  if (p.playing) return pause();
+  if (p.pos >= p.len) p.pos = 0;
+  resume();
+}
+
+/** Load a timeline and park the playhead without starting (or stopping) it. */
 function cue(q: Queue, at = 0): void {
-  load(q, at, false);
+  if (p.id !== q.id) return load(q, at, false);
+  refresh(q);
+  seekTo(at);
 }
 
 /** One clip, by id. */

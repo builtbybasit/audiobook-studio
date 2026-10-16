@@ -67,6 +67,9 @@ const server = Bun.serve({
   // is too small for big EPUBs and voice samples.
   maxRequestBodySize:
     Math.max(importBodyBytes(), scriptBodyBytes(), CLONE_BODY_BYTES) + 1024 * 1024,
+  // Off: Bun's 10 s default closes a request a slow provider is still answering (a prompt trial
+  // may wait 300 s, past Bun's 255 s cap), after it was billed. The routes keep their own limits.
+  idleTimeout: 0,
   fetch: serveLibraries(real, demo),
 });
 

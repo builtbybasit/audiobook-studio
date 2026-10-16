@@ -83,7 +83,7 @@ const rows = computed(() => {
       sort.value === "lines"
         ? b.st.lines - a.st.lines
         : sort.value === "first"
-          ? (a.st.first ?? 999) - (b.st.first ?? 999)
+          ? a.st.first - b.st.first
           : a.c.name.localeCompare(b.c.name),
     );
   return nestPersonas(sorted, byName);

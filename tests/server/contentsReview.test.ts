@@ -4,6 +4,11 @@
 import { describe, expect, test } from "bun:test";
 
 import type { Book, Chapter } from "@/types";
+import { DEFAULT_EXPORT_SETTINGS } from "@/lib/exports";
+import * as queue from "~/db/jobs";
+import * as library from "~/db/library";
+import type { Runner } from "~/jobs/runner";
+import * as ops from "~/library/ops";
 import { epubFile, story } from "../support/epub";
 import { jsonBody, testApi } from "../support/server";
 
@@ -206,6 +211,49 @@ describe("a novel split across several EPUBs", () => {
     const after = await api.request<ImportResult>(`/api/books/${id}`);
     expect(after.body.book.volumes).toHaveLength(1);
     expect(after.body.chapters.map((c) => c.title)).toEqual(["One", "Two"]);
+  });
+
+  test.each([
+    ["scripted", "chapters/script", {}],
+    ["narrated", "chapters/narrate", {}],
+    ["checked by ear", "chapters/check", {}],
+    ["built", "exports", { settings: { ...DEFAULT_EXPORT_SETTINGS, title: "T", filename: "T" } }],
+  ])("a volume waiting in the review is not %s", async (_, path, body) => {
+    const api = testApi();
+    const first = await api.import<ImportResult>(await volume(["One"]));
+    const id = first.body.book.id;
+    await api.request(`/api/books/${id}/confirm`, { method: "POST" });
+    await api.import<ImportResult>(await volume(["Two"]), { bookId: id });
+
+    const res = await api.request<{ error: { message: string } }>(
+      `/api/books/${id}/${path}`,
+      jsonBody({ ...body, ids: [2] }),
+    );
+    expect(res.status).toBe(409);
+    expect(res.body.error.message).toContain("contents review");
+  });
+
+  test("discarding a new volume stops work on its chapters before they go", async () => {
+    const api = testApi();
+    const first = await api.import<ImportResult>(await volume(["One"]));
+    const id = first.body.book.id;
+    await api.request(`/api/books/${id}/confirm`, { method: "POST" });
+    await api.import<ImportResult>(await volume(["Two"]), { bookId: id });
+    const job = (chapterId: number) =>
+      queue.enqueueJob(api.db, { kind: "narration", bookId: id, chapterId, label: "Narrate" }).job;
+    const going = job(2);
+    job(1);
+    const stopped: { id: number; chapters: number }[] = [];
+    const runner = {
+      cancel: () => "queued",
+      finished: async (jobId: number) => {
+        stopped.push({ id: jobId, chapters: library.listChapters(api.db, id).length });
+      },
+    } as unknown as Runner;
+
+    await ops.discardImport(api.db, id, { runner });
+    // waited out while its chapter was still there to settle
+    expect(stopped).toEqual([{ id: going.id, chapters: 2 }]);
   });
 
   test("only one volume can be waiting in a book's review at a time", async () => {

@@ -15,6 +15,7 @@ import {
   DEFAULT_EXPORT_SETTINGS,
   durationOf,
   exportKey,
+  markerTitle,
   planOf,
   readinessOf,
   reviewOf,
@@ -96,6 +97,13 @@ describe("the plan", () => {
     // there is no join between two chapters when each is its own file
     expect(plan.duration).toBe(1000);
     expect(plan.gaps).toBe(0);
+  });
+
+  test.each(["Cost: $5", "$& and $1", "$$"])("a mark shows a title as written: %p", (title) => {
+    const c = chapter(1, 1, 100, { title });
+    expect(markerTitle(c, 3, settings({ markerPattern: "{n}. {title}" }), null)).toBe(
+      `3. ${title}`,
+    );
   });
 
   test("track numbers are wide enough for the whole set", () => {
@@ -220,20 +228,15 @@ const usableIds = (bookId = "starforge") =>
 describe("staying up to date", () => {
   beforeEach(() => open());
 
-  test("a chapter that has not been touched is current; one that changed is not", async () => {
+  test("an untouched audiobook is current on a page that has read no script", async () => {
     const ids = usableIds().slice(0, 3);
     const item = await build("starforge", ids, own({ useStale: true }));
     expect(item.status).toBe("done");
-    // nothing has moved since: the server's fingerprints are the ones this page works out
-    expect(exportsStore.exportUpdateFor(item).changed).toEqual([]);
-
-    // re-rendering one chapter's clip changes that chapter's fingerprint and nothing else
-    const seg = scriptsStore.segmentsOf("starforge", ids[1])[0];
-    seg.audio.duration += 3;
-    castStore._retime("starforge", ids[1]);
+    // the overview and the shelf read no scripts; the answer must not need them
+    scriptsStore.$reset();
     const update = exportsStore.exportUpdateFor(item);
-    expect(update.changed).toEqual([ids[1]]);
-    expect(update.needed).toBe(true);
+    expect(update.changed).toEqual([]);
+    expect(update.needed).toBe(false);
   });
 
   test("a pause costs nothing and renders nothing, but it does change the file", async () => {
@@ -241,8 +244,17 @@ describe("staying up to date", () => {
     const item = await build("starforge", ids, own({ useStale: true }));
     expect(exportsStore.exportUpdateFor(item).changed).toHaveLength(0);
     await castStore.setPacing("starforge", { turn: 1.4 });
-    expect(exportsStore.exportUpdateFor(item).changed.length).toBeGreaterThan(0);
+    const after = await settled(item);
+    expect(exportsStore.exportUpdateFor(after).changed.length).toBeGreaterThan(0);
     await castStore.resetPacing("starforge");
+  });
+
+  test("a changed title or author on the form is a reason to build again", async () => {
+    const s = own();
+    const item = await build("starforge", [2, 3], s);
+    expect(exportsStore.exportUpdateFor(item, { ...s, author: "Someone Else" }).settings).toEqual([
+      "Author",
+    ]);
   });
 
   test("an export of everything the book can give follows the book", async () => {

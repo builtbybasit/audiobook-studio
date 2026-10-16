@@ -18,7 +18,7 @@ Turn an EPUB into a full-cast audiobook, with a different voice for every charac
 - Works with any OpenAI-compatible API, or with **Claude Code / Codex** under your own login (run with no tools, in an empty folder).
 - Keeps a recap per chapter and running cast notes, so later chapters know who is who. Picks up personas and aliases.
 - Marks site boilerplate and translator's notes (it never deletes them). Neither is read aloud unless you turn notes on.
-- A detector suggests the lines the model probably got wrong. You can edit, split and join lines, fix speakers in bulk, and use checkpoints with diff and restore.
+- A detector second-guesses the site-text and note marks: story marked as boilerplate, or boilerplate left as story. You can edit, split and join lines, fix speakers in bulk, and use checkpoints with diff and restore.
 - The prompt can be edited per library, per endpoint and per book. You can try it on one chunk first.
 
 ### 🎭 Cast and voices

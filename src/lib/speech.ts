@@ -41,38 +41,54 @@ function matcher(list: LexEntry[]): { re: RegExp; byTerm: Map<string, LexEntry> 
   };
 }
 
-/** Left to right, without overlaps. */
-export function hitsIn(text: string, list: LexEntry[]): LexHit[] {
-  const m = matcher(list);
-  if (!m) return [];
-  const out: LexHit[] = [];
-  let last = 0;
-  for (const found of text.matchAll(m.re)) {
-    const from = found.index ?? 0;
-    const to = from + found[0].length;
-    if (from < last) continue; // already inside a longer hit
-    // mid-word: "Ning" inside "Ninghai" is not the name
-    if (WORDY.test(text[from - 1] ?? "") || WORDY.test(text[to] ?? "")) continue;
-    const e = m.byTerm.get(found[0].toLowerCase());
-    if (!e || (e.matchCase && found[0] !== termOf(e))) continue;
-    out.push({ term: found[0], say: sayOf(e), from, to });
-    last = to;
-  }
-  return out;
+export interface LexMatcher {
+  /** Left to right, without overlaps. */
+  hits(text: string): LexHit[];
+  /** A replacement is never itself re-matched. */
+  speak(text: string): Spoken;
 }
 
-/** A replacement is never itself re-matched. */
-export function speak(text: string, list: LexEntry[]): Spoken {
-  const hits = hitsIn(text, list);
-  if (!hits.length) return { text, hits };
-  let out = "";
-  let last = 0;
-  for (const h of hits) {
-    out += text.slice(last, h.from) + h.say;
-    last = h.to;
-  }
-  return { text: out + text.slice(last), hits };
+/** The dictionary made ready once, for a loop over a book's lines. */
+export function lexMatcher(list: LexEntry[]): LexMatcher {
+  const m = matcher(list);
+  const hits = (text: string): LexHit[] => {
+    if (!m) return [];
+    const out: LexHit[] = [];
+    let last = 0;
+    for (const found of text.matchAll(m.re)) {
+      const from = found.index ?? 0;
+      const to = from + found[0].length;
+      if (from < last) continue; // already inside a longer hit
+      // mid-word: "Ning" inside "Ninghai" is not the name
+      if (WORDY.test(text[from - 1] ?? "") || WORDY.test(text[to] ?? "")) continue;
+      const e = m.byTerm.get(found[0].toLowerCase());
+      if (!e || (e.matchCase && found[0] !== termOf(e))) continue;
+      out.push({ term: found[0], say: sayOf(e), from, to });
+      last = to;
+    }
+    return out;
+  };
+  return {
+    hits,
+    speak(text) {
+      const found = hits(text);
+      if (!found.length) return { text, hits: found };
+      let out = "";
+      let last = 0;
+      for (const h of found) {
+        out += text.slice(last, h.from) + h.say;
+        last = h.to;
+      }
+      return { text: out + text.slice(last), hits: found };
+    },
+  };
 }
+
+/** `lexMatcher(list).hits`, for one line. */
+export const hitsIn = (text: string, list: LexEntry[]): LexHit[] => lexMatcher(list).hits(text);
+
+/** `lexMatcher(list).speak`, for one line. */
+export const speak = (text: string, list: LexEntry[]): Spoken => lexMatcher(list).speak(text);
 
 /**
  * What a voice may be sent: Latin letters (books are English), digits, reading punctuation and the

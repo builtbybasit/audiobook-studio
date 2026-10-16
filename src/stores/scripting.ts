@@ -26,6 +26,9 @@ import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 import { toastFailure } from "@/stores/toastFailure";
 import { useUiStore } from "@/stores/ui";
+/** "Smaller chunks" never cuts below this: a few paragraphs. */
+const MIN_CHUNK_CHARS = 1000;
+
 interface ScriptingState {
   scriptSettings: ScriptSettings;
 }
@@ -326,7 +329,8 @@ export const useScriptingStore = defineStore("scripting", {
       const p = this.runProfile;
       if (!p) return void this.startRun(bookId, [chId]);
       const was = p.maxChars;
-      p.maxChars = Math.max(100, (p.maxChars || DEFAULT_MAX_CHARS) - 2000);
+      const size = p.maxChars || DEFAULT_MAX_CHARS;
+      p.maxChars = Math.min(size, Math.max(MIN_CHUNK_CHARS, Math.round(size / 2)));
       if (!(await this.startRun(bookId, [chId], { quiet: true }))) {
         p.maxChars = was;
         return;

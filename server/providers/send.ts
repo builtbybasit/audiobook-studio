@@ -55,6 +55,7 @@ export async function sendSpeech(
       startedAt,
       finishedAt: Date.now(),
       attempts: Math.max(1, stats.attempts) + more.attempts,
+      timedOut: stats.timedOut,
       rateLimited: stats.rateLimited || more.rateLimited,
       simulated: false,
       text: request.text,

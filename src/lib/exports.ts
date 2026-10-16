@@ -8,6 +8,7 @@ import type {
   Chapter,
   ChapterReadiness,
   ExportBlocker,
+  ExportFile,
   ExportFormat,
   ExportGrouping,
   ExportItem,
@@ -126,6 +127,10 @@ export function fileTitle(
   return s.title;
 }
 
+/** The volume a chapter's mark may name: none in a one-volume book, where it says nothing. */
+export const markVolume = (volumes: Volume[], c: Chapter): string | null =>
+  volumes.length > 1 ? (volumes.find((v) => v.id === c.volumeId)?.name ?? null) : null;
+
 export function markerTitle(
   c: Chapter,
   n: number,
@@ -134,9 +139,10 @@ export function markerTitle(
 ): string {
   const prefix =
     volume && s.volPrefix && s.grouping === "single" ? `${shortVolume(volume)} · ` : "";
-  return (s.markerPattern || "{title}")
-    .replace("{n}", String(n))
-    .replace("{title}", prefix + c.title);
+  // a replacer function, so a `$` in a title is a dollar sign and not a pattern
+  return (s.markerPattern || "{title}").replace(/\{(n|title)\}/g, (_, key: string) =>
+    key === "n" ? String(n) : prefix + c.title,
+  );
 }
 
 /**
@@ -446,6 +452,40 @@ export function chapterSignature(
   return [c.narration, clips.length, Math.round(c.duration * 100), silence, h].join(":");
 }
 
+/**
+ * What each chapter of `files` is called and where it lands: its file, that file's title tag and
+ * its chapter mark. A rename or a volume move changes these without touching the audio.
+ */
+export function placesOf(
+  files: Pick<ExportFile, "name" | "chapterIds" | "volume">[],
+  chapters: Chapter[],
+  volumes: Volume[],
+  s: ExportSettings,
+): Map<number, { file: string; marker: string }> {
+  const byId = new Map(chapters.map((c) => [c.id, c]));
+  const marks = s.markers && formatOf(s.format).markers;
+  const out = new Map<number, { file: string; marker: string }>();
+  for (const f of files) {
+    const inside = f.chapterIds.flatMap((id) => byId.get(id) ?? []);
+    const title = fileTitle(s, s.grouping === "volume" ? (f.volume?.name ?? null) : null, inside);
+    inside.forEach((c, i) =>
+      out.set(c.id, {
+        file: `${f.name}\n${title}`,
+        marker: marks ? markerTitle(c, i + 1, s, markVolume(volumes, c)) : "",
+      }),
+    );
+  }
+  return out;
+}
+
+/** A chapter's fingerprint in one export: its audio (`chapterSignature`), then its place. */
+export const chapterState = (audio: string, place: { file: string; marker: string }): string =>
+  `${audio}|${hash(`${place.file}\n${place.marker}`)}`;
+
+/** Exports recorded before places were fingerprinted are compared on their audio alone. */
+export const sameState = (was: string | undefined, now: string): boolean =>
+  was === now || (!!was && !was.includes("|") && now.slice(0, now.indexOf("|")) === was);
+
 /** `chapterSignature` for each of `ids` the book has. */
 export function chapterStates(
   chapters: Chapter[],
@@ -474,6 +514,12 @@ export const OUTPUT_KEYS = [
   "markerPattern",
   "volPrefix",
   "cover",
+  "title",
+  "series",
+  "author",
+  "narrator",
+  "year",
+  "description",
 ] as const;
 
 export const SETTING_LABEL: Record<string, string> = {

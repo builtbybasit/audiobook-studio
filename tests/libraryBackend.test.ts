@@ -4,10 +4,12 @@
 // `tests/server/` because that project compiles without the DOM, and a Pinia store brings one in.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
+import { pendingFor, volumeTargets } from "@/components/addEpub";
 import { HttpLibraryService, setLibraryService } from "@/services/library";
 import { useCastStore } from "@/stores/cast";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
+import { useTransferStore } from "@/stores/transfer";
 import { useUiStore } from "@/stores/ui";
 import { useChapterText, chapterTextNow } from "@/queries";
 import { createApp } from "~/app";
@@ -93,6 +95,16 @@ describe("the library store with a server answering", () => {
     // still in its review, so the shelf does not list it yet
     expect(libraryStore.bookById(id!)?.importing).toBe(true);
     expect(libraryStore.shelved).toEqual([]);
+  });
+
+  test("a file added as it was picked takes the EPUB's title, not its file name", async () => {
+    const source = await epubFile(
+      { title: "Moonlight Ledger", chapters: [{ title: "One", paragraphs: story() }] },
+      "ml_vol1_FINAL.epub",
+    );
+    const { title } = pendingFor({ name: source.name, source }, null);
+    const id = await libraryStore.importBook({ source, title });
+    expect(libraryStore.bookById(id!)?.title).toBe("Moonlight Ledger");
   });
 
   test("a file the server will not read leaves the library alone and says why", async () => {
@@ -207,7 +219,11 @@ describe("the library store with a server answering", () => {
       name: "Vol. 2",
     });
     expect(volId).not.toBeNull();
-    expect(libraryStore.chaptersOf(id).map((c) => c.id)).toEqual([1, 2, 3]);
+    expect(libraryStore.allChaptersOf(id).map((c) => c.id)).toEqual([1, 2, 3]);
+    // nothing runs on it until it is added, so only the review sees its chapters
+    expect(libraryStore.chaptersOf(id).map((c) => c.id)).toEqual([1, 2]);
+    // and the book is not offered another volume, which the server would refuse
+    expect(volumeTargets(libraryStore.shelved).map((b) => b.id)).not.toContain(id);
     expect(libraryStore.importingVolume(id)?.id).toBe(volId!);
     expect(libraryStore.importingVolume(id)?.name).toBe("Vol. 2");
     // the volume waits in the review; the book it joins stays on the shelf
@@ -481,6 +497,38 @@ describe("a book's settings with a server answering", () => {
     expect(numbering(id)).toEqual(moved);
     await reload(id);
     expect(numbering(id)).toEqual(moved);
+  });
+
+  test("a script file read before volumes move or go applies to the chapters it was matched to", async () => {
+    const id = await twoVolumes();
+    const transferStore = useTransferStore();
+    const matched = (chapterId: number) => {
+      const title = libraryStore.chapter(id, chapterId)!.title;
+      return { chapterId, title, fileTitle: title, file: `${chapterId}.json`, segments: [] };
+    };
+    transferStore.plans[id] = {
+      title: "",
+      author: "",
+      name: "book.script.zip",
+      chapters: [matched(1), matched(3)],
+      refused: [],
+      ignored: [],
+      cast: { add: [], differ: [], aliases: [] },
+      lexicon: { add: [], differ: [] },
+      voices: [],
+    };
+    const planned = () =>
+      transferStore
+        .planOf(id)!
+        .chapters.map((c) => [c.title, libraryStore.chapter(id, c.chapterId)?.title]);
+
+    expect(await libraryStore.moveVolume(id, 2, 0)).toBe(true);
+    expect(planned()).toEqual([
+      ["One", "One"],
+      ["Three", "Three"],
+    ]);
+    expect(await libraryStore.removeVolume(id, 1)).toBe("volume");
+    expect(planned()).toEqual([["Three", "Three"]]);
   });
 
   test("a move the server refuses moves nothing and says why", async () => {

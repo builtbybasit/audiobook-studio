@@ -39,7 +39,7 @@ export function useContents() {
   const bookId = useBookId();
 
   const book = computed(() => libraryStore.bookById(bookId));
-  const chapters = computed(() => libraryStore.chaptersOf(bookId));
+  const chapters = computed(() => libraryStore.allChaptersOf(bookId));
   const numbers = computed(() => libraryStore.chapterNumbers[bookId]);
   const volumes = computed(() => libraryStore.volumesOf(bookId));
   const multi = computed(() => volumes.value.length > 1);

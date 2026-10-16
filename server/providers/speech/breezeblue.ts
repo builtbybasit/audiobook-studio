@@ -73,7 +73,13 @@ export const breezeBlueWire: SpeechWire = {
       );
     } catch (e) {
       if (!(e instanceof ProviderError)) throw e;
-      throw new ProviderError(unsaved(e.message), e.status, e.retryable, e.rateLimited);
+      throw new ProviderError(
+        unsaved(e.message),
+        e.status,
+        e.retryable,
+        e.rateLimited,
+        e.outOfCredit,
+      );
     }
     const voice = (await saved.json().catch(() => null)) as {
       voice_id?: unknown;

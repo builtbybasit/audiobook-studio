@@ -18,6 +18,8 @@ import { useUiStore } from "@/stores/ui";
 import { narrationTargets, runActionLabel, selectionSummary, skipSummary } from "@/lib/runPlan";
 import { newProfile } from "@/lib/scripting";
 import { jobsService, setJobsService, type JobsService } from "@/services/jobs";
+import { libraryService, setLibraryService, type LibraryService } from "@/services/library";
+import { key } from "@/lib/scriptReview";
 import type { Job, NarrationScope, PricingConfig } from "@/types";
 import { demoServer } from "./support/demoServer";
 import { openDemoBook } from "./support/demoBook";
@@ -342,12 +344,44 @@ describe("a run can be stopped and picked up again", () => {
     expect(asked).toEqual([{ kind: "narrate", ids: [ch.id], scope: "failed" }]);
   });
 
+  test("Retry all failed is one run, its scope read from a script no page has open", async () => {
+    const [a, b] = chapters().filter((c) => c.narration === "done");
+    // b's failed replacement is in the store; a's only on the server, its script never read here
+    segments(b.id)[0].candidate = { ...segments(b.id)[0].audio, status: "failed", n: 2 };
+    delete scriptsStore.segments[key(BOOK, a.id)];
+    const lib = libraryService();
+    setLibraryService(
+      Object.assign(Object.create(lib) as LibraryService, {
+        chapterScripts: async (book: string, ids: readonly number[]) => {
+          const read = await lib.chapterScripts(book, ids);
+          const first = read[a.id]?.segments[0];
+          if (first) first.candidate = { ...first.audio, status: "failed", n: 2 };
+          return read;
+        },
+      }),
+    );
+    try {
+      useQueryCache().setQueryData(keys.jobs, [
+        job({ kind: "narration", chapterId: a.id, status: "failed" }),
+        job({ kind: "narration", chapterId: b.id, status: "failed" }),
+      ]);
+      expect(jobsStore.retryableFailures()).toHaveLength(2);
+      jobsStore.retryAllFailed();
+      await retried();
+      expect(asked).toEqual([{ kind: "narrate", ids: [a.id, b.id], scope: "failed" }]);
+    } finally {
+      setLibraryService(lib);
+    }
+  });
+
   test("retrying a run's failures is one run again, not one run per chapter", async () => {
     const run = [
       job({ kind: "narration", chapterId: 1, status: "failed", bulk: bulk(9, 1, 3) }),
       job({ kind: "narration", chapterId: 2, status: "done", bulk: bulk(9, 2, 3) }),
       job({ kind: "narration", chapterId: 3, status: "failed", bulk: bulk(9, 3, 3) }),
     ];
+    for (const id of [1, 3])
+      segments(id)[0].candidate = { ...segments(id)[0].audio, status: "failed", n: 2 };
     useQueryCache().setQueryData(keys.jobs, run);
     expect(jobsStore.retryRunFailures(9)).toBe(2);
     await retried();

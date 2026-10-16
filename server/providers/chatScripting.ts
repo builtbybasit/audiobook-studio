@@ -2,6 +2,7 @@
 // not trusted (fenced JSON, odd types, truncation, tidied prose): each is checked word for word
 // (`fidelity`) and refused on a mismatch, except in a prompt trial (`input.lenient`). Every request
 // on the wire is reported through `input.sent`, refused or not, since it was billed (`sent.ts`).
+import { diffArrays } from "diff";
 import * as v from "valibot";
 
 import type {
@@ -69,35 +70,71 @@ export function builtInPrompt(
 // ---------------------------------------------------------------------------------------------
 // Fidelity
 
-/** How much of the prose sent came back as the script's words, and how much was made up. */
+/** How much of the prose sent came back as the script's words, in order, and how much was made up. */
 export interface Fidelity {
   words: number;
-  /** counted with repeats */
+  /** counted with repeats; a moved passage counts as missing where it was and added where it went */
   missing: number;
   added: number;
-  /** a few of the missing words, for the message */
+  /** the longest runs of missing words, for the message */
   examples: string[];
-  /** at most TOLERANCE of the words either way, and never less than one */
+  /** at most TOLERANCE of the words either way, and no missing or added run longer than RUN */
   ok: boolean;
 }
 
 const TOLERANCE = 0.02;
+/** A few words in a row is normalisation (a number spelled out, "Mr." as "Mister"); more is a lost phrase. */
+const RUN = 3;
+const EXAMPLE_WORDS = 8;
 
 /**
- * Whether `lines` read out `input`: every word once, nothing invented. Compares word counts, not
- * order: cheap, and a dropped or rewritten sentence still shows.
+ * Whether `lines` read out `input`: every word once, in order, nothing invented. Past the edits
+ * TOLERANCE allows the answer fails anyway, so the diff stops there (an unrelated answer would
+ * take seconds) and the figures fall back to counting words.
  */
 export function fidelity(input: string, lines: readonly { text: string }[]): Fidelity {
   const want = wordsOf(input);
+  const got = lines.flatMap((l) => wordsOf(l.text));
+  const allowed = Math.max(1, Math.floor(want.length * TOLERANCE));
+  const parts = diffArrays(want, got, { maxEditLength: 2 * allowed });
+  if (!parts) return { words: want.length, ...wordCounts(want, got), ok: false };
+  let missing = 0;
+  let added = 0;
+  let longest = 0;
+  const gaps: string[][] = [];
+  for (const p of parts) {
+    if (p.removed) {
+      missing += p.count;
+      gaps.push(p.value);
+    } else if (p.added) added += p.count;
+    else continue;
+    longest = Math.max(longest, p.count);
+  }
+  return {
+    words: want.length,
+    missing,
+    added,
+    examples: gaps
+      .sort((a, b) => b.length - a.length)
+      .slice(0, 5)
+      .map(excerpt),
+    ok: missing <= allowed && added <= allowed && longest <= RUN,
+  };
+}
+
+const excerpt = (words: readonly string[]): string =>
+  words.length > EXAMPLE_WORDS ? `${words.slice(0, EXAMPLE_WORDS).join(" ")}…` : words.join(" ");
+
+/** Missing and added regardless of order, for an answer too far off to diff. */
+function wordCounts(want: readonly string[], got: readonly string[]) {
   const counts = new Map<string, number>();
   for (const w of want) counts.set(w, (counts.get(w) ?? 0) + 1);
   let added = 0;
-  for (const line of lines)
-    for (const w of wordsOf(line.text)) {
-      const n = counts.get(w) ?? 0;
-      if (n > 0) counts.set(w, n - 1);
-      else added++;
-    }
+  for (const w of got) {
+    const n = counts.get(w) ?? 0;
+    if (n > 0) counts.set(w, n - 1);
+    else added++;
+  }
   let missing = 0;
   const examples: string[] = [];
   for (const [w, n] of counts)
@@ -105,14 +142,7 @@ export function fidelity(input: string, lines: readonly { text: string }[]): Fid
       missing += n;
       if (examples.length < 5) examples.push(w);
     }
-  const allowed = Math.max(1, Math.floor(want.length * TOLERANCE));
-  return {
-    words: want.length,
-    missing,
-    added,
-    examples,
-    ok: missing <= allowed && added <= allowed,
-  };
+  return { missing, added, examples };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -326,6 +356,9 @@ export function answerOf(content: string, who: string, excerpt?: string): Script
   return { lines: out, cast: castOf(parsed.cast), ...(recap ? { recap } : {}) };
 }
 
+/** An answer cut off, or not the chunk's words: the failures a smaller chunk can get past. */
+export class ChunkMisfit extends ProviderError {}
+
 /**
  * The script in a model's final message, checked against the prose sent (`lenient` skips only the
  * word check). Throws a `ProviderError` with `status`.
@@ -351,7 +384,7 @@ export function checkedScript(
       check.added ? `added ${check.added} that are not in the text` : "",
     ].filter(Boolean);
     const example = check.examples.length ? ` (missing e.g. “${check.examples.join("”, “")}”)` : "";
-    throw new ProviderError(
+    throw new ChunkMisfit(
       `${who} did not copy the text faithfully: it ${parts.join(" and ")}${example}. The script was not written; run it again or try another model`,
       status,
       false,
@@ -455,6 +488,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
         startedAt,
         finishedAt: Date.now(),
         attempts: Math.max(1, stats.attempts),
+        timedOut: stats.timedOut,
         rateLimited: stats.rateLimited,
         status,
         ...(error ? { error: { code: error.status, message: error.message, body } } : {}),
@@ -525,7 +559,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
         target.reasoning && target.reasoning !== "off"
           ? "raise it or lower the reasoning level on the Endpoints page (the model’s thinking counts against it)"
           : "raise it on the Endpoints page (a reasoning model spends part of it thinking)";
-      throw new ProviderError(
+      throw new ChunkMisfit(
         `${target.name}’s answer was cut off at max output tokens (${cap}); ${remedy} or use smaller chunks`,
         status,
         false,

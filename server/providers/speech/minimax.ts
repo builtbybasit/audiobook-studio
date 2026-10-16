@@ -152,7 +152,13 @@ async function step<T>(doing: string, send: () => Promise<T>): Promise<T> {
     return await send();
   } catch (e) {
     if (!(e instanceof ProviderError)) throw e;
-    throw new ProviderError(`${doing}: ${e.message}`, e.status, e.retryable, e.rateLimited);
+    throw new ProviderError(
+      `${doing}: ${e.message}`,
+      e.status,
+      e.retryable,
+      e.rateLimited,
+      e.outOfCredit,
+    );
   }
 }
 

@@ -222,10 +222,15 @@ function rowId(kind: EndpointKind, id: string): string {
   }
 }
 
-/** The key is write-only: undefined keeps it, `""` forgets it. */
-function keyAfterSave(sent: string | undefined, kept: string | null | undefined): string | null {
-  if (sent === undefined) return kept ?? null;
-  return sent.trim() || null;
+type Kept = { apiKey: string | null; baseUrl: string };
+
+/**
+ * The key is write-only: undefined keeps it, `""` forgets it. A new base URL without a new key
+ * forgets it too, so a save can't point a stored key at another server.
+ */
+function keyAfterSave(sent: { apiKey?: string; baseUrl: string }, kept: Kept | undefined) {
+  if (sent.apiKey !== undefined) return sent.apiKey.trim() || null;
+  return kept?.baseUrl === sent.baseUrl ? kept.apiKey : null;
 }
 
 /** Call inside a transaction. */
@@ -233,24 +238,22 @@ export function replaceEndpoints(tx: Tx, config: EndpointConfig): void {
   // read before the rows go, so a save that did not mention a key keeps it
   const kept = new Map(
     tx
-      .select({ id: endpoints.id, apiKey: endpoints.apiKey })
+      .select({ id: endpoints.id, apiKey: endpoints.apiKey, baseUrl: endpoints.baseUrl })
       .from(endpoints)
       .all()
-      .map((r) => [r.id, r.apiKey]),
+      .map(({ id, ...k }) => [id, k]),
   );
   const transcribers = config.transcribers ?? readTranscribers(tx);
   // children cascade
   tx.delete(endpoints).run();
   tx.delete(credentials).run();
   writeCredentials(tx, config.credentials);
-  config.endpoints.forEach((e, i) =>
-    writeEndpoint(tx, e, i, keyAfterSave(e.apiKey, kept.get(e.id))),
-  );
+  config.endpoints.forEach((e, i) => writeEndpoint(tx, e, i, keyAfterSave(e, kept.get(e.id))));
   config.profiles.forEach((p, i) =>
-    writeProfile(tx, p, i, keyAfterSave(p.apiKey, kept.get(rows.profileKey(p.id)))),
+    writeProfile(tx, p, i, keyAfterSave(p, kept.get(rows.profileKey(p.id)))),
   );
   transcribers.forEach((t, i) =>
-    writeTranscriber(tx, t, i, keyAfterSave(t.apiKey, kept.get(rows.transcriberKey(t.id)))),
+    writeTranscriber(tx, t, i, keyAfterSave(t, kept.get(rows.transcriberKey(t.id)))),
   );
   if (config.prompt !== undefined) writeLibraryPrompt(tx, config.prompt);
   if (config.script !== undefined) writeScriptSettings(tx, config.script);

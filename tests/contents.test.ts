@@ -238,7 +238,7 @@ describe("the review against the demo library", () => {
       await libraryStore.loadBook("cliche");
       const before = libraryStore.chaptersOf("cliche").length;
       await libraryStore.importVolume("cliche", { source: await volume(), name: "Vol. 4" });
-      const added = libraryStore.chaptersOf("cliche").slice(before);
+      const added = libraryStore.allChaptersOf("cliche").slice(before);
       expect(added[0].id).toBe(before + 1);
       expect(added.some((c) => c.note)).toBe(true);
       await libraryStore.confirmImport("cliche");

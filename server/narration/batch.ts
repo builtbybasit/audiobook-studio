@@ -10,7 +10,7 @@ import {
   type RenderedClip,
   type SpeechInput,
 } from "~/providers/speech";
-import { joinParts, PartFailed, type Outcome } from "~/narration/parts";
+import { joinParts, PartFailed, stopsRun, type Outcome } from "~/narration/parts";
 
 /** `T` is the run's own line. */
 export interface BatchLine<T> {
@@ -26,6 +26,8 @@ export interface BatchLine<T> {
 export interface LineRun<T, L extends BatchLine<T>> {
   /** a cancel, or the first failure beyond one line */
   stop: AbortSignal;
+  /** a failure beyond one line: aborts `stop`; the first one wins */
+  fail(error: unknown): void;
   /** resolves to the slot's release */
   acquire(endpoint: string | null): Promise<() => void>;
   /** stopped, or out of budget */
@@ -70,21 +72,17 @@ export async function batchLines<T, L extends BatchLine<T>>(
     let items = 0;
     let chars = 0;
     while (pending.length && !run.halted()) {
-      const next = pending[0];
+      // off the queue before any await, so another batch filling meanwhile can't take it too
+      const next = pending.shift()!;
       const line = next.line ?? (await run.admit(next.t, limits.maxItemChars));
-      if (!line) {
-        if (run.halted()) break;
-        pending.shift();
-        continue;
-      }
+      if (!line) continue;
       // the first always goes
       const parts = line.cuts?.length ?? 1;
       const size = line.input.text.length;
       if (batch.length && (items + parts > maxItems || chars + size > maxChars)) {
-        pending[0] = { t: next.t, line };
+        pending.unshift({ t: next.t, line });
         break;
       }
-      pending.shift();
       // more parts than a batch may carry: sent alone
       if (parts > maxItems) await run.land(line, await run.speak(line));
       else {
@@ -147,32 +145,48 @@ export async function batchLines<T, L extends BatchLine<T>>(
       }
       landing.push(run.land(line, joined));
     };
+    let stopped: { error: unknown } | null = null;
     try {
       await run.speakBatch(id, items, answered);
     } catch (e) {
-      if (run.stop.aborted) throw e;
-      for (const line of batch) if (!settled.has(line)) failLine(line, e, e instanceof BatchCut);
+      if (run.stop.aborted || stopsRun(e)) stopped = { error: e };
+      else
+        for (const line of batch) if (!settled.has(line)) failLine(line, e, e instanceof BatchCut);
     }
     pending.unshift(
       ...again
         .sort((a, b) => order.get(a.t)! - order.get(b.t)!)
         .map((line) => ({ t: line.t, line })),
     );
-    await Promise.all(landing);
+    // every landing finishes before this returns or throws: none may write after the run settles
+    await allLanded(landing);
+    if (stopped) throw stopped.error;
   };
 
   const worker = async (): Promise<void> => {
-    while (pending.length && !run.halted()) {
-      const leave = await run.acquire(id);
-      try {
-        const batch = await fill();
-        if (batch.length) await send(batch);
-      } finally {
-        leave();
+    try {
+      while (pending.length && !run.halted()) {
+        const leave = await run.acquire(id);
+        try {
+          const batch = await fill();
+          if (batch.length) await send(batch);
+        } finally {
+          leave();
+        }
       }
+    } catch (e) {
+      // the other batches out stop now, not when they next fill
+      run.fail(e);
+      throw e;
     }
   };
   // as many as could ever be out at once; the gate decides how many are
   const width = Math.max(1, Math.ceil(lines.length / Math.min(maxItems, lines.length)));
-  await Promise.all(Array.from({ length: width }, worker));
+  await allLanded(Array.from({ length: width }, worker));
+}
+
+/** Like `Promise.all`, but waits for every one before throwing the first failure. */
+async function allLanded(work: Promise<void>[]): Promise<void> {
+  const failed = (await Promise.allSettled(work)).find((r) => r.status === "rejected");
+  if (failed) throw failed.reason;
 }

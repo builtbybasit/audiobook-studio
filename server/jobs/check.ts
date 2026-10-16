@@ -252,7 +252,8 @@ export function enqueueCheck(
 ): CheckQueued {
   const book = library.getBook(db, bookId);
   if (!book) throw notFound("No such book");
-  if (book.importing) throw conflict("Finish the contents review before checking this book");
+  if (library.inReview(book, ids))
+    throw conflict("Finish the contents review before checking this book");
   const t = readTranscriber(db);
   if (!t) throw badRequest(NO_TRANSCRIBER);
   const known = new Map(library.listChapters(db, bookId).map((c) => [c.id, c]));

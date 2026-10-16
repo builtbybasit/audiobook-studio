@@ -103,9 +103,21 @@ describe("the fidelity check", () => {
     const kept = words.split(" ").slice(0, 95).join(" ");
     const check = fidelity(words, [{ text: kept + " invented" }]);
     expect(check).toMatchObject({ words: 100, missing: 5, added: 1, ok: false });
-    expect(check.examples).toHaveLength(5);
     // two in a hundred is the tolerance
     expect(fidelity(words, [{ text: words.split(" ").slice(0, 98).join(" ") }]).ok).toBe(true);
+  });
+
+  // 2,000 words: the 2% tolerance alone would let a whole sentence go
+  const prose = Array.from({ length: 2000 }, (_, i) => `w${i}`);
+  const without = (from: number, n: number) => [...prose.slice(0, from), ...prose.slice(from + n)];
+  test.each([
+    ["a dropped sentence", without(1000, 12)],
+    ["a moved sentence", [...without(1000, 12), ...prose.slice(1000, 1012)]],
+    ["a rewritten sentence", [...prose.slice(0, 1000), "x y z q r", ...prose.slice(1012)]],
+  ])("refuses %s, naming its words", (_, words) => {
+    const check = fidelity(prose.join(" "), [{ text: words.join(" ") }]);
+    expect(check.ok).toBe(false);
+    expect(check.examples[0]).toStartWith("w1000 w1001");
   });
 });
 

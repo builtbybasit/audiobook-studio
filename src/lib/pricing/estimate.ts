@@ -82,7 +82,7 @@ export function estimateRates(
     );
   if (snapshot.applied.length)
     cautions.push(
-      `${snapshot.applied.length === 1 ? "A promotion is" : `${snapshot.applied.length} promotions are`} in force. Budget checks use ${money(withoutPromotions)}, the price without ${snapshot.applied.length === 1 ? "it" : "them"}, so a promotion ending mid-run cannot overshoot a cap.`,
+      `${snapshot.applied.length === 1 ? "A promotion is" : `${snapshot.applied.length} promotions are`} in force. Budget checks use ${money(withoutPromotions)}, the price without ${snapshot.applied.length === 1 ? "it" : "them"}, so a promotion ending mid-run is already allowed for.`,
     );
   else if (!inputIsCeiling || dearerLater)
     cautions.push(
@@ -91,7 +91,7 @@ export function estimateRates(
         inputIsCeiling ? "" : "every input token at the dearest rate this endpoint charges for one",
       ]
         .filter(Boolean)
-        .join(" and ")}, so no request can cost more than it reserved.`,
+        .join(" and ")}. The output is an estimate, so a long answer can still cost more.`,
     );
 
   return {
@@ -153,19 +153,19 @@ export function estimateSpeech(
     );
   if (snapshot.applied.length && now.total != null && bare.total != null)
     cautions.push(
-      `${snapshot.applied.length === 1 ? "A promotion is" : `${snapshot.applied.length} promotions are`} in force. Budget checks use ${money(bare.total)}, the price without ${snapshot.applied.length === 1 ? "it" : "them"}, so a promotion ending mid-run cannot overshoot a cap.`,
+      `${snapshot.applied.length === 1 ? "A promotion is" : `${snapshot.applied.length} promotions are`} in force. Budget checks use ${money(bare.total)}, the price without ${snapshot.applied.length === 1 ? "it" : "them"}, so a promotion ending mid-run is already allowed for.`,
     );
   else if (now.total != null && bare.total != null && bare.total > now.total + EPSILON)
     cautions.push(
-      `Budget checks use ${money(bare.total)}, the rates of this endpoint's dearest hours, so a run still going when they start cannot overshoot a cap.`,
+      `Budget checks use ${money(bare.total)}, the rates of this endpoint's dearest hours, so a run still going when they start is already allowed for.`,
     );
   if (billing.unit === "minute")
     cautions.push(
-      "This endpoint bills on the audio it returns, so the figure rests on this app's estimate of how long each line will take to read.",
+      "This endpoint bills on the audio it returns, so the figure and the budget hold rest on an estimate of how long each line reads; a line that reads longer costs more than was held.",
     );
   if (billsAudioTokens(billing.unit))
     cautions.push(
-      `The audio half is ${Math.round(units.audioSeconds).toLocaleString()}s of expected audio at ${audioTokensPerSecondOf(billing)} audio tokens a second — this endpoint's configured assumption about its provider's audio tokeniser. Audio tokens do not follow from the text, so this half is the part of the estimate most likely to move; the input half is counted from the text that will actually be submitted.`,
+      `The audio half is ${Math.round(units.audioSeconds).toLocaleString()}s of expected audio at ${audioTokensPerSecondOf(billing)} audio tokens a second — this endpoint's configured assumption about its provider's audio tokeniser. Audio tokens do not follow from the text, so this half, and the budget hold, can be short; the input half is counted from the text that will actually be submitted.`,
     );
 
   return {

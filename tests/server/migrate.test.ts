@@ -3,8 +3,9 @@
 // would cascade. This writes the rebuild the next `chapters` change would, and runs it. Also the
 // row-rewriting migrations: cover file name to url, label chapter id to none, plain-thought switch
 // to no thought effect, sentence-end scripting cut to paragraph end.
+import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -105,6 +106,42 @@ describe("a migration that rebuilds a table", () => {
     db.$client.exec("PRAGMA foreign_keys = ON;");
     addRebuild(db, dir, "chapters");
     expect(() => migrate(db, dir)).toThrow(/pointing at nothing/);
+  });
+});
+
+describe("a database file with migrations pending", () => {
+  test("is copied to backups/ first, the last few kept, and the error names the copy", () => {
+    const dir = copyOfMigrations();
+    const data = mkdtempSync(join(tmpdir(), "audiobook-data-"));
+    const db = openDb(join(data, "library.db"));
+    migrate(db, dir);
+    const backups = () => readdirSync(join(data, "backups")).sort();
+    // a fresh file holds nothing to keep, and an up-to-date one needs no copy
+    expect(existsSync(join(data, "backups"))).toBe(false);
+    migrate(db, dir);
+    expect(existsSync(join(data, "backups"))).toBe(false);
+
+    const applied = (d: Database) =>
+      (d.query("SELECT count(*) AS n FROM __drizzle_migrations").get() as { n: number }).n;
+    const before = applied(db.$client);
+    addRebuild(db, dir, "books");
+    migrate(db, dir);
+    const copy = new Database(join(data, "backups", backups()[0]), { readonly: true });
+    expect(applied(copy)).toBe(before);
+    copy.close();
+
+    for (const table of ["chapters", "segments", "clips"]) {
+      addRebuild(db, dir, table);
+      migrate(db, dir);
+    }
+    expect(backups()).toHaveLength(3);
+
+    db.$client.exec("PRAGMA foreign_keys = OFF;");
+    db.$client.exec(
+      "INSERT INTO chapter_texts (book_id, chapter_id, body) VALUES ('nobody', 1, 'orphan')",
+    );
+    addRebuild(db, dir, "voices");
+    expect(() => migrate(db, dir)).toThrow(join(data, "backups", "library-"));
   });
 });
 

@@ -153,17 +153,40 @@ export function setDiscarded(db: Db | Tx, id: number, at: number | null): void {
   db.update(speakerSamples).set({ discardedAt: at }).where(eq(speakerSamples.id, id)).run();
 }
 
-/** For a merge; a cascade from the removed speaker would orphan the files on disk. */
-export function moveSpeakerSamples(tx: Db | Tx, bookId: string, from: string, into: string): void {
+const waitingWith = (bookId: string, name: string) =>
+  and(
+    eq(speakerSamples.bookId, bookId),
+    eq(speakerSamples.speaker, name),
+    isNull(speakerSamples.discardedAt),
+  );
+
+/**
+ * For a merge; a cascade from the removed speaker would orphan the files on disk. Returns the
+ * waiting rows moved, for an Undo to give back (`giveBackSamples`).
+ */
+export function moveSpeakerSamples(
+  tx: Db | Tx,
+  bookId: string,
+  from: string,
+  into: string,
+): number[] {
+  const waiting = tx
+    .select({ id: speakerSamples.id })
+    .from(speakerSamples)
+    .where(waitingWith(bookId, from))
+    .all()
+    .map((r) => r.id);
   tx.update(speakerSamples)
     .set({ speaker: into })
     .where(and(eq(speakerSamples.bookId, bookId), eq(speakerSamples.speaker, from)))
     .run();
+  return waiting;
 }
 
 /**
  * For a removed speaker: soft-discarded and re-pointed at the Narrator (only to satisfy the foreign
- * key), then purged with their files, instead of cascading and orphaning the files.
+ * key), then purged with their files, instead of cascading and orphaning the files. Returns the
+ * rows that were waiting, for an Undo to give back.
  */
 export function discardSpeakerSamples(
   tx: Db | Tx,
@@ -171,19 +194,31 @@ export function discardSpeakerSamples(
   name: string,
   holder: string,
   at = Date.now(),
-): void {
-  tx.update(speakerSamples)
+): number[] {
+  const waiting = tx
+    .update(speakerSamples)
     .set({ speaker: holder, discardedAt: at })
-    .where(
-      and(
-        eq(speakerSamples.bookId, bookId),
-        eq(speakerSamples.speaker, name),
-        isNull(speakerSamples.discardedAt),
-      ),
-    )
-    .run();
+    .where(waitingWith(bookId, name))
+    .returning({ id: speakerSamples.id })
+    .all()
+    .map((r) => r.id);
   tx.update(speakerSamples)
     .set({ speaker: holder })
     .where(and(eq(speakerSamples.bookId, bookId), eq(speakerSamples.speaker, name)))
+    .run();
+  return waiting;
+}
+
+/** The Undo of a merge or removal: these rows wait with `speaker` again. Purged ones are gone. */
+export function giveBackSamples(
+  tx: Db | Tx,
+  bookId: string,
+  ids: readonly number[],
+  speaker: string,
+): void {
+  if (!ids.length) return;
+  tx.update(speakerSamples)
+    .set({ speaker, discardedAt: null })
+    .where(and(eq(speakerSamples.bookId, bookId), inArray(speakerSamples.id, [...ids])))
     .run();
 }

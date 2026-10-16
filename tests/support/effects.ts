@@ -40,6 +40,7 @@ export function fakeEffectRunner(): FakeEffectRunner {
     fail: null,
     ready: true,
     available: async () => fake.ready,
+    unavailable: async () => (fake.ready ? null : "uv was not found"),
     async render(bytes, format, chains) {
       fake.calls.render.push({ format, chains });
       if (fake.fail) throw fake.fail;

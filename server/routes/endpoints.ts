@@ -185,12 +185,6 @@ export function endpointRoutes(
    * one sample and words every refusal the same.
    */
   app.post("/voices/clone", samplesLimit, async (c) => {
-    // Bun closes a request with no answer within 10 s, and Fish is slow over an upload this size.
-    // Under a test there is no Bun server.
-    (c.env as { timeout?(request: Request, seconds: number): void } | undefined)?.timeout?.(
-      c.req.raw,
-      0,
-    );
     const form = await formOf(c.req);
     const id = textOf(form, "id");
     const title = textOf(form, "title");

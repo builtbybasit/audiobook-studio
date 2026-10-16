@@ -120,7 +120,10 @@ async function remove() {
         >
           Cast
         </button>
-        <label class="ui-item w-full cursor-pointer hover:bg-violet-50 dark:hover:bg-violet-500/15">
+        <label
+          v-if="!libraryStore.importingVolume(book.id)"
+          class="ui-item w-full cursor-pointer hover:bg-violet-50 dark:hover:bg-violet-500/15"
+        >
           <AddIcon class="mr-1 icon-sm" /> Add a volume…
           <input type="file" accept=".epub" class="hidden" @change="addVolume" />
         </label>

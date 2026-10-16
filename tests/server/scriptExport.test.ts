@@ -1,6 +1,8 @@
 // A book's script written out as `<book>.script.zip`: which chapter a script belongs to is told by
 // the words of its source, and the file holds the script and nothing local to this install.
 import { describe, expect, test } from "bun:test";
+import { rmSync } from "node:fs";
+
 import { eq } from "drizzle-orm";
 import JSZip from "jszip";
 
@@ -16,6 +18,7 @@ import type {
   ScriptManifest,
 } from "@/types";
 import { clonedVoices } from "~/db/schema";
+import { readCarried } from "~/db/voiceSamples";
 import { sourceHash } from "~/script/transfer";
 import { keepSampleFiles } from "~/voices/ops";
 import { voiceFiles } from "~/voices/files";
@@ -324,6 +327,22 @@ describe("voice samples", () => {
     ).toEqual({
       voices: [{ speaker: "Vex", title: "Vex (clone)", count: 1, bytes: wav("vex").length }],
     });
+  });
+
+  test("a kept recording gone from disk is left out of the export and of its count alike", async () => {
+    const { api, speaker, recordings, zipOf, summary } = await cloned();
+    const [first] = readCarried(api.db, "fish", "v1")!.samples;
+    rmSync(voiceFiles(api.voiceDir).path("fish", "v1", first.file)!);
+
+    const zip = await zipOf("?samples=1");
+    const cast = JSON.parse(await zip.file("cast.json")!.async("string")) as ScriptFileSpeaker[];
+    const folder = cast.find((c) => c.name === speaker)!.samples!;
+    const record = JSON.parse(
+      await zip.file(folder + "samples.json")!.async("string"),
+    ) as ScriptFileVoice;
+    const { voices } = await summary();
+    expect(voices.map((v) => v.count)).toEqual([record.samples.length]);
+    expect(record.samples.length).toBe(recordings.length - 1);
   });
 
   test.each([

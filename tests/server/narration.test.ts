@@ -6,6 +6,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import type {
+  Cast,
   ChapterScript,
   ImportedBook,
   Job,
@@ -56,6 +57,17 @@ async function scripted(api = testApi()) {
   await api.request(`/api/books/${id}/chapters/script`, jsonBody({ ids: [1, 2] }));
   await api.runner.idle();
   return { api, id };
+}
+
+/** Hand `name`'s lines to a Narrator who reads them differently, which stales their clips. */
+async function reread(api: TestApi, id: string, name: string) {
+  const { characters } = (await api.request<Cast>(`/api/books/${id}/cast`)).body;
+  const narrator = characters.find((c) => c.name === "Narrator")!;
+  await api.request(`/api/books/${id}/characters/Narrator`, {
+    ...jsonBody({ ...narrator, style: "warm" }),
+    method: "PUT",
+  });
+  await api.request(`/api/books/${id}/characters/remove`, jsonBody({ names: [name] }));
 }
 
 const narrate = (api: TestApi, id: string, ids: number[], scope?: string) =>
@@ -219,8 +231,7 @@ describe("what a scope renders", () => {
     expect(nothing.body.jobs).toEqual([]);
     expect(nothing.body.skipped).toEqual([{ id: 1, why: "nothing" }]);
     const before = await scriptOf(api, id);
-    // a rename marks the clips of the lines it moves stale
-    await api.request(`/api/books/${id}/characters/Mara/rename`, jsonBody({ to: "Marla" }));
+    await reread(api, id, "Mara");
     const stale = (await scriptOf(api, id)).segments.filter((s) => s.audio.status === "stale");
     expect(stale.length).toBe(1);
     expect((await chaptersOf(api, id))[0].narration).toBe("done");
@@ -818,6 +829,33 @@ describe("the verdict on a retake", () => {
   });
 });
 
+describe("a retake that went stale", () => {
+  test.each([
+    ["while it rendered", true],
+    ["after it landed", false],
+  ])("under a dictionary change %s is kept as the stale clip in the book", async (_, before) => {
+    const { api, id } = await narrated();
+    const line = (await scriptOf(api, id)).segments[0];
+    const gate = gatedSpeechProvider();
+    const slow = testRunner(api.db, collectingLogger().log, {
+      speech: gate.provider,
+      audioDir: api.audioDir,
+    });
+    retakeLines(api.db, slow, id, 1, [line.id]);
+    await gate.started;
+    const change = () => lexicon(api, id, [{ id: 1, term: line.text, say: "SAID" }]);
+    if (before) await change();
+    gate.release();
+    await slow.idle();
+    if (!before) await change();
+
+    const { status, body } = await judge(api, id, line.id, "accept");
+    expect(status).toBe(200);
+    expect(body.segment.audio.status).toBe("stale");
+    expect(body.chapter.narration).toBe("stale");
+  });
+});
+
 const lexicon = (
   api: TestApi,
   id: string,
@@ -919,8 +957,8 @@ describe("what a line is spoken as", () => {
     const { api, id } = await scripted(testApi({ speech: fakeSpeechProvider() }));
     await narrate(api, id, [1]);
     await api.runner.idle();
-    // Tobin's lines go stale by the rename, and nothing about the dictionary changed them
-    await api.request(`/api/books/${id}/characters/Tobin/rename`, jsonBody({ to: "Toby" }));
+    // Tobin's lines go stale by the move, and nothing about the dictionary changed them
+    await reread(api, id, "Tobin");
     const { segments } = await scriptOf(api, id);
     const renamed = segments.filter((s) => s.audio.status === "stale").map((s) => s.id);
     expect(renamed.length).toBeGreaterThan(0);

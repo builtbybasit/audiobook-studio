@@ -23,6 +23,7 @@ import type {
 import { useCastStore } from "@/stores/cast";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
+import { useScriptsStore } from "@/stores/scripts";
 import { toastFailure } from "@/stores/toastFailure";
 
 /** How long an edited effect sits still before sending; a dragged slider sends its last value. */
@@ -200,7 +201,8 @@ export const useEffectsStore = defineStore("effects", {
     },
     /**
      * Remove an effect and every choice of it (library to "none", books to the library, speakers
-     * to none or the book), as the server does. Null when refused and read back.
+     * to none or the book) and every line effect of it, as the server does. Null when refused and
+     * read back.
      */
     async remove(id: string): Promise<EffectTaken | null> {
       const libraryStore = useLibraryStore();
@@ -220,7 +222,8 @@ export const useEffectsStore = defineStore("effects", {
       };
       if (taken.library) this.libraryThoughts = "none";
       try {
-        await effectsService().remove(id);
+        // the lines the server took it off, so no copy here writes it back
+        useScriptsStore()._dropEffect(id, await effectsService().remove(id));
       } catch (cause) {
         toastFailure("remove this effect", cause);
         const casts = new Set(taken.speakers.map((s) => s.bookId));

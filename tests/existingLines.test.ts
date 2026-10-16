@@ -7,8 +7,10 @@ import type { Step } from "@/types";
 import { fetchBook, fetchCast } from "@/queries";
 import { HttpEffectsService, setEffectsService } from "@/services/effects";
 import { useCastStore } from "@/stores/cast";
+import { useEndpointsStore } from "@/stores/endpoints";
 import { useEffectsStore } from "@/stores/effects";
 import { useExistingLinesStore } from "@/stores/existingLines";
+import { useLibraryStore } from "@/stores/library";
 import { useUiStore } from "@/stores/ui";
 import { readScript } from "~/db/script";
 import { backendServer, pointServicesAt } from "./support/backendServer";
@@ -56,7 +58,8 @@ describe("lines made the old way", () => {
     const existing = useExistingLinesStore();
 
     await useCastStore().setVoice(id, "Mara", "studio/bea");
-    expect(existing.ask).toMatchObject({ kind: "voice", name: "Mara", start: "none" });
+    expect(existing.ask).toMatchObject({ kind: "voice", start: "none" });
+    expect(existing.ask!.names).toEqual(["Mara"]);
     expect(existing.ask!.chapters.map((c) => c.id)).toEqual([1, 2]);
 
     expect(await existing.answer([2])).toBe(true);
@@ -65,6 +68,34 @@ describe("lines made the old way", () => {
       readScript(api.db, id, ch).find((s) => s.speaker === "Mara")!.audio.voiceRef;
     expect([voiceOf(1), voiceOf(2)]).toEqual(["studio/ash", "studio/bea"]);
     expect(existing.ask).toBeNull();
+  });
+
+  test.each([
+    [
+      "the Character voice",
+      (id: string) =>
+        useLibraryStore().setCharacterVoice(id, {
+          by: "one",
+          one: "studio/bea",
+          male: null,
+          female: null,
+          other: null,
+        }),
+    ],
+    ["auto-assign", (id: string) => void useCastStore().autoAssignByGender(id)],
+  ])("%s asks about the lines it moved to another voice", async (_, change) => {
+    const { id } = await heard();
+    await useEndpointsStore().load();
+    const existing = useExistingLinesStore();
+    // Mara falls back to the Narrator's voice, the one her lines were made in
+    await useCastStore().updateCharacter(id, "Mara", { gender: "f", voice: null });
+    const asked = new Promise<void>((r) =>
+      existing.$subscribe(() => existing.ask && r(), { flush: "sync" }),
+    );
+    await change(id);
+    await asked;
+    expect(existing.ask).toMatchObject({ kind: "voice", lines: 2 });
+    expect(existing.ask!.names).toEqual(["Mara"]);
   });
 
   test("an effect answered for chapter 1 re-applies it and keeps chapter 2's old sound", async () => {

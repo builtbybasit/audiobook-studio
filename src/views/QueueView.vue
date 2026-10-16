@@ -26,7 +26,7 @@ import {
   X as CloseIcon,
 } from "@lucide/vue";
 import { pricingLabel, unifyEndpoint } from "@/lib/endpoints";
-import { useBooks, useEndpointLive } from "@/queries";
+import { useBookJobs, useBooks, useEndpointLive } from "@/queries";
 import { hhmm } from "@/lib/format";
 
 const endpointsStore = useEndpointsStore();
@@ -70,9 +70,18 @@ const filter = ref("all");
 // Asked of the store: a chapter's label cannot answer it (a failed re-script puts the status back,
 // a failed narration replacement still reads as narrated).
 const retryable = computed(() => jobsStore.retryableFailures().length);
-const shown = computed(() =>
+const filtered = computed(() =>
   filter.value === "all" ? history.value : history.value.filter((j) => j.status === filter.value),
 );
+// rows drawn, a page at a time; past the jobs read, the server is asked for older ones
+const ROWS = 100;
+const rows = ref(ROWS);
+const { older, showOlder } = useBookJobs();
+const shown = computed(() => filtered.value.slice(0, rows.value));
+function showMore() {
+  rows.value += ROWS;
+  if (rows.value > filtered.value.length && older.value) showOlder();
+}
 
 const book = (j: Job) => libraryStore.bookById(j.bookId);
 // by reading number only: a later title would give the plot away
@@ -165,12 +174,14 @@ async function toggleNotify() {
       </div>
       <div class="card p-4">
         <div class="label">Done</div>
-        <div class="text-2xl font-semibold text-emerald-500">{{ counts.done }}</div>
+        <div class="text-2xl font-semibold text-emerald-500">
+          {{ counts.done }}<span v-if="older">+</span>
+        </div>
       </div>
       <div class="card p-4">
         <div class="label">Failed</div>
         <div class="text-2xl font-semibold" :class="counts.failed ? 'text-red-500' : ''">
-          {{ counts.failed }}
+          {{ counts.failed }}<span v-if="older">+</span>
         </div>
       </div>
     </div>
@@ -305,7 +316,10 @@ async function toggleNotify() {
                     ? 'bg-zinc-200 dark:bg-zinc-700'
                     : 'text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800'
                 "
-                @click="filter = f"
+                @click="
+                  filter = f;
+                  rows = ROWS;
+                "
               >
                 {{ f }}
               </button>
@@ -391,6 +405,13 @@ async function toggleNotify() {
                 </tr>
               </tbody>
             </table>
+            <button
+              v-if="filtered.length > rows || older"
+              class="btn-ghost btn-xs m-2 justify-center"
+              @click="showMore"
+            >
+              Show older
+            </button>
           </div>
         </section>
       </div>

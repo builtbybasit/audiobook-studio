@@ -1,8 +1,16 @@
 // The scripting job: a chapter's prose in, an attributed script out. Finds the chapter by uid at
-// write time (volumes renumber) and writes against the revision it started from, so a result that
-// would land on newer work is dropped with a note. Money rules: `~/usage/budget`. The prompt is
-// resolved when queued (`resolvePrompt`); edits while it waits reach the next run.
-import type { Book, Job, Profile, PromptTemplate, ScriptingQueued, Segment } from "@/types";
+// write time (volumes renumber) and writes against the revision it started from; a result that
+// would land on newer work goes into the chapter's history instead. Money rules: `~/usage/budget`.
+// The prompt is resolved when queued (`resolvePrompt`); edits while it waits reach the next run.
+import type {
+  Book,
+  Job,
+  Profile,
+  PromptTemplate,
+  ScriptingQueued,
+  Segment,
+  VersionOrigin,
+} from "@/types";
 import { castNameFor } from "@/lib/cast";
 import { expressionNames, scriptedAnnotation } from "@/lib/expressions";
 import {
@@ -10,13 +18,16 @@ import {
   lineEffectsOf,
   renderPrompt,
   resolvePrompt,
+  type PromptCastMember,
   type PromptVars,
 } from "@/lib/prompt";
+import { compareReading } from "@/lib/reading";
+import { planRestore } from "@/lib/scriptHistory";
 import { tokenEstimate } from "@/lib/scripting";
 import { ensureSpeakers, learnCast, readChapterCast, readSpeakers } from "~/db/cast";
 import type { Db, Tx } from "~/db/client";
 import { listEffects } from "~/db/effects";
-import { capture } from "~/db/history";
+import { capture, keepVersion } from "~/db/history";
 import { readEndpoints, readProfiles } from "~/db/endpoints";
 import { activeJob, getJob, nextRunId, setScriptRun } from "~/db/jobs";
 import * as library from "~/db/library";
@@ -25,6 +36,9 @@ import { ScriptConflict, lineCount, readScript, replaceScript, scriptRevision } 
 import { plainText } from "~/epub/markdown";
 import type { JobContext, JobHandler, Runner } from "~/jobs/runner";
 import { conflict, notFound } from "~/lib/errors";
+import { narrationInProgress, settleChapter } from "~/narration/chapter";
+import { bookDelivery, lineReading } from "~/narration/cost";
+import { ChunkMisfit } from "~/providers/chatScripting";
 import type { ScriptAnswer, ScriptingProvider } from "~/providers/scripting";
 import type { SentScript } from "~/providers/sent";
 import { scriptTarget } from "~/providers/target";
@@ -45,6 +59,51 @@ function settledScriptingStatus(
   // a failed re-script keeps the old script; reading as failed would block narration and export
   if (lineCount(db, bookId, chapterId)) return "done";
   return outcome === "failed" ? "failed" : "none";
+}
+
+/**
+ * Who the model meant by a name (`castNameFor`): the cast plus the aliases this answer's notes
+ * give. Names the answer calls a disguise stay their own speakers, for `learnCast` to make personas.
+ */
+function speakerOf(
+  cast: readonly PromptCastMember[],
+  notes: readonly PromptCastMember[],
+): (name: string) => string {
+  const disguises = new Set(
+    notes.filter((n) => n.personaOf || n.masked).map((n) => n.name.toLowerCase()),
+  );
+  const known = cast.map((c) => ({ name: c.name, aliases: [...(c.aliases ?? [])] }));
+  for (const n of notes) {
+    if (!n.aliases?.length) continue;
+    const name = castNameFor(n.name, known);
+    let entry = known.find((c) => c.name === name);
+    if (!entry) known.push((entry = { name: n.name, aliases: [] }));
+    entry.aliases.push(...n.aliases);
+  }
+  for (const c of known) c.aliases = c.aliases.filter((a) => !disguises.has(a.toLowerCase()));
+  return (name) => castNameFor(name, known);
+}
+
+/**
+ * Clips follow lines whose words came back unchanged (`planRestore`, as a restore does); one whose
+ * speaker, direction or reading moved goes stale. Everything else about the new lines is kept.
+ */
+function keepClips(tx: Tx, bookId: string, previous: Segment[], next: Segment[]): Segment[] {
+  const deliveryOf = bookDelivery(tx, bookId);
+  // the clip's own file says whose line it was
+  const spoken = new Map(previous.flatMap((s) => (s.audio.url ? [[s.audio.url, s.speaker]] : [])));
+  const plan = planRestore(previous, next, {
+    drift: (s, a) => [
+      ...(a.url && spoken.get(a.url) !== s.speaker ? ["speaker"] : []),
+      ...compareReading(a, s, lineReading(tx, bookId, s, deliveryOf(s.speaker))),
+    ],
+    cast: new Set(),
+    book: library.getBook(tx, bookId),
+  });
+  return next.map((s, i) => {
+    const { audio, candidate, flag } = plan.segments[i];
+    return { ...s, audio, ...(candidate ? { candidate } : {}), ...(flag ? { flag } : {}) };
+  });
 }
 
 /**
@@ -111,8 +170,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
       const chunks = chunksOf(chapter.text, queued?.profile);
       // the key is read now, so one saved after pressing Script is used
       const target = queued ? scriptTarget(db, queued.profile) : null;
-      const speakers = readSpeakers(db, job.bookId);
-      const cast = speakers.map((c) => c.name);
+      const cast = readSpeakers(db, job.bookId).map((c) => c.name);
       // the speakers this chapter likely needs, not the whole book's
       const listed = readChapterCast(db, job.bookId, job.chapterId, chapter.text);
       const template = queued?.prompt ?? BUILT_IN_PROMPT;
@@ -257,7 +315,13 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
               },
             });
           } catch (e) {
-            if (signal.aborted || chunks.length === 1) throw e;
+            if (signal.aborted) throw e;
+            // the failed-chapter page offers "Smaller chunks" on this detail
+            if (e instanceof ChunkMisfit)
+              ctx.note("A smaller chunk may script where this one failed", "info", {
+                smallerChunks: 1,
+              });
+            if (chunks.length === 1) throw e;
             throw new Error(
               `Request ${i + 1} of ${chunks.length} failed: ${e instanceof Error ? e.message : String(e)}`,
               { cause: e },
@@ -289,28 +353,17 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
       if (signal.aborted) throw signal.reason;
       if (refused != null) throw new Error(refused);
 
-      // Map aliases to the cast member (`castNameFor`), except names this answer calls a disguise:
-      // those stay separate speakers for `learnCast` to make personas.
       const notes = answers.flatMap((a) => a.cast ?? []);
-      const disguises = new Set(
-        notes.filter((n) => n.personaOf || n.masked).map((n) => n.name.toLowerCase()),
-      );
-      const known = speakers.map((c) => ({
-        name: c.name,
-        aliases: c.aliases?.filter((a) => !disguises.has(a.toLowerCase())),
-      }));
-      const meant = (name: string) => castNameFor(name, known);
-
-      // line and tag ids are renumbered 1..n across chunks
+      // line and tag ids are renumbered 1..n across chunks; speakers as the model wrote them
       let annotation = 0;
-      const lines: Segment[] = answers
+      const scripted: Segment[] = answers
         .flatMap((a) => a.lines)
         .map((l, i) => {
           const effects = effectsOf(l.effects);
           return {
             id: i + 1,
             type: l.type,
-            speaker: meant(l.speaker),
+            speaker: l.speaker,
             text: l.text,
             direction: l.direction ?? "",
             ...(l.tags?.length
@@ -325,6 +378,18 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
           .map((a) => a.recap)
           .filter(Boolean)
           .at(-1) ?? null;
+      const origin = (again: boolean): VersionOrigin => ({
+        kind: "scripted",
+        profile: queued?.profile.name ?? provider.name,
+        ...(queued ? { model: provider.callsProfile ? queued.profile.model : provider.name } : {}),
+        again,
+        ...(queued?.prompt ? { prompt: queued.prompt.origin } : {}),
+      });
+      /** Speakers matched against the cast as it stands now, so a merge during the run holds. */
+      const matched = (tx: Tx, bookId: string) => {
+        const meant = speakerOf(readSpeakers(tx, bookId), notes);
+        return { meant, lines: scripted.map((l) => ({ ...l, speaker: meant(l.speaker) })) };
+      };
 
       // One transaction: script, history version, new speakers. A failed or refused run never
       // gets here, so a good script is never pushed into history by an empty attempt.
@@ -332,9 +397,15 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
         db.transaction((tx) => {
           const at = library.locateChapter(tx, chapter.uid);
           if (!at) throw notFound("The chapter was removed while it was being scripted");
-          const segs = checkSiteText(tx, at.bookId, at.id, lines);
-          noteSiteText(ctx, segs, book);
+          const { meant, lines } = matched(tx, at.bookId);
           const previous = readScript(tx, at.bookId, at.id);
+          const segs = keepClips(
+            tx,
+            at.bookId,
+            previous,
+            checkSiteText(tx, at.bookId, at.id, lines),
+          );
+          noteSiteText(ctx, segs, book);
           const { revision } = replaceScript(tx, at.bookId, at.id, segs, {
             ifRevision: chapter.revision,
           });
@@ -342,15 +413,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
             tx,
             at.bookId,
             at.id,
-            {
-              kind: "scripted",
-              profile: queued?.profile.name ?? provider.name,
-              ...(queued
-                ? { model: provider.callsProfile ? queued.profile.model : provider.name }
-                : {}),
-              again: previous.length > 0,
-              ...(queued?.prompt ? { prompt: queued.prompt.origin } : {}),
-            },
+            origin(previous.length > 0),
             previous,
             segs,
           );
@@ -373,6 +436,9 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
           // a script without a recap clears the old one
           library.setChapterRecap(tx, at.bookId, at.id, leftOff);
           library.setChapterScripting(tx, at.bookId, at.id, "done", 100);
+          const narrated = library.getChapter(tx, at.bookId, at.id)?.narration !== "none";
+          if (narrated && !narrationInProgress(tx, at.bookId, at.id))
+            settleChapter(tx, at.bookId, at.id);
           ctx.note("Script written", "info", {
             lines: segs.length,
             speakers: new Set(segs.map((s) => s.speaker)).size,
@@ -385,8 +451,19 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
           });
         });
       } catch (e) {
-        if (e instanceof ScriptConflict) throw conflict(e.message);
-        throw e;
+        if (!(e instanceof ScriptConflict)) throw e;
+        // newer work stands, but the run was paid for: keep it where a restore can reach it
+        const kept = db.transaction((tx) => {
+          const at = library.locateChapter(tx, chapter.uid);
+          return (
+            at && keepVersion(tx, at.bookId, at.id, origin(true), matched(tx, at.bookId).lines)
+          );
+        });
+        throw conflict(
+          kept == null
+            ? e.message
+            : `The chapter's script changed while this ran, so the result was kept in its history as v${kept}`,
+        );
       }
     },
 
@@ -422,7 +499,8 @@ export function enqueueScripting(
 ): ScriptingQueued {
   const book = library.getBook(db, bookId);
   if (!book) throw notFound("No such book");
-  if (book.importing) throw conflict("Finish the contents review before scripting this book");
+  if (library.inReview(book, ids))
+    throw conflict("Finish the contents review before scripting this book");
   // Read once and kept on every job. An unknown profile is a 404 now; none at all is queued and
   // left to the provider (the real one refuses, the test fake scripts).
   const chosen = profile ? readProfiles(db).find((p) => p.id === profile) : undefined;
@@ -435,7 +513,8 @@ export function enqueueScripting(
 
   const targets: number[] = [];
   const skipped: ScriptingQueued["skipped"] = [];
-  for (const id of ids) {
+  // reading order, however the chapters were ticked: each run reads the recap of the one before
+  for (const id of [...ids].sort((a, b) => a - b)) {
     const c = known.get(id);
     if (!c) skipped.push({ id, why: "missing" });
     else if (c.excluded) skipped.push({ id, why: "excluded" });

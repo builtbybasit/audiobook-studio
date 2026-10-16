@@ -16,6 +16,8 @@ export class ProviderError extends Error {
     readonly retryable: boolean,
     /** a refusal inside a 200 that says it is a rate limit, as a 429 would */
     readonly rateLimited = false,
+    /** out of credit or quota: no line after it can go either, so a run stops on it */
+    readonly outOfCredit = false,
   ) {
     super(message);
     this.name = "ProviderError";
@@ -27,14 +29,21 @@ const RETRYABLE = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 const BODY_CHARS = 300;
 
+/** A day's limit can ask for hours; the gate would hold the endpoint that long. */
+const MAX_RETRY_AFTER_MS = 2 * 60_000;
+
 /** ms; a `Retry-After` is seconds or an HTTP date. */
 function retryAfterMs(header: string | null, now = Date.now()): number | undefined {
   if (!header) return undefined;
   const seconds = Number(header);
-  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
   const at = Date.parse(header);
-  return Number.isNaN(at) ? undefined : Math.max(0, at - now);
+  const ms = Number.isFinite(seconds) ? seconds * 1000 : Number.isNaN(at) ? NaN : at - now;
+  return Number.isNaN(ms) ? undefined : Math.min(MAX_RETRY_AFTER_MS, Math.max(0, ms));
 }
+
+/** 402 (no credit, or not on this plan), or OpenAI's 429 for an empty balance: not a passing limit. */
+const outOfCredit = (status: number, code: string | undefined): boolean =>
+  status === 402 || (status === 429 && code === "insufficient_quota");
 
 /** FastAPI's `[{loc, msg}]`, as ElevenLabs sends. */
 const listed = (detail: unknown[]): string | undefined =>
@@ -45,11 +54,12 @@ const listed = (detail: unknown[]): string | undefined =>
 
 /**
  * A refusal's message, trimmed: `{error:{message}}`, `{error}`, `{message}`, `{detail}` (ElevenLabs:
- * `{detail:{message}}`, or `{detail:[{msg}]}` on a 422), or the text.
+ * `{detail:{message}}`, or `{detail:[{msg}]}` on a 422), or the text; and OpenAI's `error.code`.
  */
-async function refusal(res: Response): Promise<string> {
+async function refusal(res: Response): Promise<{ said: string; code?: string }> {
   const text = (await res.text().catch(() => "")).trim();
   let said = text;
+  let code: string | undefined;
   try {
     const body = JSON.parse(text) as Record<string, unknown>;
     const error = body.error as Record<string, unknown> | string | undefined;
@@ -63,11 +73,12 @@ async function refusal(res: Response): Promise<string> {
           ? (detail as { message?: unknown }).message
           : detail);
     if (typeof found === "string") said = found;
+    if (typeof error === "object" && typeof error?.code === "string") code = error.code;
   } catch {
     // not JSON
   }
   said = said.replace(/\s+/g, " ");
-  return said.length > BODY_CHARS ? said.slice(0, BODY_CHARS) + "…" : said;
+  return { said: said.length > BODY_CHARS ? said.slice(0, BODY_CHARS) + "…" : said, code };
 }
 
 export interface CallOptions {
@@ -100,6 +111,8 @@ export interface CallOptions {
 export interface CallStats {
   attempts: number;
   rateLimited: boolean;
+  /** attempts the clock cut off: they went out, so the provider may have charged for them */
+  timedOut?: number;
 }
 
 const defaultBackoff = (attempt: number, t: ProviderTarget): number =>
@@ -147,21 +160,26 @@ export async function call(
           limited = wait;
         }
       } else {
-        if (res.status === 429 && options.stats) options.stats.rateLimited = true;
-        const said = await refusal(res);
+        const { said, code } = await refusal(res);
+        const broke = outOfCredit(res.status, code);
+        if (res.status === 429 && !broke && options.stats) options.stats.rateLimited = true;
         last = new ProviderError(
           `${target.name} answered ${res.status}${said ? `: ${said}` : ""}`,
           res.status,
-          RETRYABLE.has(res.status) || !!options.retryable?.(res.status),
+          !broke && (RETRYABLE.has(res.status) || !!options.retryable?.(res.status)),
+          false,
+          broke,
         );
         wait = retryAfterMs(res.headers.get("retry-after"));
-        if (res.status === 429) {
+        if (res.status === 429 && !broke) {
           wait ??= target.cooldownSec * 1000;
           limited = wait;
         }
       }
     } catch (e) {
       if (signal.aborted) throw signal.reason;
+      if (clock.aborted && options.stats)
+        options.stats.timedOut = (options.stats.timedOut ?? 0) + 1;
       last = clock.aborted
         ? new ProviderError(`${target.name} did not answer within ${target.timeoutSec} s`, 0, true)
         : new ProviderError(

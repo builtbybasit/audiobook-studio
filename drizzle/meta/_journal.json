@@ -267,6 +267,13 @@
       "when": 1792060955595,
       "tag": "0037_kept_sounds",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "6",
+      "when": 1792160932640,
+      "tag": "0038_clips_endpoint_index",
+      "breakpoints": true
     }
   ]
 }

@@ -107,6 +107,14 @@ export function getBook(db: Db | Tx, id: string): Book | undefined {
   return toBook(row, vols, chapterCounts(db, id).get(id) ?? NO_CHAPTERS);
 }
 
+/**
+ * Whether the book, or the volume holding any of these chapters, is still in its contents review.
+ * Nothing runs on such a chapter: Discard takes it away whole.
+ */
+export const inReview = (book: Book, chapterIds: readonly number[]): boolean =>
+  !!book.importing ||
+  book.volumes.some((v) => v.importing && chapterIds.some((id) => id >= v.from && id <= v.to));
+
 /** A book's pacing, or the default when it has none of its own. */
 export function readPacing(db: Db | Tx, bookId: string): Pacing {
   const row = db

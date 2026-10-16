@@ -32,7 +32,8 @@ import BookPromptPanel from "@/views/scripting/BookPromptPanel.vue";
 import { pendingFor, pickedFrom, type PendingAdd } from "@/components/addEpub";
 import type { Volume } from "@/types";
 import { useBookId } from "@/composables/useBookId";
-import { useBookExports, useCast } from "@/queries";
+import { useCast } from "@/queries";
+import { useBookExportsKeptUp } from "@/views/export/shared";
 import { nextStepOf } from "@/views/library/shared";
 import { countOf, useReviewInbox } from "@/views/review/inbox";
 
@@ -63,7 +64,7 @@ const book = computed(() => libraryStore.bookById(bookId)!);
 const chapters = computed(() => libraryStore.chaptersOf(bookId));
 const p = computed(() => libraryStore.progress(bookId));
 const { characters: cast } = useCast(bookId);
-useBookExports(bookId);
+useBookExportsKeptUp(bookId);
 const unreviewed = computed(() => cast.value.filter((c) => c.isNew).length);
 const byName = computed(() => castStore.byName[bookId] ?? new Map());
 const unvoiced = computed(

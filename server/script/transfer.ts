@@ -1,5 +1,7 @@
 // A book's script written out as a file to keep, send, edit or carry to a newer EPUB of the same
 // book. Reading one back is `importPlan.ts`.
+import { existsSync } from "node:fs";
+
 import JSZip from "jszip";
 
 import type {
@@ -88,7 +90,10 @@ function waitingVoices(db: Db, bookId: string, audioDir: string): CarriedVoice[]
   return readSpeakerSamplesForExport(db, bookId, audioDir);
 }
 
-/** The kept recordings of the clone a speaker is voiced by; none if the voice is gone. */
+/**
+ * The kept recordings of the clone a speaker is voiced by; none if the voice is gone. A recording
+ * gone from disk is left out, as `readSpeakerSamplesForExport` leaves one out.
+ */
 function keptCloneOf(
   db: Db,
   c: Character,
@@ -104,16 +109,13 @@ function keptCloneOf(
   return {
     speaker: c.name,
     title: clone.title,
-    samples: clone.samples.map((s) => ({
-      name: s.name,
-      format: s.format,
-      bytes: s.bytes,
-      read: async () => {
-        const path = files?.path(endpointId, voiceId, s.file);
-        if (!path) throw new Error(`No recording kept as ${s.file}`);
-        return Bun.file(path).bytes();
-      },
-    })),
+    samples: clone.samples.flatMap((s) => {
+      const path = files?.path(endpointId, voiceId, s.file);
+      if (!path || !existsSync(path)) return [];
+      return [
+        { name: s.name, format: s.format, bytes: s.bytes, read: () => Bun.file(path).bytes() },
+      ];
+    }),
   };
 }
 
@@ -135,10 +137,15 @@ function carriedVoices(
 }
 
 /** What "Include voice samples" would add to this book's export, shown before it is ticked. */
-export function exportSamples(db: Db, bookId: string, audioDir: string): ScriptExportSamples {
+export function exportSamples(
+  db: Db,
+  bookId: string,
+  audioDir: string,
+  voices?: VoiceFiles,
+): ScriptExportSamples {
   if (!getBook(db, bookId)) throw notFound("There is no book by that id");
   return {
-    voices: carriedVoices(db, bookId, audioDir).map((v) => ({
+    voices: carriedVoices(db, bookId, audioDir, voices).map((v) => ({
       speaker: v.speaker,
       title: v.title,
       count: v.samples.length,

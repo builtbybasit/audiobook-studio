@@ -93,9 +93,18 @@ const EXAMPLE_WORDS = 8;
  * take seconds) and the figures fall back to counting words.
  */
 export function fidelity(input: string, lines: readonly { text: string }[]): Fidelity {
-  const want = wordsOf(input);
-  const got = lines.flatMap((l) => wordsOf(l.text));
-  const allowed = Math.max(1, Math.floor(want.length * TOLERANCE));
+  return wordFidelity(
+    wordsOf(input),
+    lines.flatMap((l) => wordsOf(l.text)),
+  );
+}
+
+/** How many words either way `fidelity` lets a text of `words` words differ by. */
+export const allowedEdits = (words: number): number => Math.max(1, Math.floor(words * TOLERANCE));
+
+/** `fidelity` over words already read. */
+export function wordFidelity(want: string[], got: string[]): Fidelity {
+  const allowed = allowedEdits(want.length);
   const parts = diffArrays(want, got, { maxEditLength: 2 * allowed });
   if (!parts) return { words: want.length, ...wordCounts(want, got), ok: false };
   let missing = 0;

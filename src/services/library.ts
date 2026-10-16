@@ -97,6 +97,8 @@ export interface ScriptEdit {
   ifRevision: number;
   /** an ordinary edit when left out */
   origin?: VersionOrigin;
+  /** the chapter's recap, written with its script; left out, the stored one stands */
+  recap?: string;
 }
 
 export interface LibraryService {

@@ -68,6 +68,7 @@ export function scriptOnly(s: Segment): Segment {
   if (s.expressions?.length) out.expressions = s.expressions.map((a) => ({ ...a }));
   if (s.pause != null) out.pause = s.pause;
   if (s.sep != null) out.sep = s.sep;
+  if (s.effects?.length) out.effects = [...s.effects];
   if (s.edited) out.edited = true;
   if (s.fallback) {
     out.fallback = true;
@@ -266,6 +267,10 @@ const EXPR = (s: Segment): string =>
         .join(" · ")
     : "none";
 
+/** Line effects run in the library's order, so the list's own order is no change. */
+const EFFECTS = (s: Segment): string =>
+  s.effects?.length ? [...s.effects].sort().join(" · ") : "none";
+
 function fieldChanges(from: Segment, to: Segment): FieldChange[] {
   const out: FieldChange[] = [];
   if (norm(from.text) !== norm(to.text)) out.push({ field: "text", from: from.text, to: to.text });
@@ -298,6 +303,8 @@ function fieldChanges(from: Segment, to: Segment): FieldChange[] {
   }
   if ((from.pause ?? null) !== (to.pause ?? null))
     out.push({ field: "pause", from: PAUSE(from), to: PAUSE(to) });
+  if (EFFECTS(from) !== EFFECTS(to))
+    out.push({ field: "effects", from: EFFECTS(from), to: EFFECTS(to) });
   return out;
 }
 
@@ -352,6 +359,7 @@ const emptyCounts = (): ComparisonCounts => ({
   type: 0,
   expressions: 0,
   pause: 0,
+  effects: 0,
   added: 0,
   removed: 0,
   split: 0,
@@ -460,6 +468,7 @@ export function comparisonSummary(c: ScriptComparison): string[] {
   if (c.counts.type) parts.push(n(c.counts.type, "type change"));
   if (c.counts.expressions) parts.push(n(c.counts.expressions, "expression change"));
   if (c.counts.pause) parts.push(n(c.counts.pause, "pause change"));
+  if (c.counts.effects) parts.push(n(c.counts.effects, "line effect change"));
   if (c.counts.split) parts.push(n(c.counts.split, "line split"));
   if (c.counts.joined) parts.push(n(c.counts.joined, "line joined"));
   if (c.counts.added) parts.push(n(c.counts.added, "new line"));

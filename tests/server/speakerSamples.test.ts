@@ -41,7 +41,7 @@ async function scriptFile(cast: ScriptFileSpeaker[], recordings: Record<string, 
     "manifest.json",
     JSON.stringify({
       format: "audiobook-studio/script",
-      version: 1,
+      version: 2,
       title: "Ledger",
       author: "",
       chapters: [],

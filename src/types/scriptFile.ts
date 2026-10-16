@@ -1,7 +1,10 @@
 // A book's script as an exported file, and the plan an import answers with before writing anything.
 // Nothing here is local to one install: no segment or annotation ids, no `VoiceRef`. A voice
 // travels as a hint the importer judges; expression tags travel in `text` as `{tag}` markers.
+import type { BookPrompt } from "@/types/scripting";
+import type { CharacterVoice, Pacing } from "@/types/book";
 import type { Gender, VoiceRef } from "@/types/common";
+import type { Step } from "@/types/effect";
 import type { Segment, SegmentType } from "@/types/segment";
 import type { KeptSample, Voice } from "@/types/voice";
 
@@ -20,17 +23,21 @@ export interface ScriptFileLine {
   fallback?: boolean;
   fallbackCount?: number;
   fallbackMismatch?: string;
+  /** line effects by effect name: ids are local to an install (`effects.json` defines them) */
+  effects?: string[];
 }
 
 /** `chapters/NNNN-slug.json` — complete on its own, so it can be imported without the zip. */
 export interface ScriptFileChapter {
   format: "audiobook-studio/script-chapter";
-  version: 1;
+  version: 2;
   title: string;
   /** `sha256:<hex>` over the chapter's source words, from the one shared `sourceHash` */
   sourceHash: string;
   words: number;
   lines: ScriptFileLine[];
+  /** where the chapter leaves off, as the scripting model summed it up; the next one's context */
+  recap?: string;
 }
 
 /** The manifest's table of contents; where it and a chapter file disagree, the chapter file wins. */
@@ -44,7 +51,7 @@ export interface ScriptManifestChapter {
 
 export interface ScriptManifest {
   format: "audiobook-studio/script";
-  version: 1;
+  version: 2;
   title: string;
   author: string;
   chapters: ScriptManifestChapter[];
@@ -75,6 +82,36 @@ export interface ScriptFileSpeaker {
   personaOf?: string;
   /** `voices/<slug>/`: the zip folder with this speaker's recordings and `samples.json` */
   samples?: string;
+  /** the effect they wear, by name */
+  effect?: string;
+  /** their thought effect: an effect name or `"none"` */
+  thoughts?: string;
+}
+
+/** One entry of `effects.json`: every library effect the file's lines, speakers and book name. */
+export interface ScriptFileEffect {
+  name: string;
+  chain: Step[];
+  useWhen?: string;
+}
+
+/**
+ * `book.json`: the book's own settings that shape its script and reading. Budgets and check-by-ear
+ * stay with the install. A voice travels as a hint, an effect by name.
+ */
+export interface ScriptFileBook {
+  pacing?: Pacing;
+  prompt?: BookPrompt;
+  readNotes?: boolean;
+  /** an effect name or `"none"` */
+  thoughts?: string;
+  characterVoice?: {
+    by: CharacterVoice["by"];
+    one?: VoiceHint;
+    male?: VoiceHint;
+    female?: VoiceHint;
+    other?: VoiceHint;
+  };
 }
 
 /** `voices/<slug>/samples.json`: which recordings the folder holds. */
@@ -110,9 +147,23 @@ export interface ImportChapter {
   /**
    * The file's lines as segments (ids `1…n`, no audio, fresh `annotationId`s), with expressions
    * filled from the speaking endpoint's tags; a tag it lacks arrives `needsReview`. Ready for
-   * `planRestore(current, segments, …)`.
+   * `planRestore(current, segments, …)`. `effects` hold local ids, or `NEW_EFFECT + name` for an
+   * effect in `plan.effects.add` (the apply step swaps in the id it creates, or drops it).
    */
   segments: Segment[];
+  /**
+   * `source`: the book has the very words the script was made from. `text`: no chapter had them,
+   * so this one was picked by overlap; its lines were moved onto the book's words.
+   */
+  pairedBy: "source" | "text";
+  /** for `text`: source words missing plus added between the file's chapter and this one */
+  wordsDiffer?: number;
+  /** for `text`: ids (in `segments`) of lines whose words were changed to this book's */
+  retexted?: number[];
+  /** the file's recap for the chapter, written with its script */
+  recap?: string;
+  /** with `recap`: the chapter's own now ("" for none), which an Undo writes back */
+  recapBefore?: string;
 }
 
 export type RefusalReason =
@@ -137,6 +188,9 @@ export interface SpeakerDetails {
   gender: Gender;
   description: string;
   style: string;
+  /** effect names, as the file writes them; absent = none of their own */
+  effect?: string;
+  thoughts?: string;
 }
 
 export interface SpeakerDiff {
@@ -216,6 +270,34 @@ export interface ScriptImportPlan {
     differ: TermDiff[];
   };
   voices: VoiceRow[];
+  /** effects are matched by name; everything in the plan names them as the file does */
+  effects: {
+    /** file effects this library has by name; `sameChain` false = the library's chain is kept */
+    known: { name: string; id: string; sameChain: boolean }[];
+    /** file effects the library lacks, added to the library (for all books) when ticked */
+    add: ScriptFileEffect[];
+    /** names used in the file that neither it nor the library defines; dropped */
+    missing: string[];
+  };
+  /** absent when the file has no `book.json` or nothing in it differs; applied only when ticked */
+  book?: {
+    file: ImportBookSettings;
+    /** the settings that differ from this book's */
+    differ: (keyof ScriptFileBook)[];
+  };
+}
+
+/** `book.json` as this install can apply it: voices resolved, effects by name. */
+export interface ImportBookSettings {
+  pacing?: Pacing;
+  prompt?: BookPrompt;
+  readNotes?: boolean;
+  /** an effect name or `"none"` */
+  thoughts?: string;
+  /** only slots whose hint matched a voice here (`VoiceMatch` "here"); the rest are null */
+  characterVoice?: CharacterVoice;
+  /** slots whose voice is not on this install, by slot name */
+  unmatchedVoices?: ("one" | "male" | "female" | "other")[];
 }
 
 // ---------- voice samples waiting with a speaker ----------

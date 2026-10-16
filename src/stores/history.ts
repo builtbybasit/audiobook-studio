@@ -209,9 +209,15 @@ export const useHistoryStore = defineStore("history", {
     /**
      * Write `plan` over the script under `origin` (restore and import): status as the plan says,
      * unknown speakers added unreviewed and written after the chapter, re-timed, saved. Undo puts
-     * back only this chapter's script and status; the caller drops absorbed speakers.
+     * back this chapter's script, status and `recap.back`; the caller drops absorbed speakers.
      */
-    _rewrite(bookId: string, chId: number, plan: RestorePlan, origin: VersionOrigin): Rewrite {
+    _rewrite(
+      bookId: string,
+      chId: number,
+      plan: RestorePlan,
+      origin: VersionOrigin,
+      recap?: { to: string; back: string },
+    ): Rewrite {
       const castStore = useCastStore();
       const libraryStore = useLibraryStore();
       const scriptsStore = useScriptsStore();
@@ -239,7 +245,7 @@ export const useHistoryStore = defineStore("history", {
         });
       const absorbed = castStore._absorbCast(bookId, chId);
       castStore._retime(bookId, chId);
-      const landed = scriptsStore._save(bookId, chId, origin);
+      const landed = scriptsStore._save(bookId, chId, origin, recap?.to);
       return {
         absorbed,
         pushed: absorbed.map((name) => castStore._push(bookId, name, landed)),
@@ -249,7 +255,7 @@ export const useHistoryStore = defineStore("history", {
           scriptsStore._replace(bookId, chId, beforeScript);
           if (was) libraryStore._patchChapter(bookId, chId, was);
           castStore._retime(bookId, chId);
-          const back = await scriptsStore._save(bookId, chId);
+          const back = await scriptsStore._save(bookId, chId, undefined, recap?.back);
           await scriptsStore._settled(bookId, chId);
           return back;
         },

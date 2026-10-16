@@ -22,6 +22,7 @@ import { getChapterBody } from "~/db/library";
 import { readScript } from "~/db/script";
 import { plainText } from "~/epub/markdown";
 import { AppError } from "~/lib/errors";
+import { fidelity } from "~/providers/chatScripting";
 import type { VoiceLister, VoiceQuery } from "~/providers/voices";
 import { planScriptImport, type ImportPorts } from "~/script/importPlan";
 import { sourceHash } from "~/script/transfer";
@@ -65,7 +66,7 @@ function chapterOf(
   const { hash, words } = sourceHash(body);
   return {
     format: "audiobook-studio/script-chapter",
-    version: 1,
+    version: 2,
     title: `Chapter ${n}`,
     sourceHash: hash,
     words,
@@ -76,7 +77,7 @@ function chapterOf(
 
 const manifest = (chapters: ScriptFileChapter[] = []): ScriptManifest => ({
   format: "audiobook-studio/script",
-  version: 1,
+  version: 2,
   title: "Moonlight Ledger",
   author: "A. Writer",
   chapters: chapters.map((c, i) => ({
@@ -152,6 +153,11 @@ describe("reading the file", () => {
         "b/manifest.json": JSON.stringify(manifest()),
       },
       "That zip holds more than one script",
+    ],
+    [
+      "a file from an older version",
+      { "manifest.json": JSON.stringify({ ...manifest(), version: 1 }) },
+      "This script file is from an older version of Audiobook Studio; export it again",
     ],
   ])("%s is refused", async (_, files, message) => {
     const zip = new JSZip();
@@ -232,21 +238,67 @@ describe("matching chapters", () => {
       await zipOf({
         chapters: [
           chapterOf(3, { title: "Chapter Three (revised)" }),
-          chapterOf(1, { title: "Prologue" }),
+          chapterOf(1, { title: "Prologue", recap: "The clerk counts." }),
         ],
       }),
     );
-    expect(got.chapters.map((c) => [c.chapterId, c.title, c.fileTitle])).toEqual([
-      [1, "One", "Prologue"],
-      [3, "Three", "Chapter Three (revised)"],
+    expect(got.chapters.map((c) => [c.chapterId, c.title, c.fileTitle, c.pairedBy])).toEqual([
+      [1, "One", "Prologue", "source"],
+      [3, "Three", "Chapter Three (revised)", "source"],
     ]);
+    expect(got.chapters[0].recap).toBe("The clerk counts.");
   });
 
-  test("one changed word in the source refuses that chapter", async () => {
-    const theirs = sourceHash(bodies.get(2)!.replace("closing", "opening"));
-    const got = await plan(await zipOf({ chapters: [chapterOf(2, { sourceHash: theirs.hash })] }));
+  test("a newer edition that changed a word pairs by text, the lines moved onto its words", async () => {
+    // scripted from an edition that said "opening" where this one says "closing"
+    const theirs = bodies.get(2)!.replace("closing", "opening");
+    const [narration, dialogue] = plainText(theirs).split("\n\n“");
+    const lines: ScriptFileLine[] = [
+      { speaker: "Narrator", type: "narration", text: narration },
+      {
+        speaker: "Mara",
+        type: "dialogue",
+        text: `“${dialogue.replace("opening", "{sigh} opening")}`,
+      },
+    ];
+    const got = await plan(
+      await zipOf({
+        chapters: [
+          chapterOf(2, { sourceHash: sourceHash(theirs).hash, lines, recap: "Mara closes it." }),
+        ],
+      }),
+    );
+    const [chapter] = got.chapters;
+    expect(chapter).toMatchObject({
+      chapterId: 2,
+      pairedBy: "text",
+      wordsDiffer: 2,
+      retexted: [2],
+      recap: "Mara closes it.",
+    });
+    const moved = chapter.segments[1];
+    expect(moved).toMatchObject({ speaker: "Mara", type: "dialogue" });
+    expect(moved.text.slice(moved.expressions![0].at)).toStartWith("closing ledger");
+    expect(fidelity(plainText(bodies.get(2)!), chapter.segments)).toMatchObject({
+      missing: 0,
+      added: 0,
+    });
+  });
+
+  test("lines too far from every chapter are refused, saying how far the closest was", async () => {
+    const theirs = bodies.get(2)!.replace("closing", "opening").replace("short", "long");
+    const got = await plan(
+      await zipOf({
+        chapters: [chapterOf(2, { sourceHash: sourceHash(theirs).hash }, plainText(theirs))],
+      }),
+    );
     expect(got.chapters).toEqual([]);
-    expect(got.refused.map((r) => r.reason)).toEqual(["unmatched"]);
+    expect(got.refused).toMatchObject([
+      {
+        reason: "unmatched",
+        detail: expect.stringContaining("closest chapter differs by 4 words"),
+      },
+    ]);
   });
 
   test("an honest correction passes the check on the lines; a rewritten chapter does not", async () => {
@@ -290,11 +342,14 @@ describe("two chapters with the same words", () => {
   // the chapter's heading is part of its words, so the two notes share a title as well
   beforeAll(() => shelve(["Note", "Story", "Note"], (i) => (i === 1 ? prose(9) : prose(0))));
 
-  test("pair in reading order", async () => {
-    const a = chapterOf(1, { title: "first note" });
-    const b = chapterOf(3, { title: "second note" });
+  // `text`: neither note's source words are this book's, so both pair on their lines' words
+  test.each(["source", "text"])("pair in reading order by %s", async (by) => {
+    const sourceHash = by === "text" ? `sha256:${"0".repeat(64)}` : undefined;
+    const a = chapterOf(1, { title: "first note", ...(sourceHash && { sourceHash }) });
+    const b = chapterOf(3, { title: "second note", ...(sourceHash && { sourceHash }) });
     expect(a.sourceHash).toBe(b.sourceHash);
     const got = await plan(await zipOf({ chapters: [a, b] }));
+    expect(got.chapters.map((c) => c.pairedBy)).toEqual([by, by]);
     expect(got.chapters.map((c) => [c.chapterId, c.fileTitle])).toEqual([
       [1, "first note"],
       [3, "second note"],

@@ -53,6 +53,8 @@ interface PendingWrite {
   answers: ((landed: boolean) => void)[];
   /** what produced the script for the next write; an ordinary edit when unset */
   origin?: VersionOrigin;
+  /** a recap the next write carries (an import) */
+  recap?: string;
   /** a server read arrived mid-write and was put off */
   deferred?: boolean;
   /** the server's script is to be read back and installed once the writes land */
@@ -834,10 +836,11 @@ export const useScriptsStore = defineStore("scripts", {
      * serialised: an edit during a write marks it dirty, so a burst is a few writes. `origin`
      * names a non-edit source (bulk, restore). Nothing is written inside `silence()`.
      */
-    _commit(bookId: string, chId: number, origin?: VersionOrigin): void {
+    _commit(bookId: string, chId: number, origin?: VersionOrigin, recap?: string): void {
       if (this._silent) return;
       const p = this._pending(bookId, chId);
       if (origin) p.origin = origin;
+      if (recap != null) p.recap = recap;
       p.dirty = true;
       this._kick(bookId, chId, p);
     },
@@ -845,11 +848,11 @@ export const useScriptsStore = defineStore("scripts", {
      * `_commit`, answered: true once landed, false when refused (script reverted, toast said) or
      * never sent, as inside `silence()`. For callers that report or undo only what persisted.
      */
-    _save(bookId: string, chId: number, origin?: VersionOrigin): Promise<boolean> {
+    _save(bookId: string, chId: number, origin?: VersionOrigin, recap?: string): Promise<boolean> {
       if (this._silent) return Promise.resolve(false);
       return new Promise((resolve) => {
         this._pending(bookId, chId).answers.push(resolve);
-        this._commit(bookId, chId, origin);
+        this._commit(bookId, chId, origin, recap);
       });
     },
     /**
@@ -909,8 +912,9 @@ export const useScriptsStore = defineStore("scripts", {
             continue;
           }
           p.dirty = false;
-          const origin = p.origin;
+          const { origin, recap } = p;
           p.origin = undefined;
+          p.recap = undefined;
           // this write answers every save asked for so far
           const answers = p.answers.splice(0);
           const segments = clone(this.segments[k] ?? []);
@@ -924,6 +928,7 @@ export const useScriptsStore = defineStore("scripts", {
               segments,
               ifRevision: this._revision[k] ?? 0,
               ...(origin ? { origin } : {}),
+              ...(recap != null ? { recap } : {}),
             });
             // never backwards: a rename's answer may have landed in between
             this._revision[k] = Math.max(this._revision[k] ?? 0, revision);

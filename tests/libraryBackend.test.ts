@@ -504,7 +504,14 @@ describe("a book's settings with a server answering", () => {
     const transferStore = useTransferStore();
     const matched = (chapterId: number) => {
       const title = libraryStore.chapter(id, chapterId)!.title;
-      return { chapterId, title, fileTitle: title, file: `${chapterId}.json`, segments: [] };
+      return {
+        chapterId,
+        title,
+        fileTitle: title,
+        file: `${chapterId}.json`,
+        segments: [],
+        pairedBy: "source" as const,
+      };
     };
     transferStore.plans[id] = {
       title: "",
@@ -516,6 +523,7 @@ describe("a book's settings with a server answering", () => {
       cast: { add: [], differ: [], aliases: [] },
       lexicon: { add: [], differ: [] },
       voices: [],
+      effects: { known: [], add: [], missing: [] },
     };
     const planned = () =>
       transferStore

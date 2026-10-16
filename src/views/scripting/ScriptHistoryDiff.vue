@@ -27,6 +27,7 @@ const GROUPS: { id: ChangeGroup; label: string }[] = [
   { id: "type", label: "Types" },
   { id: "expressions", label: "Expressions" },
   { id: "pause", label: "Pauses" },
+  { id: "effects", label: "Line effects" },
   { id: "structure", label: "Split, joined, new, gone" },
 ];
 const FIELD_LABEL: Record<string, string> = {
@@ -36,6 +37,7 @@ const FIELD_LABEL: Record<string, string> = {
   type: "type",
   expressions: "expressions",
   pause: "pause",
+  effects: "line effects",
 };
 const KIND_LABEL: Record<LineChange["kind"], string> = {
   changed: "changed",

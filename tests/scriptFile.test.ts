@@ -140,7 +140,7 @@ describe("lines", () => {
     const back = chapter.map((s, i) => fromFileLine(toFileLine(s), i + 1, TAGS, () => ++n));
     expect(scriptSignature(back)).toBe(scriptSignature(chapter));
     // the clip, the ids and the provider tokens were never in the file
-    const written = JSON.stringify(chapter.map(toFileLine));
+    const written = JSON.stringify(chapter.map((s) => toFileLine(s)));
     for (const local of ["audio", "annotationId", "(sighs)", '"id"'])
       expect(written).not.toContain(local);
     expect(back[1].expressions?.map((a) => [a.label, a.token, a.annotationId])).toEqual([

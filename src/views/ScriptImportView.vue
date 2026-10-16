@@ -1,10 +1,12 @@
 <script setup lang="ts">
 // Importing a script file into this book. The server matches the file's chapters to this book's by
-// their source words and answers with a plan; nothing is written until Apply. Once applied, the
-// page becomes the report, where kept cast and dictionary differences can still be taken.
+// their source words (or, failing that, their text) and answers with a plan; nothing is written
+// until Apply. Once applied, the page becomes the report, where kept cast and dictionary
+// differences can still be taken.
 import { computed, reactive, ref, watch } from "vue";
 import { useBookId } from "@/composables/useBookId";
 import { useCast } from "@/queries";
+import { useEffects } from "@/queries/effects";
 import { key } from "@/lib/scriptReview";
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
@@ -16,12 +18,14 @@ import { useSpeakerSamplesStore } from "@/stores/speakerSamples";
 import { plural } from "@/lib/contents";
 import VoicePicker from "@/components/VoicePicker.vue";
 import { useRangeSelect } from "@/composables/useRangeSelect";
-import { UiCheckbox, UiSelect } from "@/ui";
+import { UiCheckbox, UiHint, UiSelect, UiSwitch } from "@/ui";
 import { FileUp as FileIcon, X as ClearIcon } from "@lucide/vue";
 import type {
   ImportChapter,
   RefusalReason,
   RestorePlan,
+  ScriptFileBook,
+  SpeakerDetails,
   VoiceRef,
   VoiceRow,
   VoiceRowSamples,
@@ -35,6 +39,8 @@ const transferStore = useTransferStore();
 const samplesStore = useSpeakerSamplesStore();
 const bookId = useBookId();
 useCast(bookId);
+// an effect the library already has by name is used, not made again
+useEffects();
 
 const book = computed(() => libraryStore.bookById(bookId));
 const plan = computed(() => transferStore.planOf(bookId));
@@ -64,10 +70,15 @@ const choices = reactive<Record<string, VoiceChoice>>({});
 
 const busy = (c: ImportChapter) => historyStore.busyJobs(bookId, c.chapterId).length > 0;
 const ticked = ref(new Set<number>());
+/** the file's effects to add to the library; the lines and speakers drop the rest */
+const takeEffects = ref(new Set<string>());
+const useBook = ref(false);
 watch(
   plan,
   (p) => {
     ticked.value = new Set((p?.chapters ?? []).filter((c) => !busy(c)).map((c) => c.chapterId));
+    takeEffects.value = new Set((p?.effects.add ?? []).map((e) => e.name));
+    useBook.value = false;
     resetVoices();
   },
   { immediate: true },
@@ -118,7 +129,7 @@ const previews = computed(() => {
   const m = new Map<number, RestorePlan>();
   for (const c of ordered.value)
     if (!transferStore.loading[key(bookId, c.chapterId)])
-      m.set(c.chapterId, transferStore.previewOf(bookId, c));
+      m.set(c.chapterId, transferStore.previewOf(bookId, c, takeEffects.value));
   return m;
 });
 
@@ -137,6 +148,31 @@ function consequence(c: ImportChapter): string {
 }
 const toApply = computed(() =>
   [...ticked.value].filter((id) => ordered.value.some((c) => c.chapterId === id)),
+);
+const differ = (n: number) => (n === 1 ? "1 word differs" : `${n} words differ`);
+
+function tickEffect(name: string, on: boolean) {
+  const next = new Set(takeEffects.value);
+  if (on) next.add(name);
+  else next.delete(name);
+  takeEffects.value = next;
+}
+/** Effects whose chain differs from the file's: the library's is used. */
+const keptEffects = computed(() =>
+  (plan.value?.effects.known ?? []).filter((k) => !k.sameChain).map((k) => k.name),
+);
+
+const BOOK_KEYS: Record<keyof ScriptFileBook, string> = {
+  pacing: "pauses between lines",
+  prompt: "scripting notes and prompt",
+  readNotes: "reading notes aloud",
+  thoughts: "thought effect",
+  characterVoice: "Character voice",
+};
+const SLOTS = { one: "everyone", male: "men", female: "women", other: "everyone else" } as const;
+const bookDiffer = computed(() => (plan.value?.book?.differ ?? []).map((k) => BOOK_KEYS[k]));
+const unmatchedSlots = computed(() =>
+  (plan.value?.book?.file.unmatchedVoices ?? []).map((s) => SLOTS[s]),
 );
 
 const REFUSED: Record<RefusalReason, string> = {
@@ -188,7 +224,10 @@ const applying = ref(false);
 async function apply() {
   applying.value = true;
   try {
-    await transferStore.apply(bookId, toApply.value, picks.value);
+    await transferStore.apply(bookId, toApply.value, picks.value, {
+      effects: [...takeEffects.value],
+      book: useBook.value,
+    });
   } finally {
     applying.value = false;
   }
@@ -210,16 +249,14 @@ const castNow = computed(() => castStore.charactersOf(bookId));
 const lexNow = computed(() => castStore.lexiconOf(bookId));
 /** one taken from the file drops off the list */
 const speakerDiffs = computed(() =>
-  (plan.value?.cast.differ ?? []).filter((d) => {
-    const c = castNow.value.find((x) => x.name === d.name);
-    return (
-      c &&
-      (c.gender !== d.file.gender ||
-        c.description !== d.file.description ||
-        c.style !== d.file.style)
-    );
-  }),
+  (plan.value?.cast.differ ?? []).filter((d) => transferStore.speakerChangeOf(bookId, d)),
 );
+/** The speaker's effects in a few words; empty when they wear none. */
+function effectsLine(d: SpeakerDetails): string {
+  return [d.effect && `effect: ${d.effect}`, d.thoughts && `thoughts: ${d.thoughts}`]
+    .filter(Boolean)
+    .join(" · ");
+}
 const termDiffs = computed(() =>
   (plan.value?.lexicon.differ ?? []).filter((d) => {
     const e = lexNow.value.find((x) => x.term === d.term);
@@ -334,6 +371,10 @@ const SKIPPED = {
             <p v-if="report.voices" class="mt-1 text-xs">
               {{ plural(report.voices, "voice") }} set
             </p>
+            <p v-if="report.effects.length" class="mt-1 text-xs">
+              Added to the library, for all books: {{ report.effects.join(", ") }}
+            </p>
+            <p v-if="report.book" class="mt-1 text-xs">The file's book settings are in use</p>
           </section>
 
           <section v-if="keptSamples.length" class="card p-4">
@@ -402,11 +443,17 @@ const SKIPPED = {
                 <div class="text-[10px] uppercase text-zinc-400">This book</div>
                 {{ d.book.gender }} · {{ d.book.description || "—" }}
                 <div v-if="d.book.style" class="text-zinc-500">{{ d.book.style }}</div>
+                <div v-if="effectsLine(d.book) !== effectsLine(d.file)" class="text-zinc-500">
+                  {{ effectsLine(d.book) || "no effects" }}
+                </div>
               </div>
               <div>
                 <div class="text-[10px] uppercase text-zinc-400">The file</div>
                 {{ d.file.gender }} · {{ d.file.description || "—" }}
                 <div v-if="d.file.style" class="text-zinc-500">{{ d.file.style }}</div>
+                <div v-if="effectsLine(d.book) !== effectsLine(d.file)" class="text-zinc-500">
+                  {{ effectsLine(d.file) || "no effects" }}
+                </div>
               </div>
               <button
                 class="btn-ghost btn-xs self-start"
@@ -497,6 +544,15 @@ const SKIPPED = {
                     <span v-if="c.fileTitle && c.fileTitle !== c.title" class="text-zinc-400"
                       >· “{{ c.fileTitle }}” in the file</span
                     >
+                    <span v-if="c.pairedBy === 'text'" class="text-amber-700 dark:text-amber-400"
+                      >· by text · {{ differ(c.wordsDiffer ?? 0) }}</span
+                    >
+                    <UiHint
+                      v-if="c.pairedBy === 'text' && c.retexted?.length"
+                      class="ml-1"
+                      label="a chapter paired by text"
+                      :text="`${plural(c.retexted.length, 'line')} now read this book's words in place of the file's.`"
+                    />
                   </div>
                   <div class="text-[11px] text-zinc-500" :class="busy(c) && 'text-amber-600'">
                     {{ consequence(c) }}
@@ -509,7 +565,7 @@ const SKIPPED = {
           <section v-if="plan.refused.length" class="card p-4">
             <h2 class="text-sm font-semibold">Refused</h2>
             <p class="mt-1 text-xs text-zinc-500">
-              A chapter whose source words differ from this book's — even by one corrected typo — is
+              A chapter that matches none of this book's, by its source words or by its text, is
               never applied.
             </p>
             <ul class="mt-2 space-y-1 text-xs">
@@ -621,11 +677,68 @@ const SKIPPED = {
             </div>
           </section>
 
+          <section
+            v-if="plan.effects.add.length || keptEffects.length || plan.effects.missing.length"
+            class="card"
+          >
+            <div
+              class="flex flex-wrap items-center gap-2 border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-800"
+            >
+              <h2 class="text-sm font-semibold">Effects</h2>
+              <span v-if="plan.effects.add.length" class="text-xs text-zinc-500"
+                >ticked ones are added to the library, for all books</span
+              >
+            </div>
+            <div
+              v-for="e in plan.effects.add"
+              :key="e.name"
+              class="flex items-center gap-2 border-t border-zinc-100 px-4 py-1.5 text-xs first:border-t-0 dark:border-zinc-800"
+            >
+              <UiCheckbox
+                :model-value="takeEffects.has(e.name)"
+                :aria-label="`Add ${e.name} to the library`"
+                @update:model-value="(v) => tickEffect(e.name, v === true)"
+              />
+              <span class="font-medium">{{ e.name }}</span>
+              <span v-if="!takeEffects.has(e.name)" class="text-zinc-500"
+                >lines and speakers go without it</span
+              >
+            </div>
+            <p v-if="keptEffects.length" class="px-4 py-1.5 text-[11px] text-zinc-500">
+              {{ keptEffects.join(", ") }}: this library's own version is kept
+            </p>
+            <p v-if="plan.effects.missing.length" class="px-4 py-1.5 text-[11px] text-zinc-500">
+              Not in the file or the library, so left off: {{ plan.effects.missing.join(", ") }}
+            </p>
+          </section>
+
+          <section v-if="plan.book" class="card p-4 text-xs">
+            <UiSwitch v-model="useBook" label="Use the file's book settings" />
+            <p class="mt-1.5 text-[11px] text-zinc-500">
+              {{
+                bookDiffer.length
+                  ? "Differs from this book: " + bookDiffer.join(", ")
+                  : "Same as this book's"
+              }}
+            </p>
+            <p v-if="unmatchedSlots.length" class="mt-0.5 text-[11px] text-zinc-500">
+              The file's Character voice for {{ unmatchedSlots.join(", ") }} isn't here, so it is
+              left empty
+            </p>
+          </section>
+
           <div class="flex flex-wrap items-center justify-end gap-3">
             <span v-if="picks.length" class="text-xs text-zinc-500">
               and {{ plural(picks.length, "voice") }}
             </span>
-            <button class="btn-primary" :disabled="!toApply.length || applying" @click="apply">
+            <span v-if="useBook && bookDiffer.length" class="text-xs text-zinc-500">
+              and the book's settings
+            </span>
+            <button
+              class="btn-primary"
+              :disabled="(!toApply.length && !(useBook && bookDiffer.length)) || applying"
+              @click="apply"
+            >
               Apply {{ plural(toApply.length, "chapter") }}
             </button>
           </div>

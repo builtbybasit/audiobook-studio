@@ -1,18 +1,25 @@
 // Plans a script-file import without writing anything; the page writes only what the person ticks.
-// Chapters pair on `sourceHash` (the words the script was made from), never titles or numbers.
+// Chapters pair on `sourceHash` (the words the script was made from), else on the lines reading
+// a chapter closely (`pairing.ts`); never on titles or numbers.
 // Reading the file is `scriptFile.ts`.
 import type {
+  Book,
   Character,
   CharacterVoice,
+  Effect,
   Endpoint,
   ExpressionTag,
   FoundVoice,
+  ImportBookSettings,
   ImportChapter,
   LexEntry,
   RefusedChapter,
+  ScriptFileBook,
+  ScriptFileLine,
   ScriptFileSpeaker,
   ScriptFileTerm,
   ScriptImportPlan,
+  Segment,
   SpeakerDetails,
   TermDetails,
   VoiceHint,
@@ -20,17 +27,20 @@ import type {
   VoiceRow,
 } from "@/types";
 import { isFishAudio } from "@/lib/endpointShapes";
-import { fromFileLine, readMarkers } from "@/lib/scriptFile";
+import { wordsOf } from "@/lib/gaps";
+import { fromFileLine, NEW_EFFECT } from "@/lib/scriptFile";
 import { readCast, readLexicon } from "~/db/cast";
 import type { Db } from "~/db/client";
+import { listEffects } from "~/db/effects";
 import { readEndpoints } from "~/db/endpoints";
-import { getBook, getChapterBody, listChapters } from "~/db/library";
+import { chapterRecap, getBook, getChapterBody, listChapters } from "~/db/library";
 import { plainText } from "~/epub/markdown";
 import { notFound } from "~/lib/errors";
 import { deliveryFor } from "~/narration/cost";
 import { fidelity } from "~/providers/chatScripting";
 import { speechTarget } from "~/providers/target";
 import { endpointVoiceLister, type VoiceLister, type VoiceQuery } from "~/providers/voices";
+import { closestDetail, pairByText, retext } from "~/script/pairing";
 import { readScriptFile, type ReadFile, type ScriptUpload } from "~/script/scriptFile";
 import { sourceHash } from "~/script/transfer";
 import {
@@ -71,17 +81,145 @@ export async function planScriptImport(
   refused.push(...file.refused);
   refused.sort((a, b) => a.file.localeCompare(b.file));
 
-  return {
+  const library = listEffects(db);
+  const effects = effectsPlan(library, file, chapters);
+  for (const ch of chapters) {
+    ch.segments = ch.segments.map((s) => withEffectIds(s, effects.idOf));
+    if (ch.recap != null) ch.recapBefore = chapterRecap(db, bookId, ch.chapterId);
+  }
+  const effectName = effectNames(library);
+
+  const plan: ScriptImportPlan = {
     title: file.manifest?.title ?? "",
     author: file.manifest?.author ?? "",
     name: upload.name,
     chapters,
     refused,
     ignored: file.ignored,
-    cast: castDiff(cast, file.cast),
+    cast: castDiff(cast, file.cast, effectName),
     lexicon: lexiconDiff(readLexicon(db, bookId), file.lexicon),
     voices: await voiceRows(db, cast, endpoints, file, ports, limits),
+    effects: effects.plan,
   };
+  const bookSettings = file.book && bookPlan(book, file.book, endpoints, effectName);
+  if (bookSettings?.differ.length) plan.book = bookSettings;
+  return plan;
+}
+
+// ---------- effects ----------
+
+/** This library's names for effect ids; `"none"` is itself, and a dead id names nothing. */
+const effectNames =
+  (library: readonly Effect[]) =>
+  (id: string | undefined): string | undefined =>
+    id === "none" ? id : library.find((e) => e.id === id)?.name;
+
+/**
+ * Match the file's effects to the library by name. One the file only names (a lone chapter has no
+ * `effects.json`) is the library's when it has one by that name, else missing.
+ */
+function effectsPlan(
+  library: readonly Effect[],
+  read: ReadFile,
+  chapters: readonly ImportChapter[],
+): { plan: ScriptImportPlan["effects"]; idOf: (name: string) => string | undefined } {
+  const plan: ScriptImportPlan["effects"] = { known: [], add: [], missing: [] };
+  const ids = new Map<string, string>();
+  const byName = (name: string) => library.find((e) => e.name === name);
+  for (const f of read.effects) {
+    if (ids.has(f.name)) continue;
+    const have = byName(f.name);
+    if (have) {
+      plan.known.push({ name: f.name, id: have.id, sameChain: sameJson(have.chain, f.chain) });
+      ids.set(f.name, have.id);
+    } else {
+      plan.add.push(f);
+      ids.set(f.name, NEW_EFFECT + f.name);
+    }
+  }
+  const named = new Set([
+    ...chapters.flatMap((c) => c.segments.flatMap((s) => s.effects ?? [])),
+    ...read.cast.flatMap((c) => [c.effect, c.thoughts]),
+    read.book?.thoughts,
+  ]);
+  for (const name of named) {
+    if (!name || name === "none" || ids.has(name)) continue;
+    const have = byName(name);
+    if (have) {
+      plan.known.push({ name, id: have.id, sameChain: true });
+      ids.set(name, have.id);
+    } else if (!plan.missing.includes(name)) plan.missing.push(name);
+  }
+  return { plan, idOf: (name) => ids.get(name) };
+}
+
+/** A segment's effect names as ids to write; a missing one is dropped. */
+function withEffectIds(s: Segment, idOf: (name: string) => string | undefined): Segment {
+  if (!s.effects) return s;
+  const { effects: names, ...rest } = s;
+  const effects = names.flatMap((n) => idOf(n) ?? []);
+  return effects.length ? { ...rest, effects } : rest;
+}
+
+/** Equal as JSON, whatever order the keys came in. */
+function sameJson(a: unknown, b: unknown): boolean {
+  const stable = (x: unknown): string =>
+    JSON.stringify(x, (_, v: unknown) =>
+      v && typeof v === "object" && !Array.isArray(v)
+        ? Object.fromEntries(Object.entries(v).sort(([p], [q]) => p.localeCompare(q)))
+        : v,
+    );
+  return stable(a) === stable(b);
+}
+
+// ---------- the book's settings ----------
+
+const VOICE_SLOTS = ["one", "male", "female", "other"] as const;
+
+/** `book.json` as this install can apply it, and which settings differ from the book's own. */
+function bookPlan(
+  book: Book,
+  file: ScriptFileBook,
+  endpoints: readonly Endpoint[],
+  effectName: (id: string | undefined) => string | undefined,
+): NonNullable<ScriptImportPlan["book"]> {
+  const out: ImportBookSettings = {};
+  if (file.pacing) out.pacing = file.pacing;
+  if (file.prompt) out.prompt = file.prompt;
+  if (file.readNotes != null) out.readNotes = file.readNotes;
+  if (file.thoughts) out.thoughts = file.thoughts;
+  if (file.characterVoice) {
+    const enabled = endpoints.filter((e) => e.enabled);
+    const voice: CharacterVoice = {
+      by: file.characterVoice.by,
+      one: null,
+      male: null,
+      female: null,
+      other: null,
+    };
+    const unmatched: (typeof VOICE_SLOTS)[number][] = [];
+    for (const slot of VOICE_SLOTS) {
+      const hint = file.characterVoice[slot];
+      if (!hint) continue;
+      const ref = hereOptions(hint, enabled)[0]?.ref;
+      if (ref) voice[slot] = ref;
+      else unmatched.push(slot);
+    }
+    out.characterVoice = voice;
+    if (unmatched.length) out.unmatchedVoices = unmatched;
+  }
+  // an absent readNotes is off; any other absent setting follows the library, so differs
+  const mine = {
+    pacing: book.pacing,
+    prompt: book.prompt,
+    readNotes: book.readNotes ?? false,
+    thoughts: effectName(book.thoughts),
+    characterVoice: book.characterVoice,
+  };
+  const differ = (["pacing", "prompt", "readNotes", "thoughts", "characterVoice"] as const).filter(
+    (k) => out[k] !== undefined && !sameJson(out[k], mine[k]),
+  );
+  return { file: out, differ };
 }
 
 // ---------- matching ----------
@@ -106,75 +244,130 @@ function matchChapters(
   tagsFor: (speaker: string) => readonly ExpressionTag[],
 ): { chapters: ImportChapter[]; refused: RefusedChapter[] } {
   // Each fingerprint's chapters in reading order, so two identical author's notes pair in order.
-  const byHash = new Map<string, { id: number; title: string; body: string }[]>();
-  for (const ch of listChapters(db, bookId)) {
+  type Target = { id: number; title: string; body: string; position: number };
+  const byHash = new Map<string, Target[]>();
+  listChapters(db, bookId).forEach((ch, position) => {
     const body = getChapterBody(db, bookId, ch.id);
-    if (body === undefined) continue;
+    if (body === undefined) return;
     const { hash } = sourceHash(body);
     (byHash.get(hash) ?? byHash.set(hash, []).get(hash)!).push({
       id: ch.id,
       title: ch.title,
       body,
+      position,
     });
-  }
+  });
 
   const chapters: ImportChapter[] = [];
   const refused: RefusedChapter[] = [];
-  for (const { file, chapter } of files) {
-    const refusal = (reason: RefusedChapter["reason"], detail: string): void => {
-      refused.push({ file, title: chapter.title, words: chapter.words, reason, detail });
-    };
-    const target = byHash.get(chapter.sourceHash)?.shift();
-    if (!target) {
-      refusal(
-        "unmatched",
-        "No chapter of this book has these words. The EPUB may have changed it, or the script is from another book.",
-      );
-      continue;
-    }
-    // The same bar a model's answer clears: an honest correction passes, a rewritten scene does not.
-    const lines = chapter.lines.map((l) => ({ text: readMarkers(l.text).text }));
-    const check = fidelity(plainText(target.body), lines);
-    if (!check.ok) {
-      refusal(
-        "fidelity",
-        `The lines differ from the chapter by ${check.missing} missing and ${check.added} added words${
-          check.examples.length ? ` (missing: ${check.examples.join(", ")})` : ""
-        }; at most 2% may.`,
-      );
-      continue;
-    }
-    let annotation = 0;
-    const next = (): number => ++annotation;
+  const refuse = (
+    { file, chapter }: ReadFile["chapters"][number],
+    reason: RefusedChapter["reason"],
+    detail: string,
+  ): void => {
+    refused.push({ file, title: chapter.title, words: chapter.words, reason, detail });
+  };
+  const pair = (
+    { file, chapter }: ReadFile["chapters"][number],
+    target: Target,
+    segments: Segment[],
+    text?: Pick<ImportChapter, "wordsDiffer" | "retexted">,
+  ): void => {
     chapters.push({
       chapterId: target.id,
       title: target.title,
       fileTitle: chapter.title,
       file,
-      segments: chapter.lines.map((l, i) => fromFileLine(l, i + 1, tagsFor(l.speaker), next)),
+      segments,
+      pairedBy: text ? "text" : "source",
+      ...text,
+      ...(chapter.recap ? { recap: chapter.recap } : {}),
     });
-  }
+  };
+  const segmentsOf = (lines: ScriptFileLine[]): Segment[] => {
+    let annotation = 0;
+    const next = (): number => ++annotation;
+    return lines.map((l, i) => fromFileLine(l, i + 1, tagsFor(l.speaker), next));
+  };
+
+  const loose: { read: ReadFile["chapters"][number]; position: number; segments: Segment[] }[] = [];
+  files.forEach((read, position) => {
+    const segments = segmentsOf(read.chapter.lines);
+    const target = byHash.get(read.chapter.sourceHash)?.shift();
+    if (!target) {
+      loose.push({ read, position, segments });
+      return;
+    }
+    // The same bar a model's answer clears: an honest correction passes, a rewritten scene does not.
+    const check = fidelity(plainText(target.body), segments);
+    if (!check.ok) {
+      refuse(
+        read,
+        "fidelity",
+        `The lines differ from the chapter by ${check.missing} missing and ${check.added} added words${
+          check.examples.length ? ` (missing: ${check.examples.join(", ")})` : ""
+        }; at most 2% may.`,
+      );
+      return;
+    }
+    pair(read, target, segments);
+  });
+
+  // Not the very words: the closest chapter left, if the lines still read it within that bar.
+  const free = [...byHash.values()].flat().map((t) => ({ ...t, text: plainText(t.body) }));
+  const found = pairByText(
+    loose.map((l) => ({ position: l.position, words: l.segments.flatMap((s) => wordsOf(s.text)) })),
+    free.map((t) => ({ position: t.position, words: wordsOf(t.text) })),
+  );
+  loose.forEach(({ read, segments }, i) => {
+    const match = found[i];
+    if (match.book === undefined) {
+      refuse(
+        read,
+        "unmatched",
+        `No chapter of this book has these words${closestDetail(match.closest)}. The EPUB may have changed it, or the script is from another book.`,
+      );
+      return;
+    }
+    const target = free[match.book];
+    const moved = retext(segments, target.text);
+    pair(read, target, moved.segments, {
+      wordsDiffer: match.check.missing + match.check.added,
+      retexted: moved.retexted,
+    });
+  });
+
   chapters.sort((a, b) => a.chapterId - b.chapterId);
   return { chapters, refused };
 }
 
 // ---------- the cast and the dictionary ----------
 
-const detailsOf = (c: {
-  gender: SpeakerDetails["gender"];
-  description: string;
-  style: string;
-}) => ({
-  gender: c.gender,
-  description: c.description,
-  style: c.style,
-});
+/** Effects by name, as the file writes them. */
+function detailsOf(
+  c: Pick<SpeakerDetails, "gender" | "description" | "style">,
+  effect: string | undefined,
+  thoughts: string | undefined,
+): SpeakerDetails {
+  const d: SpeakerDetails = { gender: c.gender, description: c.description, style: c.style };
+  if (effect) d.effect = effect;
+  if (thoughts) d.thoughts = thoughts;
+  return d;
+}
 
 const sameDetails = (a: SpeakerDetails, b: SpeakerDetails): boolean =>
-  a.gender === b.gender && a.description === b.description && a.style === b.style;
+  a.gender === b.gender &&
+  a.description === b.description &&
+  a.style === b.style &&
+  a.effect === b.effect &&
+  a.thoughts === b.thoughts;
 
 /** Add what the book lacks, keep what it has, and union the aliases, which only ever adds matches. */
-function castDiff(cast: Character[], file: ScriptFileSpeaker[]): ScriptImportPlan["cast"] {
+function castDiff(
+  cast: Character[],
+  file: ScriptFileSpeaker[],
+  effectName: (id: string | undefined) => string | undefined,
+): ScriptImportPlan["cast"] {
   const out: ScriptImportPlan["cast"] = { add: [], differ: [], aliases: [] };
   for (const speaker of file) {
     const have = cast.find((c) => c.name === speaker.name);
@@ -182,8 +375,8 @@ function castDiff(cast: Character[], file: ScriptFileSpeaker[]): ScriptImportPla
       out.add.push(speaker);
       continue;
     }
-    const book = detailsOf(have);
-    const theirs = detailsOf(speaker);
+    const book = detailsOf(have, effectName(have.effect), effectName(have.thoughts));
+    const theirs = detailsOf(speaker, speaker.effect, speaker.thoughts);
     if (!sameDetails(book, theirs)) out.differ.push({ name: speaker.name, book, file: theirs });
     const known = new Set([have.name, ...have.aliases]);
     const add = [...new Set(speaker.aliases)].filter((a) => !known.has(a));
@@ -292,16 +485,22 @@ async function voiceRows(
   return rows.filter((r): r is VoiceRow => r !== null);
 }
 
+/** The hint's voice on these endpoints: same provider host, voice id and label. */
+function hereOptions(hint: VoiceHint, endpoints: readonly Endpoint[]) {
+  return endpoints.flatMap((e) =>
+    hostOf(e.baseUrl) === hint.provider &&
+    e.voices.some((v) => v.id === hint.voiceId && v.label === hint.voiceLabel)
+      ? [{ endpointId: e.id, endpointName: e.name, ref: `${e.id}/${hint.voiceId}` }]
+      : [],
+  );
+}
+
 async function matchVoice(
   hint: VoiceHint,
   endpoints: readonly Endpoint[],
   ask: (e: Endpoint, query: VoiceQuery) => Promise<Lookup>,
 ): Promise<VoiceMatch> {
-  const options = endpoints.flatMap((e) =>
-    e.voices.some((v) => v.id === hint.voiceId && v.label === hint.voiceLabel)
-      ? [{ endpointId: e.id, endpointName: e.name, ref: `${e.id}/${hint.voiceId}` }]
-      : [],
-  );
+  const options = hereOptions(hint, endpoints);
   if (options.length) return { kind: "here", options };
 
   // Not here yet: can the provider hand it over (its library, or Fish's public catalogue by id)?

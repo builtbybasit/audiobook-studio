@@ -4,16 +4,28 @@ import * as v from "valibot";
 
 import type {
   RefusedChapter,
+  ScriptFileBook,
   ScriptFileChapter,
+  ScriptFileEffect,
   ScriptFileSpeaker,
   ScriptFileTerm,
   ScriptManifest,
 } from "@/types";
-import { MarkerError, readMarkers, SCRIPT_CHAPTER_FORMAT, SCRIPT_FORMAT } from "@/lib/scriptFile";
+import {
+  BOOK_FILE,
+  EFFECTS_FILE,
+  MarkerError,
+  readMarkers,
+  SCRIPT_CHAPTER_FORMAT,
+  SCRIPT_FORMAT,
+  SCRIPT_FORMAT_VERSION,
+} from "@/lib/scriptFile";
 import { env } from "~/env";
 import { AppError } from "~/lib/errors";
 import {
+  BookFileSchema,
   CastFileSchema,
+  EffectsFileSchema,
   LexiconFileSchema,
   ScriptChapterSchema,
   ScriptManifestSchema,
@@ -41,6 +53,10 @@ export interface ReadFile {
   refused: RefusedChapter[];
   cast: ScriptFileSpeaker[];
   lexicon: ScriptFileTerm[];
+  /** `effects.json`; empty for a lone chapter */
+  effects: ScriptFileEffect[];
+  /** `book.json`, when the file has one */
+  book?: ScriptFileBook;
   ignored: string[];
   /** Every file under `voices/`, by path relative to the manifest: size, and maybe bytes. */
   voices: Map<string, FolderEntry>;
@@ -58,6 +74,12 @@ export type RecordingReads = "head" | { whole(path: string): boolean };
 export const SNIFF_BYTES = 4096;
 
 const refuse = (message: string, detail?: string): AppError => new AppError(400, message, detail);
+
+/** Older files are refused whole rather than read: the format moved on with no way back. */
+function refuseOlder(json: Record<string, unknown>): void {
+  if (typeof json.version === "number" && json.version < SCRIPT_FORMAT_VERSION)
+    throw refuse("This script file is from an older version of Audiobook Studio; export it again");
+}
 
 /** A zip starts with a local file header, `PK\x03\x04` — or `PK\x05\x06` when it is empty. */
 const isZip = (b: Uint8Array): boolean => b.length >= 4 && b[0] === 0x50 && b[1] === 0x4b;
@@ -146,6 +168,7 @@ function readZip(
       "That zip is not a script file",
       `${manifestName} does not say it is one (format "${SCRIPT_FORMAT}").`,
     );
+  refuseOlder(manifestJson);
   const manifest = v.safeParse(ScriptManifestSchema, manifestJson);
   if (!manifest.success)
     throw refuse("That script file's manifest could not be read", issuesOf(manifest.issues));
@@ -156,6 +179,7 @@ function readZip(
     refused: [],
     cast: [],
     lexicon: [],
+    effects: [],
     ignored: [],
     voices: new Map(),
     root,
@@ -185,6 +209,14 @@ function readZip(
     }
     if (name === lexiconName && bytes) {
       read.lexicon = parseWhole(LexiconFileSchema, bytes, "lexicon.json");
+      continue;
+    }
+    if (name === `${root}${EFFECTS_FILE}` && bytes) {
+      read.effects = parseWhole(EffectsFileSchema, bytes, EFFECTS_FILE);
+      continue;
+    }
+    if (name === `${root}${BOOK_FILE}` && bytes) {
+      read.book = parseWhole(BookFileSchema, bytes, BOOK_FILE);
       continue;
     }
     const rest = name.startsWith(chapterDir) ? name.slice(chapterDir.length) : "";
@@ -231,12 +263,14 @@ function readLoneChapter(upload: ScriptUpload): ReadFile {
       "That file is not a script file",
       "Import a .script.zip exported from the book menu, or one chapter's .json from inside one.",
     );
+  refuseOlder(json as Record<string, unknown>);
   const chapter = parseChapter(upload.name, upload.bytes);
   const read: ReadFile = {
     chapters: [],
     refused: [],
     cast: [],
     lexicon: [],
+    effects: [],
     ignored: [],
     voices: new Map(),
     root: "",
@@ -269,7 +303,7 @@ function parseChapter(file: string, bytes: Uint8Array): ScriptFileChapter | Refu
   return parsed.output;
 }
 
-/** `cast.json` or `lexicon.json`: read whole, or the import is refused saying which. */
+/** `cast.json`, `lexicon.json`, `effects.json` or `book.json`: read whole, or the import is refused saying which. */
 function parseWhole<T>(schema: v.GenericSchema<unknown, T>, bytes: Uint8Array, name: string): T {
   const json = parseJsonOr(bytes);
   if (json === undefined) throw refuse(`That script file's ${name} is not valid JSON`);

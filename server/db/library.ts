@@ -256,6 +256,16 @@ export function locateChapter(
     .get();
 }
 
+/** A chapter's own recap; "" when it has none. */
+export function chapterRecap(db: Db | Tx, bookId: string, chapterId: number): string {
+  const row = db
+    .select({ recap: chapters.recap })
+    .from(chapters)
+    .where(chapterAt(bookId, chapterId))
+    .get();
+  return row?.recap ?? "";
+}
+
 /** Keep where a chapter's script leaves off, for the chapter after it. */
 export function setChapterRecap(
   db: Db | Tx,

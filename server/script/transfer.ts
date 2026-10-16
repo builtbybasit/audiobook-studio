@@ -5,12 +5,16 @@ import { existsSync } from "node:fs";
 import JSZip from "jszip";
 
 import type {
+  Book,
   Character,
+  Effect,
   Endpoint,
   KeptSample,
   LexEntry,
   ScriptExportSamples,
+  ScriptFileBook,
   ScriptFileChapter,
+  ScriptFileEffect,
   ScriptFileSpeaker,
   ScriptFileTerm,
   ScriptFileVoice,
@@ -19,7 +23,9 @@ import type {
 } from "@/types";
 import { wordsOf } from "@/lib/gaps";
 import {
+  BOOK_FILE,
   chapterFileName,
+  EFFECTS_FILE,
   SCRIPT_CHAPTER_FORMAT,
   SCRIPT_FORMAT,
   SCRIPT_FORMAT_VERSION,
@@ -27,9 +33,10 @@ import {
 } from "@/lib/scriptFile";
 import { readCast, readLexicon } from "~/db/cast";
 import type { Db } from "~/db/client";
+import { listEffects } from "~/db/effects";
 import { readEndpoints } from "~/db/endpoints";
 import { readCarried } from "~/db/voiceSamples";
-import { getBook, getChapterBody, listChapters } from "~/db/library";
+import { chapterRecap, getBook, getChapterBody, listChapters } from "~/db/library";
 import { readScript } from "~/db/script";
 import { plainText } from "~/epub/markdown";
 import { notFound } from "~/lib/errors";
@@ -52,7 +59,10 @@ export function sourceHash(body: string): { hash: string; words: number } {
  * How another install can recognise a voice: provider host, voice id and label. Not the
  * `VoiceRef`, whose endpoint id is local to this database.
  */
-function voiceHint(ref: string | null, endpoints: readonly Endpoint[]): VoiceHint | undefined {
+export function voiceHint(
+  ref: string | null | undefined,
+  endpoints: readonly Endpoint[],
+): VoiceHint | undefined {
   if (!ref) return undefined;
   const slash = ref.indexOf("/");
   if (slash < 0) return undefined;
@@ -169,7 +179,14 @@ function folderOf(speaker: string, taken: Set<string>): string {
   return `voices/${slug}/`;
 }
 
-function speakerOf(c: Character, endpoints: readonly Endpoint[]): ScriptFileSpeaker {
+/** Effect ids as the file names them: by name, `"none"` as itself; a dead id is dropped. */
+type EffectNames = (id: string) => string | undefined;
+
+function speakerOf(
+  c: Character,
+  endpoints: readonly Endpoint[],
+  effectName: EffectNames,
+): ScriptFileSpeaker {
   const out: ScriptFileSpeaker = {
     name: c.name,
     aliases: c.aliases,
@@ -182,6 +199,29 @@ function speakerOf(c: Character, endpoints: readonly Endpoint[]): ScriptFileSpea
   if (c.personaOf) out.personaOf = c.personaOf;
   const voice = voiceHint(c.voice, endpoints);
   if (voice) out.voice = voice;
+  const effect = c.effect && effectName(c.effect);
+  if (effect) out.effect = effect;
+  const thoughts = c.thoughts && effectName(c.thoughts);
+  if (thoughts) out.thoughts = thoughts;
+  return out;
+}
+
+/** The settings the book has of its own; one following the library's default is left out. */
+function bookOf(book: Book, endpoints: readonly Endpoint[], effectName: EffectNames) {
+  const out: ScriptFileBook = {};
+  if (book.pacing) out.pacing = book.pacing;
+  if (book.prompt) out.prompt = book.prompt;
+  if (book.readNotes != null) out.readNotes = book.readNotes;
+  const thoughts = book.thoughts && effectName(book.thoughts);
+  if (thoughts) out.thoughts = thoughts;
+  const cv = book.characterVoice;
+  if (cv) {
+    out.characterVoice = { by: cv.by };
+    for (const slot of ["one", "male", "female", "other"] as const) {
+      const hint = voiceHint(cv[slot], endpoints);
+      if (hint) out.characterVoice[slot] = hint;
+    }
+  }
   return out;
 }
 
@@ -207,6 +247,15 @@ export async function buildScriptExport(
   const book = getBook(db, bookId);
   if (!book) throw notFound("There is no book by that id");
   const endpoints = readEndpoints(db);
+  const library = new Map(listEffects(db).map((e) => [e.id, e]));
+  // every effect the file names, so `effects.json` defines exactly those
+  const used = new Map<string, Effect>();
+  const effectName: EffectNames = (id) => {
+    if (id === "none") return id;
+    const effect = library.get(id);
+    if (effect) used.set(id, effect);
+    return effect?.name;
+  };
 
   const zip = new JSZip();
   const manifest: ScriptManifest = {
@@ -228,8 +277,10 @@ export async function buildScriptExport(
       title: chapter.title,
       sourceHash: hash,
       words,
-      lines: segments.map(toFileLine),
+      lines: segments.map((s) => toFileLine(s, effectName)),
     };
+    const recap = chapterRecap(db, bookId, chapter.id);
+    if (recap) doc.recap = recap;
     zip.file(file, json(doc));
     manifest.chapters.push({ file, title: chapter.title, sourceHash: hash, words });
   }
@@ -261,7 +312,7 @@ export async function buildScriptExport(
     "cast.json",
     json(
       readCast(db, bookId).map((c) => {
-        const speaker = speakerOf(c, endpoints);
+        const speaker = speakerOf(c, endpoints, effectName);
         const folder = folders.get(c.name);
         if (folder) speaker.samples = folder;
         return speaker;
@@ -269,6 +320,18 @@ export async function buildScriptExport(
     ),
   );
   zip.file("lexicon.json", json(readLexicon(db, bookId).map(termOf)));
+  zip.file(BOOK_FILE, json(bookOf(book, endpoints, effectName)));
+  // last, once lines, speakers and the book have named theirs; in library order
+  zip.file(
+    EFFECTS_FILE,
+    json(
+      [...library.values()]
+        .filter((e) => used.has(e.id))
+        .map(({ name, chain, useWhen }): ScriptFileEffect =>
+          useWhen ? { name, chain, useWhen } : { name, chain },
+        ),
+    ),
+  );
 
   const buffer = await zip.generateAsync({ type: "arraybuffer", compression: "DEFLATE" });
   return { name: `${book.title}.script.zip`, bytes: new Uint8Array(buffer) };

@@ -78,6 +78,8 @@ export interface EditInput {
   ifRevision: number;
   /** what produced this script; an ordinary edit when left out */
   origin?: VersionOrigin;
+  /** the chapter's recap (`{{previous.recap}}` for the next), written with the script */
+  recap?: string;
 }
 
 /**
@@ -145,6 +147,8 @@ export function editScript(
       const { revision } = replaceScript(tx, bookId, chapterId, segments, {
         ifRevision: input.ifRevision,
       });
+      if (input.recap !== undefined)
+        library.setChapterRecap(tx, bookId, chapterId, input.recap || null);
       const chapter = library.getChapter(tx, bookId, chapterId);
       const status = chapter?.scripting;
       if (status !== "done" && status !== "fallback")

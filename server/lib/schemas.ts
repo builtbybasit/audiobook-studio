@@ -11,7 +11,9 @@ import type {
   Profile,
   ProfilePrompt,
   PromptTemplate,
+  ScriptFileBook,
   ScriptFileChapter,
+  ScriptFileEffect,
   ScriptFileSpeaker,
   ScriptFileTerm,
   ScriptManifest,
@@ -247,9 +249,19 @@ const Hash = v.pipe(
 );
 const WordCount = v.pipe(v.number(), v.integer(), v.minValue(0));
 
+/** An effect as a script file names it; matched by name on import. */
+const EffectName = v.pipe(v.string(), v.trim(), v.nonEmpty("must not be empty"), v.maxLength(100));
+
+const VoiceHintSchema = v.looseObject({
+  endpoint: v.string(),
+  provider: v.string(),
+  voiceId: FileText,
+  voiceLabel: v.string(),
+});
+
 export const ScriptManifestSchema = v.looseObject({
   format: v.literal("audiobook-studio/script"),
-  version: v.literal(1),
+  version: v.literal(2),
   title: v.string(),
   author: v.string(),
   chapters: v.array(
@@ -259,7 +271,7 @@ export const ScriptManifestSchema = v.looseObject({
 
 export const ScriptChapterSchema = v.looseObject({
   format: v.literal("audiobook-studio/script-chapter"),
-  version: v.literal(1),
+  version: v.literal(2),
   title: v.string(),
   sourceHash: Hash,
   words: WordCount,
@@ -275,8 +287,10 @@ export const ScriptChapterSchema = v.looseObject({
       fallback: v.optional(v.boolean()),
       fallbackCount: v.optional(v.number()),
       fallbackMismatch: v.optional(v.string()),
+      effects: v.optional(v.array(EffectName)),
     }),
   ),
+  recap: v.optional(v.string()),
 }) satisfies v.GenericSchema<unknown, ScriptFileChapter>;
 
 export const CastFileSchema = v.array(
@@ -289,16 +303,19 @@ export const CastFileSchema = v.array(
     color: v.optional(v.string()),
     major: v.optional(v.boolean()),
     personaOf: v.optional(v.pipe(v.string(), v.trim())),
-    voice: v.optional(
-      v.looseObject({
-        endpoint: v.string(),
-        provider: v.string(),
-        voiceId: FileText,
-        voiceLabel: v.string(),
-      }),
-    ),
+    voice: v.optional(VoiceHintSchema),
+    effect: v.optional(EffectName),
+    thoughts: v.optional(EffectName),
   }),
 ) satisfies v.GenericSchema<unknown, ScriptFileSpeaker[]>;
+
+export const EffectsFileSchema = v.array(
+  v.looseObject({
+    name: EffectName,
+    chain: ChainSchema,
+    useWhen: v.optional(v.pipe(v.string(), v.trim(), v.maxLength(300))),
+  }),
+) satisfies v.GenericSchema<unknown, ScriptFileEffect[]>;
 
 export const LexiconFileSchema = v.array(
   v.looseObject({
@@ -505,6 +522,32 @@ export const BookPromptSchema = v.object({
   replace: v.boolean(),
   ...PromptTemplateSchema.entries,
 }) satisfies v.GenericSchema<unknown, BookPrompt>;
+
+/** `book.json` of a script file: the book's own settings, voices as hints, effects by name. */
+const FileSeconds = v.pipe(v.number(), v.minValue(0), v.maxValue(60));
+
+export const BookFileSchema = v.looseObject({
+  pacing: v.optional(
+    v.object({
+      line: FileSeconds,
+      turn: FileSeconds,
+      inlineShort: FileSeconds,
+      inlineLong: FileSeconds,
+    }),
+  ),
+  prompt: v.optional(BookPromptSchema),
+  readNotes: v.optional(v.boolean()),
+  thoughts: v.optional(EffectName),
+  characterVoice: v.optional(
+    v.object({
+      by: v.picklist(["one", "gender"]),
+      one: v.optional(VoiceHintSchema),
+      male: v.optional(VoiceHintSchema),
+      female: v.optional(VoiceHintSchema),
+      other: v.optional(VoiceHintSchema),
+    }),
+  ),
+}) satisfies v.GenericSchema<unknown, ScriptFileBook>;
 
 /** Which profile scripting runs go to; see `~/db/settings`. Other fields are dropped. */
 export const ScriptSettingsSchema = v.object({

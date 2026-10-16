@@ -50,7 +50,14 @@ export interface ChapterHistory {
 
 // ---------- comparison ----------
 
-export type ChangeField = "text" | "speaker" | "direction" | "type" | "expressions" | "pause";
+export type ChangeField =
+  | "text"
+  | "speaker"
+  | "direction"
+  | "type"
+  | "expressions"
+  | "pause"
+  | "effects";
 export type ChangeKind = "changed" | "added" | "removed" | "split" | "joined";
 /** How the panel groups changes for its filters: the fields, plus everything structural. */
 export type ChangeGroup = ChangeField | "structure";
@@ -95,6 +102,7 @@ export interface ComparisonCounts {
   type: number;
   expressions: number;
   pause: number;
+  effects: number;
   added: number;
   removed: number;
   split: number;

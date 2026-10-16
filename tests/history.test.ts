@@ -171,7 +171,7 @@ describe("comparing two scripts", () => {
     expect(c.changes[0].fields[0].detail).toContain("spaced differently");
   });
 
-  test("speaker, direction, type, expressions and pauses are each their own change", () => {
+  test("speaker, direction, type, expressions, pauses and line effects are each their own change", () => {
     const from = [
       seg(1),
       seg(2, { direction: "wary" }),
@@ -182,8 +182,19 @@ describe("comparing two scripts", () => {
       }),
       seg(4, { pause: 1.5 }),
       seg(5, { type: "thought" }),
+      seg(6, { effects: ["phone", "mask"] }),
+      seg(7, { effects: ["phone"] }),
     ];
-    const to = [seg(1, { speaker: "Elder Mo" }), seg(2, { direction: "" }), seg(3), seg(4), seg(5)];
+    const to = [
+      seg(1, { speaker: "Elder Mo" }),
+      seg(2, { direction: "" }),
+      seg(3),
+      seg(4),
+      seg(5),
+      // the same effects in another order run the same
+      seg(6, { effects: ["mask", "phone"] }),
+      seg(7),
+    ];
     const c = compareScripts(from, to);
     expect(c.counts).toMatchObject({
       speaker: 1,
@@ -191,9 +202,12 @@ describe("comparing two scripts", () => {
       expressions: 1,
       pause: 1,
       type: 1,
+      effects: 1,
       added: 0,
       removed: 0,
     });
+    // a version keeps them, so a restore brings them back
+    expect(scriptOnly(from[5]).effects).toEqual(["phone", "mask"]);
     const pause = c.changes.find((x) => x.groups.includes("pause"))!.fields[0];
     expect([pause.from, pause.to]).toEqual(["1.5s", "the book’s pause"]);
   });
@@ -364,6 +378,7 @@ describe("importing a script file", () => {
       fileTitle: title,
       file: `chapters/${chId}.json`,
       segments: lines,
+      pairedBy: "source",
     };
   }
   function readIn(chapters: ImportChapter[], extra: Partial<ScriptImportPlan> = {}) {
@@ -377,6 +392,7 @@ describe("importing a script file", () => {
       cast: { add: [], differ: [], aliases: [] },
       lexicon: { add: [], differ: [] },
       voices: [],
+      effects: { known: [], add: [], missing: [] },
       ...extra,
     };
   }
@@ -712,12 +728,22 @@ describe("voice samples a script file carries", () => {
       title: "The Cliche",
       author: "",
       name: "The Cliche.script.zip",
-      chapters: [{ chapterId: 1, title, fileTitle: title, file: "c/1.json", segments: chapter }],
+      chapters: [
+        {
+          chapterId: 1,
+          title,
+          fileTitle: title,
+          file: "c/1.json",
+          segments: chapter,
+          pairedBy: "source",
+        },
+      ],
       refused: [],
       ignored: [],
       cast: { add: [], differ: [], aliases: [] },
       lexicon: { add: [], differ: [] },
       voices: voices(speaker),
+      effects: { known: [], add: [], missing: [] },
     };
     transferStore._hold("cliche", new File(["zip"], "The Cliche.script.zip"));
     return speaker;

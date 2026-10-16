@@ -28,6 +28,8 @@ const Edit = v.object({
   segments: v.array(SegmentSchema),
   ifRevision: v.pipe(v.number(), v.integer(), v.minValue(0)),
   origin: v.optional(VersionOriginSchema),
+  /** the chapter's recap, written with the script (an import carries one) */
+  recap: v.optional(v.string()),
 });
 const Checkpoint = v.object({
   name: v.pipe(v.string(), v.trim(), v.nonEmpty("must not be empty")),

@@ -8,7 +8,12 @@ import { isSiteText } from "@/lib/siteText";
 
 export const SCRIPT_FORMAT = "audiobook-studio/script";
 export const SCRIPT_CHAPTER_FORMAT = "audiobook-studio/script-chapter";
-export const SCRIPT_FORMAT_VERSION = 1;
+export const SCRIPT_FORMAT_VERSION = 2;
+/** Beside `manifest.json`: the effects the file names, and the book's own settings. */
+export const EFFECTS_FILE = "effects.json";
+export const BOOK_FILE = "book.json";
+/** A plan's stand-in id for a file effect the library lacks, until the apply step creates it. */
+export const NEW_EFFECT = "new:";
 
 export interface Mark {
   id: string;
@@ -127,8 +132,11 @@ export function readMarkers(marked: string): { text: string; marks: Mark[] } {
   return { text, marks };
 }
 
-/** Nothing local to this install. */
-export function toFileLine(s: Segment): ScriptFileLine {
+/** Nothing local to this install: effects go by name, and one `effectName` can't name is left out. */
+export function toFileLine(
+  s: Segment,
+  effectName: (id: string) => string | undefined = (id) => id,
+): ScriptFileLine {
   const line: ScriptFileLine = {
     speaker: s.speaker,
     type: s.type,
@@ -143,12 +151,15 @@ export function toFileLine(s: Segment): ScriptFileLine {
     if (s.fallbackCount != null) line.fallbackCount = s.fallbackCount;
     if (s.fallbackMismatch != null) line.fallbackMismatch = s.fallbackMismatch;
   }
+  const effects = (s.effects ?? []).flatMap((id) => effectName(id) ?? []);
+  if (effects.length) line.effects = effects;
   return line;
 }
 
 /**
  * A file line as a segment, with no audio. A tag the endpoint does not offer is kept but needs
- * review. Site text and notes go to the Narrator whoever the file names. Throws `MarkerError`.
+ * review. Site text and notes go to the Narrator whoever the file names. `effects` keep the file's
+ * names; the caller swaps in ids. Throws `MarkerError`.
  */
 export function fromFileLine(
   line: ScriptFileLine,
@@ -209,6 +220,7 @@ export function fromFileLine(
     s.fallbackCount = line.fallbackCount;
     s.fallbackMismatch = line.fallbackMismatch;
   }
+  if (line.effects?.length) s.effects = [...line.effects];
   return s;
 }
 

@@ -8,7 +8,9 @@ import JSZip from "jszip";
 
 import type {
   Book,
+  ChapterScript,
   Character,
+  Effect,
   Endpoint,
   ScriptFileChapter,
   ScriptFileSpeaker,
@@ -17,13 +19,16 @@ import type {
   ScriptFileVoice,
   ScriptManifest,
 } from "@/types";
+import { previousRecap } from "~/db/library";
 import { clonedVoices } from "~/db/schema";
+import { NEW_EFFECT } from "@/lib/scriptFile";
+import { planScriptImport } from "~/script/importPlan";
 import { readCarried } from "~/db/voiceSamples";
 import { sourceHash } from "~/script/transfer";
 import { keepSampleFiles } from "~/voices/ops";
 import { voiceFiles } from "~/voices/files";
 import { epubFile, story } from "../support/epub";
-import { jsonBody, testApi } from "../support/server";
+import { jsonBody, speechEndpoint, testApi, voicedBook } from "../support/server";
 
 describe("sourceHash", () => {
   const body = "The *ledger* lay open. “We are short again,” said Mara.";
@@ -114,9 +119,11 @@ test("the zip holds a manifest, the cast with voice hints, the dictionary and on
     ["chapters/0001-one.json", "One"],
   ]);
   expect(Object.keys(zip.files).sort()).toEqual([
+    "book.json",
     "cast.json",
     "chapters/",
     "chapters/0001-one.json",
+    "effects.json",
     "lexicon.json",
     "manifest.json",
   ]);
@@ -269,7 +276,7 @@ describe("voice samples", () => {
       "manifest.json",
       JSON.stringify({
         format: "audiobook-studio/script",
-        version: 1,
+        version: 2,
         title: "Ledger",
         author: "",
         chapters: [],
@@ -355,4 +362,99 @@ describe("voice samples", () => {
     expect(Object.keys(zip.files).some((f) => f.startsWith("voices/"))).toBe(false);
     expect(await summary()).toEqual({ voices: [] });
   });
+});
+
+test("a round trip carries line effects, speakers' effects, recaps and the book's own settings", async () => {
+  const api = testApi();
+  const paragraphs = ["“We are short again,” said Mara.", ...story(2)];
+  const id = await voicedBook(api, {
+    endpoints: [speechEndpoint()],
+    paragraphs,
+    voiceOf: "studio/ash",
+    chapters: ["One", "Two"],
+  });
+  const phone = (
+    await api.request<{ effect: Effect }>(
+      "/api/effects",
+      jsonBody({
+        name: "Phone",
+        chain: [{ plugin: "HighpassFilter", params: { cutoff_frequency_hz: 300 }, on: true }],
+      }),
+    )
+  ).body.effect;
+  const put = (book: string, body: unknown) =>
+    api.request(`/api/books/${book}/chapters/1/script`, { ...jsonBody(body), method: "PUT" });
+  const script = (await api.request<ChapterScript>(`/api/books/${id}/chapters/1/script`)).body;
+  const [first, ...rest] = script.segments;
+  await put(id, {
+    segments: [{ ...first, effects: [phone.id] }, ...rest],
+    ifRevision: script.revision,
+    recap: "Mara counts the shortfall.",
+  });
+  const cast = (await api.request<{ characters: Character[] }>(`/api/books/${id}/cast`)).body;
+  const mara = cast.characters.find((c) => c.name !== "Narrator")!;
+  await api.request(`/api/books/${id}/characters/${encodeURIComponent(mara.name)}`, {
+    ...jsonBody({ ...mara, effect: phone.id, thoughts: "none" }),
+    method: "PUT",
+  });
+  const pacing = { line: 0.4, turn: 0.9, inlineShort: 0.3, inlineLong: 1 };
+  await api.request(`/api/books/${id}`, {
+    ...jsonBody({
+      pacing,
+      readNotes: true,
+      thoughts: "inner-voice",
+      characterVoice: { by: "one", one: "studio/ash", male: null, female: null, other: null },
+    }),
+    method: "PATCH",
+  });
+  const bytes = new Uint8Array(
+    await (await api.fetch(`/api/books/${id}/script-export`)).arrayBuffer(),
+  );
+
+  // the install it lands on has no Phone, and a fresh copy of the book
+  await api.request(`/api/effects/${phone.id}`, { method: "DELETE" });
+  const copy = (
+    await api.import<{ book: Book }>(
+      await epubFile({ chapters: ["One", "Two"].map((title) => ({ title, paragraphs })) }),
+    )
+  ).body.book.id;
+  await api.request(`/api/books/${copy}/confirm`, { method: "POST" });
+  const plan = await planScriptImport(api.db, copy, { name: "Ledger.script.zip", bytes });
+
+  expect(plan.effects.add.map((e) => e.name)).toEqual(["Phone"]);
+  expect(plan.effects.known).toEqual([{ name: "Inner voice", id: "inner-voice", sameChain: true }]);
+  expect(plan.effects.missing).toEqual([]);
+  const [line] = plan.chapters[0].segments;
+  expect(line.effects).toEqual([NEW_EFFECT + "Phone"]);
+  expect(plan.cast.add.find((s) => s.name === mara.name)).toMatchObject({
+    effect: "Phone",
+    thoughts: "none",
+  });
+  expect(plan.book?.file).toEqual({
+    pacing,
+    readNotes: true,
+    thoughts: "Inner voice",
+    characterVoice: { by: "one", one: "studio/ash", male: null, female: null, other: null },
+  });
+  expect(new Set(plan.book?.differ)).toEqual(
+    new Set(["pacing", "readNotes", "thoughts", "characterVoice"]),
+  );
+  // read back into the book it came from, its settings are no choice to offer
+  expect(
+    (await planScriptImport(api.db, id, { name: "Ledger.script.zip", bytes })).book,
+  ).toBeUndefined();
+
+  // the recap lands with the script, where the next chapter's run reads it
+  const recap = plan.chapters[0].recap;
+  expect(recap).toBe("Mara counts the shortfall.");
+  // and the copy's own, which an Undo writes back
+  expect(plan.chapters[0].recapBefore).toBe("");
+  const theirs = (await api.request<ChapterScript>(`/api/books/${copy}/chapters/1/script`)).body;
+  const res = await put(copy, {
+    segments: plan.chapters[0].segments.map(({ effects: _new, ...s }) => s),
+    ifRevision: theirs.revision,
+    recap,
+  });
+  expect(res.status).toBe(200);
+  expect(previousRecap(api.db, copy, 2)).toBe(recap!);
 });

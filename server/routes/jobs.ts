@@ -7,11 +7,15 @@ import type { Db } from "~/db/client";
 import * as queue from "~/db/jobs";
 import type { Runner } from "~/jobs/runner";
 import { conflict, notFound } from "~/lib/errors";
-import { IdParam } from "~/lib/http";
+import { IdParam, IntParam } from "~/lib/http";
 import { validate } from "~/lib/validate";
 
 const JobId = v.object({ id: IdParam });
-const ListQuery = v.object({ bookId: v.optional(v.string()) });
+const ListQuery = v.object({
+  bookId: v.optional(v.string()),
+  /** finished jobs sent, latest first; capped well under SQLite's bound-variable limit */
+  history: v.optional(v.pipe(IntParam, v.minValue(0), v.maxValue(10_000))),
+});
 const JobIds = v.object({
   ids: v.pipe(v.array(v.pipe(v.number(), v.integer(), v.minValue(1))), v.minLength(1)),
 });

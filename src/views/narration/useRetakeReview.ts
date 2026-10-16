@@ -1,5 +1,6 @@
 // The book's retakes waiting for a verdict, as one queue the ledger walks through. The next one
 // can be in another chapter, so moving on goes through the URL (`?ch=`, `?filter=review`, `?seg=`).
+import { useChapterScripts } from "@/queries";
 import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptsStore } from "@/stores/scripts";
@@ -22,6 +23,16 @@ export function useRetakeReview(props: ChapterProps, segments: Ref<Segment[]>) {
 
   /** this chapter's retakes waiting for a verdict */
   const reviewable = computed(() => segments.value.filter(waiting));
+  // "retake N of M" and the next one are the whole book's, so while there is one here to judge,
+  // every chapter with audio (none other can hold a retake) is read
+  useChapterScripts(props.bookId, () =>
+    reviewable.value.length
+      ? libraryStore
+          .chaptersOf(props.bookId)
+          .filter((c) => c.duration > 0)
+          .map((c) => c.id)
+      : [],
+  );
   /** every chapter's, in reading order */
   const bookReviewable = computed(() =>
     libraryStore.chaptersOf(props.bookId).flatMap((chapter) =>

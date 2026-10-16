@@ -172,6 +172,26 @@ export function checkpoint(
   return version;
 }
 
+/** Keep `segments` as a version beside the script, which stays as it is; returns its id. */
+export function keepVersion(
+  tx: Tx,
+  bookId: string,
+  chapterId: number,
+  origin: VersionOrigin,
+  segments: Segment[],
+  now = Date.now(),
+): number {
+  const h = readStored(tx, bookId, chapterId);
+  insertVersion(tx, bookId, chapterId, {
+    id: h.nextId,
+    at: now,
+    origin,
+    segments: snapshotScript(segments),
+  });
+  writeHead(tx, bookId, chapterId, h.head, h.nextId + 1, h.sessionVersion);
+  return h.nextId;
+}
+
 /**
  * Version numbers are never reused. Dropping the checkpoint the head names reverts the head to
  * `was`, or (checkpoint over checkpoint, which keeps no `was`) the newest remaining checkpoint,

@@ -320,8 +320,8 @@ export function bookRoutes(
   );
 
   /** Cancel an import: a new book goes entirely; a new volume comes off its book. */
-  app.post("/:id/discard", validate("param", BookParam), (c) =>
-    c.json(ops.discardImport(db, c.req.valid("param").id)),
+  app.post("/:id/discard", validate("param", BookParam), async (c) =>
+    c.json(await ops.discardImport(db, c.req.valid("param").id, { runner, files, built })),
   );
 
   // ---------- a book's settings, and its volumes ----------

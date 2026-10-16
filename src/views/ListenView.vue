@@ -89,7 +89,7 @@ const total = computed(() => {
   return last ? last.end + last.gap : 0;
 });
 
-const { p, playQueue, seekTo, skip, next, prev, repeatClip, layout, now } = usePlayer();
+const { p, playQueue, cue, skip, next, prev, repeatClip, layout, now } = usePlayer();
 const queueId = computed(() => chapterQueueId(bookId, opened.value));
 const isThis = computed(() => p.id === queueId.value);
 const current = computed(() =>
@@ -104,17 +104,17 @@ const buildQueue = () =>
     href: (id) => `/book/${bookId}/listen?ch=${id}`,
     onChapter: (id) => void router.replace({ query: { ...route.query, ch: String(id) } }),
   });
-/** Toggle this chapter, or start it `at` seconds in. */
+/** Toggle this chapter, or start it `at` seconds in; a scrub in the playing chapter only moves. */
 function playChapter(at?: number) {
-  if (at != null && isThis.value) return seekTo(at);
   const q = buildQueue();
-  if (q) playQueue(q, at);
+  if (!q) return;
+  if (at != null && isThis.value) cue(q, at);
+  else playQueue(q, at);
 }
 function listenFrom(s: Segment, offset: number) {
   const at = segmentStart(bookId, opened.value, s.id);
   if (at == null) return;
   held = { id: s.id, at: offset, until: performance.now() + HOLD_MS };
-  if (isThis.value && p.playing) return seekTo(at + offset);
   const q = buildQueue();
   if (q) playQueue(q, at + offset);
 }

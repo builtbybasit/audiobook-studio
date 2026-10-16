@@ -7,7 +7,7 @@ import { and, eq } from "drizzle-orm";
 import type { Book, Cast, Character, Effect, EffectUses, ImportedBook, Step } from "@/types";
 import { effectContext } from "~/db/effects";
 import { segments } from "~/db/schema";
-import { readScript } from "~/db/script";
+import { readScript, scriptRevision } from "~/db/script";
 import { epubFile, line, story } from "../support/epub";
 import { jsonBody, narratedBook, testApi, type TestApi } from "../support/server";
 
@@ -170,8 +170,28 @@ describe("an effect's use-when and the lines that have it", () => {
         .run();
     give(a.id, ["radio", "phone"]);
     give(b.id, ["phone"]);
+    expect((await api.request<EffectUses>("/api/effects/phone/uses")).body.lines).toBe(2);
+    const copy = readScript(api.db, id, 1);
+    const read = scriptRevision(api.db, id, 1);
 
-    await api.request("/api/effects/phone", { method: "DELETE" });
+    const removed = await api.request<{ lines: unknown }>("/api/effects/phone", {
+      method: "DELETE",
+    });
+    // the chapter moves on, so a copy read before cannot write the id back
+    expect(removed.body.lines).toEqual([
+      { bookId: id, chapterId: 1, ids: [a.id, b.id], revision: read! + 1 },
+    ]);
+    const stale = await api.request(
+      `/api/books/${id}/chapters/1/script`,
+      put({ segments: copy, ifRevision: read }),
+    );
+    expect(stale.status).toBe(409);
+    // nor can that copy sent at the new revision: the server drops ids no effect has
+    const resent = await api.request(
+      `/api/books/${id}/chapters/1/script`,
+      put({ segments: copy, ifRevision: read! + 1 }),
+    );
+    expect(resent.status).toBe(200);
     const [a2, b2] = readScript(api.db, id, 1);
     expect(a2.effects).toEqual(["radio"]);
     expect(b2).not.toHaveProperty("effects");
@@ -185,6 +205,9 @@ describe("an effect's use-when and the lines that have it", () => {
     // a new effect given the old id is not heard on them
     await create(api, "Phone");
     expect(readScript(api.db, id, 1).flatMap((s) => s.effects ?? [])).toEqual(["radio"]);
+    // nor is an id some line still names (an import, a restored version) handed out again
+    give(b.id, ["echo"]);
+    expect((await create(api, "Echo")).body.effect.id).toBe("echo-2");
   });
 });
 
@@ -250,7 +273,7 @@ describe("a book's and a speaker's choices", () => {
     });
 
     const removed = await api.request("/api/effects/echo", { method: "DELETE" });
-    expect(removed).toEqual({ status: 200, body: { removed: "echo" } });
+    expect(removed).toEqual({ status: 200, body: { removed: "echo", lines: [] } });
     expect((await list(api)).map((e) => e.id)).toEqual(["inner-voice", "phone"]);
     // the book and the speaker follow again, the speaker wears nothing, and the library has none
     // rather than an effect nobody picked
@@ -325,6 +348,7 @@ describe("an effect's uses", () => {
     expect(await uses(api, "echo")).toEqual({
       status: 200,
       body: {
+        lines: 0,
         library: true,
         books: [{ id: zebra, title: "Zebra Days" }],
         speakers: [
@@ -336,6 +360,7 @@ describe("an effect's uses", () => {
     });
     // the Inner voice is no longer anyone's
     expect((await uses(api, "inner-voice")).body).toEqual({
+      lines: 0,
       library: false,
       books: [],
       speakers: [],

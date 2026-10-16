@@ -6,10 +6,23 @@ import type { AudiobookFiles } from "~/exports/files";
 import { conflict, notFound } from "~/lib/errors";
 import { requireBook } from "~/library/ops";
 import { inBackground } from "~/lib/background";
+import { withChanges } from "~/jobs/export";
 
-export function bookExports(db: Db, bookId: string): ExportItem[] {
+/** As the page reads them: what moved since each was built, and where its files are. */
+function listed(db: Db, bookId: string, items: ExportItem[], files: AudiobookFiles): ExportItem[] {
+  return withChanges(db, bookId, items).map((e) => ({
+    ...e,
+    files: e.files.map((f, position) => {
+      const token = exports.exportFileToken(db, e.id, position);
+      const path = token ? files.path(bookId, token) : null;
+      return path ? { ...f, path } : f;
+    }),
+  }));
+}
+
+export function bookExports(db: Db, bookId: string, files: AudiobookFiles): ExportItem[] {
   requireBook(db, bookId);
-  return exports.listExports(db, bookId);
+  return listed(db, bookId, exports.listExports(db, bookId), files);
 }
 
 /** Another book's export is a 404. */

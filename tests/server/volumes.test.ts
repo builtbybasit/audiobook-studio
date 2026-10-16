@@ -7,6 +7,7 @@ import { join } from "node:path";
 
 import type { Book } from "@/types";
 import * as queue from "~/db/jobs";
+import * as library from "~/db/library";
 import type { Runner } from "~/jobs/runner";
 import { AppError } from "~/lib/errors";
 import * as ops from "~/library/ops";
@@ -68,18 +69,24 @@ describe("removing a volume with work queued on the book", () => {
     expect(queue.activeJob(api.db, "narration", id, 7)?.id).toBe(b.id);
   });
 
-  test("work on the chapters that go is cancelled first, and work on the rest is not", async () => {
+  test("work on the chapters that go is cancelled and waited out first, and work on the rest is not", async () => {
     const { api, id } = await twoVolumes();
     const going = queue.enqueueJob(api.db, narrate(id, 2)).job;
     const staying = queue.enqueueJob(api.db, narrate(id, 5)).job;
     const cancelled: number[] = [];
+    // how many chapters the book still had when each job was waited out
+    const awaited: [number, number][] = [];
     const runner = {
       cancel: (job: number) => (cancelled.push(job), "queued"),
+      finished: async (job: number) => {
+        awaited.push([job, library.listChapters(api.db, id).length]);
+      },
     } as unknown as Runner;
 
     await ops.removeVolume(api.db, id, 1, { runner });
 
     expect(cancelled).toEqual([going.id]);
+    expect(awaited).toEqual([[going.id, 6]]);
     expect(queue.getJob(api.db, staying.id)?.status).toBe("queued");
   });
 

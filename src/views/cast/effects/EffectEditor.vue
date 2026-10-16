@@ -14,6 +14,7 @@ import {
 } from "@lucide/vue";
 
 import Waveform from "@/components/Waveform.vue";
+import { plural } from "@/lib/contents";
 import { useEffectsStore } from "@/stores/effects";
 import type { EffectUses, Step } from "@/types";
 import { UiDialog, UiHint } from "@/ui";
@@ -81,10 +82,13 @@ const menu = ref(false);
 const confirming = ref(false);
 /** everyone who loses it, read afresh when Delete is asked for; null when the server couldn't say */
 const losers = ref<string[] | null>(null);
+/** script lines that carry it, in every book */
+const carried = ref(0);
 async function askRemove() {
   menu.value = false;
   const read = await effectsStore.usesOf(props.effectId);
   losers.value = read ? placesOf(read, props.bookId) : null;
+  carried.value = read?.lines ?? 0;
   confirming.value = true;
 }
 async function remove() {
@@ -450,7 +454,9 @@ onUnmounted(() => {
       <template v-if="losers === null">Where it is used couldn’t be checked.</template>
       <template v-else-if="losers.length">Used by {{ listed(losers, 6) }}.</template>
       <template v-else>No speaker or book uses it.</template>
-      Script lines that carry it lose it.
+      <template v-if="carried"
+        >{{ plural(carried, "script line") }} {{ carried === 1 ? "loses" : "lose" }} it.</template
+      >
       <UiHint
         label="what deleting takes"
         text="Speakers who used it go back to no effect, and their thoughts to the book’s. A book’s thoughts go back to all books’, and all books’ thoughts to none. Lines the scripting model put it on are heard without it."

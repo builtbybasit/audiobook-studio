@@ -6,6 +6,7 @@ import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 
 import { chapterTimeline } from "@/lib/speech";
+import { fetchScript } from "@/queries/chapterScript";
 import type { Queue } from "@/composables/usePlayer";
 
 /** The player is app-wide, so a queue names its exact chapter: play on ch 7 while ch 6 runs must
@@ -50,10 +51,13 @@ export function chapterQueue(
       label: s.text,
       speaker: s.speaker,
     })),
-    // listening through a book shouldn't stop at a chapter boundary
-    next: () => {
+    // Listening through a book shouldn't stop at a chapter boundary. The next kept chapter with
+    // audio is read if no page has read it yet; one already read keeps any edit in progress.
+    next: async () => {
       const chapters = libraryStore.chaptersOf(bookId);
       for (const c of chapters.slice(chapters.findIndex((x) => x.id === chId) + 1)) {
+        if (c.excluded || !c.duration) continue;
+        if (!scriptsStore.segmentsOf(bookId, c.id).length) await fetchScript(bookId, c.id);
         const q = chapterQueue(bookId, c.id, opts);
         if (!q) continue;
         opts.onChapter?.(c.id);

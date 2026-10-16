@@ -6,7 +6,7 @@ import type { ExistingScope, Job } from "@/types";
 import { plural } from "@/lib/contents";
 import { runnable } from "@/lib/effects";
 import { pacingOrDefault, chapterSeconds } from "@/lib/speech";
-import type { EffectJob, EffectRunner } from "~/audio/effects";
+import { NO_UV, type EffectJob, type EffectRunner } from "~/audio/effects";
 import { fileName, formatOfFile, type AudioFiles } from "~/audio/files";
 import { probeClip } from "~/audio/probe";
 import type { Db } from "~/db/client";
@@ -40,10 +40,8 @@ export function effectsHandler(runner: EffectRunner | undefined, files: AudioFil
         return;
       }
       const renders = todo.filter((c) => c.want != null);
-      if (renders.length && !(await runner?.available()))
-        throw new Error(
-          "Voice effects cannot run on this machine: they run Pedalboard through uv, which was not found",
-        );
+      const why = renders.length ? (runner ? await runner.unavailable() : NO_UV) : null;
+      if (why) throw new Error(`Voice effects cannot run on this machine: ${why}`);
       ctx.note("Re-apply started", "info", { clips: todo.length });
 
       const pacing = pacingOrDefault(book.pacing);

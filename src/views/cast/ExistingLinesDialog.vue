@@ -93,8 +93,8 @@ async function act() {
         <DialogTitle class="font-semibold">{{ ask.title }}</DialogTitle>
         <p class="text-sm text-zinc-600 dark:text-zinc-300">
           {{ plural(ask.lines, "line") }} in {{ plural(ask.chapters.length, "chapter")
-          }}{{ ask.name ? "" : " of this book" }} {{ ask.lines === 1 ? "has" : "have" }} the old
-          {{ old }}.
+          }}{{ ask.names.length ? "" : " of this book" }} {{ ask.lines === 1 ? "has" : "have" }} the
+          old {{ old }}.
         </p>
       </div>
 

@@ -10,6 +10,7 @@ import { numericEntities } from "~/epub/entities";
 import { parseEmphasis, plainText } from "~/epub/markdown";
 import { countWords, sectionParts, sectionText } from "~/epub/text";
 import { buildEpub, epubFile, story } from "../support/epub";
+import { PNG } from "../support/images";
 import { testApi } from "../support/server";
 
 interface ImportResult {
@@ -163,14 +164,23 @@ describe("importing an EPUB", () => {
     expect(body.book.id).toBe("the-villain-pays-in-full");
   });
 
-  test("a second book of the same name gets an id of its own", async () => {
+  test("a second book of the same name gets an id of its own, even read at the same time", async () => {
     const api = testApi();
+    // the cover is written part-way through an import, which is where two can interleave
     const file = () =>
-      epubFile({ title: "Salt", chapters: [{ title: "One", paragraphs: story() }] });
+      epubFile({
+        title: "Salt",
+        cover: { bytes: PNG },
+        chapters: [{ title: "One", paragraphs: story() }],
+      });
     const first = await api.import<ImportResult>(await file());
     const second = await api.import<ImportResult>(await file());
     expect(first.body.book.id).toBe("salt");
     expect(second.body.book.id).toBe("salt-2");
+    const [a, b] = await Promise.all([file(), file()]);
+    const both = await Promise.all([api.import<ImportResult>(a), api.import<ImportResult>(b)]);
+    expect(both.map((r) => r.status)).toEqual([201, 201]);
+    expect(new Set(both.map((r) => r.body.book.id))).toEqual(new Set(["salt-3", "salt-4"]));
   });
 
   test("a file that is not an EPUB is refused, and says what is wrong with it", async () => {

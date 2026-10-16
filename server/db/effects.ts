@@ -1,12 +1,20 @@
 // Voice effects: their reads and writes, and what a line's effects are read from.
 // Effects are named by id from text columns with no foreign key (they also hold "none"), so
 // deleting one resets those names here, in the same transaction.
-import { and, asc, eq, gte, inArray, isNotNull, max, or, sql } from "drizzle-orm";
+import { and, asc, count, eq, gte, inArray, isNotNull, max, or, sql } from "drizzle-orm";
 
-import type { Effect, EffectUses, ExistingChapter, ExistingScope, StaleSound } from "@/types";
+import type {
+  Effect,
+  EffectUses,
+  ExistingChapter,
+  ExistingScope,
+  RevisedLines,
+  StaleSound,
+} from "@/types";
 import { chainsFor, soundOf, type EffectContext } from "@/lib/effects";
 import type { Db, Tx } from "~/db/client";
 import { books, chapters, characters, clips, effects, keptSounds, segments } from "~/db/schema";
+import { bumpRevision } from "~/db/script";
 import { readThoughts, writeThoughts } from "~/db/settings";
 
 /** A fresh library's thought effect, as migrations 0031 and 0036 lay it down. */
@@ -72,6 +80,12 @@ export function createEffect(db: Db, slug: string, body: EffectBody, after?: str
         .from(effects)
         .all()
         .map((r) => r.id),
+      // a deleted effect's id some line still names (an import, a restored version) stays dead
+      ...tx
+        .selectDistinct({ id: sql<string>`je.value` })
+        .from(sql`${segments}, json_each(${segments.effects}) je`)
+        .all()
+        .map((r) => r.id),
     ]);
     let id = slug;
     for (let n = 2; taken.has(id); n++) id = `${slug}-${n}`;
@@ -111,34 +125,64 @@ export function updateEffect(db: Db | Tx, id: string, body: EffectBody): Effect 
   return row && toEffect(row);
 }
 
+/** Lines in one book's chapter, and that chapter's script revision after the change. */
+export interface BookLines extends RevisedLines {
+  bookId: string;
+}
+
+const carries = (id: string) =>
+  sql`EXISTS (SELECT 1 FROM json_each(${segments.effects}) WHERE value = ${id})`;
+
 /**
  * Also clears every choice of it (the library's thought effect goes to "none", not another effect)
- * and strips it from line effects, so a later effect with the same id is not heard on them.
+ * and strips it from line effects. Those chapters' revisions move, so a copy read before cannot
+ * write it back. Returns the lines stripped; undefined when there is no such effect.
  */
-export function deleteEffect(db: Db, id: string): boolean {
+export function deleteEffect(db: Db, id: string): BookLines[] | undefined {
   return db.transaction((tx) => {
     const wasLibrary = readThoughts(tx) === id;
     const gone = tx.delete(effects).where(eq(effects.id, id)).returning({ id: effects.id }).all();
-    if (!gone.length) return false;
+    if (!gone.length) return undefined;
     tx.update(books).set({ thoughts: null }).where(eq(books.thoughts, id)).run();
     tx.update(characters).set({ thoughts: null }).where(eq(characters.thoughts, id)).run();
     tx.update(characters).set({ effect: null }).where(eq(characters.effect, id)).run();
     if (wasLibrary) writeThoughts(tx, "none");
     // none left is null, as an empty list is written
-    tx.update(segments)
+    const stripped = tx
+      .update(segments)
       .set({
         effects: sql`(SELECT CASE WHEN count(*) > 0 THEN json_group_array(value) END
           FROM json_each(${segments.effects}) WHERE value <> ${id})`,
       })
-      .where(sql`EXISTS (SELECT 1 FROM json_each(${segments.effects}) WHERE value = ${id})`)
-      .run();
-    return true;
+      .where(carries(id))
+      .returning({ bookId: segments.bookId, chapterId: segments.chapterId, id: segments.id })
+      .all();
+    const byChapter = new Map<string, BookLines>();
+    for (const r of stripped) {
+      const k = `${r.bookId}:${r.chapterId}`;
+      const at = byChapter.get(k) ?? {
+        bookId: r.bookId,
+        chapterId: r.chapterId,
+        ids: [],
+        revision: 0,
+      };
+      at.ids.push(r.id);
+      byChapter.set(k, at);
+    }
+    for (const at of byChapter.values()) at.revision = bumpRevision(tx, at.bookId, at.chapterId);
+    return [...byChapter.values()];
   });
 }
 
-/** Everywhere an effect is chosen, across every book. */
+/** Everywhere an effect is chosen, across every book, and how many lines carry it. */
 export function effectUses(db: Db | Tx, id: string): EffectUses {
   return {
+    lines:
+      db
+        .select({ n: count() })
+        .from(segments)
+        .where(and(isNotNull(segments.effects), carries(id)))
+        .get()?.n ?? 0,
     library: readThoughts(db) === id,
     books: db
       .select({ id: books.id, title: books.title })
@@ -213,10 +257,18 @@ export interface StaleClip {
 export const cannotRedo = (c: Pick<StaleClip, "raw" | "sound">): boolean =>
   c.raw == null && c.sound != null;
 
+/** A speaker and their personas, whose lines all run through the speaker's effect (`chainsFor`). */
+function wornBy(ctx: EffectContext, speaker: string): string[] {
+  const out = [speaker];
+  for (const [name, c] of ctx.cast) if (c.personaOf === speaker && name !== speaker) out.push(name);
+  return out;
+}
+
 /**
  * Finished current/candidate clips whose sound is stale, in the chapters kept in the book; takes are
  * history and left alone, and so is a clip kept against the sound its line wants now. Effects are
- * worked out once per (thought?, speaker, line effects), not per line, for scale.
+ * worked out once per (thought?, speaker, line effects), not per line, for scale. A speaker's scope
+ * takes in their personas, who wear their effect.
  */
 export function staleClips(db: Db | Tx, bookId: string, scope: ExistingScope = {}): StaleClip[] {
   const ctx = effectContext(db, bookId);
@@ -251,7 +303,7 @@ export function staleClips(db: Db | Tx, bookId: string, scope: ExistingScope = {
         eq(clips.status, "done"),
         isNotNull(clips.url),
         sql`coalesce(${chapters.excluded}, 0) = 0`,
-        scope.speaker != null ? eq(segments.speaker, scope.speaker) : undefined,
+        scope.speaker != null ? inArray(segments.speaker, wornBy(ctx, scope.speaker)) : undefined,
       ),
     )
     .orderBy(asc(clips.chapterId))

@@ -277,6 +277,19 @@ describe("a run that does not answer", () => {
     expect(() => process.kill(cli.childPid(), 0)).toThrow();
   });
 
+  test("a cancel while the run's folder is being made never starts the tool", async () => {
+    const cli = fakeCli("codex", { sleepMs: 10_000, answer: SCRIPT });
+    const stop = new AbortController();
+    const { input: given, sent } = input(target(`codex:${cli.path}`), { signal: stop.signal });
+    const running = provider.script(given).catch((e) => e);
+    // the provider is now awaiting its temp folder
+    const reason = new Error("cancelled by test");
+    stop.abort(reason);
+    expect(await running).toBe(reason);
+    expect(cli.calls()).toHaveLength(0);
+    expect(sent).toHaveLength(0);
+  });
+
   test("a tool that is not there says so, and nothing is reported", async () => {
     const { input: given, sent } = input(target("codex:/nowhere/codex"));
     const error = await provider.script(given).catch((e) => e);

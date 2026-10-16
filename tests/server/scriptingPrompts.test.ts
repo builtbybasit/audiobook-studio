@@ -24,7 +24,7 @@ import { fakeScriptingProvider } from "~/providers/fake";
 import type { ScriptInput, ScriptingProvider } from "~/providers/scripting";
 import { append, scriptReasoning } from "~/usage/ledger";
 import { epubFile, story } from "../support/epub";
-import { jsonBody, testApi, type TestApi } from "../support/server";
+import { gatedProvider, jsonBody, scriptChapters, testApi, type TestApi } from "../support/server";
 import { openaiProfile } from "../support/profiles";
 
 interface Settings {
@@ -681,6 +681,49 @@ describe("a speaker the model names by another of their names", () => {
       await api.request<{ segments: Segment[] }>(`/api/books/${id}/chapters/1/script`)
     ).body;
     expect(segments.map((s) => s.speaker)).toEqual(["Young Soldier", "Young Soldier"]);
+  });
+
+  test("is one speaker when the same answer's notes say so", async () => {
+    const provider: ScriptingProvider = {
+      name: "Aliased (test)",
+      async script(input) {
+        return {
+          lines: [
+            { type: "dialogue", speaker: "Robert", text: input.text.slice(0, 20) },
+            { type: "dialogue", speaker: "Bob", text: input.text.slice(20) },
+          ],
+          cast: [{ name: "Robert", aliases: ["Bob"] }],
+        };
+      },
+    };
+    const api = testApi({ scripting: provider });
+    const id = await shelved(api);
+    await scriptChapters(api, id, [1]);
+    const { characters: cast } = (await api.request<Cast>(`/api/books/${id}/cast`)).body;
+    expect(cast.map((c) => c.name)).not.toContain("Bob");
+    expect(cast.find((c) => c.name === "Robert")?.aliases).toEqual(["Bob"]);
+  });
+
+  test("merged away while a run was out stays merged when it lands", async () => {
+    const gate = gatedProvider([{ type: "dialogue", speaker: "Bob", text: "Rain fell." }]);
+    const api = testApi({ scripting: gate.provider });
+    const id = await shelved(api);
+    for (const name of ["Robert", "Bob"])
+      api.db.insert(characters).values({ bookId: id, name, gender: "m", color: "#333" }).run();
+    await api.request(`/api/books/${id}/chapters/script`, jsonBody({ ids: [1] }));
+    await gate.started;
+    await api.request(
+      `/api/books/${id}/characters/merge`,
+      jsonBody({ merges: [{ from: "Bob", into: "Robert" }] }),
+    );
+    gate.release();
+    await api.runner.idle();
+    const { characters: cast } = (await api.request<Cast>(`/api/books/${id}/cast`)).body;
+    expect(cast.map((c) => c.name)).not.toContain("Bob");
+    const { segments } = (
+      await api.request<{ segments: Segment[] }>(`/api/books/${id}/chapters/1/script`)
+    ).body;
+    expect(segments.map((s) => s.speaker)).toEqual(["Robert"]);
   });
 });
 

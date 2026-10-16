@@ -159,6 +159,8 @@ export const clips = sqliteTable(
       .onDelete("cascade")
       .onUpdate("cascade"),
     index("clips_segment").on(t.bookId, t.chapterId, t.segmentId),
+    /** Covers the per-endpoint counts the Queue polls (`clipsByEndpoint`). */
+    index("clips_endpoint").on(t.role, t.endpoint, t.status),
     /** At most one current and one candidate per line; takes are a list. */
     uniqueIndex("clips_one_per_role")
       .on(t.bookId, t.chapterId, t.segmentId, t.role)

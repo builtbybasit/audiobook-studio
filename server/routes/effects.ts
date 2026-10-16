@@ -5,7 +5,7 @@ import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
 
 import type { Effect, EffectUses, Step, ThoughtChoice } from "@/types";
-import type { EffectRunner } from "~/audio/effects";
+import { NO_UV, type EffectRunner } from "~/audio/effects";
 import { formatOfFile, type AudioFiles } from "~/audio/files";
 import type { Db } from "~/db/client";
 import * as ops from "~/effects/ops";
@@ -27,13 +27,11 @@ const Parse = v.object({ code: v.pipe(v.string(), v.maxLength(64 * 1024)) });
 export function effectRoutes(db: Db, files: AudioFiles, effects?: EffectRunner): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
 
-  /** The runner, or a 503 that says what is missing. */
+  /** The runner, or a 503 that says what is in the way. */
   const runner = async (): Promise<EffectRunner> => {
-    if (effects && (await effects.available())) return effects;
-    fail(
-      503,
-      "Voice effects cannot run here: they need uv (docs.astral.sh/uv) — install it and restart the server",
-    );
+    const why = effects ? await effects.unavailable() : NO_UV;
+    if (!why) return effects!;
+    fail(503, `Voice effects cannot run here: ${why}`);
   };
 
   /** A clip through unsaved `chains`, as WAV; nothing is kept. `AudioFiles.find` limits the url. */
@@ -88,8 +86,7 @@ export function effectRoutes(db: Db, files: AudioFiles, effects?: EffectRunner):
   /** Every choice of it goes too. */
   app.delete("/:id", validate("param", EffectParam), (c) => {
     const { id } = c.req.valid("param");
-    ops.deleteEffect(db, id);
-    return c.json({ removed: id });
+    return c.json({ removed: id, lines: ops.deleteEffect(db, id) });
   });
 
   return app;

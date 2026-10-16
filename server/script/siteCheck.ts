@@ -6,7 +6,7 @@ import type { Book, Segment, SiteCheck } from "@/types";
 import { wordsOf } from "@/lib/gaps";
 import { isSiteText, siteTextSignals, unreadShare } from "@/lib/siteText";
 import type { Tx } from "~/db/client";
-import { linesElsewhere } from "~/db/script";
+import { foldLine, linesElsewhere } from "~/db/script";
 
 /** How many of the book's other chapters a line has to be in to read as the site's. */
 export const REPEATED_IN = 3;
@@ -18,12 +18,9 @@ export const STORY_WORDS = 40;
 export const storyWhy = (words: number): string =>
   `${words} words, and nothing in them gives site text away`;
 
-/** Case and whitespace folded, for comparing lines across chapters. */
-export const fold = (text: string): string => text.replace(/\s+/g, " ").trim().toLowerCase();
-
 /**
  * The lines with the detector's suggestions on them, replacing any earlier ones. `repeats` counts
- * the other chapters holding a line that `fold`s the same.
+ * the other chapters holding a line that `foldLine`s the same.
  */
 export function siteChecks(
   segs: readonly Segment[],
@@ -32,7 +29,7 @@ export function siteChecks(
   return segs.map((s) => {
     const { siteCheck: _earlier, ...line } = s;
     const words = wordsOf(s.text).length;
-    const n = words >= REPEAT_MIN_WORDS ? repeats(fold(s.text)) : 0;
+    const n = words >= REPEAT_MIN_WORDS ? repeats(foldLine(s.text)) : 0;
     const signs = [
       ...siteTextSignals(s.text),
       ...(n >= REPEATED_IN ? [`repeated in ${n} chapters`] : []),
@@ -79,12 +76,12 @@ export function checkSiteText(
 ): Segment[] {
   const asked = [
     ...new Set(
-      segs.filter((s) => wordsOf(s.text).length >= REPEAT_MIN_WORDS).map((s) => fold(s.text)),
+      segs.filter((s) => wordsOf(s.text).length >= REPEAT_MIN_WORDS).map((s) => foldLine(s.text)),
     ),
   ];
   const chaptersOf = new Map<string, Set<number>>();
   for (const row of linesElsewhere(tx, bookId, chapterId, asked)) {
-    const key = fold(row.text);
+    const key = foldLine(row.text);
     (chaptersOf.get(key) ?? chaptersOf.set(key, new Set()).get(key)!).add(row.chapterId);
   }
   return siteChecks(segs, (folded) => chaptersOf.get(folded)?.size ?? 0);

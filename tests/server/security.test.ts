@@ -5,12 +5,14 @@ import { describe, expect, test } from "bun:test";
 
 import JSZip from "jszip";
 
+import { createApp } from "~/app";
 import { env } from "~/env";
 import { checkArchive } from "~/epub/archive";
 import { EpubParseError } from "~/epub/parse";
 import { AppError } from "~/lib/errors";
+import { DEMO_BASE, REAL_BASE } from "~/libraries";
 import { buildEpub, story } from "../support/epub";
-import { testApi } from "../support/server";
+import { collectingLogger, testApi, testDb } from "../support/server";
 import { claiming } from "../support/zip";
 
 const MB = 1024 * 1024;
@@ -168,6 +170,27 @@ describe("a request another site made the browser send", () => {
     });
     expect(status).toBe(200);
   });
+});
+
+describe("a request naming a host other than this machine", () => {
+  // DNS rebinding: the hostile page is same-origin with the API, but its Host is its own name
+  const get = (base: string, host: string) =>
+    createApp(testDb(), { base, log: collectingLogger().log }).request(`${base}/books`, {
+      headers: { host },
+    });
+
+  test.each([REAL_BASE, DEMO_BASE])("is refused under %s", async (base) => {
+    const res = await get(base, "rebound.example:8787");
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as Refusal).error.code).toBe("forbidden");
+  });
+
+  test.each(["localhost:5173", "127.0.0.1:8787", "[::1]:8787", "192.168.1.20:8787"])(
+    "%s is let through",
+    async (host) => {
+      expect((await get(REAL_BASE, host)).status).toBe(200);
+    },
+  );
 });
 
 describe("what every response carries, and how a malformed request is answered", () => {

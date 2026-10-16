@@ -25,6 +25,12 @@ export function failureCode(e: unknown): number {
   return cause instanceof ProviderError ? cause.status : 0;
 }
 
+/** Out of credit: every line after it would fail the same, so the run stops with this reason. */
+export function stopsRun(e: unknown): boolean {
+  const cause = e instanceof PartFailed ? e.cause : e;
+  return cause instanceof ProviderError && cause.outOfCredit;
+}
+
 /**
  * No silence between `maxChars` cuts: each part's audio carries its own breath. A cut for a pause
  * gets the pause's silence (`SplitPart.before`/`after`). A failed part fails the whole line.

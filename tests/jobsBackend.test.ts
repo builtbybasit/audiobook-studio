@@ -27,6 +27,7 @@ import {
   setEndpointSettingsService,
 } from "@/services/endpointSettings";
 import { fetchCast } from "@/queries/cast";
+import { HISTORY_STEP } from "@/queries/jobs";
 import { HttpJobsService, setJobsService } from "@/services/jobs";
 import { libraryService } from "@/services/library";
 import { useCastStore } from "@/stores/cast";
@@ -316,7 +317,7 @@ describe("the queue with a server answering", () => {
     asked.length = 0;
     await poll();
     expect(jobsStore.jobs).toHaveLength(2);
-    expect(asked).toEqual(["/api/jobs"]);
+    expect(asked).toEqual([`/api/jobs?history=${HISTORY_STEP}`]);
     // and the reader's own read of a script is not undone by a later poll seeing the same jobs
     pinia.run(() => useChapterScript(id, 1));
     await settle();
@@ -775,10 +776,33 @@ describe("the cast with a server answering", () => {
     await scriptsStore._settled(id, 1);
     expect(toasts.some((t) => t.msg === "The script changed on the server")).toBe(false);
     expect(readScript(api.db, id, 1)[0].text).toBe("Still writable.");
-    // undo: renamed back, on both sides
+    // the old name stays on as an alias, so a re-script that meets it still means them
+    const aliasesOf = (name: string) =>
+      castStore.charactersOf(id).find((c) => c.name === name)?.aliases;
+    expect(aliasesOf("Mara Voss")).toContain("Mara");
+    // undo: renamed back, on both sides, with the aliases as they were
     await toasts.find((t) => t.msg.startsWith("Renamed"))!.undo!();
+    await castStore._castSettled(id);
     expect(castStore.charactersOf(id).map((c) => c.name)).toContain("Mara");
+    expect(aliasesOf("Mara")).toEqual([]);
     expect(readScript(api.db, id, 1).some((s) => s.speaker === "Mara")).toBe(true);
+  });
+
+  test("a rename and the undo of a removal keep the finished clips of lines read the same", async () => {
+    const { id } = await narrated();
+    const stale = () => [
+      ...scriptsStore.segmentsOf(id, 1).filter((s) => s.audio.status === "stale"),
+      ...readScript(api.db, id, 1).filter((s) => s.audio.status === "stale"),
+    ];
+    const done = (name: string) =>
+      readScript(api.db, id, 1).filter((s) => s.speaker === name && s.audio.status === "done");
+    expect(done("Mara").length && done("Tobin").length).toBeGreaterThan(0);
+    await castStore.renameCharacter(id, "Mara", "Mara Voss");
+    expect(stale()).toEqual([]);
+    // every speaker here falls back to the Narrator's voice, so moving lines between them is free
+    await castStore.deleteCharacter(id, "Tobin");
+    await toasts.at(-1)!.undo!();
+    expect(stale()).toEqual([]);
   });
 
   test("a merge and a removal can be undone exactly, line by line", async () => {
@@ -818,19 +842,25 @@ describe("the cast with a server answering", () => {
     ).toEqual(tobinLines);
   });
 
-  test("removing a character unlinks their personas, and the undo links them back", async () => {
-    const { id } = await scriptedAndOpen();
-    const personaOf = (name: string) =>
-      castStore.charactersOf(id).find((c) => c.name === name)?.personaOf;
-    expect(castStore.addCharacter(id, "The Mask", "Mara")).toBe(true);
-    await castStore._castSettled(id);
-    expect(personaOf("The Mask")).toBe("Mara");
-    await castStore.deleteCharacter(id, "Mara");
-    expect(personaOf("The Mask")).toBeUndefined();
-    await toasts.at(-1)!.undo!();
-    await castStore._castSettled(id);
-    expect(personaOf("The Mask")).toBe("Mara");
-  });
+  test.each([
+    ["removing", (id: string) => castStore.deleteCharacter(id, "Mara"), undefined],
+    ["merging", (id: string) => castStore.mergeCharacter(id, "Mara", "Tobin"), "Tobin"],
+  ])(
+    "%s a character moves their personas off them, and the undo links them back",
+    async (_, change, moved) => {
+      const { id } = await scriptedAndOpen();
+      const personaOf = (name: string) =>
+        castStore.charactersOf(id).find((c) => c.name === name)?.personaOf;
+      expect(castStore.addCharacter(id, "The Mask", "Mara")).toBe(true);
+      await castStore._castSettled(id);
+      expect(personaOf("The Mask")).toBe("Mara");
+      await change(id);
+      expect(personaOf("The Mask")).toBe(moved);
+      await toasts.at(-1)!.undo!();
+      await castStore._castSettled(id);
+      expect(personaOf("The Mask")).toBe("Mara");
+    },
+  );
 
   test("removing several speakers is one toast, and its one undo puts every line back", async () => {
     const { id } = await scriptedAndOpen();

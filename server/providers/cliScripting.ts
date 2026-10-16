@@ -235,7 +235,9 @@ function run(
       timedOut = true;
       kill();
     }, timeoutMs);
-    signal.addEventListener("abort", kill, { once: true });
+    // a signal that fired before the spawn never fires again
+    if (signal.aborted) kill();
+    else signal.addEventListener("abort", kill, { once: true });
     const done = (): void => {
       clearTimeout(clock);
       signal.removeEventListener("abort", kill);
@@ -471,10 +473,6 @@ export function cliScriptingProvider(options: CliScriptingOptions = {}): Scripti
 
     for (;;) {
       attempt++;
-      if (signal.aborted) {
-        if (attempt > 1) report(null, "cancelled");
-        throw signal.reason;
-      }
       const dir = await mkdtemp(join(tmpdir(), "audiobook-cli-"));
       let failed: ProviderError;
       let usage: TokenUsage | null = null;
@@ -482,6 +480,11 @@ export function cliScriptingProvider(options: CliScriptingOptions = {}): Scripti
         const call = invocation(cli, target, prompt, dir);
         for (const [name, body] of Object.entries(call.files))
           await writeFile(join(dir, name), body);
+        // after the awaits, so a cancel during them never starts the tool
+        if (signal.aborted) {
+          if (attempt > 1) report(null, "cancelled");
+          throw signal.reason;
+        }
         let ran: Ran & { timedOut: boolean };
         try {
           ran = await run(

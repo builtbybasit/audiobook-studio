@@ -96,6 +96,7 @@ describe("names", () => {
   });
   test("places name speakers, thoughts and books, and leave out the choice being edited", () => {
     const uses: EffectUses = {
+      lines: 0,
       library: true,
       books: [
         { id: "b1", title: "Here" },

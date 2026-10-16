@@ -26,10 +26,21 @@ const Merge = v.object({
   merges: v.pipe(v.array(v.object({ from: Name, into: Name })), v.minLength(1)),
 });
 const Remove = v.object({ names: v.pipe(v.array(Name), v.minLength(1)) });
+const SampleIds = v.array(v.pipe(v.number(), v.integer(), v.minValue(1)));
 const Attribute = v.object({
-  speakers: v.array(v.object({ character: CharacterSchema, lines: v.array(ChapterLinesSchema) })),
+  speakers: v.array(
+    v.object({
+      character: CharacterSchema,
+      lines: v.array(ChapterLinesSchema),
+      samples: v.optional(SampleIds),
+    }),
+  ),
 });
+const Characters = v.object({ characters: v.pipe(v.array(CharacterSchema), v.minLength(1)) });
+const Names = v.pipe(v.array(Name), v.minLength(1));
+const OldVoiceOf = v.object({ names: Names });
 const Revoice = v.object({
+  names: Names,
   chapters: v.pipe(v.array(v.pipe(v.number(), v.integer(), v.minValue(1))), v.minLength(1)),
 });
 const Lexicon = v.object({
@@ -43,6 +54,13 @@ export function castRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
 
   app.get("/:id/cast", validate("param", BookParam), (c) =>
     c.json(ops.bookCast(db, c.req.valid("param").id) satisfies Cast),
+  );
+
+  /** Several speakers new or replaced, all or nothing. */
+  app.put("/:id/characters", validate("param", BookParam), validate("json", Characters), (c) =>
+    c.json({
+      characters: ops.putCharacters(db, c.req.valid("param").id, c.req.valid("json").characters),
+    }),
   );
 
   /** New or replaced. */
@@ -102,19 +120,23 @@ export function castRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
       ),
   );
 
-  app.get("/:id/characters/:name/old-voice", validate("param", NameParam), (c) => {
-    const { id, name } = c.req.valid("param");
-    return c.json(oldVoice(db, id, name) satisfies OldVoice);
-  });
+  /** A read with a body: auto-assign asks about hundreds of speakers at once. */
+  app.post(
+    "/:id/characters/old-voice",
+    validate("param", BookParam),
+    validate("json", OldVoiceOf),
+    (c) =>
+      c.json(oldVoice(db, c.req.valid("param").id, c.req.valid("json").names) satisfies OldVoice),
+  );
 
   /** Re-narrates the old-voice lines in these chapters; chapters with none are skipped. */
   app.post(
-    "/:id/characters/:name/revoice",
-    validate("param", NameParam),
+    "/:id/characters/revoice",
+    validate("param", BookParam),
     validate("json", Revoice),
     (c) => {
-      const { id, name } = c.req.valid("param");
-      const result = revoice(db, runner, id, name, c.req.valid("json").chapters);
+      const { names, chapters } = c.req.valid("json");
+      const result = revoice(db, runner, c.req.valid("param").id, names, chapters);
       c.var.logger.info(
         { run: result.runId, jobs: result.jobs.length, skipped: result.skipped.length },
         "old-voice lines queued",

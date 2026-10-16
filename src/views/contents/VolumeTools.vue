@@ -4,7 +4,7 @@
 import { computed, ref } from "vue";
 import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
 import { TITLE_START } from "@/lib/volumes";
-import { UiCheckbox } from "@/ui";
+import { UiCheckbox, UiNumber } from "@/ui";
 import type { ContentsPage } from "@/views/contents/useContents";
 
 const props = defineProps<{ page: ContentsPage }>();
@@ -34,28 +34,28 @@ function togglePick(id: number) {
   <div class="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
     <div class="flex items-center gap-1.5">
       <span>Evenly into</span>
-      <input
-        v-model.number="evenly"
-        type="number"
-        min="2"
-        class="input w-14 py-0.5 text-xs"
-        aria-label="How many volumes"
+      <UiNumber
+        :model-value="evenly"
+        :min="2"
+        class="w-14 text-xs"
+        label="How many volumes"
+        @update:model-value="(v: number | null) => v != null && (evenly = v)"
       />
       <span>volumes</span>
-      <button class="btn-ghost btn-xs" @click="p.cutEvenly(Math.max(2, evenly))">Split</button>
+      <button class="btn-ghost btn-xs" @click="p.cutEvenly(evenly)">Split</button>
     </div>
     <div class="flex items-center gap-1.5">
       <span>Every</span>
-      <input
-        v-model.number="every"
-        type="number"
-        min="10"
-        step="10"
-        class="input w-14 py-0.5 text-xs"
-        aria-label="Chapters per volume"
+      <UiNumber
+        :model-value="every"
+        :min="10"
+        :step="10"
+        class="w-14 text-xs"
+        label="Chapters per volume"
+        @update:model-value="(v: number | null) => v != null && (every = v)"
       />
       <span>chapters</span>
-      <button class="btn-ghost btn-xs" @click="p.cutEvery(Math.max(10, every))">Split</button>
+      <button class="btn-ghost btn-xs" @click="p.cutEvery(every)">Split</button>
     </div>
     <PopoverRoot @update:open="(o) => o && openDetect()">
       <PopoverTrigger class="btn-ghost btn-xs">

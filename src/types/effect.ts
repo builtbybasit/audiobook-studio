@@ -70,8 +70,8 @@ export interface ExistingChapter {
 }
 
 /**
- * `GET …/characters/:name/old-voice`: the speaker's finished lines made with a voice other than the
- * one their line gets now (own voice, persona fallback, Character voice and Narrator included).
+ * `POST …/characters/old-voice`: the named speakers' finished lines made with a voice other than
+ * the one their line gets now (own voice, persona fallback, Character voice and Narrator included).
  */
 export interface OldVoice {
   lines: number;
@@ -83,7 +83,7 @@ export interface OldVoice {
 /** Which chapters a Re-apply, a Keep or a re-voice reaches; absent `chapters` = all of them. */
 export interface ExistingScope {
   chapters?: number[];
-  /** only this speaker's lines */
+  /** only this speaker's lines, and their personas' */
   speaker?: string;
 }
 
@@ -92,6 +92,8 @@ export interface ExistingScope {
  * library is reached through `library`, not listed in `books`.
  */
 export interface EffectUses {
+  /** script lines that carry it as a line effect, in every book */
+  lines: number;
   /** it is the library's thought effect */
   library: boolean;
   /** books whose own thought effect it is */

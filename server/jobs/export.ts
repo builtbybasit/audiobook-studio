@@ -18,13 +18,17 @@ import type {
 } from "@/types";
 import {
   chapterSignature,
+  chapterState,
+  DEFAULT_EXPORT_SETTINGS,
   exportKey,
   fileTitle,
-  markerTitle,
+  placesOf,
   planOf,
   reviewOf,
+  sameState,
   scopeOf,
   setLabel,
+  settingsOf,
 } from "@/lib/exports";
 import { heardLines } from "@/lib/siteText";
 import { pacingOrDefault, pauseAfter, sampleRateLabel } from "@/lib/speech";
@@ -41,6 +45,7 @@ import type {
   AudiobookEncoder,
   EncodeChapter,
   EncodePart,
+  EncodedFile,
   EncodeTags,
   ExportPorts,
 } from "~/providers/encoder";
@@ -56,6 +61,23 @@ export interface BuildInput {
 const mb = (bytes: number): number => Math.round((bytes / 1024 / 1024) * 100) / 100;
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
+
+/** "−25.0 LUFS in, −18.1 out · one gain, peaks limited 4.2 dB" */
+function loudnessNote({ measuredLufs, levelled }: EncodedFile): string {
+  const was = `${measuredLufs!.toFixed(1)} LUFS in`;
+  if (!levelled) return was;
+  const how = levelled.linear
+    ? `one gain${levelled.limited > 0 ? `, peaks limited ${levelled.limited.toFixed(1)} dB` : ""}`
+    : "dynamic: the gain moved through the file";
+  return `${was}, ${levelled.lufs.toFixed(1)} out · ${how}`;
+}
+
+/** The finished version of an audiobook (`exportKey`) that a new build of it follows. */
+const currentOf = (db: Db, bookId: string, key: string): ExportItem | null =>
+  exports
+    .listExports(db, bookId)
+    .filter((e) => e.key === key && e.status === "done")
+    .at(-1) ?? null;
 
 /** One file's tags. Track number only for per-chapter files, disc only for per-volume files. */
 function tagsOf(
@@ -115,6 +137,53 @@ function audioOf(
   };
 }
 
+/**
+ * Each chapter's fingerprint in `files`, an export of `chapters` with `settings`. `audio` caches
+ * the script reads, which do not depend on the export.
+ */
+function statesOf(
+  db: Db | Tx,
+  book: Book,
+  chapters: Chapter[],
+  files: ExportFile[],
+  settings: ExportSettings,
+  audio = new Map<number, string>(),
+): Record<number, string> {
+  const pacing = pacingOrDefault(book.pacing);
+  const places = placesOf(files, chapters, book.volumes, settings);
+  const out: Record<number, string> = {};
+  for (const c of chapters) {
+    let sig = audio.get(c.id);
+    if (sig == null) audio.set(c.id, (sig = audioOf(db, book, c, pacing).signature));
+    out[c.id] = chapterState(sig, places.get(c.id)!);
+  }
+  return out;
+}
+
+/**
+ * Finished exports with the chapters that no longer match the book, read from the scripts here so
+ * the answer never depends on what a page has loaded. Chapters gone from the book are left out.
+ * ponytail: reads each chapter's script per listing (~0.3 ms a chapter); keep a fingerprint per
+ * chapter on write if listings get frequent.
+ */
+export function withChanges(db: Db, bookId: string, items: ExportItem[]): ExportItem[] {
+  const book = library.getBook(db, bookId);
+  if (!book) return items;
+  const known = new Map(library.listChapters(db, bookId).map((c) => [c.id, c]));
+  const audio = new Map<number, string>();
+  return items.map((e) => {
+    if (e.status !== "done") return e;
+    const chapters = e.chapterIds.flatMap((id) => known.get(id) ?? []);
+    const settings = { ...DEFAULT_EXPORT_SETTINGS, ...settingsOf(e) };
+    const { files } = planOf({ chapters, volumes: book.volumes, settings });
+    const now = statesOf(db, book, chapters, files, settings, audio);
+    return {
+      ...e,
+      changed: chapters.filter((c) => !sameState(e.state[c.id], now[c.id])).map((c) => c.id),
+    };
+  });
+}
+
 // ---------- queueing one ----------
 
 /**
@@ -133,7 +202,8 @@ export function enqueueBuild(
   const encoder = encoders.for(settings);
   const book = library.getBook(db, bookId);
   if (!book) throw notFound("No such book");
-  if (book.importing) throw conflict("Finish the contents review before building this book");
+  if (library.inReview(book, ids))
+    throw conflict("Finish the contents review before building this book");
   // Only this book's uploaded cover URLs resolve; refuse anything else now rather than mid-build.
   // Whether the file still exists is checked by the build.
   if (settings.cover != null && !covers.fileOf(bookId, settings.cover))
@@ -167,21 +237,13 @@ export function enqueueBuild(
   const named = updates == null ? null : exports.getExport(db, updates);
   if (updates != null && (!named || named.bookId !== bookId))
     throw notFound("No such export to update");
-  // a renamed audiobook is a different one, not an update
-  const prev =
-    named?.key === key
-      ? named
-      : (exports
-          .listExports(db, bookId)
-          .filter((e) => e.key === key && e.status === "done")
-          .at(-1) ?? null);
+  // The current version of this audiobook, whichever one `updates` named: a retry or a stale tab
+  // may name one a later build already replaced. A renamed audiobook is a different one.
+  const prev = currentOf(db, bookId, key);
 
-  const pacing = pacingOrDefault(book.pacing);
   const ordered = chapters.map((c) => c.id);
-  const state: Record<number, string> = {};
-  for (const c of chapters) state[c.id] = audioOf(db, book, c, pacing).signature;
-
   const { files, label, markers } = planFor(chapters, book.volumes, settings, encoder);
+  const state = statesOf(db, book, chapters, files, settings);
   const draft: Omit<ExportItem, "id"> = {
     bookId,
     key,
@@ -277,6 +339,15 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
     const pacing = pacingOrDefault(book.pacing);
     const known = new Map(library.listChapters(db, job.bookId).map((c) => [c.id, c]));
     const prev = entry.replaces == null ? null : (exports.getExport(db, entry.replaces) ?? null);
+    if (entry.chapterIds.some((id) => !known.has(id)))
+      throw notFound(`A chapter was removed while ${entry.filename} was being built`);
+    // the files as queued, with titles and volume names as they stand now
+    const places = placesOf(
+      entry.files,
+      entry.chapterIds.map((id) => known.get(id)!),
+      book.volumes,
+      run.settings,
+    );
 
     ctx.note(
       prev ? `Updating ${entry.filename} to v${entry.version}` : `Building ${entry.filename}`,
@@ -320,7 +391,7 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
       });
     if (run.settings.normalize && encoder.normalizes)
       ctx.note(`Loudness normalisation to ${run.settings.loudness} LUFS`, "info", {
-        measured: "EBU R128, in two passes over the joined audio",
+        measured: "EBU R128, measured over the joined audio, then levelled; each file says how",
       });
 
     const written: exports.WrittenFile[] = [];
@@ -349,17 +420,11 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
       // mismatch is reported here by chapter and line. Opus counts as 48 kHz.
       let rate: { hz: number; chapter: string } | null = null;
       for (const id of file.chapterIds) {
-        const chapter = known.get(id);
-        if (!chapter)
-          throw notFound(`A chapter was removed while ${entry.filename} was being built`);
+        const chapter = known.get(id)!;
         const { signature, lines } = audioOf(db, book, chapter, pacing);
-        signatures.set(id, signature);
-        const title = markerTitle(
-          chapter,
-          plan.length + 1,
-          run.settings,
-          file.volume?.name ?? null,
-        );
+        const place = places.get(id)!;
+        signatures.set(id, chapterState(signature, place));
+        const title = place.marker || chapter.title;
         const parts: EncodePart[] = [];
         for (const [i, s] of lines.entries()) {
           const at = await clipPath(job.bookId, s.audio.url);
@@ -405,19 +470,19 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
         seconds: Math.round(result.seconds),
         sizeMB: mb(result.bytes),
         // pre-normalisation loudness, which the Export page can't know until a build
-        ...(result.measuredLufs != null
-          ? {
-              loudness: `${result.measuredLufs.toFixed(1)} LUFS in, levelled to ${run.settings.loudness}`,
-            }
-          : {}),
+        ...(result.measuredLufs != null ? { loudness: loudnessNote(result) } : {}),
       });
     }
 
     // Last point a cancel can take the build back; past it the build counts as done.
     if (signal.aborted) throw signal.reason;
+    // every other finished version, not only the one queued against: one of them may have landed since
+    const older = exports
+      .listExports(db, job.bookId)
+      .filter((e) => e.key === entry.key && e.id !== entry.id && e.status === "done");
     db.transaction((tx) => {
       exports.finishBuild(tx, entry.id, written, signatures);
-      if (entry.replaces != null) exports.setBuildStatus(tx, entry.replaces, "replaced");
+      for (const e of older) exports.setBuildStatus(tx, e.id, "replaced");
     });
     setRun(db, job.id, {
       ...run,

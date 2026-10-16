@@ -23,7 +23,7 @@ const castStore = useCastStore();
 const route = useRoute();
 const router = useRouter();
 const { chapter, book, segments, colorOf } = useJob(props);
-const { p, playQueue, cue, seekTo, skip, next, prev, cycleRate } = usePlayer();
+const { p, playQueue, cue, skip, next, prev, cycleRate } = usePlayer();
 const pacing = computed(() => castStore.pacingOf(props.bookId));
 const timeline = computed(() => chapterTimeline(segments.value, pacing.value, book.value));
 // Summed from the drawn clips, not `chapter.duration`: a clip being re-rendered leaves `timeline`
@@ -50,7 +50,6 @@ function scrub(e: MouseEvent) {
   // from the bar's edge: `offsetX` would be relative to the clip block under the pointer
   const bar = (e.currentTarget as HTMLElement).getBoundingClientRect();
   const at = ((e.clientX - bar.left) / bar.width) * total.value;
-  if (isChapter.value) return seekTo(at);
   const q = buildQueue(props.chapterId);
   if (q) cue(q, at); // park the playhead without starting — scrubbing is not pressing play
 }

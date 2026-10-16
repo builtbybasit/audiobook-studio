@@ -12,14 +12,16 @@ import { readScript, writeScript } from "~/db/script";
 import { jobs } from "~/db/schema";
 import { fakeScriptingProvider, sleep } from "~/providers/fake";
 import type { ScriptedLine, ScriptingProvider } from "~/providers/scripting";
-import { chatScriptingProvider } from "~/providers/chatScripting";
+import { ChunkMisfit, chatScriptingProvider } from "~/providers/chatScripting";
 import { heldToday } from "~/usage/budget";
 import { bookSpend, endpointRequests } from "~/usage/ledger";
-import { epubFile, story } from "../support/epub";
+import { epubFile, line, story } from "../support/epub";
 import {
   collectingLogger,
   gatedProvider,
   jsonBody,
+  narratedBook,
+  scriptChapters,
   testApi,
   testDb,
   testRunner,
@@ -73,9 +75,10 @@ const jobById = async (api: ReturnType<typeof testApi>, id: number) =>
   (await api.request<{ job: Job }>(`/api/jobs/${id}`)).body.job;
 
 describe("scripting a chapter through the queue", () => {
-  test("queues one job per chapter as one run, and the chapters say so", async () => {
+  test("queues one job per chapter as one run, in reading order, and the chapters say so", async () => {
     const { api, id } = await shelved();
-    const { status, body } = await script(api, id, [1, 2]);
+    // ticked out of order: each chapter's run reads the recap of the one before
+    const { status, body } = await script(api, id, [2, 1]);
     expect(status).toBe(202);
     expect(body.jobs.map((j) => j.chapterId)).toEqual([1, 2]);
     expect(body.jobs.map((j) => j.bulk)).toEqual([
@@ -152,6 +155,33 @@ describe("scripting a chapter through the queue", () => {
     await api.runner.idle();
     const { body } = await api.request<ScriptResult>(`/api/books/${id}/chapters/1/script`);
     expect(body.revision).toBe(2);
+  });
+});
+
+describe("re-scripting a narrated chapter", () => {
+  test("keeps the clips of lines that came back the same, makes a re-spoken line's stale, and adds the chapter up again", async () => {
+    const fake = fakeScriptingProvider({ random: () => 0 });
+    let retold = false;
+    const api = testApi({
+      scripting: {
+        ...fake,
+        async script(input) {
+          const answer = await fake.script(input);
+          if (!retold) return answer;
+          const lines = answer.lines.map((l) =>
+            l.type === "dialogue" ? { ...l, speaker: "Ash" } : l,
+          );
+          return { ...answer, lines };
+        },
+      },
+    });
+    const { id } = await narratedBook(api, { chapters: [["One", line("One")]] });
+    retold = true;
+    await scriptChapters(api, id, [1]);
+    const { body } = await api.request<ScriptResult>(`/api/books/${id}/chapters/1/script`);
+    for (const s of body.segments)
+      expect(s.audio.status).toBe(s.type === "dialogue" ? "stale" : "done");
+    expect((await chaptersOf(api, id))[0].narration).toBe("stale");
   });
 });
 
@@ -361,24 +391,30 @@ describe("a result never lands on newer work", () => {
 });
 
 describe("failure", () => {
-  test("a provider that fails leaves a chapter with no script reading as failed, and says why", async () => {
-    const { api, id } = await shelved(
-      testApi({
-        scripting: {
-          name: "Broken",
-          script: () => Promise.reject(new Error("The model answered with nothing")),
-        },
-      }),
-    );
-    const { body } = await script(api, id, [1]);
-    await api.runner.idle();
-    const job = await jobById(api, body.jobs[0].id);
-    expect(job.status).toBe("failed");
-    expect(job.activity?.at(-1)?.detail?.error).toBe("The model answered with nothing");
-    expect((await chaptersOf(api, id))[0].scripting).toBe("failed");
-    // and the queue is free to be asked again
-    expect((await script(api, id, [1])).body.jobs).toHaveLength(1);
-  });
+  test.each([
+    ["a refusal", new Error("The model answered with nothing"), false],
+    [
+      "an answer that misses words",
+      new ChunkMisfit("The model answered with nothing", 200, false),
+      true,
+    ],
+  ])(
+    "%s leaves a chapter with no script reading as failed, saying why and whether smaller chunks may help",
+    async (_, error, smaller) => {
+      const { api, id } = await shelved(
+        testApi({ scripting: { name: "Broken", script: () => Promise.reject(error) } }),
+      );
+      const { body } = await script(api, id, [1]);
+      await api.runner.idle();
+      const job = await jobById(api, body.jobs[0].id);
+      expect(job.status).toBe("failed");
+      expect(job.activity?.at(-1)?.detail?.error).toBe("The model answered with nothing");
+      expect(job.activity?.some((e) => e.detail?.smallerChunks)).toBe(smaller);
+      expect((await chaptersOf(api, id))[0].scripting).toBe("failed");
+      // and the queue is free to be asked again
+      expect((await script(api, id, [1])).body.jobs).toHaveLength(1);
+    },
+  );
 
   test("a kind this server cannot run fails at once and says so", async () => {
     const api = testApi();
@@ -594,6 +630,30 @@ describe("the job log", () => {
     // "Job queued" and the first four events are the ones that went
     expect(full.droppedEvents).toBe(5);
     expect(full.activity?.[0].message).toBe("event 4");
+  });
+
+  test("the list holds every live job and the latest finished, with no log but a failure's cause", () => {
+    // it is polled: the whole history with every event made each poll grow with the library
+    const db = testDb();
+    db.run(
+      "insert into books (id, title, author, cover_from, cover_to, added_at) values ('b','B','A','#000','#111',0)",
+    );
+    // whole-book jobs of different kinds, so none dedupes on another
+    const add = (kind: Job["kind"]) =>
+      queue.enqueueJob(db, { kind, bookId: "b", chapterId: null, label: "x" }).job.id;
+    const waiting = add("export");
+    const old = add("effects");
+    queue.finishJob(db, old, "done", 1);
+    const failed = add("check");
+    queue.appendEvent(db, failed, "Gateway answered 500", "error");
+    queue.appendEvent(db, failed, "Retried and gave up", "error");
+    queue.finishJob(db, failed, "failed", 2);
+
+    const listed = queue.listJobs(db, { history: 1 });
+    expect(listed.map((j) => j.id)).toEqual([waiting, failed]);
+    expect(listed[0].activity).toBeUndefined();
+    expect(listed[1].activity?.map((e) => e.message)).toEqual(["Gateway answered 500"]);
+    expect(queue.getJob(db, failed)!.activity!.length).toBeGreaterThan(1);
   });
 });
 

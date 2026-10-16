@@ -122,6 +122,7 @@ export async function sendBatch(
       startedAt,
       finishedAt: Date.now(),
       attempts: Math.max(1, stats.attempts),
+      timedOut: stats.timedOut,
       rateLimited: stats.rateLimited,
       simulated: false,
       text: items[i].text,

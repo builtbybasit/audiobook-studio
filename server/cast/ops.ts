@@ -1,6 +1,6 @@
 // A book's cast operations. Speakers are keyed by name and the script names them, so a rename,
 // merge or removal moves lines in the same transaction as the cast row, and reports which lines
-// moved so an Undo can put exactly those back through `attribute`.
+// (and waiting voice samples) moved so an Undo can put exactly those back through `attribute`.
 import type {
   Cast,
   ChapterLines,
@@ -12,14 +12,21 @@ import type {
   RevisedLines,
   SegmentAudio,
 } from "@/types";
-import { NARRATOR, personaRefusal } from "@/lib/cast";
+import { NARRATOR, personaRefusal, sameReading } from "@/lib/cast";
 import { pronunciationMoved } from "@/lib/reading";
-import { speak } from "@/lib/speech";
+import { lexMatcher } from "@/lib/speech";
 import type { Db, Tx } from "~/db/client";
 import * as cast from "~/db/cast";
 import * as library from "~/db/library";
-import { discardSpeakerSamples, moveSpeakerSamples } from "~/db/speakerSamples";
-import { attributeLines, bumpRevision, readScript, reattribute, writeClip } from "~/db/script";
+import { discardSpeakerSamples, giveBackSamples, moveSpeakerSamples } from "~/db/speakerSamples";
+import {
+  attributeLines,
+  bumpRevision,
+  readScript,
+  reattribute,
+  writeClip,
+  type ReadsAlike,
+} from "~/db/script";
 import { isEffectChoice, requireEffect } from "~/effects/ops";
 import { badRequest, conflict, notFound } from "~/lib/errors";
 import { requireBook } from "~/library/ops";
@@ -36,52 +43,84 @@ export function requireCharacter(db: Db | Tx, bookId: string, name: string): Cha
   return c;
 }
 
-function requireEffects(db: Db, c: Character): void {
-  requireEffect(db, c.effect, `${c.name}’s effect`);
-  requireEffect(db, c.thoughts, `${c.name}’s thought effect`);
+const castByName = (tx: Tx, bookId: string) =>
+  new Map(cast.readCast(tx, bookId).map((c) => [c.name, c]));
+
+/**
+ * The stale rule for lines that change speaker along with the cast (`sameReading`): asked before
+ * the cast changes, and settled once it reads as the moved lines will hear it.
+ */
+function readings(tx: Tx, bookId: string): () => ReadsAlike {
+  const before = castByName(tx, bookId);
+  const cv = library.getBook(tx, bookId)?.characterVoice;
+  return () => {
+    const after = castByName(tx, bookId);
+    return (from, to) => sameReading(from, to, before, cv, after);
+  };
 }
 
 /**
  * Insert or replace a speaker, for every edit that moves no lines. The persona link is checked only
  * when it changes, so an existing link never blocks an edit.
  */
-export function putCharacter(db: Db, bookId: string, name: string, c: Character): Character[] {
-  requireBook(db, bookId);
-  if (c.name !== name) throw badRequest("The speaker in the body is not the one in the path");
-  requireEffects(db, c);
-  const was = cast.getCharacter(db, bookId, name);
+function putOne(tx: Db | Tx, bookId: string, c: Character): void {
+  requireEffect(tx, c.effect, `${c.name}’s effect`);
+  requireEffect(tx, c.thoughts, `${c.name}’s thought effect`);
+  const was = cast.getCharacter(tx, bookId, c.name);
   if (c.personaOf && c.personaOf !== was?.personaOf) {
-    const why = personaRefusal(name, c.personaOf, cast.readCast(db, bookId));
+    const why = personaRefusal(c.name, c.personaOf, cast.readCast(tx, bookId));
     if (why) throw badRequest(why);
   }
   // a human changed the persona link, so the model's `masked` finding no longer applies
   if (was && (c.personaOf ?? null) !== (was.personaOf ?? null)) delete c.masked;
-  cast.upsertCharacter(db, bookId, c);
+  cast.upsertCharacter(tx, bookId, c);
+}
+
+export function putCharacter(db: Db, bookId: string, name: string, c: Character): Character[] {
+  requireBook(db, bookId);
+  if (c.name !== name) throw badRequest("The speaker in the body is not the one in the path");
+  putOne(db, bookId, c);
   return cast.readCast(db, bookId);
 }
 
-/** Rename a speaker, moving their lines and personas. The Narrator's name is fixed. */
+/** `putCharacter` for several speakers in one go (auto-assign), all or nothing. */
+export function putCharacters(db: Db, bookId: string, list: readonly Character[]): Character[] {
+  requireBook(db, bookId);
+  return db.transaction((tx) => {
+    for (const c of list) putOne(tx, bookId, c);
+    return cast.readCast(tx, bookId);
+  });
+}
+
+/**
+ * Rename a speaker, moving their lines and personas. The old name becomes an alias, so a re-script
+ * that meets it in the text still means them. The Narrator's name is fixed.
+ */
 export function renameCharacter(db: Db, bookId: string, from: string, to: string): MovedLines {
   requireBook(db, bookId);
   to = to.trim();
   if (!to) throw badRequest("A speaker needs a name");
   if (from === NARRATOR) throw conflict("The Narrator cannot be renamed");
-  requireCharacter(db, bookId, from);
+  const was = requireCharacter(db, bookId, from);
   if (from === to) return { characters: cast.readCast(db, bookId), moved: [] };
   if (cast.getCharacter(db, bookId, to))
     throw conflict(`“${to}” is already in the cast`, "Merge the two speakers instead.");
   return db.transaction((tx) => {
+    const settle = readings(tx, bookId);
     cast.renameCharacterRow(tx, bookId, from, to);
+    const aliases = [...new Set([...was.aliases, from])].filter((a) => a !== to);
+    cast.upsertCharacter(tx, bookId, { ...requireCharacter(tx, bookId, to), aliases });
     cast.relinkPersonas(tx, bookId, from, to);
-    const moved = reattribute(tx, bookId, from, to);
+    const moved = reattribute(tx, bookId, from, to, settle());
     return { characters: cast.readCast(tx, bookId), moved };
   });
 }
 
 /**
- * Fold each `from` into its `into`, in order and all or nothing: lines move and `from` with its
- * aliases becomes aliases. Personas of `from` move to `into`, or are unlinked when `into` is a
- * persona or the Narrator (no chains).
+ * Fold each `from` into its `into`, in order and all or nothing: lines and waiting voice samples
+ * move, `from` with its aliases becomes aliases, and what `into` left blank `from` fills (not for
+ * the Narrator, whose voice is every narration line's). Personas of `from` move to `into`, or are
+ * unlinked when `into` is a persona or the Narrator (no chains).
  */
 export function mergeCharacters(
   db: Db,
@@ -90,15 +129,17 @@ export function mergeCharacters(
 ): MovedSpeakers {
   requireBook(db, bookId);
   return db.transaction((tx) => {
-    const speakers = merges.map(({ from, into }) => ({
-      name: from,
-      moved: mergeOne(tx, bookId, from, into),
-    }));
+    const speakers = merges.map(({ from, into }) => mergeOne(tx, bookId, from, into));
     return { characters: cast.readCast(tx, bookId), speakers };
   });
 }
 
-function mergeOne(tx: Tx, bookId: string, from: string, into: string): RevisedLines[] {
+function mergeOne(
+  tx: Tx,
+  bookId: string,
+  from: string,
+  into: string,
+): MovedSpeakers["speakers"][number] {
   if (from === NARRATOR)
     throw conflict(
       "The Narrator cannot be merged into another speaker",
@@ -107,20 +148,36 @@ function mergeOne(tx: Tx, bookId: string, from: string, into: string): RevisedLi
   const src = requireCharacter(tx, bookId, from);
   const dst = requireCharacter(tx, bookId, into);
   if (from === into) throw badRequest("A speaker cannot be merged into themselves");
+  const settle = readings(tx, bookId);
   // `into` was a persona of `from`: it can't be a persona of itself
   const personaOf = dst.personaOf === from ? undefined : dst.personaOf;
+  const blanks =
+    into === NARRATOR
+      ? {}
+      : {
+          // a voiceless persona reads in their character's
+          voice: dst.voice ?? (personaOf ? null : src.voice),
+          effect: dst.effect ?? src.effect,
+          thoughts: dst.thoughts ?? src.thoughts,
+          description: dst.description.trim() ? dst.description : src.description,
+          gender: dst.gender === "?" ? src.gender : dst.gender,
+        };
   cast.upsertCharacter(tx, bookId, {
     ...dst,
+    ...blanks,
     aliases: [...new Set([...dst.aliases, from, ...src.aliases])],
     personaOf,
   });
-  moveSpeakerSamples(tx, bookId, from, into);
+  const samples = moveSpeakerSamples(tx, bookId, from, into);
   cast.deleteCharacterRow(tx, bookId, from);
   cast.relinkPersonas(tx, bookId, from, personaOf || into === NARRATOR ? null : into);
-  return reattribute(tx, bookId, from, into);
+  return { name: from, moved: reattribute(tx, bookId, from, into, settle()), samples };
 }
 
-/** Remove speakers, all or nothing; their lines go to the Narrator and their personas are unlinked. */
+/**
+ * Remove speakers, all or nothing; their lines go to the Narrator, their personas are unlinked and
+ * their waiting voice samples are put aside.
+ */
 export function removeCharacters(db: Db, bookId: string, names: readonly string[]): MovedSpeakers {
   requireBook(db, bookId);
   if (names.includes(NARRATOR)) throw conflict("The Narrator cannot be removed");
@@ -128,35 +185,38 @@ export function removeCharacters(db: Db, bookId: string, names: readonly string[
     cast.ensureSpeakers(tx, bookId, [NARRATOR]);
     const speakers = [...new Set(names)].map((name) => {
       requireCharacter(tx, bookId, name);
-      discardSpeakerSamples(tx, bookId, name, NARRATOR);
+      const settle = readings(tx, bookId);
+      const samples = discardSpeakerSamples(tx, bookId, name, NARRATOR);
       cast.deleteCharacterRow(tx, bookId, name);
       cast.relinkPersonas(tx, bookId, name, null);
-      return { name, moved: reattribute(tx, bookId, name, NARRATOR) };
+      return { name, moved: reattribute(tx, bookId, name, NARRATOR, settle()), samples };
     });
     return { characters: cast.readCast(tx, bookId), speakers };
   });
 }
 
 /**
- * The Undo of a merge or removal: put each speaker back on exactly their lines, as stated. Links
- * are checked once all are back, so a persona and its character can return together; a link or
- * effect no longer allowed is dropped rather than refusing the Undo.
+ * The Undo of a merge or removal: put each speaker back on exactly their lines and samples, as
+ * stated. Links are checked once all are back, so a persona and its character can return together;
+ * a link or effect no longer allowed is dropped rather than refusing the Undo.
  */
 export function attribute(
   db: Db,
   bookId: string,
-  restore: readonly { character: Character; lines: readonly ChapterLines[] }[],
+  restore: readonly { character: Character; lines: readonly ChapterLines[]; samples?: number[] }[],
 ): MovedSpeakers {
   requireBook(db, bookId);
   const known = (id?: string) => (id && isEffectChoice(db, id) ? id : undefined);
   return db.transaction((tx) => {
-    const speakers = restore.map(({ character: c, lines }) => {
+    const speakers = restore.map(({ character: c, lines, samples = [] }) => {
+      const settle = readings(tx, bookId);
       cast.upsertCharacter(tx, bookId, {
         ...c,
         effect: known(c.effect),
         thoughts: known(c.thoughts),
       });
-      return { name: c.name, moved: attributeLines(tx, bookId, lines, c.name) };
+      giveBackSamples(tx, bookId, samples, c.name);
+      return { name: c.name, moved: attributeLines(tx, bookId, lines, c.name, settle()) };
     });
     const now = cast.readCast(tx, bookId);
     for (const { character: c } of restore) {
@@ -191,6 +251,7 @@ export function putLexicon(
   return db.transaction((tx) => {
     cast.replaceLexicon(tx, bookId, entries);
     const lexicon = cast.readLexicon(tx, bookId);
+    const say = lexMatcher(lexicon);
     const named = new Map(restore.map((r) => [r.chapterId, new Set(r.ids)]));
     const stale: RevisedLines[] = [];
     const restored: RevisedLines[] = [];
@@ -200,7 +261,7 @@ export function putLexicon(
       const undo = named.get(chapterId);
       for (const s of readScript(tx, bookId, chapterId)) {
         const a = s.audio;
-        const moved = pronunciationMoved(a, speak(s.text, lexicon).text);
+        const moved = pronunciationMoved(a, say.speak(s.text).text);
         if (moved == null) continue;
         let status: SegmentAudio["status"] | null = null;
         if (a.status === "done" && moved) status = "stale";

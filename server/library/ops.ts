@@ -177,12 +177,13 @@ export async function importEpub(db: Db, input: ImportInput, log?: ImportLog): P
     return { ...bookWithChapters(db, bookId), volumeId: volume.id, read };
   }
 
+  // The id is taken and inserted with no await between, or two same-titled uploads share it.
   const id = library.freeBookId(db, slugify(title?.trim() || parsed.title || fileName));
   const assembled = assembleBook(parsed, id, fileName, { title });
+  library.insertBook(db, assembled.book, assembled.chapters, assembled.bodies);
   // Only a new book takes the EPUB's cover; a later volume's is often another edition's.
   const cover = covers && parsed.cover ? await keepCover(covers, id, parsed.cover, log) : null;
-  if (cover) assembled.book.coverImage = cover;
-  library.insertBook(db, assembled.book, assembled.chapters, assembled.bodies);
+  if (cover) library.setBookCover(db, id, cover);
   log?.info(
     { book: id, title: assembled.book.title, chapters: assembled.chapters.length },
     "stored a new book",
@@ -190,7 +191,7 @@ export async function importEpub(db: Db, input: ImportInput, log?: ImportLog): P
   return { ...bookWithChapters(db, id), read };
 }
 
-/** Keep the EPUB's cover if it is a JPEG or PNG of a sane size; otherwise log why not. */
+/** Keep the EPUB's cover if it is a JPEG or PNG of a sane size and can be written; else log why not. */
 async function keepCover(
   covers: CoverFiles,
   bookId: string,
@@ -205,7 +206,12 @@ async function keepCover(
     );
     return null;
   }
-  return (await covers.write(bookId, bytes, type)).url;
+  try {
+    return (await covers.write(bookId, bytes, type)).url;
+  } catch (e) {
+    log?.warn({ reason: String(e) }, "the cover could not be written; it was not kept");
+    return null;
+  }
 }
 
 /**
@@ -259,17 +265,23 @@ export type Discarded =
   | { discarded: "book" }
   | { discarded: "volume"; volumeId: number; chapters: number };
 
-/** Cancel an import: a new book goes entirely; a new volume comes off its book. */
-export function discardImport(db: Db, bookId: string): Discarded {
+/**
+ * Cancel an import: a new book goes entirely (its cover too); a new volume comes off its book.
+ * Removed as a removal would, in case anything ran on it.
+ */
+export async function discardImport(
+  db: Db,
+  bookId: string,
+  ports: VolumePorts = {},
+): Promise<Discarded> {
   const book = requireBook(db, bookId);
   if (book.importing) {
-    library.deleteBook(db, bookId);
+    await removeBook(db, bookId, ports);
     return { discarded: "book" };
   }
   const vol = book.volumes.find((x) => x.importing);
   if (!vol) throw conflict("Nothing is waiting in this book’s contents review");
-  // Nothing has run on a volume in review, so there is nothing on disk to remove.
-  const { chapters } = library.deleteVolume(db, bookId, vol.id);
+  const chapters = await dropVolume(db, bookId, vol.id, ports);
   return { discarded: "volume", volumeId: vol.id, chapters };
 }
 
@@ -306,10 +318,31 @@ export function setDecisions(
 // ---------- removal ----------
 
 /**
- * Remove a book and everything it owns. Live jobs are cancelled and awaited first: a running job
- * would recreate the directories, and its `onSettled` needs the rows. Files go after the rows (a
- * leaked directory beats a chapter that plays nothing), in the background so a slow disk can't
- * hold the response.
+ * Cancel the book's live jobs, or those on `chapters`, and wait them out: a running job would
+ * write files after they are removed, and its `onSettled` needs the rows.
+ */
+async function stopJobs(
+  db: Db,
+  bookId: string,
+  runner: Runner | undefined,
+  chapters?: ReadonlySet<number>,
+): Promise<void> {
+  if (!runner) return;
+  const live = queue
+    .listJobs(db, { bookId })
+    .filter(
+      (job) =>
+        (job.status === "queued" || job.status === "running") &&
+        (!chapters || (job.chapterId != null && chapters.has(job.chapterId))),
+    );
+  for (const job of live) runner.cancel(job.id);
+  for (const job of live) await runner.finished(job.id);
+}
+
+/**
+ * Remove a book and everything it owns, its jobs stopped first (`stopJobs`). Files go after the
+ * rows (a leaked directory beats a chapter that plays nothing), in the background so a slow disk
+ * can't hold the response. The book's directory holds its covers too.
  */
 export async function removeBook(
   db: Db,
@@ -317,13 +350,7 @@ export async function removeBook(
   { runner, files, built }: VolumePorts = {},
 ): Promise<void> {
   requireBook(db, bookId);
-  if (runner) {
-    const live = queue
-      .listJobs(db, { bookId })
-      .filter((job) => job.status === "queued" || job.status === "running");
-    for (const job of live) runner.cancel(job.id);
-    for (const job of live) await runner.finished(job.id);
-  }
+  await stopJobs(db, bookId, runner);
   library.deleteBook(db, bookId);
   inBackground(files?.removeBook(bookId), "could not remove a book's clips", { book: bookId });
   inBackground(built?.removeBook(bookId), "could not remove a book's audiobooks", { book: bookId });
@@ -346,7 +373,7 @@ export async function removeVolume(
   db: Db,
   bookId: string,
   volumeId: number,
-  { runner, files, built }: VolumePorts = {},
+  ports: VolumePorts = {},
 ): Promise<Removed> {
   const book = requireBook(db, bookId);
   if (!book.volumes.some((x) => x.id === volumeId)) throw notFound("No such volume");
@@ -356,24 +383,27 @@ export async function removeVolume(
       "Let the build finish, or cancel it from the Queue, before removing a volume.",
     );
   if (book.volumes.length <= 1) {
-    await removeBook(db, bookId, { runner, files, built });
+    await removeBook(db, bookId, ports);
     return { removed: "book" };
   }
 
+  return { removed: "volume", chapters: await dropVolume(db, bookId, volumeId, ports) };
+}
+
+/** Take a volume off once its chapters' jobs are stopped; files go after the rows. */
+async function dropVolume(
+  db: Db,
+  bookId: string,
+  volumeId: number,
+  { runner, files, built }: VolumePorts,
+): Promise<number> {
   const going = new Set(
     library
       .listChapters(db, bookId)
       .filter((ch) => ch.volumeId === volumeId)
       .map((ch) => ch.id),
   );
-  for (const job of queue.listJobs(db, { bookId }))
-    if (
-      (job.status === "queued" || job.status === "running") &&
-      job.chapterId != null &&
-      going.has(job.chapterId)
-    )
-      runner?.cancel(job.id);
-
+  await stopJobs(db, bookId, runner, going);
   const gone = library.deleteVolume(db, bookId, volumeId);
   inBackground(files?.remove(bookId, gone.clips), "could not remove a volume's clips", {
     book: bookId,
@@ -384,7 +414,7 @@ export async function removeVolume(
       book: bookId,
       export: e.id,
     });
-  return { removed: "volume", chapters: gone.chapters };
+  return gone.chapters;
 }
 
 // ---------- a book's settings, and its volumes' names and order ----------

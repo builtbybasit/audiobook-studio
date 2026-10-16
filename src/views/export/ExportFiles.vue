@@ -11,7 +11,7 @@ import {
   X as CloseIcon,
 } from "@lucide/vue";
 
-import { markerTitle } from "@/lib/exports";
+import { markerTitle, markVolume } from "@/lib/exports";
 import { plural } from "@/lib/contents";
 import { UiDialog } from "@/ui";
 import { clock, hms, mb } from "@/views/export/shared";
@@ -42,9 +42,7 @@ function toggle(name: string) {
 const chapter = (id: number) => libraryStore.chapter(props.bookId, id);
 const volumeName = (id: number) => {
   const c = chapter(id);
-  return c
-    ? (libraryStore.volumesOf(props.bookId).find((v) => v.id === c.volumeId)?.name ?? null)
-    : null;
+  return c ? markVolume(libraryStore.volumesOf(props.bookId), c) : null;
 };
 const shown = computed(() => props.plan.files);
 </script>

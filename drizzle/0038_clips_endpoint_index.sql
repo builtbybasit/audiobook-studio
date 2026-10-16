@@ -1,0 +1,1 @@
+CREATE INDEX `clips_endpoint` ON `clips` (`role`,`endpoint`,`status`);

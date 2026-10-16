@@ -164,6 +164,17 @@ export const useTransferStore = defineStore("transfer", {
     _hold(bookId: string, file: File): void {
       files.set(bookId, file);
     },
+    /** Follow a renumbering; a chapter that went leaves the plan. */
+    _remapBook(bookId: string, map: Record<number, number>): void {
+      const plan = this.plans[bookId];
+      if (!plan) return;
+      this.plans[bookId] = {
+        ...plan,
+        chapters: plan.chapters.flatMap((c) =>
+          map[c.chapterId] ? [{ ...c, chapterId: map[c.chapterId] }] : [],
+        ),
+      };
+    },
     /** Drop the file and its report. */
     forget(bookId: string): void {
       files.delete(bookId);

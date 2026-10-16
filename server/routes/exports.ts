@@ -43,7 +43,7 @@ export function exportRoutes(
   const app = new Hono<PinoEnv>();
 
   app.get("/:id/exports", validate("param", BookParam), (c) =>
-    c.json({ exports: ops.bookExports(db, c.req.valid("param").id) }),
+    c.json({ exports: ops.bookExports(db, c.req.valid("param").id, ports.files) }),
   );
 
   /**

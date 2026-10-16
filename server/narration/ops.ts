@@ -2,8 +2,9 @@
 // is queued like a bulk run at the `pending` scope and never `auto`, so it waits beside the clip in
 // the book for a verdict. Both settle the chapter, since its length is asked of the clips that play.
 import type { Judged, RetakesQueued, Segment } from "@/types";
+import { compareReading } from "@/lib/reading";
 import { isSpoken } from "@/lib/siteText";
-import type { Db } from "~/db/client";
+import type { Db, Tx } from "~/db/client";
 import { activeJob, nextRunId } from "~/db/jobs";
 import * as library from "~/db/library";
 import {
@@ -24,7 +25,7 @@ import {
   RETAKE_LABEL,
   settleChapter,
 } from "~/narration/chapter";
-import { narrationCost } from "~/narration/cost";
+import { bookDelivery, lineReading, narrationCost } from "~/narration/cost";
 import { assertWithinBudget } from "~/usage/budget";
 
 export type Verdict = "accept" | "reject";
@@ -113,9 +114,21 @@ export function retakeLines(
 }
 
 /**
- * Kept, the retake becomes the clip in the book and the line's flag is cleared. Dropped, it joins
- * the takes as rejected (or goes, if it never rendered). Refused while rendering, for an accept with
- * no clip, and while a run owns the chapter.
+ * Whichever clip the verdict leaves in the book is checked against the line as it reads now: one
+ * rendered before a text, dictionary or voice edit is stale, kept or not.
+ */
+function markDrift(tx: Tx, bookId: string, chapterId: number, segmentId: number): void {
+  const s = readScript(tx, bookId, chapterId).find((x) => x.id === segmentId);
+  if (!s || s.audio.status !== "done") return;
+  const who = bookDelivery(tx, bookId)(s.speaker);
+  if (compareReading(s.audio, s, lineReading(tx, bookId, s, who)).length)
+    writeClip(tx, bookId, chapterId, segmentId, "current", { ...s.audio, status: "stale" });
+}
+
+/**
+ * Kept, the retake becomes the clip in the book (stale if it went stale) and the line's flag is
+ * cleared. Dropped, it joins the takes as rejected (or goes, if it never rendered). Refused while
+ * rendering, for an accept with no clip, and while a run owns the chapter.
  */
 export function judgeTake(
   db: Db,
@@ -130,7 +143,10 @@ export function judgeTake(
   const candidate = s.candidate;
   if (!candidate) throw conflict("Nothing to judge: this line has no retake");
   if (inFlight(candidate.status)) throw conflict("The retake is still rendering");
-  if (verdict === "accept" && (candidate.status !== "done" || candidate.duration <= 0))
+  if (
+    verdict === "accept" &&
+    (!["done", "stale"].includes(candidate.status) || candidate.duration <= 0)
+  )
     throw conflict("The retake did not produce a clip; discard it instead");
   if (activeJob(db, "narration", bookId, chapterId))
     throw beingNarrated(db, bookId, chapterId, "give the verdict");
@@ -142,6 +158,7 @@ export function judgeTake(
     } else {
       rejectCandidate(tx, bookId, chapterId, segmentId);
     }
+    markDrift(tx, bookId, chapterId, segmentId);
     settleChapter(tx, bookId, chapterId);
     return bumpRevision(tx, bookId, chapterId);
   });

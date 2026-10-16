@@ -799,26 +799,26 @@ export const useNarrationStore = defineStore("narration", {
         stepRevision(bookId, chId, revision);
         const c = libraryStore.chapter(bookId, chId);
         if (c) Object.assign(c, chapter);
+        // the server checks whichever clip stays against the line as it reads now
+        const stale = segment.audio.status === "stale";
+        const why = stale ? this.clipDrift(bookId, segment)[0] : undefined;
+        const outOfDate = `The kept clip is out of date${why ? ` — ${why}` : ""}.`;
         if (verdict === "accept") {
           uiStore.toast(`Take ${segment.audio.n ?? 1} kept`, {
-            kind: "success",
-            description: "It is the clip in the book now; the earlier take stays in the take list.",
+            kind: stale ? "warn" : "success",
+            description: stale
+              ? outOfDate
+              : "It is the clip in the book now; the earlier take stays in the take list.",
           });
           return;
-        }
-        // the kept clip may have gone stale while the retake rendered: mark it rather than call it current
-        const drift = i >= 0 ? this.clipDrift(bookId, segment) : [];
-        if (drift.length && ["done", "stale"].includes(segment.audio.status)) {
-          scriptsStore._markStale(bookId, chId, segment);
-          scriptsStore._commit(bookId, chId);
         }
         const rejected = segment.audio.takes?.at(-1);
         uiStore.toast(
           rejected?.rejected ? `Take ${segment.audio.n ?? 1} kept` : "Retake discarded",
           {
-            kind: drift.length ? "warn" : "info",
-            description: drift.length
-              ? `The kept clip is out of date — ${drift[0]}.`
+            kind: stale ? "warn" : "info",
+            description: stale
+              ? outOfDate
               : rejected?.rejected
                 ? `Take ${rejected.n} is marked rejected — retake again or edit the line first.`
                 : "It never produced a clip.",

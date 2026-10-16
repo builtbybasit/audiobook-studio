@@ -11,6 +11,7 @@ import { setLibraryService, type LibraryService } from "@/services/library";
 import { useCastStore } from "@/stores/cast";
 import { useEffectsStore } from "@/stores/effects";
 import { useLibraryStore } from "@/stores/library";
+import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
 import type { Book, Character, Effect, Step, ThoughtChoice } from "@/types";
 import { useChoice } from "@/views/cast/effects/choice";
@@ -72,6 +73,7 @@ beforeEach(() => {
     remove: async (id) => {
       refused();
       server.effects = server.effects.filter((e) => e.id !== id);
+      return id === "room" ? [{ bookId: "b", chapterId: 1, ids: [1], revision: 8 }] : [];
     },
     setLibraryThoughts: async (choice) => {
       refused();
@@ -159,7 +161,25 @@ describe("duplicating", () => {
 
 describe("removing", () => {
   test("takes every choice of it here at once, and says whose they were", async () => {
+    const scripts = useScriptsStore();
+    scripts._install("b", 1, {
+      revision: 7,
+      segments: [
+        {
+          id: 1,
+          text: "Rain.",
+          speaker: "Ana",
+          type: "dialogue",
+          direction: "",
+          effects: ["room"],
+          audio: { status: "none", endpoint: null, duration: 0, ms: 0 },
+        },
+      ],
+    });
     const taken = await effects().remove("room");
+    // off the line too, at the chapter's new revision, so no later edit writes it back
+    expect(scripts.segmentsOf("b", 1)[0]).not.toHaveProperty("effects");
+    expect(scripts._revision["b:1"]).toBe(8);
     expect(taken).toMatchObject({
       library: false,
       books: ["b"],

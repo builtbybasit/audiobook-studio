@@ -52,7 +52,8 @@ export async function tryPrompt(
 ): Promise<PromptTrialResult> {
   const book = library.getBook(db, bookId);
   if (!book) throw notFound("No such book");
-  if (book.importing) throw conflict("Finish the contents review before scripting this book");
+  if (library.inReview(book, [request.chapterId]))
+    throw conflict("Finish the contents review before scripting this book");
   const profile = readProfiles(db).find((p) => p.id === request.profile);
   if (!profile) throw notFound(`There is no scripting endpoint “${request.profile}”`);
   const chapter = library.getChapter(db, bookId, request.chapterId);

@@ -72,10 +72,13 @@ export interface MovedLines {
   moved: RevisedLines[];
 }
 
-/** The cast after a merge, removal or its Undo, and each named speaker's lines that moved. */
+/**
+ * The cast after a merge, removal or its Undo, and each named speaker's lines that moved; `samples`:
+ * the voice-sample rows that left them, for the Undo to give back.
+ */
 export interface MovedSpeakers {
   characters: Character[];
-  speakers: { name: string; moved: RevisedLines[] }[];
+  speakers: { name: string; moved: RevisedLines[]; samples?: number[] }[];
 }
 
 /**

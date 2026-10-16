@@ -2,7 +2,8 @@
 // ledger as each report lands, and the hold given back (the charge at once, the rest on release).
 // Every provider call goes through here. Priced at the endpoint's rates when it settles (the sent
 // snapshot if removed since). A chapter removed mid-request is unlinked; a removed book drops the
-// row. A request cancelled before it left records nothing.
+// row. A request cancelled before it left records nothing; an attempt the clock cut off is a row of
+// its own, cancelled after send, cost unknown.
 import type { Endpoint, EndpointKind, Profile, RequestRecord, Transcriber } from "@/types";
 import type { Db } from "~/db/client";
 import { getBook, locateChapter } from "~/db/library";
@@ -27,6 +28,13 @@ const SETTLE: { [K in EndpointKind]: Settle<K> } = {
   tts: settleSpeech,
   scripting: settleScript,
   transcription: settleTranscription,
+};
+
+/** What a timed-out attempt got back, whatever the request's last attempt did. */
+const NOTHING_BACK: { [K in EndpointKind]: Partial<Kinds[K]["sent"]> } = {
+  tts: { audioSeconds: 0, reported: null },
+  scripting: { usage: null },
+  transcription: {},
 };
 
 export interface DispatchOptions<K extends EndpointKind> {
@@ -63,20 +71,36 @@ export function dispatch<K extends EndpointKind>(db: Db, o: DispatchOptions<K>):
   };
   const settle = SETTLE[kind] as Settle<K>;
   return {
-    sent(report) {
+    sent({ timedOut = 0, ...report }) {
       if (work.bookId != null && !getBook(db, work.bookId)) return null;
       const current = (endpointOf(db, kind, endpoint.id) as Kinds[K]["endpoint"]) ?? endpoint;
       const chapterUid =
         work.chapterUid != null && locateChapter(db, work.chapterUid) ? work.chapterUid : null;
       // an unknown cost is counted at what is still held, which is then given back
-      const record = settle(
-        db,
-        current,
-        { ...work, chapterUid, held: left, free: hold <= 0 },
-        report,
-      );
-      give(record.cost ?? left);
-      return record;
+      const one = (sent: Kinds[K]["sent"]): RequestRecord => {
+        const record = settle(
+          db,
+          current,
+          { ...work, chapterUid, held: left, free: hold <= 0 },
+          sent,
+        );
+        give(record.cost ?? left);
+        return record;
+      };
+      const cut = Math.min(timedOut, report.attempts);
+      let record: RequestRecord | null = null;
+      for (let i = 0; i < cut; i++)
+        record = one({
+          ...report,
+          ...NOTHING_BACK[kind],
+          status: "cancelled",
+          attempts: 1,
+          billed: null,
+          error: { code: 0, message: `${current.name} did not answer in time` },
+        } as Kinds[K]["sent"]);
+      return report.attempts > cut
+        ? one({ ...report, attempts: report.attempts - cut } as Kinds[K]["sent"])
+        : record;
     },
     release: () => give(left),
   };

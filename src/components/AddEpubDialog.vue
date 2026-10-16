@@ -5,7 +5,7 @@ import { useLibraryStore } from "@/stores/library";
 
 import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import type { PendingAdd } from "@/components/addEpub";
+import { volumeTargets, type PendingAdd } from "@/components/addEpub";
 import { UiDialog, UiSelect } from "@/ui";
 import { DialogDescription, DialogTitle } from "reka-ui";
 
@@ -14,15 +14,18 @@ const emit = defineEmits<{ close: [] }>();
 const libraryStore = useLibraryStore();
 const router = useRouter();
 
+const books = computed(() => volumeTargets(libraryStore.shelved));
 const draft = ref<PendingAdd | null>(null);
 watch(
   () => props.pending,
   (p) => {
-    draft.value = p ? { ...p } : null;
+    const d = p ? { ...p } : null;
+    if (d && !books.value.some((b) => b.id === d.bookId)) d.bookId = "";
+    if (d && !books.value.length) d.mode = "new";
+    draft.value = d;
   },
   { immediate: true },
 );
-const books = computed(() => libraryStore.shelved);
 const reading = ref(false);
 
 async function confirm() {
@@ -97,7 +100,10 @@ async function confirm() {
       </div>
       <template v-if="draft.mode === 'new'">
         <label class="block text-xs"
-          >Title<input v-model="draft.title" class="input mt-1 w-full"
+          >Title<input
+            v-model="draft.title"
+            class="input mt-1 w-full"
+            placeholder="The EPUB’s own title"
         /></label>
       </template>
       <template v-else>
@@ -122,7 +128,11 @@ async function confirm() {
       <div class="mt-4 flex items-center justify-end gap-2">
         <span class="mr-auto text-[11px] text-zinc-500">Next: review the contents</span>
         <button class="btn-ghost" :disabled="reading" @click="emit('close')">Cancel</button
-        ><button class="btn-primary" :disabled="reading" @click="confirm">
+        ><button
+          class="btn-primary"
+          :disabled="reading || (draft.mode === 'volume' && !draft.bookId)"
+          @click="confirm"
+        >
           {{ reading ? "Reading…" : "Read the file" }}
         </button>
       </div>

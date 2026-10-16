@@ -15,6 +15,7 @@ import {
   LOUDNESS_TARGETS,
   MARKER_PATTERNS,
   markerTitle,
+  markVolume,
   trackNo,
 } from "@/lib/exports";
 import { DEFAULT_PACING, secs } from "@/lib/speech";
@@ -81,7 +82,7 @@ const markerSummary = computed(() => {
   if (!s.markers) return "off";
   const first = chapters.value[0];
   return first
-    ? markerTitle(first, 1, s, volNameOf(first.volumeId))
+    ? markerTitle(first, 1, s, markVolume(volumes.value, first))
     : (MARKER_PATTERNS.find((p) => p.value === s.markerPattern)?.sample ?? s.markerPattern);
 });
 
@@ -92,7 +93,6 @@ const PACING_PRESETS = {
 } as const;
 
 const sample = computed(() => chapters.value.slice(0, 3));
-const volNameOf = (volumeId: number) => volumes.value.find((v) => v.id === volumeId)?.name ?? null;
 
 // ---- the cover: the chosen image, else the EPUB's own. The gradient is never written to a file.
 const coverShown = computed(() => s.cover ?? book.value.coverImage);
@@ -303,7 +303,7 @@ const trackSample = computed(() =>
             as the player will list them
           </div>
           <div v-for="(c, i) in sample" :key="c.id" class="truncate">
-            {{ markerTitle(c, i + 1, s, volNameOf(c.volumeId)) }}
+            {{ markerTitle(c, i + 1, s, markVolume(volumes, c)) }}
           </div>
           <div v-if="chapters.length > 3" class="text-zinc-400">
             …and {{ chapters.length - 3 }} more

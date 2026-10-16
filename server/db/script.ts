@@ -15,7 +15,7 @@ import { snapshotTake } from "@/lib/takes";
 import { chapterAt, clipFiles } from "~/db/library";
 import { insertRows, prepared } from "~/db/prepared";
 import type { Db, Tx } from "~/db/client";
-import { chapters, clips, heard, segments } from "~/db/schema";
+import { chapters, clips, effects, heard, segments } from "~/db/schema";
 import {
   clipValues,
   segmentClipValues,
@@ -117,6 +117,23 @@ export class ScriptConflict extends Error {
   }
 }
 
+/** A deleted effect must not come back through an old copy of a script (a stale tab, history, a file). */
+function knownEffects(tx: Tx, segs: readonly Segment[]): readonly Segment[] {
+  if (!segs.some((s) => s.effects?.length)) return segs;
+  const known = new Set(
+    tx
+      .select({ id: effects.id })
+      .from(effects)
+      .all()
+      .map((e) => e.id),
+  );
+  return segs.map((s) =>
+    s.effects?.some((id) => !known.has(id))
+      ? { ...s, effects: s.effects.filter((id) => known.has(id)) }
+      : s,
+  );
+}
+
 /**
  * Replace a chapter's script inside the caller's transaction, and move its revision. When the
  * chapter has moved past `ifRevision`, nothing is written and a `ScriptConflict` is thrown.
@@ -131,6 +148,7 @@ export function replaceScript(
   const current = scriptRevision(tx, bookId, chapterId);
   if (current == null) throw new ScriptConflict(ifRevision ?? 0, null);
   if (ifRevision != null && current !== ifRevision) throw new ScriptConflict(ifRevision, current);
+  segs = knownEffects(tx, segs);
 
   // prepared once: the demo seed writes ~300 chapters in one transaction
   const at: At = { bookId, chapterId };
@@ -388,10 +406,27 @@ export function bumpRevision(tx: Tx, bookId: string, chapterId: number): number 
 
 // ---------- the same words elsewhere in the book ----------
 
-/**
- * Lines in the book's other chapters that fold (lower-cased, whitespace runs as one space) to one
- * of `folded`, for the site-text detector. SQLite's `lower` folds ASCII only.
- */
+// One fold for both sides of the comparison: `foldLine` in JS, `foldedText` in SQLite, whose
+// `lower` and `trim` only know ASCII. So only ASCII is lower-cased, and only these are spaces.
+const SPACES = ["\t", "\n", "\r", "\u00a0", "\u2009", "\u202f", "\u3000"];
+const SPACE_RUN = new RegExp(`[ ${SPACES.join("")}]+`, "g");
+
+/** Whitespace runs as one space, trimmed, ASCII lower-cased. */
+export const foldLine = (text: string): string =>
+  text
+    .replace(SPACE_RUN, " ")
+    .replace(/^ | $/g, "")
+    .replace(/[A-Z]+/g, (s) => s.toLowerCase());
+
+function foldedText() {
+  let e = sql`lower(${segments.text})`;
+  for (const c of SPACES) e = sql`replace(${e}, ${c}, ' ')`;
+  // a run of spaces as one: each becomes \1\2, then every \2\1 inside a run goes
+  e = sql`replace(replace(replace(${e}, ' ', char(1, 2)), char(2, 1), ''), char(1, 2), ' ')`;
+  return sql`trim(${e}, ' ')`;
+}
+
+/** Lines in the book's other chapters that `foldLine` to one of `folded`, for the site-text detector. */
 export function linesElsewhere(
   db: Db | Tx,
   bookId: string,
@@ -399,7 +434,6 @@ export function linesElsewhere(
   folded: readonly string[],
 ): { chapterId: number; text: string }[] {
   if (!folded.length) return [];
-  const spaced = sql`replace(replace(replace(replace(lower(${segments.text}), char(10), ' '), char(13), ' '), char(9), ' '), '  ', ' ')`;
   return db
     .select({ chapterId: segments.chapterId, text: segments.text })
     .from(segments)
@@ -407,7 +441,7 @@ export function linesElsewhere(
       and(
         eq(segments.bookId, bookId),
         ne(segments.chapterId, chapterId),
-        sql`trim(replace(${spaced}, '  ', ' ')) in (select value from json_each(${JSON.stringify(folded)}))`,
+        sql`${foldedText()} in (select value from json_each(${JSON.stringify(folded)}))`,
       ),
     )
     .all();
@@ -419,7 +453,13 @@ export function linesElsewhere(
  * Give every line `from` reads to `to` (a rename or merge). Returns the moved lines by chapter so
  * an Undo can put exactly those back.
  */
-export function reattribute(tx: Tx, bookId: string, from: string, to: string): RevisedLines[] {
+export function reattribute(
+  tx: Tx,
+  bookId: string,
+  from: string,
+  to: string,
+  alike: ReadsAlike,
+): RevisedLines[] {
   const rows = tx
     .select({ chapterId: segments.chapterId, id: segments.id })
     .from(segments)
@@ -429,18 +469,23 @@ export function reattribute(tx: Tx, bookId: string, from: string, to: string): R
   const byChapter = new Map<number, number[]>();
   for (const r of rows) byChapter.set(r.chapterId, [...(byChapter.get(r.chapterId) ?? []), r.id]);
   const moved = [...byChapter].map(([chapterId, ids]) => ({ chapterId, ids }));
-  return attributeLines(tx, bookId, moved, to);
+  return attributeLines(tx, bookId, moved, to, alike);
 }
+
+/** Whether a line moved from one speaker to another keeps its clip (`sameReading`). */
+export type ReadsAlike = (from: string, to: string) => boolean;
 
 /**
  * Put `speaker` on exactly these lines; missing lines are skipped, not refused. Each touched
- * chapter's revision moves, so an in-flight job cannot land over it, and its done clips go stale.
+ * chapter's revision moves, so an in-flight job cannot land over it. A done clip goes stale
+ * unless its old speaker and `speaker` read alike.
  */
 export function attributeLines(
   tx: Tx,
   bookId: string,
   lines: readonly ChapterLines[],
   speaker: string,
+  alike: ReadsAlike,
 ): RevisedLines[] {
   const moved: RevisedLines[] = [];
   for (const { chapterId, ids } of lines) {
@@ -451,26 +496,28 @@ export function attributeLines(
         eq(segments.chapterId, chapterId),
         inArray(segments.id, part),
       );
-      const n = tx
-        .update(segments)
-        .set({ speaker })
+      const was = tx
+        .select({ id: segments.id, speaker: segments.speaker })
+        .from(segments)
         .where(where)
-        .returning({ id: segments.id })
-        .all().length;
-      if (!n) continue;
-      changed += n;
-      tx.update(clips)
-        .set({ status: "stale" })
-        .where(
-          and(
-            eq(clips.bookId, bookId),
-            eq(clips.chapterId, chapterId),
-            inArray(clips.segmentId, part),
-            eq(clips.role, "current"),
-            eq(clips.status, "done"),
-          ),
-        )
-        .run();
+        .all();
+      if (!was.length) continue;
+      tx.update(segments).set({ speaker }).where(where).run();
+      changed += was.length;
+      const respoken = was.filter((s) => !alike(s.speaker, speaker)).map((s) => s.id);
+      if (respoken.length)
+        tx.update(clips)
+          .set({ status: "stale" })
+          .where(
+            and(
+              eq(clips.bookId, bookId),
+              eq(clips.chapterId, chapterId),
+              inArray(clips.segmentId, respoken),
+              eq(clips.role, "current"),
+              eq(clips.status, "done"),
+            ),
+          )
+          .run();
     }
     if (!changed) continue;
     const revision = tx
@@ -484,7 +531,10 @@ export function attributeLines(
   return moved;
 }
 
-/** Current clips done and failed per endpoint id, across every book, for the Queue's pool. */
+/**
+ * Current clips done and failed per endpoint id, across every book, for the Queue's pool. Polled,
+ * so read from the `clips_endpoint` index alone.
+ */
 export function clipsByEndpoint(db: Db | Tx): Map<string, { done: number; failed: number }> {
   const rows = db
     .select({

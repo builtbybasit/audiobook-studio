@@ -31,7 +31,14 @@ export function transferRoutes(
 
   /** What "Include voice samples" would hand over, before it is ticked. */
   app.get("/:id/script-export/samples", validate("param", BookParam), (c) =>
-    c.json(exportSamples(db, c.req.valid("param").id, audio.dir) satisfies ScriptExportSamples),
+    c.json(
+      exportSamples(
+        db,
+        c.req.valid("param").id,
+        audio.dir,
+        voiceFiles,
+      ) satisfies ScriptExportSamples,
+    ),
   );
 
   /**

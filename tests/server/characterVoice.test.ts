@@ -230,11 +230,11 @@ const script = async (api: TestApi, id: string, ch: number) =>
   (await api.request<{ segments: Segment[] }>(`/api/books/${id}/chapters/${ch}/script`)).body
     .segments;
 const oldVoice = (api: TestApi, id: string, name: string) =>
-  api.request<OldVoice>(`/api/books/${id}/characters/${encodeURIComponent(name)}/old-voice`);
+  api.request<OldVoice>(`/api/books/${id}/characters/old-voice`, jsonBody({ names: [name] }));
 const revoice = (api: TestApi, id: string, name: string, chapters: number[]) =>
   api.request<NarrationQueued>(
-    `/api/books/${id}/characters/${encodeURIComponent(name)}/revoice`,
-    jsonBody({ chapters }),
+    `/api/books/${id}/characters/revoice`,
+    jsonBody({ names: [name], chapters }),
   );
 const doneBy = (segs: Segment[], speakers: readonly string[]) =>
   segs.filter((s) => s.audio.status === "done" && speakers.includes(s.speaker)).length;

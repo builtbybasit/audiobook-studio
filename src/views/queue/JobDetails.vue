@@ -10,6 +10,7 @@ import { X as CloseIcon, Copy as CopyIcon, ArrowUpRight as OpenIcon } from "@luc
 
 import { clockOf, duration } from "@/lib/endpoints";
 import { jobDiagnostics } from "@/lib/jobActivity";
+import { useJob } from "@/queries/jobs";
 import type { Job } from "@/types";
 import { PAGE, stageLink } from "@/views/queue/stage";
 
@@ -32,7 +33,10 @@ watch(
     tab.value = "activity";
   },
 );
-const events = computed(() => props.job?.activity ?? []);
+// the list's row carries no log, so the sheet reads the job whole
+const { data: read } = useJob(() => props.job?.id);
+const logged = computed(() => (read.value?.id === props.job?.id ? read.value : undefined));
+const events = computed(() => logged.value?.activity ?? []);
 const chapterRef = computed(() =>
   props.job?.chapterId == null
     ? undefined
@@ -83,7 +87,7 @@ const stamp = (at: number | null) => (at === null ? "—" : new Date(at).toLocal
 async function copy() {
   if (!props.job) return;
   try {
-    await navigator.clipboard.writeText(jobDiagnostics(props.job));
+    await navigator.clipboard.writeText(jobDiagnostics(logged.value ?? props.job));
     copyStatus.value = "Diagnostics copied";
   } catch {
     copyStatus.value = "Could not copy. Select the log text to copy it manually.";
@@ -253,8 +257,9 @@ async function copy() {
               first</span
             ><span v-if="!job.finishedAt" class="text-violet-500">Live</span>
           </div>
+          <p v-if="!logged" class="py-8 text-center text-sm text-zinc-500">Reading the log…</p>
           <p
-            v-if="!job.activity"
+            v-else-if="!logged.activity"
             class="rounded-lg border border-dashed border-zinc-300 p-5 text-sm text-zinc-500 dark:border-zinc-700"
           >
             Detailed activity was not recorded for this older sample job. New jobs record their
@@ -316,9 +321,9 @@ async function copy() {
           >
             Show 100 more events
           </button>
-          <p v-if="job.droppedEvents" class="mt-3 text-xs text-zinc-500">
-            {{ job.droppedEvents }} earlier events were discarded. The latest 1,000 are retained per
-            job.
+          <p v-if="logged?.droppedEvents" class="mt-3 text-xs text-zinc-500">
+            {{ logged.droppedEvents }} earlier events were discarded. The latest 1,000 are retained
+            per job.
           </p>
         </TabsContent>
         <TabsContent value="details" class="min-h-0 flex-1 overflow-y-auto p-5 text-sm">

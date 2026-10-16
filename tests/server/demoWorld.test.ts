@@ -157,9 +157,14 @@ describe("the demo's library is the browser's world", () => {
       const { exports } = await get<{ exports: ExportItem[] }>(`/books/${book.id}/exports`);
       const expected = world.exports.filter((e) => e.bookId === book.id);
       const byId = (a: ExportItem, b: ExportItem) => a.id - b.id;
-      expect(
-        [...exports].sort(byId).map((e) => ({ ...e, createdAt: e.createdAt.slice(0, 10) })),
-      ).toEqual(
+      // less what the listing reads off the book and the disk: what moved, and where files are
+      const stored = exports.map((e) => {
+        const copy = { ...e, files: e.files.map((f) => ({ ...f })) };
+        delete copy.changed;
+        for (const f of copy.files) delete f.path;
+        return copy;
+      });
+      expect(stored.sort(byId).map((e) => ({ ...e, createdAt: e.createdAt.slice(0, 10) }))).toEqual(
         [...expected].sort(byId).map((e) => ({ ...e, createdAt: e.createdAt.slice(0, 10) })),
       );
     }

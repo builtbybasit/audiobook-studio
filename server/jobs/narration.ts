@@ -55,6 +55,7 @@ import {
   opusInParts,
   PartFailed,
   speakInParts,
+  stopsRun,
   type Outcome,
 } from "~/narration/parts";
 import {
@@ -268,6 +269,7 @@ function lineRun(o: {
   targets: readonly Target[];
   lines: number;
   stop: AbortSignal;
+  fail: (error: unknown) => void;
 }): LineRun<Target, Line> & {
   renderLine(t: Target): Promise<void>;
   /** why the budget stopped the run, or null */
@@ -276,7 +278,8 @@ function lineRun(o: {
   close(): void;
   tally: Tally;
 } {
-  const { ctx, provider, files, gate, chapter, deliveryOf, soundFor, targets, lines, stop } = o;
+  const { ctx, provider, files, gate, chapter, deliveryOf, soundFor, targets, lines, stop, fail } =
+    o;
   const { job, db } = ctx;
 
   /** Write against the chapter by uid, moving the revision. */
@@ -495,7 +498,7 @@ function lineRun(o: {
       if (stop.aborted) throw stop.reason;
       return { rendered };
     } catch (e) {
-      if (stop.aborted) throw e;
+      if (stop.aborted || stopsRun(e)) throw e;
       return { error: e };
     }
   };
@@ -680,6 +683,7 @@ function lineRun(o: {
 
   return {
     stop,
+    fail,
     acquire,
     halted,
     admit,
@@ -732,6 +736,12 @@ export function narrationHandler(
       const onAbort = (): void => stop.abort(signal.reason);
       signal.addEventListener("abort", onAbort, { once: true });
       let fatal: { error: unknown } | null = null;
+      const fail = (error: unknown): void => {
+        // the first error wins; later ones are just the stop
+        if (stop.signal.aborted) return;
+        fatal = { error };
+        stop.abort(error);
+      };
       const run = lineRun({
         ctx,
         provider,
@@ -743,6 +753,7 @@ export function narrationHandler(
         targets,
         lines,
         stop: stop.signal,
+        fail,
       });
 
       // Ask each endpoint once whether it batches; no answer or batches off: one line at a time.
@@ -778,14 +789,7 @@ export function narrationHandler(
             .sort((a, b) => targets.indexOf(a) - targets.indexOf(b))
             .map((t) => run.renderLine(t)),
           ...batched.map(([id, lines, limits]) => batchLines(run, id, lines, limits)),
-        ].map((work) =>
-          work.catch((e: unknown) => {
-            // the first error wins; later ones are just the stop
-            if (stop.signal.aborted) return;
-            fatal = { error: e };
-            stop.abort(e);
-          }),
-        ),
+        ].map((work) => work.catch(fail)),
       );
       run.close();
       signal.removeEventListener("abort", onAbort);
@@ -863,7 +867,8 @@ export function enqueueNarration(
 ): NarrationQueued {
   const book = library.getBook(db, bookId);
   if (!book) throw notFound("No such book");
-  if (book.importing) throw conflict("Finish the contents review before narrating this book");
+  if (library.inReview(book, ids))
+    throw conflict("Finish the contents review before narrating this book");
   const known = new Map(library.listChapters(db, bookId).map((c) => [c.id, c]));
 
   const priceOf = narrationPricer(db, bookId);

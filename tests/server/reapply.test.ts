@@ -11,7 +11,7 @@ import { soundOf } from "@/lib/effects";
 import { newSpeaker } from "@/lib/cast";
 import { createEffect } from "~/db/effects";
 import { characterValues } from "~/db/rows/cast";
-import { listJobs } from "~/db/jobs";
+import { getJob } from "~/db/jobs";
 import { chapters, clips, characters, segments } from "~/db/schema";
 import { readScript, writeScript } from "~/db/script";
 import { and, eq } from "drizzle-orm";
@@ -69,7 +69,7 @@ async function reapply(api: TestApi, id: string, scope: ExistingScope = {}): Pro
   );
   expect(status).toBe(202);
   await api.runner.idle();
-  return listJobs(api.db, { bookId: id }).find((j) => j.id === body.job.id)!;
+  return getJob(api.db, body.job.id)!;
 }
 
 const onDisk = (api: TestApi, id: string): string[] => readdirSync(join(api.audioDir, id)).sort();
@@ -152,6 +152,8 @@ describe("what has an old sound", () => {
       .where(and(eq(characters.bookId, id), eq(characters.name, "Mara")))
       .run();
     expect(await count(api, id)).toEqual({ lines: 2, unavailable: 0 });
+    // Ann's own ask takes in her persona's lines, which wear her effect
+    expect((await stale(api, id, "?speaker=Ann")).lines).toBe(2);
     setClip(api, a.audio.url!, { sound: soundOf([louderFx, e]) });
     setClip(api, b.audio.url!, { sound: soundOf([louderFx]), raw: "/api/audio/x/raw-b.wav" });
     expect(await count(api, id)).toEqual({ lines: 0, unavailable: 0 });

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { chapterName } from "@/lib/chapterNumber";
+import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptingStore } from "@/stores/scripting";
 
@@ -32,6 +33,7 @@ import { useCast, useChapterScript, useChapterTexts } from "@/queries";
 import type { Chapter } from "@/types";
 import { scriptExportUrl } from "@/services/library";
 
+const jobsStore = useJobsStore();
 const libraryStore = useLibraryStore();
 const scriptingStore = useScriptingStore();
 const bookId = useBookId();
@@ -90,6 +92,24 @@ const hasScript = computed(() => chapter.value && isScripted(chapter.value));
 /** scripts and texts still on their way, which the reader and the buttons wait for */
 const waiting = computed(() => (hasScript.value && !loaded.value) || unread.value > 0);
 const anyScripted = computed(() => libraryStore.chaptersOf(bookId).some(isScripted));
+/** Its last failed run: what the server said, and whether smaller chunks may help. */
+const failure = computed(() => {
+  // the queue lists oldest first
+  const job = jobsStore.jobs
+    .filter(
+      (j) =>
+        j.kind === "scripting" &&
+        j.bookId === bookId &&
+        j.chapterId === opened.value &&
+        j.status === "failed",
+    )
+    .at(-1);
+  const said = job?.activity?.filter((e) => e.detail?.error).at(-1)?.detail?.error;
+  return {
+    error: said == null ? "Scripting failed, so nothing was kept." : String(said),
+    smaller: !!job?.activity?.some((e) => e.detail?.smallerChunks),
+  };
+});
 function scriptFirst() {
   const ids = kept.value.slice(0, 3).map((c) => c.id);
   selected.value = ids;
@@ -274,7 +294,7 @@ function scriptFirst() {
           v-else-if="chapter?.scripting === 'failed'"
           :icon="WarnIcon"
           :title="chapter.title"
-          body="Scripting failed: after retries the model's output still didn't reconstruct the chapter text, so nothing was kept. This usually means a chunk boundary split a quote or the chapter has unusual formatting. Try a smaller chunk size, then re-run."
+          :body="failure.error"
         >
           <button
             class="btn-primary"
@@ -284,11 +304,12 @@ function scriptFirst() {
             Re-run this chapter
           </button>
           <button
+            v-if="failure.smaller"
             class="btn-ghost"
             :disabled="waiting || !scriptingStore.runProfile"
             :title="
               scriptingStore.runProfile
-                ? `Cuts ${scriptingStore.runProfile.name}'s chunks by 2,000 characters — for every book it scripts`
+                ? `Halves ${scriptingStore.runProfile.name}'s chunks — for every book it scripts`
                 : 'No scripting endpoint can run'
             "
             @click="scriptingStore.smallerChunks(bookId, opened)"

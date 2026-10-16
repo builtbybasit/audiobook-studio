@@ -1,5 +1,4 @@
 import { toRaw } from "vue";
-import type { Spoken } from "@/lib/speech";
 // Book cast, pronunciation and pacing; speech text stays separate from source prose. The cast is
 // the server's (`useCast` reads it); each change is a request whose answer is installed. Undo is
 // exact: a merge or removal records the lines that moved and puts back those (`attribute`).
@@ -10,12 +9,14 @@ import { staleMoved } from "@/queries/effects";
 import { speechReadiness } from "@/lib/endpoints";
 import { norm } from "@/lib/scriptReview";
 import { pronunciationMoved } from "@/lib/reading";
-import { chapterSeconds, hitsIn, pacingOrDefault, speak } from "@/lib/speech";
+import { chapterSeconds, lexMatcher, pacingOrDefault, termOf } from "@/lib/speech";
 import {
   characterSlot,
+  characterVoiceFor,
   NARRATOR,
   newSpeaker,
   personaOwner,
+  sameReading,
   speakerVoice,
   voiceRef,
 } from "@/lib/cast";
@@ -31,6 +32,7 @@ import {
 import type {
   CastStat,
   Character,
+  CharacterVoice,
   EffectiveVoice,
   EffectSlot,
   Gender,
@@ -49,6 +51,7 @@ import { useEndpointsStore } from "@/stores/endpoints";
 import { useExistingLinesStore } from "@/stores/existingLines";
 import { useLibraryStore } from "@/stores/library";
 import { chapterTally, useScriptsStore } from "@/stores/scripts";
+import { useSpeakerSamplesStore } from "@/stores/speakerSamples";
 import { toastFailure } from "@/stores/toastFailure";
 import { useUiStore } from "@/stores/ui";
 interface CastState {
@@ -87,8 +90,11 @@ interface BookWrites {
  * each action a fresh proxy as `this`.
  */
 const pending = new WeakMap<object, Map<string, BookWrites>>();
-/** A speaker's counts before any line is counted; `castStats` starts from it. */
-export const newStat = (first = 0): CastStat => ({
+/**
+ * A speaker's counts before any line is counted; `castStats` starts from it. With no lines, their
+ * first chapter sorts after every real one.
+ */
+export const newStat = (first = Number.MAX_SAFE_INTEGER): CastStat => ({
   lines: 0,
   thoughts: 0,
   chapters: new Set(),
@@ -102,6 +108,20 @@ export interface AutoVoiceAssignment {
   endpoint: string;
   matchedGender: boolean;
 }
+/**
+ * `into` as it stood before a merge filled its blanks: the merge's aliases, persona link and filled
+ * fields go back, edits made since stay.
+ */
+function unmerged(now: Character, was: Character): Character {
+  const out: Character = { ...clone(now), aliases: was.aliases, personaOf: was.personaOf };
+  if (!was.voice) out.voice = null;
+  if (!was.effect) delete out.effect;
+  if (!was.thoughts) delete out.thoughts;
+  if (!was.description.trim()) out.description = was.description;
+  if (was.gender === "?") out.gender = "?";
+  return out;
+}
+
 export const useCastStore = defineStore("cast", {
   state: (): CastState => ({ characters: {}, lexicon: {} }),
   getters: {
@@ -120,20 +140,26 @@ export const useCastStore = defineStore("cast", {
       return (bookId: string): Pacing =>
         pacingOrDefault(libraryStore.books.find((b) => b.id === bookId)?.pacing);
     },
-    spoken(s): (bookId: string, text: string) => Spoken {
-      return (bookId: string, text: string) => speak(text, s.lexicon[bookId] ?? []);
-    },
     lexUses(s): (bookId: string) => Record<number, number> {
       const scriptsStore = useScriptsStore();
       return (bookId: string) => {
         const list = s.lexicon[bookId] ?? [];
         const uses: Record<number, number> = Object.fromEntries(list.map((e) => [e.id, 0]));
+        // each entry on its own, so one inside a longer term still counts; built once, and a
+        // line that doesn't hold the term is passed over before its regex runs
+        const each = list.map((e) => ({
+          id: e.id,
+          term: termOf(e).toLowerCase(),
+          m: lexMatcher([e]),
+        }));
         const prefix = bookId + ":";
         for (const k of Object.keys(scriptsStore.segments)) {
           if (!k.startsWith(prefix)) continue;
-          for (const seg of scriptsStore.segments[k])
-            // one entry at a time, so an entry shadowed by a longer one reads 0
-            for (const e of list) uses[e.id] += hitsIn(seg.text, [e]).length;
+          for (const seg of scriptsStore.segments[k]) {
+            const lower = seg.text.toLowerCase();
+            for (const { id, term, m } of each)
+              if (term && lower.includes(term)) uses[id] += m.hits(seg.text).length;
+          }
         }
         return uses;
       };
@@ -141,11 +167,11 @@ export const useCastStore = defineStore("cast", {
     lexSample(): (bookId: string, entry: LexEntry) => string {
       const scriptsStore = useScriptsStore();
       return (bookId: string, entry: LexEntry) => {
+        const m = lexMatcher([entry]);
         const prefix = bookId + ":";
         for (const k of Object.keys(scriptsStore.segments)) {
           if (!k.startsWith(prefix)) continue;
-          for (const seg of scriptsStore.segments[k])
-            if (hitsIn(seg.text, [entry]).length) return seg.text;
+          for (const seg of scriptsStore.segments[k]) if (m.hits(seg.text).length) return seg.text;
         }
         return "";
       };
@@ -522,19 +548,38 @@ export const useCastStore = defineStore("cast", {
         return true;
       });
     },
-    /** Install the server's cast, then each move: the speaker on its lines, and the revisions. */
+    /**
+     * Install the server's cast, then each move: the speaker on its lines, and the revisions. A
+     * clip goes stale as the server staled it: unless both speakers read alike (`sameReading`).
+     */
     _moved(
       bookId: string,
       characters: Character[],
       moves: { moved: RevisedLines[]; to: string }[],
     ): void {
+      const libraryStore = useLibraryStore();
       const scriptsStore = useScriptsStore();
+      const samplesStore = useSpeakerSamplesStore();
 
+      // an unread cast cannot say two speakers read alike, so the clip needs speech
+      const before = this.byName[bookId];
+      const after = new Map(characters.map((c) => [c.name, c]));
+      const cv = libraryStore.bookById(bookId)?.characterVoice;
       this._answered(bookId, { characters });
       // an unread chapter has nothing to move and reads its revision with its script
       for (const { moved, to } of moves)
         for (const { chapterId, ids, revision } of moved)
-          scriptsStore._applyLines(bookId, chapterId, ids, { speaker: to }, revision);
+          scriptsStore._applyLines(
+            bookId,
+            chapterId,
+            ids,
+            { speaker: to },
+            revision,
+            (s) => !before || !sameReading(s.speaker, to, before, cv, after),
+          );
+      // a moved line may wear another effect now, and waiting samples moved with their speaker
+      void staleMoved(bookId);
+      if (bookId in samplesStore.waiting) void samplesStore.load(bookId);
     },
     /** Add speakers this chapter uses that the cast lacks. Returns their names for an undo. */
     _absorbCast(bookId: string, chId: number): string[] {
@@ -598,9 +643,10 @@ export const useCastStore = defineStore("cast", {
     _lexRestale(bookId: string): number {
       const scriptsStore = useScriptsStore();
 
+      const say = lexMatcher(this.lexiconOf(bookId));
       return scriptsStore._restale(
         bookId,
-        (s) => !!pronunciationMoved(s.audio, this.spoken(bookId, s.text).text),
+        (s) => !!pronunciationMoved(s.audio, say.speak(s.text).text),
       );
     },
     _lexChanged(bookId: string, revert: () => void, label: string): void {
@@ -760,8 +806,12 @@ export const useCastStore = defineStore("cast", {
       const undo = await this._rename(bookId, from, to);
       if (undo) uiStore.toast(`Renamed “${from}” to “${to}”`, { undo });
     },
-    /** Rename on the server and here. Resolves to the undo (a rename back), or null. */
+    /**
+     * Rename on the server and here; the old name stays on as an alias. Resolves to the undo (a
+     * rename back, with the aliases as they were), or null.
+     */
     async _rename(bookId: string, from: string, to: string): Promise<Undo | null> {
+      const aliases = [...(this.characters[bookId]?.find((c) => c.name === from)?.aliases ?? [])];
       const ok = await this._write(bookId, "characters", "rename this speaker", async () => {
         const r = await this._service().renameCharacter(bookId, from, to);
         this._moved(bookId, r.characters, [{ moved: r.moved, to }]);
@@ -769,7 +819,8 @@ export const useCastStore = defineStore("cast", {
       });
       if (!ok) return null;
       return async () => {
-        await this._rename(bookId, to, from);
+        if (await this._rename(bookId, to, from))
+          await this._patchSpeaker(bookId, from, { aliases });
       };
     },
     mergeCharacter(bookId: string, from: string, into: string): Promise<void> {
@@ -790,6 +841,13 @@ export const useCastStore = defineStore("cast", {
         .map(({ from, into }) => ({ from, into }));
       if (!merges.length) return;
       const was = new Map(cast.map((c) => [c.name, clone(c)]));
+      const froms = new Set(merges.map((m) => m.from));
+      const intos = new Set(merges.map((m) => m.into));
+      const intoOf = new Map(merges.map((m) => [m.from, m.into]));
+      // the server moves or unlinks their personas; the Undo links back those still so
+      const personas = cast.filter(
+        (p) => p.personaOf && froms.has(p.personaOf) && !froms.has(p.name) && !intos.has(p.name),
+      );
       const result = await this._write(bookId, "characters", "merge these speakers", async () => {
         const r = await this._service().mergeCharacters(bookId, merges);
         this._moved(
@@ -801,29 +859,37 @@ export const useCastStore = defineStore("cast", {
       });
       if (!result) return;
       const n = result.speakers.reduce((sum, s) => sum + lineCount(s.moved), 0);
-      const froms = new Set(merges.map((m) => m.from));
-      const intos = new Set(merges.map((m) => m.into));
       const what =
         merges.length === 1
           ? `“${merges[0].from}” into ${merges[0].into}`
           : `${merges.length} speakers${intos.size === 1 ? ` into ${merges[0].into}` : ""}`;
       uiStore.toast(`Merged ${what} · ${n} line${n === 1 ? "" : "s"} moved`, {
         undo: async () => {
-          // the last merge first; then those that stayed get their aliases as they were
+          // the last merge first; then those that stayed get back what the merge gave them
           const back: SpeakerLines[] = result.speakers
-            .map((s) => ({ character: was.get(s.name)!, lines: s.moved }))
+            .map((s) => ({ character: was.get(s.name)!, lines: s.moved, samples: s.samples }))
             .reverse();
           for (const into of intos) {
             const now = this.characters[bookId]?.find((c) => c.name === into);
             if (now && !froms.has(into))
-              back.push({
-                character: { ...clone(now), aliases: was.get(into)!.aliases },
-                lines: [],
-              });
+              back.push({ character: unmerged(now, was.get(into)!), lines: [] });
+          }
+          for (const p of personas) {
+            const now = this.characters[bookId]?.find((c) => c.name === p.name);
+            if (now && (!now.personaOf || now.personaOf === intoOf.get(p.personaOf!)))
+              back.push({ character: { ...clone(now), personaOf: p.personaOf }, lines: [] });
           }
           await this._attribute(bookId, back, "undo the merge");
         },
       });
+      // a voice filled in from the merged speaker reaches the lines `into` already had
+      const revoiced = [...intos].filter(
+        (into) =>
+          !froms.has(into) &&
+          (was.get(into)?.voice ?? null) !==
+            (this.characters[bookId]?.find((c) => c.name === into)?.voice ?? null),
+      );
+      if (revoiced.length) await useExistingLinesStore().askVoice(bookId, revoiced);
     },
     /** A speaker typed in by hand: not "new" in the review sense, and starts as main cast. False
      *  when the name is taken (offer a merge). With `personaOf` they join as that character's
@@ -865,7 +931,9 @@ export const useCastStore = defineStore("cast", {
       const relinked = "personaOf" in rest && rest.personaOf !== c.personaOf;
       Object.assign(c, rest);
       if (relinked) delete c.masked;
-      await this._push(bookId, name);
+      const saved = await this._push(bookId, name);
+      // a voiceless persona reads in their character's voice, so a link moves their lines' voice
+      if (saved && relinked && !c.voice) await useExistingLinesStore().askVoice(bookId, [name]);
     },
     /** Take the model's "masked" finding off a speaker; their link stays. */
     async unmask(bookId: string, name: string): Promise<void> {
@@ -883,7 +951,47 @@ export const useCastStore = defineStore("cast", {
       const c = this.characters[bookId]?.find((x) => x.name === name);
       if (!c || (c.voice ?? null) === voice) return;
       c.voice = voice;
-      if (await this._push(bookId, name)) await useExistingLinesStore().askVoice(bookId, name);
+      if (await this._push(bookId, name)) await useExistingLinesStore().askVoice(bookId, [name]);
+    },
+    /**
+     * Write these speakers as they stand with one request, then ask about their lines made in
+     * another voice (`existingLines`). False when refused.
+     */
+    async _pushVoices(bookId: string, names: string[], title?: string): Promise<boolean> {
+      const ok = await this._write(bookId, "characters", "save these speakers", async () => {
+        const list = (this.characters[bookId] ?? []).filter((c) => names.includes(c.name));
+        if (list.length)
+          this._answered(bookId, {
+            characters: await this._service().putCharacters(
+              bookId,
+              list.map((c) => clone(c)),
+            ),
+          });
+        return true;
+      });
+      if (ok) await useExistingLinesStore().askVoice(bookId, names, title);
+      return ok ?? false;
+    },
+    /**
+     * After the book's Character voice changed from `was`: ask about the lines of every speaker
+     * whose fallback slot it moved (own-voiced speakers, voiced personas and the Narrator aside).
+     */
+    async _characterVoiceChanged(bookId: string, was: CharacterVoice | undefined): Promise<void> {
+      const libraryStore = useLibraryStore();
+
+      const cv = libraryStore.bookById(bookId)?.characterVoice;
+      const byName = this.byName[bookId] ?? new Map<string, Character>();
+      const names = (this.characters[bookId] ?? [])
+        .filter(
+          (c) =>
+            c.name !== NARRATOR &&
+            !c.voice &&
+            !personaOwner(c, byName) &&
+            characterVoiceFor(was, c.gender) !== characterVoiceFor(cv, c.gender),
+        )
+        .map((c) => c.name);
+      if (names.length)
+        await useExistingLinesStore().askVoice(bookId, names, "The Character voice changed");
     },
     /**
      * Put a voice effect on a speaker's lines, or null to remove it. Existing clips show in the
@@ -989,6 +1097,7 @@ export const useCastStore = defineStore("cast", {
           const back: SpeakerLines[] = result.speakers.map((s) => ({
             character: was.get(s.name)!,
             lines: s.moved,
+            samples: s.samples,
           }));
           for (const p of personas) {
             const now = this.characters[bookId]?.find((c) => c.name === p.name);
@@ -1052,18 +1161,16 @@ export const useCastStore = defineStore("cast", {
           assigned.push(character.name);
         }
       }
-      for (const name of assigned) void this._push(bookId, name);
+      const title = `${plan.length} speaker${plan.length === 1 ? "" : "s"} voiced`;
+      void this._pushVoices(bookId, assigned, title);
       uiStore.toast(`${plan.length} unvoiced speaker${plan.length === 1 ? "" : "s"} assigned`, {
         kind: "success",
         description: "Existing voice assignments were left alone.",
         // all of them had no voice of their own, so that is what they go back to
         undo: () => {
-          for (const name of assigned) {
-            const c = this.characters[bookId]?.find((x) => x.name === name);
-            if (!c) continue;
-            c.voice = null;
-            void this._push(bookId, name);
-          }
+          for (const c of this.characters[bookId] ?? [])
+            if (assigned.includes(c.name)) c.voice = null;
+          void this._pushVoices(bookId, assigned);
         },
       });
       return plan.length;

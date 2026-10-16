@@ -18,6 +18,7 @@ import ImportingCard from "@/views/library/ImportingCard.vue";
 import ShelfGrid from "@/views/library/ShelfGrid.vue";
 import ShelfTable from "@/views/library/ShelfTable.vue";
 import { bookFacts } from "@/views/library/bookFacts";
+import { useShelfExports } from "@/queries";
 import {
   filterCounts,
   SHELF_FILTERS,
@@ -48,6 +49,7 @@ const router = useRouter();
 const pending = ref<PendingAdd | null>(null);
 
 const shelved = computed(() => libraryStore.shelved);
+useShelfExports(() => shelved.value.map((b) => b.id));
 const importing = computed(() => libraryStore.books.filter((b) => b.importing));
 const running = computed(
   () =>

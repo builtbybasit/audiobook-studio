@@ -42,6 +42,7 @@ import { useExportsStore } from "@/stores/exports";
 import { useHistoryStore } from "@/stores/history";
 import { useJobsStore } from "@/stores/jobs";
 import { useScriptsStore } from "@/stores/scripts";
+import { useTransferStore } from "@/stores/transfer";
 import { toastFailure } from "@/stores/toastFailure";
 import { useUiStore } from "@/stores/ui";
 
@@ -97,12 +98,29 @@ export const useLibraryStore = defineStore("library", {
     bookById(s): (id: string) => Book | undefined {
       return (id: string): Book | undefined => s.books.find((b) => b.id === id);
     },
+    /**
+     * A shelved book's chapters without the volume still in its review: nothing runs on that until
+     * it is added, so only the contents review (`allChaptersOf`) shows it.
+     */
     chaptersOf(s): (id: string) => Chapter[] {
+      return (id: string): Chapter[] => {
+        const all = s.chapters[id] ?? [];
+        const book = s.books.find((b) => b.id === id);
+        const waiting = book?.importing ? undefined : book?.volumes.find((v) => v.importing);
+        return waiting ? all.filter((c) => c.volumeId !== waiting.id) : all;
+      };
+    },
+    /** Every chapter, a volume in review included. */
+    allChaptersOf(s): (id: string) => Chapter[] {
       return (id: string): Chapter[] => s.chapters[id] ?? [];
     },
     chapter(s): (bookId: string, chId: number) => Chapter | undefined {
-      return (bookId: string, chId: number): Chapter | undefined =>
-        (s.chapters[bookId] ?? []).find((c) => c.id === chId);
+      return (bookId: string, chId: number): Chapter | undefined => {
+        const all = s.chapters[bookId] ?? [];
+        // ids run 1…n in order, so this is O(1) at 900 chapters; the find covers a gap
+        const at = all[chId - 1];
+        return at?.id === chId ? at : all.find((c) => c.id === chId);
+      };
     },
     /**
      * Each book's reading numbers (`@/lib/chapterNumber`) by chapter id. Reads only ids and
@@ -539,14 +557,16 @@ export const useLibraryStore = defineStore("library", {
     },
     /**
      * The voice for speakers with none of their own, or null for the Narrator's. Changes no clip;
-     * clips in the old voice show as made in another.
+     * once saved, the lines it moved to another voice are asked about, as a speaker's voice is.
      */
     async setCharacterVoice(bookId: string, cv: CharacterVoice | null): Promise<void> {
       const b = this.bookById(bookId);
       if (!b) return;
+      const was = b.characterVoice && { ...b.characterVoice };
       if (cv) b.characterVoice = cv;
       else delete b.characterVoice;
-      await this._writeSettings(bookId, { characterVoice: cv }, "save the Character voice");
+      if (await this._writeSettings(bookId, { characterVoice: cv }, "save the Character voice"))
+        await useCastStore()._characterVoiceChanged(bookId, was);
     },
     /**
      * Write the book's scripter notes and prompt whole. Refused here with the reason when it cannot
@@ -837,6 +857,7 @@ export const useLibraryStore = defineStore("library", {
       const historyStore = useHistoryStore();
       const jobsStore = useJobsStore();
       const scriptsStore = useScriptsStore();
+      const transferStore = useTransferStore();
 
       const book = this.bookById(bookId);
       if (!book) return;
@@ -845,8 +866,9 @@ export const useLibraryStore = defineStore("library", {
         map[c.id] = i + 1;
       });
       scriptsStore._remapBook(bookId, map);
-      // script history is keyed by chapter number too
+      // script history and a read script file's plan are keyed by chapter number too
       historyStore.remapBook(bookId, map);
+      transferStore._remapBook(bookId, map);
       // every cached answer for this book is keyed by numbers that moved (job queue included)
       this._forgetBook(bookId);
       void jobsStore._changed();

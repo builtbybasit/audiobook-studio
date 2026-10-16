@@ -18,8 +18,10 @@ export interface EffectJob {
 }
 
 export interface EffectRunner {
-  /** Whether uv and Pedalboard are here; asked once, then remembered. */
+  /** Whether uv and Pedalboard are here: `unavailable()` is null. */
   available(): Promise<boolean>;
+  /** Null when effects can run, else why not. Only a yes is remembered; a no is asked again later. */
+  unavailable(): Promise<string | null>;
   /** The chains in order; answers 16-bit WAV bytes. */
   render(
     bytes: Uint8Array,
@@ -41,6 +43,21 @@ export interface EffectRunner {
 }
 
 const lastLine = (text: string): string => text.trim().split("\n").at(-1)?.trim() ?? "";
+
+/** How long a failed check stands before the next ask runs it again. */
+export const RETRY_MS = 60_000;
+
+export const NO_UV =
+  "they need uv (docs.astral.sh/uv), which was not found — install it, then try again";
+
+/** The probe's failure in words: uv missing, Pedalboard slow to arrive, or what Python said. */
+function whyNot(e: unknown): string {
+  const err = e as { code?: string; name?: string; message?: string };
+  if (err?.code === "ENOENT") return NO_UV;
+  if (err?.name === "TimeoutError")
+    return "Pedalboard took too long to load (its first download may be slow) — try again";
+  return `Pedalboard could not be loaded: ${err?.message ?? String(e)}`;
+}
 
 function start(cmd: string[], stdin: Uint8Array, signal: AbortSignal) {
   const proc = Bun.spawn(cmd, { stdin, stdout: "pipe", stderr: "pipe" });
@@ -88,13 +105,26 @@ export function pedalboardRunner(
     return out;
   };
 
-  let ready: Promise<boolean> | undefined;
+  // a no (offline on the first download, a timeout) is asked again after a while, not kept
+  let probe: Promise<string | null> | undefined;
+  let failedAt = 0;
+  const unavailable = (): Promise<string | null> => {
+    if (!probe || (failedAt && Date.now() - failedAt > RETRY_MS)) {
+      failedAt = 0;
+      probe = run(["-c", "import pedalboard"], new Uint8Array(), AbortSignal.timeout(300_000)).then(
+        () => null,
+        (e: unknown) => {
+          failedAt = Date.now();
+          return whyNot(e);
+        },
+      );
+    }
+    return probe;
+  };
 
   return {
-    available: () =>
-      (ready ??= run(["-c", "import pedalboard"], new Uint8Array(), AbortSignal.timeout(300_000))
-        .then(() => true)
-        .catch(() => false)),
+    unavailable,
+    available: async () => (await unavailable()) === null,
 
     async render(bytes, format, chains, signal) {
       const head = encode(`${JSON.stringify({ format, chains })}\n`);

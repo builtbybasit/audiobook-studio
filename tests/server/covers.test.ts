@@ -68,6 +68,16 @@ describe("the EPUB's cover", () => {
     expect(shelf.body.books[0].coverImage).toBe(book.coverImage);
   });
 
+  test("goes off the disk with an import that is discarded", async () => {
+    const api = testApi();
+    const book = await imported(api, { cover: { bytes: PNG } });
+    const dir = join(api.audioDir, book.id);
+    expect(existsSync(dir)).toBe(true);
+    await api.request(`/api/books/${book.id}/discard`, { method: "POST" });
+    for (let i = 0; i < 50 && existsSync(dir); i++) await new Promise((r) => setTimeout(r, 2));
+    expect(existsSync(dir)).toBe(false);
+  });
+
   test("is found the EPUB 2 way too, through the package's cover meta", async () => {
     const api = testApi();
     const book = await imported(api, {

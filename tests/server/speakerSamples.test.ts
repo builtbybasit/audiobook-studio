@@ -6,7 +6,7 @@ import { join } from "node:path";
 import JSZip from "jszip";
 
 import type { Book, Character, ScriptFileSpeaker, SpeakerSamples } from "@/types";
-import { mergeCharacters, removeCharacters, renameCharacter } from "~/cast/ops";
+import { attribute, mergeCharacters, removeCharacters, renameCharacter } from "~/cast/ops";
 import { upsertCharacter } from "~/db/cast";
 import { speakerSamples } from "~/db/schema";
 import { GRACE_MS } from "~/db/voiceSamples";
@@ -240,6 +240,19 @@ describe("where they belong", () => {
       ["Narrator", true],
       ["Narrator", true],
     ]);
+  });
+
+  test("an Undo of a merge or a removal gives them back to their speaker", async () => {
+    await store(await both(), ["Vex", "Ines"]);
+    const speakers = async () => (await list()).map((s) => s.speaker).sort();
+    for (const take of [
+      () => mergeCharacters(api.db, id, [{ from: "Vex", into: "Ines" }]),
+      () => removeCharacters(api.db, id, ["Vex"]),
+    ]) {
+      const { samples } = take().speakers[0];
+      attribute(api.db, id, [{ character: character("Vex"), lines: [], samples }]);
+      expect(await speakers()).toEqual(["Ines", "Vex"]);
+    }
   });
 
   test("an export leaves out a recording gone from disk, and a voice with none left", async () => {

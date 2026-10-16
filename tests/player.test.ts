@@ -34,7 +34,7 @@ function advance(seconds: number): void {
 }
 
 /** two lines with a beat between them: 2s, 1s of silence, 3s */
-const chapter = (id = "ch1", next?: () => Queue | null): Queue => ({
+const chapter = (id = "ch1", next?: Queue["next"]): Queue => ({
   id,
   title: id,
   clips: [
@@ -140,6 +140,20 @@ describe("playing", () => {
     expect(p.pos).toBe(0);
   });
 
+  test("the same chapter with a changed timeline is played and scrubbed in the new one", () => {
+    playQueue(chapter("ch1"));
+    // the second line was re-rendered longer: 2 + 1 + 10
+    const longer = { ...chapter("ch1"), clips: [chapter().clips[0], { id: "b", duration: 10 }] };
+    playQueue(longer, 8);
+    expect(p.len).toBe(13);
+    expect(p.pos).toBe(8);
+    expect(p.playing).toBe(true);
+    pause();
+    cue({ ...longer, clips: [...longer.clips, { id: "c", duration: 5 }] }, 15);
+    expect(p.pos).toBe(15);
+    expect(p.playing).toBe(false);
+  });
+
   test("scrubbing a chapter that isn't loaded doesn't start it", () => {
     cue(chapter(), 4);
     expect(p.pos).toBe(4);
@@ -161,6 +175,25 @@ describe("listening through a book", () => {
     expect(p.id).toBe("ch2");
     expect(p.playing).toBe(true); // the chapter boundary is not a stop
     expect(p.pos).toBeLessThan(p.len);
+  });
+
+  test("a next chapter that must be read first is asked for once, and plays when it arrives", async () => {
+    let handoffs = 0;
+    let arrive!: (q: Queue) => void;
+    playQueue(
+      chapter("ch1", () => {
+        handoffs++;
+        return new Promise<Queue>((resolve) => (arrive = resolve));
+      }),
+    );
+    advance(10);
+    advance(1);
+    expect(handoffs).toBe(1);
+    arrive(chapter("ch2"));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(p.id).toBe("ch2");
+    expect(p.playing).toBe(true);
   });
 
   test("and stops when there is no next chapter", () => {

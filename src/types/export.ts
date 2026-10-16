@@ -72,6 +72,8 @@ export interface ExportFile {
   /** chapter marks in this file; 0 when it is one chapter, or the format has none */
   markers: number;
   volume: ExportVolume | null;
+  /** where it is on the server's disk, once written */
+  path?: string;
 }
 
 export interface ExportPlanFile extends ExportFile {
@@ -163,8 +165,10 @@ export interface ExportItem {
   status: ExportStatus;
   progress?: number;
   customCover?: boolean;
-  /** each chapter's audio when this was built; decides "needs an update" */
+  /** each chapter's audio and place when this was built; decides "needs an update" */
   state: Record<number, string>;
+  /** a finished one's chapters whose `state` no longer matches the book, as the server read it */
+  changed?: number[];
   /** clips that were already stale when this was built, accepted on purpose */
   stale?: number;
   /** why a failed build failed */

@@ -24,6 +24,7 @@ import type {
   BulkTarget,
   LineCounts,
   NarrationStatus,
+  RevisedLines,
   ScriptDiff,
   Segment,
   SegmentFlag,
@@ -740,8 +741,8 @@ export const useScriptsStore = defineStore("scripts", {
       this._revision[k] = Math.max(this._revision[k] ?? 0, revision);
     },
     /**
-     * Apply lines the server changed: `patch` each and stale its clip, then `_adoptRevision`.
-     * A chapter not read yet has nothing to change.
+     * Apply lines the server changed: `patch` each and stale its clip where `stales` says (asked
+     * before the patch), then `_adoptRevision`. A chapter not read yet has nothing to change.
      */
     _applyLines(
       bookId: string,
@@ -749,16 +750,39 @@ export const useScriptsStore = defineStore("scripts", {
       ids: readonly number[],
       patch: Partial<Pick<Segment, "speaker">>,
       revision: number,
+      stales: (s: Segment) => boolean = () => true,
     ): void {
+      const libraryStore = useLibraryStore();
+
       const segs = this.segments[key(bookId, chId)];
       if (!segs) return;
       const set = new Set(ids);
-      for (const s of segs)
-        if (set.has(s.id)) {
-          Object.assign(s, patch);
-          this._markStale(bookId, chId, s);
+      let staled = false;
+      for (const s of segs) {
+        if (!set.has(s.id)) continue;
+        const rendered = s.audio.status === "done" || s.audio.status === "stale";
+        if (rendered && stales(s)) {
+          s.audio.status = "stale";
+          staled = true;
         }
+        Object.assign(s, patch);
+      }
+      // once per chapter: a removal can move a thousand lines
+      if (staled) libraryStore._staleChapter(bookId, chId);
       this._adoptRevision(bookId, chId, revision);
+    },
+    /** A removed effect comes off the lines the server took it from, at their new revisions. */
+    _dropEffect(id: string, lines: readonly (RevisedLines & { bookId: string })[]): void {
+      for (const { bookId, chapterId, ids, revision } of lines) {
+        const set = new Set(ids);
+        for (const s of this.segments[key(bookId, chapterId)] ?? []) {
+          if (!set.has(s.id) || !s.effects) continue;
+          const rest = s.effects.filter((e) => e !== id);
+          if (rest.length) s.effects = rest;
+          else delete s.effects;
+        }
+        this._adoptRevision(bookId, chapterId, revision);
+      }
     },
     /** One line's pause in seconds, or none for the book's pacing. Returns whether it changed;
      *  the caller re-times and commits. */
@@ -979,12 +1003,13 @@ export const useScriptsStore = defineStore("scripts", {
       const prefix = bookId + ":";
       for (const k of Object.keys(this.segments)) {
         if (!k.startsWith(prefix)) continue;
+        const before = n;
         for (const s of this.segments[k]) {
           if (s.audio.status !== "done" || !outdated(s)) continue;
           s.audio.status = "stale";
           n++;
-          libraryStore._staleChapter(bookId, Number(k.slice(prefix.length)));
         }
+        if (n > before) libraryStore._staleChapter(bookId, Number(k.slice(prefix.length)));
       }
       return n;
     },

@@ -147,6 +147,11 @@ const batchNote = computed(() => {
   return `Sending ${items} a request, the server's limit${atOnce}.`;
 });
 
+const speedNote = computed(() => {
+  const r = props.u.endpoint?.speedRange;
+  return r ? `Takes speed ${r.min}–${r.max}× (from the server)` : null;
+});
+
 // a spoken line has no paragraph end, so only scripting is offered one
 const cutModes = computed(() =>
   props.u.kind === "scripting" ? SPLIT_MODES : SPLIT_MODES.filter((m) => m.value !== "paragraph"),
@@ -341,6 +346,7 @@ const limitNote = computed(() => {
             Check again
           </button>
         </p>
+        <p v-if="speedNote" class="mt-1 text-[11px] text-zinc-500">{{ speedNote }}</p>
       </section>
 
       <!-- timing -->

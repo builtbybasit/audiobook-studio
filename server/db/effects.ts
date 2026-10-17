@@ -210,23 +210,22 @@ export function effectUses(db: Db | Tx, id: string): EffectUses {
   };
 }
 
-/** How each speaker with a speed has it made on their voice's endpoint (`speedSplit`). */
-function speedsOf(
-  db: Db | Tx,
-  bookId: string,
-  cast: { name: string; speed: number | null }[],
-): Map<string, ReturnType<typeof speedSplit>> {
-  const out = new Map<string, ReturnType<typeof speedSplit>>();
-  if (!cast.some((c) => c.speed != null)) return out;
+type Split = ReturnType<typeof speedSplit>;
+
+/** How a speaker's pace (`speakerSpeed`) is made on their voice's endpoint, read once each. */
+function speedsOf(db: Db | Tx, bookId: string): (speaker: string) => Split {
   const deliveryOf = bookDelivery(db, bookId);
   const endpoints = new Map<string, Endpoint | undefined>();
-  for (const { name, speed } of cast) {
-    if (speed == null) continue;
-    const id = deliveryOf(name).endpoint;
-    if (id && !endpoints.has(id)) endpoints.set(id, readEndpoint(db, id));
-    out.set(name, speedSplit(id ? endpoints.get(id) : null, speed));
-  }
-  return out;
+  const memo = new Map<string, Split>();
+  return (speaker) => {
+    let split = memo.get(speaker);
+    if (!split) {
+      const { endpoint: id, speed } = deliveryOf(speaker);
+      if (id && speed !== 1 && !endpoints.has(id)) endpoints.set(id, readEndpoint(db, id));
+      memo.set(speaker, (split = speedSplit(id ? endpoints.get(id) : null, speed)));
+    }
+    return split;
+  };
 }
 
 /** `chainsFor`'s input, and the speed each speaker's clips are sent at now (null = none). */
@@ -240,19 +239,18 @@ function readContext(
       effect: characters.effect,
       thoughts: characters.thoughts,
       personaOf: characters.personaOf,
-      speed: characters.speed,
     })
     .from(characters)
     .where(eq(characters.bookId, bookId))
     .all();
-  const speeds = speedsOf(db, bookId, cast);
+  const split = speedsOf(db, bookId);
   const ctx: EffectContext = {
     effects: new Map(listEffects(db).map((e) => [e.id, e])),
     library: readThoughts(db),
     book: db.select({ t: books.thoughts }).from(books).where(eq(books.id, bookId)).get()?.t ?? null,
     cast: new Map(
       cast
-        .map((c) => ({ ...c, stretched: speeds.get(c.name)?.stretched ?? null }))
+        .map((c) => ({ ...c, stretched: split(c.name).stretched }))
         .filter((c) => c.effect != null || c.thoughts != null || c.personaOf != null || c.stretched)
         .map((c) => [
           c.name,
@@ -265,7 +263,7 @@ function readContext(
         ]),
     ),
   };
-  return { ctx, sentOf: (speaker) => speeds.get(speaker)?.sent ?? null };
+  return { ctx, sentOf: (speaker) => split(speaker).sent };
 }
 
 /** Input to `chainsFor`, read once per book. */
@@ -308,6 +306,7 @@ function wornBy(ctx: EffectContext, speaker: string): string[] {
  */
 export function staleClips(db: Db | Tx, bookId: string, scope: ExistingScope = {}): StaleClip[] {
   const { ctx, sentOf } = readContext(db, bookId);
+  const who = scope.speakers ?? (scope.speaker != null ? wornBy(ctx, scope.speaker) : null);
   const rows = db
     .select({
       chapterId: clips.chapterId,
@@ -340,7 +339,7 @@ export function staleClips(db: Db | Tx, bookId: string, scope: ExistingScope = {
         eq(clips.status, "done"),
         isNotNull(clips.url),
         sql`coalesce(${chapters.excluded}, 0) = 0`,
-        scope.speaker != null ? inArray(segments.speaker, wornBy(ctx, scope.speaker)) : undefined,
+        who ? inArray(segments.speaker, who) : undefined,
       ),
     )
     .orderBy(asc(clips.chapterId))

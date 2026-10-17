@@ -74,4 +74,4 @@ Item fields: `id` (unique, echoed back), `input`, `voice` (required); `instructi
 
 ## What the app sends
 
-`model`, `response_format`, and per item `id`, `input`, `voice`, `instructions`. No `sample_rate`, `speed`, `language` or `extra` yet. Each item is its own clip and its own ledger row. Each batch takes one of the endpoint's concurrency slots.
+`model`, `response_format`, and per item `id`, `input`, `voice`, `instructions`, and `speed` when the speaker's pace is not 1 and falls within the model's declared `speed` range (outside it, or with no range declared, the app stretches the clip itself). No `sample_rate`, `language` or `extra` yet. Each item is its own clip and its own ledger row. Each batch takes one of the endpoint's concurrency slots.

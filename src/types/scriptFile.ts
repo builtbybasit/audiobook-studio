@@ -75,7 +75,7 @@ export interface ScriptFileSpeaker {
   gender: Gender;
   description: string;
   style: string;
-  /** `Character.speed`; absent = 1 */
+  /** `Character.speed`; absent = their voice's */
   speed?: number;
   color?: string;
   major?: boolean;
@@ -190,7 +190,7 @@ export interface SpeakerDetails {
   gender: Gender;
   description: string;
   style: string;
-  /** absent = 1 */
+  /** absent = their voice's */
   speed?: number;
   /** effect names, as the file writes them; absent = none of their own */
   effect?: string;

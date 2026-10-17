@@ -11,6 +11,7 @@ import {
   type EndpointSettingsService,
 } from "@/services/endpointSettings";
 import { useEndpointsStore, WRITE_DELAY_MS } from "@/stores/endpoints";
+import { useExistingLinesStore } from "@/stores/existingLines";
 import { useUiStore } from "@/stores/ui";
 import { clone } from "@/lib/utils";
 import type { Endpoint } from "@/types";
@@ -33,7 +34,7 @@ class HeldServer {
         needsKey: true,
         maxChars: 0,
         splitAt: "sentence",
-        voices: [],
+        voices: [{ id: "ash", label: "Ash", gender: "m" }],
       } as Omit<Endpoint, "history" | "failures" | "rateLimits" | "backoffUntil">,
     ],
     profiles: [],
@@ -186,4 +187,18 @@ test("a refused write is what the flush says, and the server's configuration is 
   expect(await flushing).toBe("refused");
   expect(toasts).toEqual(["Refused"]);
   expect(ep.concurrency).toBe(3);
+});
+
+test.each<[string, "answer" | "refuse", string[][]]>([
+  ["once its write lands", "answer", [["srv-tts/ash", "Ash now reads at 1.09×"]]],
+  ["not when refused", "refuse", []],
+])("a voice's new speed asks about lines read at the old one %s", async (_, how, asked) => {
+  const calls: unknown[][] = [];
+  useExistingLinesStore().askVoiceSpeed = async (...a) => void calls.push(a);
+  const setting = endpointsStore.setVoiceSpeed(endpointsStore.endpoints[0], "ash", 1.09);
+  await wait(0);
+  expect(calls).toEqual([]);
+  server.open.pop()![how]();
+  await setting;
+  expect(calls).toEqual(asked);
 });

@@ -6,6 +6,7 @@ import type {
   AudioEncoding,
   AudioFormat,
   BatchLimits,
+  EndpointBatches,
   EndpointProbe,
   SegmentType,
   VoiceRef,
@@ -59,7 +60,7 @@ export interface RenderedClip {
   voice: string | null;
 }
 
-export type { BatchLimits };
+export type { BatchLimits, EndpointBatches };
 
 export type BatchOutcome = { clip: RenderedClip } | { error: Error };
 
@@ -93,17 +94,17 @@ export interface SpeechProvider {
   /** the Test button; absent, it cannot be tested */
   probe?(target: ProviderTarget, signal: AbortSignal): Promise<EndpointProbe>;
   /**
-   * How many lines the endpoint takes per batch; null for one at a time. Cached for a while;
-   * `fresh` asks the server again. Absent, a provider never batches.
+   * How many lines the endpoint takes per batch (`limits` null: one at a time), and the speed it
+   * declares. Cached for a while; `fresh` asks the server again. Absent, a provider never batches.
    */
-  batchLimits?(
+  capabilities?(
     target: ProviderTarget,
     signal: AbortSignal,
     fresh?: boolean,
-  ): Promise<BatchLimits | null>;
+  ): Promise<EndpointBatches>;
   /**
    * Resolves once every item is `answered`. Throws when the whole batch went wrong (refused, or a
-   * `BatchCut`); the unanswered items are then the caller's. Present exactly when `batchLimits` is.
+   * `BatchCut`); the unanswered items are then the caller's. Present exactly when `capabilities` is.
    */
   speakBatch?(batch: SpeechBatch): Promise<void>;
 }

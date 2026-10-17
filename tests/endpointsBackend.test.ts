@@ -105,7 +105,7 @@ class FakeService implements EndpointSettingsService {
     return this.answer();
   }
   async batchLimits(): Promise<EndpointBatches> {
-    return { limits: null };
+    return { limits: null, speed: null };
   }
   async testEndpoint(kind: EndpointKind, id: string): Promise<EndpointProbe> {
     this.tests.push({ kind, id });
@@ -163,6 +163,11 @@ class FakeService implements EndpointSettingsService {
   async keepSamples(): Promise<KeptVoiceSamples> {
     throw new ApiError("not used here", 500);
   }
+  voiceSpeedLines = async (): Promise<never> => {
+    throw new ApiError("not used here", 500);
+  };
+  redoVoiceSpeed = this.voiceSpeedLines;
+  keepVoiceSpeed = this.voiceSpeedLines;
   forgot: string[] = [];
   async forgetSamples(_id: string, voice: string): Promise<void> {
     this.forgot.push(voice);

@@ -6,7 +6,7 @@ import type { ChapterHistory } from "@/types/history";
 import type { Job } from "@/types/job";
 import type { SpeakerSamples } from "@/types/scriptFile";
 import type { Segment, SegmentFlag } from "@/types/segment";
-import type { FoundVoice } from "@/types/voice";
+import type { FoundVoice, SpeedRange } from "@/types/voice";
 
 // ---------- books ----------
 
@@ -114,6 +114,40 @@ export interface NarrationQueued {
   chapters: Chapter[];
 }
 
+/** One book's lines at a voice's old speed. */
+export interface VoiceSpeedBook {
+  bookId: string;
+  title: string;
+  /** sent at the old speed: re-narrated, at a price */
+  reNarrate: number;
+  /** worst-case dollars for them; null when any is unpriced */
+  cost: number | null;
+  /** made here at the old speed: Re-applied, free */
+  reApply: number;
+  /** of `reApply`, lines no Re-apply can redo */
+  unavailable: number;
+}
+
+export interface VoiceSpeedLines {
+  books: VoiceSpeedBook[];
+  /** false when effects can't run here, so nothing is Re-applied */
+  ready: boolean;
+}
+
+export interface VoiceSpeedRedone {
+  /** books with something queued or refused */
+  books: {
+    bookId: string;
+    /** narration jobs queued */
+    jobs: number;
+    /** with the queued ones marked, when any were */
+    chapters?: Chapter[];
+    reapplied: boolean;
+    /** what the book refused, said as is */
+    refused?: string[];
+  }[];
+}
+
 export interface RetakesQueued {
   /** null when nothing was queued */
   job: Job | null;
@@ -171,9 +205,11 @@ export interface BatchLimits {
   maxItemChars: number | null;
 }
 
-/** `null` when the server takes no batches. */
+/** What a speech server's capabilities say of its model; `limits` null = no batches. */
 export interface EndpointBatches {
   limits: BatchLimits | null;
+  /** the speed it takes (`Endpoint.speedRange`); null = it declares none */
+  speed: SpeedRange | null;
 }
 
 /** Nothing is added to the endpoint until the page adds it. */

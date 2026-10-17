@@ -10,10 +10,12 @@ import { setEffectsService, type EffectsService } from "@/services/effects";
 import { setLibraryService, type LibraryService } from "@/services/library";
 import { useCastStore } from "@/stores/cast";
 import { useEffectsStore } from "@/stores/effects";
+import { useEndpointsStore } from "@/stores/endpoints";
+import { useExistingLinesStore } from "@/stores/existingLines";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
-import type { Book, Character, Effect, Step, ThoughtChoice } from "@/types";
+import type { Book, Character, Effect, Endpoint, Step, ThoughtChoice } from "@/types";
 import { useChoice } from "@/views/cast/effects/choice";
 import { flush, testPinia, type TestPinia } from "./support/pinia";
 
@@ -218,6 +220,44 @@ describe("the library's thought effect", () => {
     expect(ctx.cast.get("Veil")).toEqual({ personaOf: "Ana" });
     expect(ctx.effects.get("room")!.name).toBe("Room");
   });
+});
+
+describe("a voice's speed", () => {
+  // an unknown server takes no speed, so a voice's 1.09 is made here
+  beforeEach(() => {
+    useEndpointsStore().endpoints = [
+      {
+        id: "studio",
+        baseUrl: "http://localhost:8880/v1",
+        voices: [{ id: "ash", label: "Ash", gender: "m", speed: 1.09 }],
+      } as Endpoint,
+    ];
+    useCastStore().byName.b!.get("Ana")!.voice = "studio/ash";
+  });
+
+  test("is stretched for a speaker without their own, and their persona", () => {
+    const ctx = effects().contextFor("b");
+    expect(ctx.cast.get("Ana")?.stretched).toBe(1.09);
+    expect(ctx.cast.get("Veil")?.stretched).toBe(1.09);
+  });
+
+  // asked on the speed the line gets: their own, else their voice's
+  test.each([
+    ["back to the voice's", 1.2, null, ["Ana now reads at their voice’s speed"]],
+    ["to their voice's own pace", undefined, 1, ["Ana now reads at 1×"]],
+    ["back to the voice's, which it matched", 1.09, null, []],
+  ] as const)(
+    "a speaker's own speed changed %s asks about the old sound",
+    async (_, own, to, titles) => {
+      useCastStore().byName.b!.get("Ana")!.speed = own;
+      const asked: unknown[][] = [];
+      useExistingLinesStore().askEffect = async (...a) => void asked.push(a);
+
+      expect(await pinia.run(() => useCastStore().setSpeed("b", "Ana", to))).toBe(true);
+      expect(server.characters.find((c) => c.name === "Ana")!.speed).toBe(to ?? undefined);
+      expect(asked).toEqual(titles.map((t) => ["b", "Ana", [], "none", t]));
+    },
+  );
 });
 
 describe("the old-sound count", () => {

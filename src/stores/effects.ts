@@ -95,9 +95,10 @@ export const useEffectsStore = defineStore("effects", {
         cast: new Map(
           castStore.charactersOf(bookId).flatMap((c) => {
             // as the server's `effectContext`: only a speed their endpoint can't take is made here
-            const stretched =
-              c.speed &&
-              speedSplit(castStore.effectiveVoice(bookId, c.name).endpoint, c.speed).stretched;
+            const stretched = speedSplit(
+              castStore.effectiveVoice(bookId, c.name).endpoint,
+              castStore.effectiveSpeed(bookId, c.name),
+            ).stretched;
             if (!c.effect && !c.thoughts && !c.personaOf && !stretched) return [];
             const own = { effect: c.effect, thoughts: c.thoughts, personaOf: c.personaOf };
             return [[c.name, stretched ? { ...own, stretched } : own] as const];

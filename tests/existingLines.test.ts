@@ -13,6 +13,8 @@ import { useExistingLinesStore } from "@/stores/existingLines";
 import { useLibraryStore } from "@/stores/library";
 import { useUiStore } from "@/stores/ui";
 import { readScript } from "~/db/script";
+import { voices } from "~/db/schema";
+import { and, eq } from "drizzle-orm";
 import { backendServer, pointServicesAt } from "./support/backendServer";
 import { fakeEffectRunner } from "./support/effects";
 import { line } from "./support/epub";
@@ -127,5 +129,33 @@ describe("lines made the old way", () => {
     expect(fake.calls.batch.flat()).toHaveLength(1);
     await existing.askEffect(id, "Mara", ["effect"]);
     expect(existing.ask).toBeNull();
+  });
+
+  // the studio's speed is made here: All re-applies it, None keeps the old sound
+  test.each([
+    ["All books", true, 1],
+    ["None", false, 0],
+  ])("a voice's new speed asks once across books; %s answers it", async (_, all, batches) => {
+    const { api, id, fake } = await heard();
+    const existing = useExistingLinesStore();
+    api.db
+      .update(voices)
+      .set({ speed: 1.25 })
+      .where(and(eq(voices.endpointId, "studio"), eq(voices.id, "ash")))
+      .run();
+
+    await existing.askVoiceSpeed("studio/ash", "Ash now reads at 1.25×");
+    expect(existing.speedAsk).toMatchObject({ title: "Ash now reads at 1.25×", ready: true });
+    expect(existing.speedAsk!.books).toEqual([
+      expect.objectContaining({ bookId: id, reNarrate: 0 }),
+    ]);
+    expect(existing.speedAsk!.books[0].reApply).toBeGreaterThan(0);
+    expect(await existing.answerVoiceSpeed(all ? [id] : [])).toBe(true);
+    await api.runner.idle();
+
+    expect(existing.speedAsk).toBeNull();
+    expect(fake.calls.batch).toHaveLength(batches);
+    await existing.askVoiceSpeed("studio/ash", "Ash now reads at 1.25×");
+    expect(existing.speedAsk).toBeNull();
   });
 });

@@ -3,7 +3,14 @@
 // book mid-run). Each landed clip moves the revision on, so an edit from a stale copy gets a 409.
 // A line that already has a clip renders an `auto` candidate beside it (`queuedSlot` in
 // server/narration/chapter.ts); the old clip plays until the new one lands.
-import type { Job, NarrationQueued, NarrationScope, Segment, SegmentAudio } from "@/types";
+import type {
+  Endpoint,
+  Job,
+  NarrationQueued,
+  NarrationScope,
+  Segment,
+  SegmentAudio,
+} from "@/types";
 import { chainsFor, runnable, soundOf, thoughtEffectOf, type EffectContext } from "@/lib/effects";
 import { encodingOf } from "@/lib/endpointShapes";
 import { chapterNarration, narrationTargets, SCOPE_LABEL } from "@/lib/runPlan";
@@ -17,7 +24,7 @@ import { probeClip } from "~/audio/probe";
 import type { ThoughtEffect } from "~/audio/thoughtEffect";
 import type { Db, Tx } from "~/db/client";
 import { effectContext } from "~/db/effects";
-import { readEndpoint } from "~/db/endpoints";
+import { readEndpoint, writeSpeedRange } from "~/db/endpoints";
 import { activeJob, getJob, nextRunId, setReserved } from "~/db/jobs";
 import * as library from "~/db/library";
 import {
@@ -716,7 +723,6 @@ export function narrationHandler(
 
       // The cast is read once; a rename mid-run marks the clips it moved stale itself.
       const deliveryOf = bookDelivery(db, job.bookId);
-      const soundFor = lineSounds(ctx, effectContext(db, job.bookId), sound);
 
       const { targets, lines } = planRun(db, chapter.uid, scope);
       if (!targets.length) {
@@ -729,6 +735,33 @@ export function narrationHandler(
         replacing: targets.filter((t) => t.slot === "candidate").length,
         scope: labelOf(scope),
       });
+
+      // Ask each endpoint once whether it batches; no answer or batches off: one line at a time.
+      // Asked before the effects are read, so a speed the server now declares is sent, not stretched.
+      const endpoints = new Map<string, Endpoint | undefined>();
+      const endpointOf = (id: string): Endpoint | undefined => {
+        if (!endpoints.has(id)) endpoints.set(id, readEndpoint(db, id));
+        return endpoints.get(id);
+      };
+      const groups = new Map<string, Target[]>();
+      const alone: Target[] = [];
+      for (const t of targets) {
+        const id = deliveryOf(t.s.speaker).endpoint;
+        const ep = id ? endpointOf(id) : undefined;
+        if (!id || !ep || ep.batch === false || !provider.capabilities || !provider.speakBatch)
+          alone.push(t);
+        else groups.set(id, [...(groups.get(id) ?? []), t]);
+      }
+      const batched: [string, Target[], BatchLimits][] = [];
+      for (const [id, lines] of groups) {
+        const ep = endpointOf(id)!;
+        const answer = await provider.capabilities!(speechTarget(db, ep), signal).catch(() => null);
+        if (signal.aborted) throw signal.reason;
+        if (answer) writeSpeedRange(db, id, answer.speed);
+        if (answer?.limits) batched.push([id, lines, answer.limits]);
+        else alone.push(...lines);
+      }
+      const soundFor = lineSounds(ctx, effectContext(db, job.bookId), sound);
 
       // Lines go out through the speech gate (`~/providers/gate`) and land in any order.
       // A budget stop lets in-flight lines land, then fails the job. Any other error beyond one line
@@ -757,26 +790,6 @@ export function narrationHandler(
         fail,
       });
 
-      // Ask each endpoint once whether it batches; no answer or batches off: one line at a time.
-      const groups = new Map<string, Target[]>();
-      const alone: Target[] = [];
-      for (const t of targets) {
-        const id = deliveryOf(t.s.speaker).endpoint;
-        const ep = id ? readEndpoint(db, id) : undefined;
-        if (!id || !ep || ep.batch === false || !provider.batchLimits || !provider.speakBatch)
-          alone.push(t);
-        else groups.set(id, [...(groups.get(id) ?? []), t]);
-      }
-      const batched: [string, Target[], BatchLimits][] = [];
-      for (const [id, lines] of groups) {
-        const ep = readEndpoint(db, id)!;
-        const limits = await provider.batchLimits!(speechTarget(db, ep), stop.signal).catch(
-          () => null,
-        );
-        if (signal.aborted) throw signal.reason;
-        if (limits) batched.push([id, lines, limits]);
-        else alone.push(...lines);
-      }
       if (batched.length)
         ctx.note("Sending in batches", "info", {
           endpoints: batched

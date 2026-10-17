@@ -180,7 +180,7 @@ function openaiShaped(hosted: boolean): SpeechWire {
         };
       const batches = hosted
         ? null
-        : await batchCapabilities(target, signal, options).catch(() => null);
+        : (await batchCapabilities(target, signal, options).catch(() => null))?.limits;
       return {
         ok: true,
         message:
@@ -227,6 +227,6 @@ export const openaiWire = openaiShaped(true);
 export const compatibleWire: SpeechWire = {
   ...openaiShaped(false),
   clone: makeVoice,
-  batchLimits: batchCapabilities,
+  capabilities: batchCapabilities,
   speakBatch: sendBatch,
 };

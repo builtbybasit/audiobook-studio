@@ -2,7 +2,7 @@
 // any order. The attempt's clock stops at the headers; the stream keeps an idle clock of
 // `timeoutSec`, rewound by every chunk (`ping` too). A cut stream throws `BatchCut` (its lines may
 // go again); a whole-batch refusal throws `call`'s `ProviderError` (they may not).
-import type { AudioFormat, SpeechUsage } from "@/types";
+import type { AudioFormat, EndpointBatches, SpeechUsage, SpeedRange } from "@/types";
 import { normalizeSpeechUsage } from "@/lib/pricing";
 import { audioClip } from "~/providers/answer";
 import { call, jsonHeaders, ProviderError, type CallStats } from "~/providers/http";
@@ -21,26 +21,39 @@ const isRecord = (x: unknown): x is Record<string, unknown> =>
 const limit = (x: unknown): number | null =>
   typeof x === "number" && Number.isFinite(x) && x >= 1 ? Math.floor(x) : null;
 
-function limitsOf(body: unknown, model: string): BatchLimits | null {
+/** Both finite, in order, or null. */
+function speedRange(x: unknown): SpeedRange | null {
+  if (!isRecord(x)) return null;
+  const { min, max } = x;
+  const finite = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
+  return finite(min) && finite(max) && min <= max ? { min, max } : null;
+}
+
+const NOTHING: EndpointBatches = { limits: null, speed: null };
+
+function capabilitiesOf(body: unknown, model: string): EndpointBatches {
   const models = isRecord(body) && Array.isArray(body.models) ? body.models : [];
   const entry = models.find((m) => isRecord(m) && m.id === model.trim());
-  if (!isRecord(entry) || !isRecord(entry.batch)) return null;
-  return {
-    maxItems: limit(entry.batch.max_items),
-    maxInputChars: limit(entry.batch.max_input_chars),
-    maxItemChars: limit(entry.max_item_chars),
-  };
+  if (!isRecord(entry)) return NOTHING;
+  const limits: BatchLimits | null = isRecord(entry.batch)
+    ? {
+        maxItems: limit(entry.batch.max_items),
+        maxInputChars: limit(entry.batch.max_input_chars),
+        maxItemChars: limit(entry.max_item_chars),
+      }
+    : null;
+  return { limits, speed: speedRange(entry.speed) };
 }
 
 /**
- * `GET …/audio/speech/capabilities`, read leniently per the spec. Null when there is no route, no
- * readable answer, or no `batch` for the model; any other failure is thrown.
+ * `GET …/audio/speech/capabilities`, read leniently per the spec. Nothing when there is no route,
+ * no readable answer, or no entry for the model; any other failure is thrown.
  */
 export async function batchCapabilities(
   target: ProviderTarget,
   signal: AbortSignal,
   options: SpeechCallOptions,
-): Promise<BatchLimits | null> {
+): Promise<EndpointBatches> {
   let res: Response;
   try {
     res = await call(
@@ -50,7 +63,7 @@ export async function batchCapabilities(
       { signal, ...options },
     );
   } catch (e) {
-    if (e instanceof ProviderError && NO_ROUTE.has(e.status)) return null;
+    if (e instanceof ProviderError && NO_ROUTE.has(e.status)) return NOTHING;
     throw e;
   }
   let body: unknown;
@@ -59,9 +72,9 @@ export async function batchCapabilities(
   } catch {
     if (signal.aborted) throw signal.reason;
     // a web app's fallback page is not a batch server
-    return null;
+    return NOTHING;
   }
-  return limitsOf(body, target.model);
+  return capabilitiesOf(body, target.model);
 }
 
 export const takesBatches = (limits: BatchLimits): string =>
@@ -108,6 +121,7 @@ export async function sendBatch(
       input: item.text,
       voice: voices[i],
       ...(instructions[i] ? { instructions: instructions[i] } : {}),
+      ...(item.speed != null ? { speed: item.speed } : {}),
     })),
   };
 

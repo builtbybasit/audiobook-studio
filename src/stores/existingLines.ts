@@ -1,12 +1,15 @@
 // The finished lines a speaker's voice or effect change left behind, and what to do with them:
 // redo some chapters' worth, or (effects only) keep the old sound. One ask at a time, which the
-// one `ExistingLinesDialog` shows; a later ask replaces it, and an answer overtaken is dropped.
+// one `ExistingLinesDialog` (a voice's speed, across books: `VoiceSpeedDialog`) shows; a later ask
+// replaces it, and an answer overtaken is dropped.
 import { defineStore } from "pinia";
 
 import { plural } from "@/lib/contents";
+import { staleMoved } from "@/queries/effects";
 import { effectsService } from "@/services/effects";
+import { endpointSettingsService } from "@/services/endpointSettings";
 import { libraryService } from "@/services/library";
-import type { EffectSlot, ExistingChapter } from "@/types";
+import type { EffectSlot, ExistingChapter, VoiceRef, VoiceSpeedLines } from "@/types";
 import { useCastStore } from "@/stores/cast";
 import { useEffectsStore } from "@/stores/effects";
 import { useEndpointsStore } from "@/stores/endpoints";
@@ -35,11 +38,18 @@ export interface ExistingAsk {
   start: ExistingOption;
 }
 
+/** A voice's speed changed: its lines at the old one, in every book that has any. */
+export interface VoiceSpeedAsk extends VoiceSpeedLines {
+  ref: VoiceRef;
+  /** "Ash now reads at 1.09×" */
+  title: string;
+}
+
 /** Asks out, per store, so only the latest one's answer opens the dialog. */
 let asked = 0;
 
 export const useExistingLinesStore = defineStore("existingLines", {
-  state: () => ({ ask: null as ExistingAsk | null }),
+  state: () => ({ ask: null as ExistingAsk | null, speedAsk: null as VoiceSpeedAsk | null }),
   actions: {
     /**
      * After speakers' voices changed (one picked, auto-assign, the Character voice, a persona
@@ -58,6 +68,7 @@ export const useExistingLinesStore = defineStore("existingLines", {
         const label = voice
           ? endpointsStore.voiceLabel(voice)
           : castStore.fallbackLabel(bookId, name);
+        this.speedAsk = null;
         this.ask = {
           kind: "voice",
           bookId,
@@ -98,6 +109,7 @@ export const useExistingLinesStore = defineStore("existingLines", {
         const c = name ? castStore.byName[bookId]?.get(name) : undefined;
         const effectName = (id: string | undefined) =>
           (id && effectsStore.byId.get(id)?.name) || "no effect";
+        this.speedAsk = null;
         this.ask = {
           kind: "effect",
           bookId,
@@ -120,6 +132,32 @@ export const useExistingLinesStore = defineStore("existingLines", {
       } catch (cause) {
         toastFailure("find the lines with the old sound", cause);
       }
+    },
+    /** After a voice's own speed changed: ask, if any book has lines made at the old one. */
+    async askVoiceSpeed(ref: VoiceRef, title: string): Promise<void> {
+      const mine = ++asked;
+      try {
+        const found = await endpointSettingsService().voiceSpeedLines(ref);
+        if (mine !== asked || !found.books.length) return;
+        this.ask = null;
+        this.speedAsk = { ...found, ref, title };
+      } catch (cause) {
+        toastFailure("find the lines at the old speed", cause);
+      }
+    },
+    /**
+     * Redo the lines in the `chosen` books; the others are left, their made-here lines keeping the
+     * old sound. True when done.
+     */
+    async answerVoiceSpeed(chosen: string[]): Promise<boolean> {
+      const ask = this.speedAsk;
+      if (!ask) return true;
+      const picked = new Set(chosen);
+      const rest = ask.books.filter((b) => !picked.has(b.bookId));
+      const ok =
+        (!picked.size || (await redoSpeed(ask, [...picked]))) && (await keepSpeed(ask, rest));
+      if (ok && this.speedAsk === ask) this.speedAsk = null;
+      return ok;
     },
     /**
      * Answer the ask: redo the lines in `chosen` chapters. An effect's other chapters (all of them
@@ -187,6 +225,66 @@ async function reapply(ask: ExistingAsk, chosen: number[]): Promise<boolean> {
     },
   );
   return true;
+}
+
+async function redoSpeed(ask: VoiceSpeedAsk, chosen: string[]): Promise<boolean> {
+  const libraryStore = useLibraryStore();
+  const uiStore = useUiStore();
+  try {
+    const { books } = await endpointSettingsService().redoVoiceSpeed(ask.ref, chosen);
+    for (const b of books)
+      if (b.chapters && libraryStore.chapters[b.bookId])
+        libraryStore.chapters[b.bookId] = b.chapters;
+    await useJobsStore()._changed();
+    void Promise.all(ask.books.map((b) => staleMoved(b.bookId)));
+    const shown = new Map(ask.books.map((b) => [b.bookId, b]));
+    const sum = (of: (b: (typeof books)[number]) => number) => {
+      const counted = books.filter((b) => of(b) > 0);
+      return { lines: counted.reduce((n, b) => n + of(b), 0), books: counted.length };
+    };
+    const narrated = sum((b) => (b.jobs ? (shown.get(b.bookId)?.reNarrate ?? 0) : 0));
+    const reapplied = sum((b) => {
+      const s = shown.get(b.bookId);
+      return b.reapplied && s ? s.reApply - s.unavailable : 0;
+    });
+    const say = (what: string, n: { lines: number; books: number }) =>
+      `${what} · ${plural(n.lines, "line")} in ${plural(n.books, "book")}`;
+    const parts = [
+      ...(narrated.lines ? [say("Re-narrate", narrated)] : []),
+      ...(reapplied.lines ? [say("Re-apply", reapplied)] : []),
+    ];
+    if (parts.length)
+      uiStore.toast(parts[0], {
+        kind: "info",
+        description: `${parts[1] ? `${parts[1]}, free. ` : ""}Queued on the server; progress is in the Queue.`,
+        timeout: 8000,
+      });
+    const refused = books.flatMap((b) => b.refused ?? []);
+    if (refused.length)
+      uiStore.toast("Some lines were not queued", {
+        kind: "warn",
+        description: refused.join(" "),
+      });
+    return true;
+  } catch (cause) {
+    toastFailure("queue the lines at the old speed", cause);
+    return false;
+  }
+}
+
+async function keepSpeed(ask: VoiceSpeedAsk, books: VoiceSpeedAsk["books"]): Promise<boolean> {
+  const left = books.filter((b) => b.reApply);
+  if (!left.length) return true;
+  try {
+    const ids = left.map((b) => b.bookId);
+    const kept = await endpointSettingsService().keepVoiceSpeed(ask.ref, ids);
+    void Promise.all(ids.map((id) => staleMoved(id)));
+    if (kept) useUiStore().toast(`Kept the old sound · ${plural(kept, "line")}`, { kind: "info" });
+    return true;
+  } catch (cause) {
+    toastFailure("keep the old sound", cause);
+    return false;
+  }
 }
 
 /** Lines in these chapters; `redoable` leaves out the ones only re-narrating changes. */

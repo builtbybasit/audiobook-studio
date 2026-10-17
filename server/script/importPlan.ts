@@ -350,7 +350,7 @@ function detailsOf(
   thoughts: string | undefined,
 ): SpeakerDetails {
   const d: SpeakerDetails = { gender: c.gender, description: c.description, style: c.style };
-  if (c.speed != null && c.speed !== 1) d.speed = c.speed;
+  if (c.speed != null) d.speed = c.speed;
   if (effect) d.effect = effect;
   if (thoughts) d.thoughts = thoughts;
   return d;

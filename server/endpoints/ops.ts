@@ -23,6 +23,7 @@ import {
   readEndpointConfig,
   readTranscriber,
   replaceEndpoints,
+  writeSpeedRange,
   type EndpointConfig,
 } from "~/db/endpoints";
 import { readLibraryPrompt } from "~/db/settings";
@@ -214,8 +215,9 @@ export async function listVoices(
 }
 
 /**
- * A speech endpoint's batch limits, or null when it takes no batches. Asked afresh every time and
- * whether or not batches are on, so the page can show what turning them on would do.
+ * What a speech endpoint's server says it takes: batch limits and speed. Asked afresh every time and
+ * whether or not batches are on, so the page can show what turning them on would do. The speed is
+ * kept on the endpoint (`speedRange`).
  */
 export async function batchLimits(
   db: Db,
@@ -226,9 +228,11 @@ export async function batchLimits(
   const ep = readEndpoint(db, id);
   if (!ep) throw notFound("There is no saved speech endpoint by that id", `id: ${id}`);
   const speech = providers.speech;
-  if (!speech.batchLimits) return { limits: null };
+  if (!speech.capabilities) return { limits: null, speed: null };
   try {
-    return { limits: await speech.batchLimits(speechTarget(db, ep), signal, true) };
+    const answer = await speech.capabilities(speechTarget(db, ep), signal, true);
+    writeSpeedRange(db, id, answer.speed);
+    return answer;
   } catch (e) {
     throw e instanceof ProviderError ? providerFailure(e) : e;
   }

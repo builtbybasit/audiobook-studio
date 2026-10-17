@@ -73,6 +73,7 @@ export const useNarrationStore = defineStore("narration", {
             endpoint: endpointsStore.endpointOf(voice.ref),
             voiceRef: voice.ref,
             style: castStore.byName[bookId]?.get(s.speaker)?.style,
+            speed: castStore.byName[bookId]?.get(s.speaker)?.speed,
           },
           castStore.lexiconOf(bookId),
           castStore.pacingOf(bookId),

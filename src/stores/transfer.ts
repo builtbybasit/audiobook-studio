@@ -116,7 +116,8 @@ export function carryEffects(
 
 type CarriedSlots = Partial<Pick<Character, "effect" | "thoughts">>;
 /** The speaker fields a replace sets; a slot present as `undefined` is cleared. */
-type SpeakerPatch = Partial<Pick<Character, "gender" | "description" | "style">> & CarriedSlots;
+type SpeakerPatch = Partial<Pick<Character, "gender" | "description" | "style" | "speed">> &
+  CarriedSlots;
 /**
  * A speaker's effect names as ids: a name with no id here leaves that slot out (the book's
  * stands), while a slot the file leaves empty is `undefined`, which clears it.
@@ -235,11 +236,12 @@ export const useTransferStore = defineStore("transfer", {
       return (bookId, d) => {
         const c = castStore.charactersOf(bookId).find((x) => x.name === d.name);
         if (!c) return null;
-        const { gender, description, style } = d.file;
+        const { gender, description, style, speed } = d.file;
         const to: SpeakerPatch = {
           gender,
           description,
           style,
+          speed,
           ...slotsOf(d.file, this.effectIdOf(bookId)),
         };
         const keys = Object.keys(to) as (keyof SpeakerPatch)[];
@@ -438,6 +440,7 @@ export const useTransferStore = defineStore("transfer", {
           gender: speaker.gender,
           description: speaker.description,
           style: speaker.style,
+          ...(speaker.speed != null ? { speed: speaker.speed } : {}),
           ...(speaker.color ? { color: speaker.color } : {}),
           ...(speaker.major != null ? { major: speaker.major } : {}),
           ...(speaker.personaOf && !personaRefusal(speaker.name, speaker.personaOf, cast())
@@ -692,7 +695,7 @@ export const useTransferStore = defineStore("transfer", {
           ? `${changed[0].name} now reads as the file describes them`
           : `${n(changed.length, "speaker")} now read as the file describes them`,
         {
-          description: "Details and effects. Voices and aliases are unchanged.",
+          description: "Details, speed and effects. Voices and aliases are unchanged.",
           undo: () => {
             for (const { name, was } of changed) void castStore._patchSpeaker(bookId, name, was);
           },

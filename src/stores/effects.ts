@@ -6,6 +6,7 @@ import { toRaw } from "vue";
 import { defineStore } from "pinia";
 
 import type { EffectContext } from "@/lib/effects";
+import { speedSplit } from "@/lib/providers";
 import { clone } from "@/lib/utils";
 import { fetchEffects, staleMoved } from "@/queries/effects";
 import { fetchBook } from "@/queries/library";
@@ -92,13 +93,15 @@ export const useEffectsStore = defineStore("effects", {
         library: s.libraryThoughts,
         book: libraryStore.bookById(bookId)?.thoughts ?? null,
         cast: new Map(
-          castStore
-            .charactersOf(bookId)
-            .filter((c) => c.effect || c.thoughts || c.personaOf)
-            .map((c) => [
-              c.name,
-              { effect: c.effect, thoughts: c.thoughts, personaOf: c.personaOf },
-            ]),
+          castStore.charactersOf(bookId).flatMap((c) => {
+            // as the server's `effectContext`: only a speed their endpoint can't take is made here
+            const stretched =
+              c.speed &&
+              speedSplit(castStore.effectiveVoice(bookId, c.name).endpoint, c.speed).stretched;
+            if (!c.effect && !c.thoughts && !c.personaOf && !stretched) return [];
+            const own = { effect: c.effect, thoughts: c.thoughts, personaOf: c.personaOf };
+            return [[c.name, stretched ? { ...own, stretched } : own] as const];
+          }),
         ),
       });
     },

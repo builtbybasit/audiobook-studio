@@ -28,12 +28,12 @@ const twoVoices = speechEndpoint({
 const echo: Step[] = [{ plugin: "Delay", params: { delay_seconds: 0.25 }, on: true }];
 
 /** Two narrated chapters, Mara speaking in each in `studio/ash`, read into the stores. */
-async function heard() {
+async function heard(endpoint = twoVoices) {
   const fake = fakeEffectRunner();
   const api = backendServer({ effects: fake });
   setEffectsService(new HttpEffectsService("/api", api.fetch));
   const id = await voicedBook(api, {
-    endpoints: [twoVoices],
+    endpoints: [endpoint],
     paragraphs: [line("One")],
     voiceOf: "studio/ash",
     chapters: ["One", "Two"],
@@ -96,6 +96,21 @@ describe("lines made the old way", () => {
     await asked;
     expect(existing.ask).toMatchObject({ kind: "voice", lines: 2 });
     expect(existing.ask!.names).toEqual(["Mara"]);
+  });
+
+  // the simulated kind takes 0.5–2× with the request; an unknown server's speed is made here
+  test.each([
+    ["sent with the request", "voice", "simulated://studio", undefined],
+    ["made here", "effect", "http://localhost:8880/v1", 1.09],
+  ] as const)("a speed %s is asked about like a new %s", async (_, kind, baseUrl, stretched) => {
+    const { id } = await heard({ ...twoVoices, baseUrl });
+    await useEndpointsStore().load();
+    const existing = useExistingLinesStore();
+
+    expect(await useCastStore().setSpeed(id, "Mara", 1.09)).toBe(true);
+    expect(useCastStore().byName[id]!.get("Mara")!.speed).toBe(1.09);
+    expect(existing.ask).toMatchObject({ kind, lines: 2, title: "Mara now reads at 1.09×" });
+    expect(useEffectsStore().contextFor(id).cast.get("Mara")?.stretched).toBe(stretched);
   });
 
   test("an effect answered for chapter 1 re-applies it and keeps chapter 2's old sound", async () => {

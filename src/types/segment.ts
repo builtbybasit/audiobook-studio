@@ -73,6 +73,8 @@ export interface Take {
   expressions?: string[];
   /** Hz, read from the file rather than the request */
   sampleRate?: number;
+  /** the speed sent with the request (`speedSplit`); absent or null = none */
+  speed?: number | null;
   /**
    * What the effects baked into the file do (`soundOf`); absent = the voice's own. "ffmpeg" is the
    * stand-in where Pedalboard could not run. A clip with no `raw` cannot be Re-applied.
@@ -128,6 +130,8 @@ export interface SegmentAudio {
   expressions?: string[];
   /** Hz, read from the file rather than the request */
   sampleRate?: number;
+  /** the speed sent with the request (`speedSplit`); absent or null = none */
+  speed?: number | null;
   /** As on `Take.sound`. */
   sound?: string;
   /** the voice's own file, kept beside `url` when that is one the effects made from it */

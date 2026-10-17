@@ -25,7 +25,7 @@ export function cartesiaHeaders(target: ProviderTarget): Record<string, string> 
 
 /** Exported for the tests. An MP3's bitrate is in bits per second. */
 export function cartesiaBody(
-  input: Pick<SpeechInput, "text" | "sampleRate" | "encoding">,
+  input: Pick<SpeechInput, "text" | "sampleRate" | "encoding" | "speed">,
   model: string,
   voice: string,
 ): Record<string, unknown> {
@@ -40,6 +40,7 @@ export function cartesiaBody(
       format === "mp3"
         ? { container: "mp3", sample_rate, bit_rate: (bitrate ?? defaults.bitrate!) * 1000 }
         : { container: "wav", encoding: "pcm_s16le", sample_rate },
+    ...(input.speed != null ? { generation_config: { speed: input.speed } } : {}),
   };
 }
 

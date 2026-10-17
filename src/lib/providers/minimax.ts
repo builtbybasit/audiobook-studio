@@ -74,6 +74,8 @@ export const minimax: SpeechProviderShape = {
       "made, and deletes a voice that is not used within 7 days.",
     fee: { usd: 1.5, when: "first-use", said: "$1.50 a voice, charged when it first speaks" },
   },
+  // https://platform.minimax.io/docs/api-reference/speech-t2a-http: voice_setting.speed
+  speed: () => ({ min: 0.5, max: 2 }),
   models: [
     "speech-2.8-hd",
     "speech-2.8-turbo",

@@ -4,6 +4,7 @@
 // and pacing as each line goes out, and reads again as it lands (a mismatch lands stale).
 import type { Endpoint, LexEntry, Pacing, Segment, SegmentAudio } from "@/types";
 import { expressionParts, expressionPlan, type ExpressionPlan } from "@/lib/expressions";
+import { speedSplit } from "@/lib/providers";
 import { sampleRateLabel, speechInstructions } from "@/lib/speech";
 import { partsFor, type SplitPart } from "@/lib/split";
 
@@ -12,6 +13,8 @@ export interface Reader {
   endpoint: Endpoint | null | undefined;
   voiceRef?: string | null;
   style?: string;
+  /** the speaker's own `Character.speed`; absent = 1 */
+  speed?: number;
 }
 
 export type ReadLine = Pick<Segment, "text" | "expressions" | "direction">;
@@ -21,6 +24,8 @@ export interface Reading {
   /** after the dictionary, kept to what can be said, with the tags written in */
   plan: ExpressionPlan;
   instructions: string;
+  /** `speedSplit(...).sent`: what goes with the request; null = none */
+  speed: number | null;
   /** cut at silent pauses and `maxChars`; null when not sent (no endpoint, or `plan.issues`) */
   cuts: SplitPart[] | null;
   /** a line held by a tag is counted cut the plain way, so it never estimates cheaper */
@@ -55,6 +60,7 @@ export function prepareReading(
     reader,
     plan,
     instructions: speechInstructions({ style: reader.style, direction: line.direction }),
+    speed: speedSplit(ep, reader.speed).sent,
     cuts,
     requests: !ep ? 0 : cuts ? cuts.length : partsFor(plan.text, ep),
   };
@@ -76,8 +82,9 @@ export function readingRecord(
   | "expressions"
   | "said"
   | "lex"
+  | "speed"
 > {
-  const { plan, instructions, reader } = reading;
+  const { plan, instructions, reader, speed } = reading;
   return {
     direction: line.direction,
     style: reader.style,
@@ -89,6 +96,7 @@ export function readingRecord(
     ...(plan.signature ? { expressionSignature: plan.signature } : {}),
     ...(plan.tags.length ? { expressions: plan.tags } : {}),
     ...(plan.text !== line.text ? { said: plan.text, lex: plan.hits.length } : {}),
+    speed,
   };
 }
 
@@ -136,6 +144,10 @@ export function compareReading(
   const rate = reader.endpoint?.sampleRate;
   if (a.sampleRate && rate && a.sampleRate !== rate)
     out.push(`sample rate: ${sampleRateLabel(a.sampleRate)} → ${sampleRateLabel(rate)}`);
+  if ((a.speed ?? null) !== now.speed)
+    out.push(
+      `speed sent: ${a.speed ? `${a.speed}×` : "none"} → ${now.speed ? `${now.speed}×` : "none"}`,
+    );
   if ((a.style ?? "") !== (reader.style ?? ""))
     out.push(`style: “${a.style || "—"}” → “${reader.style || "—"}”`);
   return out;

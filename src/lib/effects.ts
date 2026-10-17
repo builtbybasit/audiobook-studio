@@ -10,9 +10,22 @@ export interface EffectContext {
   library: ThoughtChoice;
   /** the book's own; null = follow the library */
   book: ThoughtChoice | null;
-  /** by speaker name */
-  cast: ReadonlyMap<string, Pick<Character, "effect" | "thoughts" | "personaOf">>;
+  /** by speaker name; `stretched` = `speedSplit(...).stretched` for their endpoint */
+  cast: ReadonlyMap<
+    string,
+    Pick<Character, "effect" | "thoughts" | "personaOf"> & { stretched?: number }
+  >;
 }
+
+/** Not a Pedalboard plugin: effects.py runs it before the board, as it changes the length. */
+export const STRETCH = "TimeStretch";
+
+/** A speed made here, as the first chain `chainsFor` gives. */
+export const stretchEffect = (speed: number): Effect => ({
+  id: "speed",
+  name: `Speed ${speed}×`,
+  chain: [{ plugin: STRETCH, params: { stretch_factor: speed }, on: true }],
+});
 
 /** Speaker → book → library. */
 export function thoughtEffectOf(speaker: string, ctx: EffectContext): Effect | null {
@@ -21,8 +34,8 @@ export function thoughtEffectOf(speaker: string, ctx: EffectContext): Effect | n
 }
 
 /**
- * In order: a persona's character's effect, the speaker's, the line's own in library order, then
- * for thoughts the thought effect. Unknown ids are skipped.
+ * In order: the speaker's stretched speed, a persona's character's effect, the speaker's, the
+ * line's own in library order, then for thoughts the thought effect. Unknown ids are skipped.
  */
 export function chainsFor(
   line: { type: SegmentType; speaker: string; effects?: readonly string[] },
@@ -30,7 +43,7 @@ export function chainsFor(
 ): Effect[] {
   const me = ctx.cast.get(line.speaker);
   const owner = personaOwner(me && { name: line.speaker, ...me }, ctx.cast);
-  const out: Effect[] = [];
+  const out: Effect[] = me?.stretched ? [stretchEffect(me.stretched)] : [];
   for (const id of [owner?.effect, me?.effect]) {
     const worn = id ? ctx.effects.get(id) : undefined;
     if (worn) out.push(worn);

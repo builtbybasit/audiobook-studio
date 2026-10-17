@@ -79,13 +79,14 @@ export const useExistingLinesStore = defineStore("existingLines", {
     },
     /**
      * After a speaker's effect (`slots` say which) changed, or from the Re-apply bar for the whole
-     * book (`name` null): ask, if any line has the old sound.
+     * book (`name` null): ask, if any line has the old sound. `title` names another change.
      */
     async askEffect(
       bookId: string,
       name: string | null,
       slots: EffectSlot[] = [],
       start: ExistingOption = "none",
+      title?: string,
     ): Promise<void> {
       const castStore = useCastStore();
       const effectsStore = useEffectsStore();
@@ -101,13 +102,15 @@ export const useExistingLinesStore = defineStore("existingLines", {
           kind: "effect",
           bookId,
           names: name ? [name] : [],
-          title: !name
-            ? "Lines with the old sound"
-            : slots.includes("effect")
-              ? `${name} now uses ${effectName(c?.effect)}`
-              : c?.thoughts
-                ? `${name}’s thoughts now use ${effectName(c.thoughts)}`
-                : `${name}’s thoughts now follow the book`,
+          title:
+            title ??
+            (!name
+              ? "Lines with the old sound"
+              : slots.includes("effect")
+                ? `${name} now uses ${effectName(c?.effect)}`
+                : c?.thoughts
+                  ? `${name}’s thoughts now use ${effectName(c.thoughts)}`
+                  : `${name}’s thoughts now follow the book`),
           lines: found.lines,
           chapters: found.chapters,
           unavailable: found.unavailable,

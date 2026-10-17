@@ -212,6 +212,8 @@ export interface Character {
   voice: VoiceRef | null;
   /** free-text delivery note applied to every line */
   style: string;
+  /** pace of every line, 1 = the voice's own (`SPEAKER_SPEED`); absent = 1. Like `style`, own only */
+  speed?: number;
   color: string;
   major: boolean;
   /** first seen in a re-script, not in the original cast */

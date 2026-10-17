@@ -5,11 +5,19 @@ import { describe, expect, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
 
 import type { Book, Cast, Character, Effect, EffectUses, ImportedBook, Step } from "@/types";
+import { SIMULATED_BASE_URL } from "@/lib/providers";
 import { effectContext } from "~/db/effects";
-import { segments } from "~/db/schema";
+import { characters, segments } from "~/db/schema";
 import { readScript, scriptRevision } from "~/db/script";
 import { epubFile, line, story } from "../support/epub";
-import { jsonBody, narratedBook, testApi, type TestApi } from "../support/server";
+import {
+  jsonBody,
+  narratedBook,
+  saveEndpoints,
+  speechEndpoint,
+  testApi,
+  type TestApi,
+} from "../support/server";
 
 const put = (body: unknown): RequestInit => ({ ...jsonBody(body), method: "PUT" });
 const patch = (body: unknown): RequestInit => ({ ...jsonBody(body), method: "PATCH" });
@@ -284,6 +292,22 @@ describe("a book's and a speaker's choices", () => {
       "thoughts",
     );
     expect(await maraIn(api, id)).not.toHaveProperty("effect");
+  });
+
+  test.each([
+    ["is sent where the endpoint takes it", SIMULATED_BASE_URL, undefined],
+    ["is stretched here where it can't", "http://localhost:8880/v1", { stretched: 1.25 }],
+  ])("a speaker's speed %s", async (_, baseUrl, want) => {
+    const api = testApi();
+    await saveEndpoints(api, [speechEndpoint({ baseUrl })]);
+    const id = await shelved(api);
+    await putMara(api, id, { voice: "studio/ash" });
+    api.db
+      .update(characters)
+      .set({ speed: 1.25 })
+      .where(and(eq(characters.bookId, id), eq(characters.name, "Mara")))
+      .run();
+    expect(effectContext(api.db, id).cast.get("Mara")).toEqual(want);
   });
 
   test("removing an effect the library does not use leaves its choice alone", async () => {

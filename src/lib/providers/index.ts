@@ -12,7 +12,12 @@ import { minimax } from "@/lib/providers/minimax";
 import { compatible, openai } from "@/lib/providers/openai";
 import { qwen } from "@/lib/providers/qwen";
 import { simulated } from "@/lib/providers/simulated";
-import type { CloneSupport, SpeechProviderShape, TagSyntax } from "@/lib/providers/types";
+import type {
+  CloneSupport,
+  SpeechProviderShape,
+  SpeedRange,
+  TagSyntax,
+} from "@/lib/providers/types";
 export {
   isSimulated,
   SIMULATED_BASE_URL,
@@ -30,6 +35,7 @@ export type {
   SampleFormat,
   SpeechProviderId,
   SpeechProviderShape,
+  SpeedRange,
   TagSyntax,
 } from "@/lib/providers/types";
 
@@ -72,3 +78,24 @@ export function cloneModelsFor(
 
 export const tagSyntaxOf = (e: Pick<Endpoint, "baseUrl" | "server" | "model">): TagSyntax | null =>
   speechProviderOf(e).tags(e.model ?? "");
+
+/** What a speaker's `speed` may be; outside an endpoint's own range it is stretched here. */
+export const SPEAKER_SPEED: SpeedRange = { min: 0.5, max: 2 };
+
+export const speedOf = (e: Pick<Endpoint, "baseUrl" | "server" | "model">): SpeedRange | null =>
+  speechProviderOf(e).speed(e.model ?? "");
+
+/**
+ * How a speaker's speed is made: `sent` with the request when the endpoint takes it, else
+ * `stretched` from the clip here. Both null at 1 or with no endpoint to ask.
+ */
+export function speedSplit(
+  e: Pick<Endpoint, "baseUrl" | "server" | "model"> | null | undefined,
+  speed: number | null | undefined,
+): { sent: number | null; stretched: number | null } {
+  if (!e || speed == null || speed === 1) return { sent: null, stretched: null };
+  const range = speedOf(e);
+  return range && speed >= range.min && speed <= range.max
+    ? { sent: speed, stretched: null }
+    : { sent: null, stretched: speed };
+}

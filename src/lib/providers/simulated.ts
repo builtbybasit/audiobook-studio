@@ -48,5 +48,7 @@ export const simulated: SpeechProviderShape = {
   }),
   billsFailures: false,
   cloning: null,
+  // the fake reads faster or slower, so the demo shows the sent kind
+  speed: () => ({ min: 0.5, max: 2 }),
   models: [SIMULATED_SPEECH_MODEL],
 };

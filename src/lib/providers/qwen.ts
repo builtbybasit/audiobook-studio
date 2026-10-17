@@ -58,5 +58,8 @@ export const qwen: SpeechProviderShape = {
       "in Singapore the first 1,000 in your first 90 days are free.",
     fee: { usd: 0.01, when: "made", said: "$0.01 a voice" },
   },
+  // https://www.alibabacloud.com/help/en/model-studio/cosyvoice-tts-http-api: input.rate on the
+  // SpeechSynthesizer models; the Qwen-TTS body has no rate
+  speed: (model) => (isQwenTts(model) ? null : { min: 0.5, max: 2 }),
   models: ["qwen-audio-3.0-tts-flash", "qwen-audio-3.0-tts-plus", ...QWEN_CLONE_MODELS],
 };

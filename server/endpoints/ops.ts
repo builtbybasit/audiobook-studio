@@ -331,6 +331,7 @@ export async function sampleVoice(
       instructions: "",
       voiceRef: `${ep.id}/${voiceId}`,
       sampleRate: ep.sampleRate ?? null,
+      speed: null,
       encoding: encodingOf(ep),
       target: { ...speechTarget(db, ep), maxRetries: 0 },
       signal,

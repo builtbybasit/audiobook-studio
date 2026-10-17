@@ -73,6 +73,7 @@ export function elevenLabsRequest(
         text: input.text,
         model_id: target.model,
         ...(instructions ? { instructions } : {}),
+        ...(input.speed != null ? { voice_settings: { speed: input.speed } } : {}),
       }),
     },
     format,

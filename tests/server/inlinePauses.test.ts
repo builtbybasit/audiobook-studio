@@ -48,6 +48,7 @@ const input = (format: AudioFormat): SpeechInput => ({
   instructions: "",
   voiceRef: null,
   sampleRate: null,
+  speed: null,
   encoding: { format },
   target: null,
   signal: new AbortController().signal,

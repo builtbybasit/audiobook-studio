@@ -3,10 +3,12 @@
 // prices exactly what that run renders, missing lines in the same chapters included.
 import type { Book, NarrationQueued, OldVoice, Segment, VoiceRef } from "@/types";
 import { NARRATOR, speakerVoice } from "@/lib/cast";
+import { speedSplit } from "@/lib/providers";
 import { narrationTargets } from "@/lib/runPlan";
 import { isSpoken } from "@/lib/siteText";
 import { chapterSpeakers, readCast } from "~/db/cast";
 import type { Db } from "~/db/client";
+import { readEndpoint } from "~/db/endpoints";
 import * as library from "~/db/library";
 import { readScript } from "~/db/script";
 import { requireCharacter } from "~/cast/ops";
@@ -15,6 +17,12 @@ import type { Runner } from "~/jobs/runner";
 import { requireBook } from "~/library/ops";
 import { narrationPricer } from "~/narration/cost";
 
+interface Wanted {
+  ref: VoiceRef | null;
+  /** `speedSplit(...).sent` for the speaker's own speed on that voice's endpoint */
+  speed: number | null;
+}
+
 /**
  * The voice a speaker's lines get now, when a change to one of `names`' voices can move them: their
  * own lines, their voiceless personas', and for the Narrator everyone who falls back to them.
@@ -22,8 +30,8 @@ import { narrationPricer } from "~/narration/cost";
 function voiceThrough(db: Db, bookId: string, names: ReadonlySet<string>) {
   const cast = new Map(readCast(db, bookId).map((c) => [c.name, c]));
   const cv = library.getBook(db, bookId)?.characterVoice;
-  const memo = new Map<string, VoiceRef | null | undefined>();
-  return (speaker: string): VoiceRef | null | undefined => {
+  const memo = new Map<string, Wanted | undefined>();
+  return (speaker: string): Wanted | undefined => {
     if (!memo.has(speaker)) {
       const v = speakerVoice(speaker, cast, cv);
       const via = v.of ? speakerVoice(v.of, cast, cv).from : v.from;
@@ -31,7 +39,11 @@ function voiceThrough(db: Db, bookId: string, names: ReadonlySet<string>) {
         names.has(speaker) ||
         (v.of != null && names.has(v.of)) ||
         (names.has(NARRATOR) && via === "narrator");
-      memo.set(speaker, moves ? v.ref : undefined);
+      const slash = v.ref?.indexOf("/") ?? -1;
+      const ep = moves && slash > 0 ? readEndpoint(db, v.ref!.slice(0, slash)) : null;
+      // own speed only, as `deliveryFor` gives it
+      const speed = speedSplit(ep, cast.get(speaker)?.speed).sent;
+      memo.set(speaker, moves ? { ref: v.ref, speed } : undefined);
     }
     return memo.get(speaker);
   };
@@ -44,9 +56,9 @@ interface OldLines {
 }
 
 /**
- * Kept chapters' spoken, done clips whose recorded voice is not the one now wanted. A clip with no
- * recorded voice can't be told apart, a line with no voice now can't be redone, and a line with a
- * retake waiting or in flight is the listener's: all three are left out.
+ * Kept chapters' spoken, done clips whose recorded voice or sent speed is not the one now wanted. A
+ * clip with no recorded voice can't be told apart, a line with no voice now can't be redone, and a
+ * line with a retake waiting or in flight is the listener's: all three are left out.
  */
 function oldLines(
   db: Db,
@@ -63,10 +75,10 @@ function oldLines(
     const segs = readScript(db, bookId, id);
     const old = new Set<number>();
     for (const s of segs) {
-      const { status, voiceRef } = s.audio;
+      const { status, voiceRef, speed } = s.audio;
       if (status !== "done" || !voiceRef || s.candidate || !isSpoken(s, book)) continue;
       const now = wanted(s.speaker);
-      if (now && now !== voiceRef) old.add(s.id);
+      if (now?.ref && (now.ref !== voiceRef || (speed ?? null) !== now.speed)) old.add(s.id);
     }
     if (old.size) out.push({ id, segs, old });
   }

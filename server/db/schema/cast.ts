@@ -1,6 +1,6 @@
 // A book's cast and pronunciation dictionary. Both belong to the book, so restoring a script
 // version never rolls them back.
-import { index, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 import type { Gender, VoiceRef } from "@/types";
 import { books } from "~/db/schema/library";
@@ -21,6 +21,8 @@ export const characters = sqliteTable(
     voice: text("voice").$type<VoiceRef>(),
     /** delivery note for every line of this speaker */
     style: text("style").notNull().default(""),
+    /** null = 1, the voice's own pace */
+    speed: real("speed"),
     color: text("color").notNull(),
     major: integer("major", { mode: "boolean" }).notNull().default(false),
     /** first seen in a re-script */

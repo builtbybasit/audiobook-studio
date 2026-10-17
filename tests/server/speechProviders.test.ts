@@ -46,6 +46,7 @@ const line = (target: ProviderTarget, over: Partial<SpeechInput> = {}): SpeechIn
   instructions: "",
   voiceRef: `${target.id}/Kore`,
   sampleRate: null,
+  speed: null,
   encoding: { format: "wav" },
   target,
   signal: new AbortController().signal,
@@ -876,5 +877,29 @@ describe("what reaches the ledger from every adapter", () => {
         error: { code: 403, message: expect.stringContaining("forbidden") },
       }),
     ]);
+  });
+
+  // where each API's docs put it; a refused request still shows what was sent
+  const speeds = (
+    [
+      [fish, "prosody.speed"],
+      [{ ...openai, model: "tts-1" }, "speed"],
+      [eleven, "voice_settings.speed"],
+      [minimax, "voice_setting.speed"],
+      [cartesia, "generation_config.speed"],
+      [qwen, "input.rate"],
+    ] as const
+  ).map(([t, path]) => [t.name, t, path] as const);
+
+  test.each(speeds)("%s: a speed goes at %s, and none when there is none", async (_, t, path) => {
+    const f = scripted(() => Response.json({ message: "forbidden" }, { status: 403 }));
+    await provider(f.fetch)
+      .speak(line(t, { speed: 1.25 }))
+      .catch(() => {});
+    await provider(f.fetch)
+      .speak(line(t))
+      .catch(() => {});
+    expect(f.body(0)).toHaveProperty(path, 1.25);
+    expect(f.body(1)).not.toHaveProperty(path);
   });
 });

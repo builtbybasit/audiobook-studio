@@ -7,7 +7,8 @@ import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 
 import type { ExistingScope, Job, StaleSound, Step } from "@/types";
-import { soundOf } from "@/lib/effects";
+import { soundOf, stretchEffect } from "@/lib/effects";
+import { SIMULATED_BASE_URL } from "@/lib/providers";
 import { newSpeaker } from "@/lib/cast";
 import { createEffect } from "~/db/effects";
 import { characterValues } from "~/db/rows/cast";
@@ -17,7 +18,14 @@ import { readScript, writeScript } from "~/db/script";
 import { and, eq } from "drizzle-orm";
 import { fakeEffectRunner, type FakeEffectRunner } from "../support/effects";
 import { line } from "../support/epub";
-import { jsonBody, narratedBook, testApi, type TestApi } from "../support/server";
+import {
+  jsonBody,
+  narratedBook,
+  saveEndpoints,
+  speechEndpoint,
+  testApi,
+  type TestApi,
+} from "../support/server";
 
 const echo: Step[] = [{ plugin: "Delay", params: { delay_seconds: 0.25 }, on: true }];
 const louder: Step[] = [{ plugin: "Gain", params: { gain_db: 3 }, on: true }];
@@ -287,6 +295,34 @@ describe("re-applying", () => {
     const job = await reapply(api, id);
     expect(job.status).toBe("failed");
     expect(job.activity?.at(-1)?.detail?.error).toContain("cannot run on this machine");
+  });
+});
+
+describe("a speaker's speed", () => {
+  test("one the endpoint can't take is old sound, stretched from the raw file; one it takes is not", async () => {
+    const { api, id, fake } = await book();
+    await saveEndpoints(api, [
+      speechEndpoint(),
+      speechEndpoint({ id: "sim", baseUrl: SIMULATED_BASE_URL }),
+    ]);
+    const raws = maras(api, id).map((s) => s.audio.url!);
+    const mara = (set: { voice?: string; speed?: number }) =>
+      api.db
+        .update(characters)
+        .set(set)
+        .where(and(eq(characters.bookId, id), eq(characters.name, "Mara")))
+        .run();
+    mara({ voice: "studio/ash", speed: 1.25 });
+    expect(await count(api, id)).toEqual({ lines: 2, unavailable: 0 });
+    expect((await reapply(api, id)).status).toBe("done");
+    expect(fake.calls.batch[0].map((j) => [fileOf(j.input), j.chains])).toEqual(
+      raws.map((url) => [fileOf(url), [stretchEffect(1.25).chain]]),
+    );
+    expect(await count(api, id)).toEqual({ lines: 0, unavailable: 0 });
+
+    // on an endpoint that sends it, her clips are an old voice to narrate again, not unstretched
+    mara({ voice: "sim/ash" });
+    expect(await count(api, id)).toEqual({ lines: 0, unavailable: 0 });
   });
 });
 

@@ -8,6 +8,7 @@ import { fetchCast } from "@/queries/cast";
 import { staleMoved } from "@/queries/effects";
 import { speechReadiness } from "@/lib/endpoints";
 import { norm } from "@/lib/scriptReview";
+import { speedSplit } from "@/lib/providers";
 import { pronunciationMoved } from "@/lib/reading";
 import { chapterSeconds, lexMatcher, pacingOrDefault, termOf } from "@/lib/speech";
 import {
@@ -117,6 +118,7 @@ function unmerged(now: Character, was: Character): Character {
   if (!was.voice) out.voice = null;
   if (!was.effect) delete out.effect;
   if (!was.thoughts) delete out.thoughts;
+  if (!was.speed) delete out.speed;
   if (!was.description.trim()) out.description = was.description;
   if (was.gender === "?") out.gender = "?";
   return out;
@@ -992,6 +994,29 @@ export const useCastStore = defineStore("cast", {
         .map((c) => c.name);
       if (names.length)
         await useExistingLinesStore().askVoice(bookId, names, "The Character voice changed");
+    },
+    /**
+     * A speaker's pace; 1 or null = the voice's own. Where their endpoint takes the old or new
+     * speed it is sent, so their lines want re-narrating; else it is made here, a Re-apply.
+     */
+    async setSpeed(bookId: string, name: string, speed: number | null): Promise<boolean> {
+      const c = this.characters[bookId]?.find((x) => x.name === name);
+      if (!c) return false;
+      const was = c.speed ?? 1;
+      const now = speed ?? 1;
+      if (was === now) return true;
+      if (now === 1) delete c.speed;
+      else c.speed = now;
+      if (!(await this._push(bookId, name))) return false;
+      void staleMoved(bookId);
+      const endpoint = this.effectiveVoice(bookId, name).endpoint;
+      const sent = [was, now].some((x) => speedSplit(endpoint, x).sent != null);
+      const title =
+        now === 1 ? `${name} now reads at the voice’s own speed` : `${name} now reads at ${now}×`;
+      const existing = useExistingLinesStore();
+      if (sent) await existing.askVoice(bookId, [name], title);
+      else await existing.askEffect(bookId, name, [], "none", title);
+      return true;
     },
     /**
      * Put a voice effect on a speaker's lines, or null to remove it. Existing clips show in the

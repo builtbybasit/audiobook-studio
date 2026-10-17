@@ -140,7 +140,7 @@ function voiceOf(
 }
 
 /**
- * Whether a line moved from `from` to `to` keeps its clip's speech: same voice and same style.
+ * Whether a line moved from `from` to `to` keeps its clip's speech: same voice, style and speed.
  * Only its effects may then be old, for Re-apply. `after` is the cast `to` is read in when the
  * move changed the cast too (a rename, merge or removal); `from` is read in `cast`.
  */
@@ -153,7 +153,8 @@ export function sameReading(
 ): boolean {
   return (
     speakerVoice(from, cast, cv).ref === speakerVoice(to, after, cv).ref &&
-    (cast.get(from)?.style ?? "") === (after.get(to)?.style ?? "")
+    (cast.get(from)?.style ?? "") === (after.get(to)?.style ?? "") &&
+    (cast.get(from)?.speed ?? 1) === (after.get(to)?.speed ?? 1)
   );
 }
 

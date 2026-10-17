@@ -107,6 +107,7 @@ export const fishWire: SpeechWire = {
           format,
           ...(bitrate != null && format !== "wav" ? { [`${format}_bitrate`]: bitrate } : {}),
           ...(sampleRate != null ? { sample_rate: sampleRate } : {}),
+          ...(input.speed != null ? { prosody: { speed: input.speed } } : {}),
           // Fish's default, pinned: it reads "1997" and "£3.50" as words
           normalize: true,
         }),

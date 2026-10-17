@@ -21,6 +21,7 @@ export function toCharacter(row: CharacterRow): Character {
   if (row.effect != null) c.effect = row.effect;
   if (row.thoughts != null) c.thoughts = row.thoughts;
   if (row.personaOf != null) c.personaOf = row.personaOf;
+  if (row.speed != null) c.speed = row.speed;
   if (row.masked) c.masked = true;
   return c;
 }
@@ -46,6 +47,8 @@ export function characterValues(
     thoughts: c.thoughts ?? null,
     personaOf: c.personaOf ?? null,
     masked: c.masked ?? null,
+    // 1 is the voice's own pace, kept as null
+    speed: c.speed != null && c.speed !== 1 ? c.speed : null,
     position,
   };
 }

@@ -31,6 +31,9 @@ export const openai: SpeechProviderShape = {
   tags: () => null,
   billsFailures: false,
   cloning: null,
+  // https://developers.openai.com/api/reference/resources/audio/subresources/speech/methods/create;
+  // gpt-4o-mini-tts is reported to ignore it
+  speed: (model) => (/^tts-1(-hd)?$/.test(model.trim()) ? { min: 0.25, max: 4 } : null),
   models: ["gpt-4o-mini-tts", "tts-1", "tts-1-hd"],
 };
 
@@ -63,5 +66,7 @@ export const compatible: SpeechProviderShape = {
     fee: null,
     optIn: true,
   },
+  // unknown servers: many ignore `speed`, so it is stretched here
+  speed: () => null,
   models: [],
 };

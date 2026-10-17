@@ -20,7 +20,7 @@ const customizationUrl = (baseUrl: string): string =>
 
 /** Exported for the tests. */
 export function qwenBody(
-  input: Pick<SpeechInput, "text" | "sampleRate">,
+  input: Pick<SpeechInput, "text" | "sampleRate" | "speed">,
   model: string,
   voice: string,
 ): Record<string, unknown> {
@@ -33,6 +33,7 @@ export function qwenBody(
       voice,
       format: "wav",
       sample_rate: input.sampleRate ?? formatDefaults(qwen, "wav").rate,
+      ...(input.speed != null ? { rate: input.speed } : {}),
     },
   };
 }

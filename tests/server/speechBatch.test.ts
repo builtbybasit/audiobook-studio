@@ -38,6 +38,7 @@ const line = (text: string, over: Partial<SpeechInput> = {}): SpeechInput => ({
   instructions: "",
   voiceRef: "omni/mara",
   sampleRate: null,
+  speed: null,
   encoding: { format: "wav" },
   target: omni,
   signal: new AbortController().signal,

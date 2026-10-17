@@ -82,15 +82,18 @@ export const tagSyntaxOf = (e: Pick<Endpoint, "baseUrl" | "server" | "model">): 
 /** What a speaker's `speed` may be; outside an endpoint's own range it is stretched here. */
 export const SPEAKER_SPEED: SpeedRange = { min: 0.5, max: 2 };
 
-export const speedOf = (e: Pick<Endpoint, "baseUrl" | "server" | "model">): SpeedRange | null =>
-  speechProviderOf(e).speed(e.model ?? "");
+type SpeedEndpoint = Pick<Endpoint, "baseUrl" | "server" | "model" | "speedRange">;
+
+/** What the server declared, else the provider's docs. */
+export const speedOf = (e: SpeedEndpoint): SpeedRange | null =>
+  e.speedRange ?? speechProviderOf(e).speed(e.model ?? "");
 
 /**
  * How a speaker's speed is made: `sent` with the request when the endpoint takes it, else
  * `stretched` from the clip here. Both null at 1 or with no endpoint to ask.
  */
 export function speedSplit(
-  e: Pick<Endpoint, "baseUrl" | "server" | "model"> | null | undefined,
+  e: SpeedEndpoint | null | undefined,
   speed: number | null | undefined,
 ): { sent: number | null; stretched: number | null } {
   if (!e || speed == null || speed === 1) return { sent: null, stretched: null };

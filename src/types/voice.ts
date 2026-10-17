@@ -3,10 +3,18 @@
 import type { Gender, VoiceRef } from "@/types/common";
 import type { Endpoint } from "@/types/endpoint";
 
+/** A multiplier: 1 is the voice's own pace, above 1 faster. */
+export interface SpeedRange {
+  min: number;
+  max: number;
+}
+
 export interface Voice {
   id: string;
   gender: Gender;
   label: string;
+  /** pace for every speaker on it who sets none (`speakerSpeed`); absent = 1 */
+  speed?: number;
 }
 
 /** A catalogue result not yet on an endpoint. Adding one keeps only the `Voice`. */

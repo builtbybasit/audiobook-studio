@@ -1,7 +1,8 @@
 // What the page and the ledger know about a speech provider without a request, shared by browser
 // and server (so no state, no browser- or server-only imports). Building and reading requests is
 // in `server/providers/speech/`.
-import type { AudioFormat, ExpressionTag, SampleRate, TagBracket } from "@/types";
+import type { AudioFormat, ExpressionTag, SampleRate, SpeedRange, TagBracket } from "@/types";
+export type { SpeedRange } from "@/types";
 
 /** `compatible` is anything else, taken as OpenAI's. */
 export type SpeechProviderId =
@@ -93,12 +94,6 @@ export interface SpeechProviderShape {
   cloning: CloneSupport | null;
   /** The speed the request can carry for this model, from the provider's docs; null = none. */
   speed(model: string): SpeedRange | null;
-}
-
-/** A multiplier: 1 is the voice's own pace, above 1 faster. */
-export interface SpeedRange {
-  min: number;
-  max: number;
 }
 
 /**

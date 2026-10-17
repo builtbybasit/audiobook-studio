@@ -281,6 +281,13 @@
       "when": 1792213200000,
       "tag": "0039_voice_speed",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "6",
+      "when": 1792215586757,
+      "tag": "0040_voice_speed_per_voice",
+      "breakpoints": true
     }
   ]
 }

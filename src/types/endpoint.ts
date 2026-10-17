@@ -8,7 +8,7 @@ import type {
   SpeechCharge,
   TtsBilling,
 } from "@/types/pricing";
-import type { Voice } from "@/types/voice";
+import type { SpeedRange, Voice } from "@/types/voice";
 import type { ExpressionConfig } from "@/types/expression";
 import type { Profile, PromptTemplate, ReasoningEffort, ScriptSettings } from "@/types/scripting";
 
@@ -95,6 +95,11 @@ export interface Endpoint {
    * base URL decides (`speechProviderOf`).
    */
   server?: SpeechServer | null;
+  /**
+   * Read only: the speed range the server's capabilities declare (`speech-batch-api.md`), kept
+   * when last read. Before the provider's own (`speedOf`); absent = the provider's.
+   */
+  speedRange?: SpeedRange | null;
 }
 
 /** A server known only by being named, never by its address: Breeze-TTS-2.cpp. */

@@ -212,7 +212,7 @@ export interface Character {
   voice: VoiceRef | null;
   /** free-text delivery note applied to every line */
   style: string;
-  /** pace of every line, 1 = the voice's own (`SPEAKER_SPEED`); absent = 1. Like `style`, own only */
+  /** pace of every line, 1 = the voice's own pace; absent = their voice's `speed` (`speakerSpeed`) */
   speed?: number;
   color: string;
   major: boolean;

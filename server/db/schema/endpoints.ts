@@ -15,6 +15,7 @@ import type {
   RateSet,
   SampleRate,
   SpeechServer,
+  SpeedRange,
   SplitMode,
   TagBracket,
   TtsBillingUnit,
@@ -60,6 +61,8 @@ export const endpoints = sqliteTable(
     makesVoices: integer("makes_voices", { mode: "boolean" }).notNull().default(false),
     /** speech only: for a base URL that cannot say; null = the base URL decides */
     server: text("server").$type<SpeechServer>(),
+    /** speech only: the range the server's capabilities declared when last read; never PUT */
+    speedRange: text("speed_range", { mode: "json" }).$type<SpeedRange>(),
     position: integer("position").notNull().default(0),
 
     // ---- scripting rates: USD per 1M tokens ----
@@ -146,6 +149,8 @@ export const voices = sqliteTable(
     id: text("id").notNull(),
     label: text("label").notNull(),
     gender: text("gender").$type<Gender>().notNull().default("?"),
+    /** null = 1, the voice's own pace */
+    speed: real("speed"),
     position: integer("position").notNull().default(0),
   },
   (t) => [primaryKey({ columns: [t.endpointId, t.id] })],

@@ -1,6 +1,6 @@
 // Cast rules shared by the seeded world, the cast store and the server's scripting job: new
 // speakers, the voice rule (`speakerVoice`), personas, and matching the model's names to the cast.
-import type { Character, CharacterVoice, Gender, VoiceRef } from "@/types";
+import type { Character, CharacterVoice, Gender, Voice, VoiceRef } from "@/types";
 import { writtenWordsOf } from "@/lib/gaps";
 import type { PromptCastMember } from "@/lib/prompt";
 
@@ -137,6 +137,22 @@ function voiceOf(
     if (ref) return { ref, from: "character" };
   }
   return { ref: cast.get(NARRATOR)?.voice ?? null, from: "narrator" };
+}
+
+/**
+ * A speaker's pace: their own, else the voice `speakerVoice` gives them (a persona's character's
+ * too), else 1. `voiceOf` finds a `<endpointId>/<voiceId>` on its endpoint.
+ */
+export function speakerSpeed(
+  name: string,
+  cast: CastLookup,
+  cv: CharacterVoice | undefined,
+  voiceOf: (ref: VoiceRef) => Pick<Voice, "speed"> | undefined,
+): number {
+  const own = cast.get(name)?.speed;
+  if (own != null) return own;
+  const ref = speakerVoice(name, cast, cv).ref;
+  return (ref && voiceOf(ref)?.speed) || 1;
 }
 
 /**

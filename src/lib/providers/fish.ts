@@ -77,6 +77,8 @@ export const fish: SpeechProviderShape = {
           pause: fixedPauses("[break]", "[long-break]"),
         },
   billsFailures: false,
+  // https://docs.fish.audio/api-reference/endpoint/openapi-v1/text-to-speech: prosody.speed
+  speed: () => ({ min: 0.5, max: 2 }),
   models: FISH_MODELS,
   // https://docs.fish.audio/features/voice-cloning: FLAC is undocumented for models but accepted;
   // without `texts` Fish transcribes the samples itself

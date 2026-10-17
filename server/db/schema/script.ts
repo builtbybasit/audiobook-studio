@@ -128,6 +128,8 @@ export const clips = sqliteTable(
     expressions: text("expressions", { mode: "json" }).$type<string[]>(),
     /** Hz, read from the file rather than the request */
     sampleRate: integer("sample_rate"),
+    /** the speed sent with the request (`speedSplit`); null = none. A stretch here is in `sound` */
+    speed: real("speed"),
     /** the effects baked into the file (`soundOf`); null = the voice's own */
     sound: text("sound"),
     /** the unprocessed file when `url` has effects applied; null = `url` is it */

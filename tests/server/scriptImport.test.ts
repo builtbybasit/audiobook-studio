@@ -386,7 +386,7 @@ describe("the cast and the dictionary", () => {
     const got = await plan(
       await zipOf({
         cast: [
-          speaker({ description: "a clerk", aliases: ["Mar", "Miss Mara"] }),
+          speaker({ description: "a clerk", aliases: ["Mar", "Miss Mara"], speed: 1.25 }),
           speaker({ name: "Tobin", gender: "m", personaOf: " Mara " }),
         ],
       }),
@@ -396,7 +396,7 @@ describe("the cast and the dictionary", () => {
       {
         name: "Mara",
         book: { gender: "f", description: "the clerk's sister", style: "" },
-        file: { gender: "f", description: "a clerk", style: "" },
+        file: { gender: "f", description: "a clerk", style: "", speed: 1.25 },
       },
     ]);
     expect(got.cast.aliases).toEqual([{ name: "Mara", add: ["Miss Mara"] }]);

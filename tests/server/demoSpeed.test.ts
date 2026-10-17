@@ -93,6 +93,7 @@ async function timed(library: Library, latencyMs: number): Promise<[number, numb
     instructions: "",
     voiceRef: "simulated/ash",
     sampleRate: null,
+    speed: null,
     encoding: { format: "wav" },
     target: simulated(latencyMs),
     signal,

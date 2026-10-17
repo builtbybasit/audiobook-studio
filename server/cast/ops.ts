@@ -159,6 +159,7 @@ function mergeOne(
           voice: dst.voice ?? (personaOf ? null : src.voice),
           effect: dst.effect ?? src.effect,
           thoughts: dst.thoughts ?? src.thoughts,
+          speed: dst.speed ?? src.speed,
           description: dst.description.trim() ? dst.description : src.description,
           gender: dst.gender === "?" ? src.gender : dst.gender,
         };

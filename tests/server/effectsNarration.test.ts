@@ -3,11 +3,13 @@
 // chains' fingerprint as its sound. Without Pedalboard, a thought line gets the ffmpeg thought
 // effect and the other effects are left off, said once.
 import { describe, expect, test } from "bun:test";
+import { and, eq } from "drizzle-orm";
 
 import type { Cast, ChapterScript, Effect, Endpoint, Job, Segment, Step } from "@/types";
-import { runnable, soundOf } from "@/lib/effects";
+import { runnable, soundOf, stretchEffect } from "@/lib/effects";
 import type { ThoughtEffect } from "~/audio/thoughtEffect";
 import { INNER_VOICE } from "~/db/effects";
+import { characters } from "~/db/schema";
 import { fakeSpeechProvider } from "~/providers/fakeSpeech";
 import type { SpeechProvider } from "~/providers/speech";
 import { fakeEffectRunner, PARSED, type FakeEffectRunner } from "../support/effects";
@@ -37,11 +39,12 @@ function stubThought(): { effect: ThoughtEffect; calls: number[] } {
 
 /**
  * A scripted one-chapter book, its first spoken line made a thought by hand; the id, and who
- * thinks it. `echo` gives that speaker an effect of their own, `phone` the thought a line effect.
+ * thinks it. `echo` gives that speaker an effect of their own, `phone` the thought a line effect,
+ * `speed` the speaker a speed, which endpoint `a` can't send.
  */
 async function bookWithAThought(
   api: TestApi,
-  { echo = false, plain = false, phone = false } = {},
+  { echo = false, plain = false, phone = false, speed = undefined as number | undefined } = {},
 ): Promise<{ id: string; who: string }> {
   const id = await voicedBook(api, {
     endpoints: [endpoint()],
@@ -75,6 +78,12 @@ async function bookWithAThought(
   }
   if (plain)
     await api.request(`/api/books/${id}`, { ...jsonBody({ thoughts: "none" }), method: "PATCH" });
+  if (speed)
+    api.db
+      .update(characters)
+      .set({ speed })
+      .where(and(eq(characters.bookId, id), eq(characters.name, who)))
+      .run();
   return { id, who };
 }
 
@@ -145,19 +154,20 @@ describe("narration with Pedalboard", () => {
       expect(s.audio.raw).toBeUndefined();
   });
 
-  test("a line's own effect runs after the speaker's and before the thought effect", async () => {
+  test("a stretched speed runs first, then the speaker's effect, the line's own, the thought effect", async () => {
     const { api, fx } = withRunner();
-    const { id } = await bookWithAThought(api, { echo: true, phone: true });
+    const { id } = await bookWithAThought(api, { echo: true, phone: true, speed: 1.25 });
     const { lines } = await narrate(api, id);
     const echo: Effect = { id: "echo", name: "Echo", chain: ECHO };
     const phone: Effect = { id: "phone", name: "Phone", chain: PHONE };
 
     const thought = lines.find((s) => s.type === "thought")!;
     expect(thought.effects).toEqual(["phone"]);
-    expect(thought.audio).toMatchObject({ sound: soundOf([echo, phone, INNER_VOICE]) });
+    const speed = stretchEffect(1.25);
+    expect(thought.audio).toMatchObject({ sound: soundOf([speed, echo, phone, INNER_VOICE]) });
     expect(fx.calls.render).toContainEqual({
       format: "wav",
-      chains: [ECHO, PHONE, INNER_VOICE.chain],
+      chains: [speed.chain, ECHO, PHONE, INNER_VOICE.chain],
     });
   });
 

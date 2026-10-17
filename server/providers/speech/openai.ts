@@ -52,6 +52,7 @@ function speechBody(
     voice: hosted && CUSTOM_VOICE.test(voice) ? { id: voice } : voice,
     response_format: input.encoding.format,
     ...(instructions ? { instructions } : {}),
+    ...(input.speed != null ? { speed: input.speed } : {}),
   };
 }
 

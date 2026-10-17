@@ -14,7 +14,7 @@ import { useBookId } from "@/composables/useBookId";
 import { useBookScripts, useCast, useEffects } from "@/queries";
 import { GENDER } from "@/lib/scriptReview";
 import { applySpan, useRangeSelect } from "@/composables/useRangeSelect";
-import { UiSelect, UiCheckbox, UiHint, UiTooltip } from "@/ui";
+import { UiSelect, UiCheckbox, UiHint, UiNumber, UiTooltip } from "@/ui";
 import VoicePicker from "@/components/VoicePicker.vue";
 import SpoilerText from "@/components/SpoilerText.vue";
 import ReadFailure, { scriptsUnread } from "@/components/ReadFailure.vue";
@@ -27,6 +27,7 @@ import ReapplyBar from "@/views/cast/effects/ReapplyBar.vue";
 import type { EffectSubject } from "@/views/cast/effects/subject";
 import { nestPersonas } from "@/views/cast/persona/rows";
 import { personaOwner, voiced as isVoiced } from "@/lib/cast";
+import { SPEAKER_SPEED, speedSplit } from "@/lib/providers";
 import type { Character, Gender } from "@/types";
 
 const castStore = useCastStore();
@@ -77,6 +78,7 @@ const rows = computed(() => {
         st: stats.value[c.name] ?? newStat(),
         voice: endpointsStore.resolveVoice(c.voice),
         borrowed: c.voice ? null : castStore.effectiveVoice(bookId, c.name),
+        speedMade: c.speed ? speedTitle(c.name, c.speed) : undefined,
       };
     })
     .sort((a, b) =>
@@ -88,6 +90,12 @@ const rows = computed(() => {
     );
   return nestPersonas(sorted, byName);
 });
+/** A row's speed tooltip: who makes it, so whether a change costs a re-narration. No endpoint
+ *  name: a masked persona's would point at their wearer. */
+const speedTitle = (name: string, speed: number): string =>
+  speedSplit(castStore.effectiveVoice(bookId, name).endpoint, speed).sent
+    ? "Sent to the voice’s service"
+    : "Made here after the voice speaks";
 /** A speaker's line count for their record, or null while the book's scripts are not all read. */
 const linesOf = (name: string) => (counted.value ? (stats.value[name]?.lines ?? 0) : null);
 
@@ -365,7 +373,7 @@ const duplicate = computed(
     <ReapplyBar :book-id="bookId" />
 
     <div class="card overflow-x-auto">
-      <table class="w-full min-w-[720px] text-sm">
+      <table class="w-full min-w-[800px] text-sm">
         <thead
           class="bg-zinc-50 text-left text-[11px] uppercase tracking-wider text-zinc-500 dark:bg-zinc-900"
         >
@@ -376,11 +384,18 @@ const duplicate = computed(
             <th class="w-16 pr-4 text-right">Lines</th>
             <th class="w-52">Voice</th>
             <th class="w-44 pl-2">Effect</th>
+            <th class="w-24">
+              Speed
+              <UiHint
+                label="speed"
+                text="Sent to the voice’s service when it takes that speed, so changing it means re-narrating. Otherwise the speed is made here after the voice speaks, and a change is re-applied for free."
+              />
+            </th>
             <th class="w-10"></th>
           </tr>
         </thead>
         <tbody>
-          <template v-for="{ c, st, voice, borrowed, of, nested } in rows" :key="c.name">
+          <template v-for="{ c, st, voice, borrowed, speedMade, of, nested } in rows" :key="c.name">
             <tr
               data-row
               :data-speaker="c.name"
@@ -583,6 +598,19 @@ const duplicate = computed(
                   </button>
                 </div>
               </td>
+              <td class="py-1" :title="speedMade">
+                <UiNumber
+                  class="w-20"
+                  :model-value="c.speed ?? 1"
+                  :min="SPEAKER_SPEED.min"
+                  :max="SPEAKER_SPEED.max"
+                  :step="0.01"
+                  :empty="1"
+                  unit="×"
+                  :label="`Speed for ${c.name}`"
+                  @update:model-value="(v) => castStore.setSpeed(bookId, c.name, v)"
+                />
+              </td>
               <td class="pr-3 text-right">
                 <button
                   v-if="c.name !== 'Narrator'"
@@ -612,7 +640,7 @@ const duplicate = computed(
             </tr>
             <tr v-if="open === c.name" class="bg-zinc-50/70 dark:bg-zinc-900/60">
               <td></td>
-              <td colspan="6" class="px-1 py-3 pr-4">
+              <td colspan="7" class="px-1 py-3 pr-4">
                 <CastRecord :book-id="bookId" :c="c" :lines="linesOf" />
               </td>
             </tr>

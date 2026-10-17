@@ -26,6 +26,8 @@ export interface SpeechInput {
   voiceRef: VoiceRef | null;
   /** Hz, or null for the model's own; the job reads the rate the file actually came back at */
   sampleRate: number | null;
+  /** `speedSplit(...).sent`: null = don't send one; only set where the provider's `speed` allows */
+  speed: number | null;
   /**
    * `encodingOf` the endpoint, WAV when there is none. A real provider refuses a combination its
    * API cannot take before any request (`encodingProblems`).

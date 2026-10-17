@@ -25,6 +25,8 @@ export interface Delivery {
   voice: string | null;
   endpoint: string | null;
   style: string;
+  /** the speaker's own `Character.speed`, 1 when unset */
+  speed: number;
 }
 
 /** The server's `effectiveVoice`: the voice `speakerVoice` gives, and the speaker's own style. */
@@ -43,6 +45,7 @@ export function deliveryFor(
       voice: voiceRef ? voiceRef.slice(slash + 1) : null,
       endpoint: voiceRef && slash > 0 ? voiceRef.slice(0, slash) : null,
       style: byName.get(speaker)?.style ?? "",
+      speed: byName.get(speaker)?.speed ?? 1,
     };
   };
 }
@@ -51,6 +54,7 @@ const readerOf = (db: Db | Tx, who: Delivery): Reader => ({
   endpoint: who.endpoint ? readEndpoint(db, who.endpoint) : undefined,
   voiceRef: who.voiceRef,
   style: who.style,
+  speed: who.speed,
 });
 
 /** A line's reading (`@/lib/reading`) against what is stored now. */
@@ -113,7 +117,7 @@ export function narrationPricer(
       }
       const reading = prepareReading(
         s,
-        { endpoint: ep, voiceRef: who.voiceRef, style: who.style },
+        { endpoint: ep, voiceRef: who.voiceRef, style: who.style, speed: who.speed },
         lexicon,
         pacing,
       );

@@ -58,5 +58,7 @@ export const breezeblue: SpeechProviderShape = {
     // charged for the preview; credits are priced by the plan
     fee: { usd: null, when: "made", said: "100 credits a voice" },
   },
+  // its docs name no speed field
+  speed: () => null,
   models: ["breeze-tts-2", "breeze-tts-2-multilingual"],
 };

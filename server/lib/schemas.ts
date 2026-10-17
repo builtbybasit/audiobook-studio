@@ -2,6 +2,8 @@
 // than `@/types`: what the domain leaves optional is optional here.
 import * as v from "valibot";
 
+import { SPEAKER_SPEED } from "@/lib/providers";
+
 import type {
   BookPrompt,
   Character,
@@ -116,6 +118,12 @@ const unset = <T>(schema: v.GenericSchema<T>) =>
     ),
   );
 
+const SpeakerSpeed = v.pipe(
+  v.number(),
+  v.minValue(SPEAKER_SPEED.min),
+  v.maxValue(SPEAKER_SPEED.max),
+);
+
 export const CharacterSchema = v.object({
   name: v.pipe(v.string(), v.trim(), v.nonEmpty("must not be empty")),
   aliases: v.array(v.pipe(v.string(), v.trim(), v.nonEmpty())),
@@ -123,6 +131,8 @@ export const CharacterSchema = v.object({
   description: v.string(),
   voice: v.nullable(v.string()),
   style: v.string(),
+  /** null, absent or 1 = the voice's own pace */
+  speed: unset(SpeakerSpeed),
   color: v.string(),
   major: v.boolean(),
   isNew: v.optional(v.boolean()),
@@ -300,6 +310,7 @@ export const CastFileSchema = v.array(
     gender: v.optional(Gender, "?"),
     description: v.optional(v.string(), ""),
     style: v.optional(v.string(), ""),
+    speed: v.optional(SpeakerSpeed),
     color: v.optional(v.string()),
     major: v.optional(v.boolean()),
     personaOf: v.optional(v.pipe(v.string(), v.trim())),

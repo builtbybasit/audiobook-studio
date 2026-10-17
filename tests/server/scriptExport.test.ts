@@ -93,7 +93,7 @@ test("the zip holds a manifest, the cast with voice hints, the dictionary and on
   const cast = (await api.request<{ characters: Character[] }>(`/api/books/${id}/cast`)).body;
   const mara = cast.characters.find((c) => c.name !== "Narrator")!;
   await api.request(`/api/books/${id}/characters/${encodeURIComponent(mara.name)}`, {
-    ...jsonBody({ ...mara, voice: "studio/ash" }),
+    ...jsonBody({ ...mara, voice: "studio/ash", speed: 1.25 }),
     method: "PUT",
   });
   // a persona of hers, carried by name
@@ -146,6 +146,8 @@ test("the zip holds a manifest, the cast with voice hints, the dictionary and on
   expect(JSON.stringify(speakers)).not.toContain("studio/ash");
   expect(speakers.find((s) => s.name === "The Mask")?.personaOf).toBe(mara.name);
   expect(speakers.find((s) => s.name === mara.name)?.personaOf).toBeUndefined();
+  expect(speakers.find((s) => s.name === mara.name)?.speed).toBe(1.25);
+  expect(speakers.find((s) => s.name === "The Mask")?.speed).toBeUndefined();
   expect(await read<ScriptFileTerm[]>("lexicon.json")).toEqual([
     { term: "Mara", say: "MAH-ra", enabled: true },
   ]);

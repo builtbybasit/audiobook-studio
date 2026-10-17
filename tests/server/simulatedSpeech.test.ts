@@ -57,6 +57,7 @@ const line = (t: ProviderTarget | null, over: Partial<SpeechInput> = {}): Speech
   instructions: "",
   voiceRef: "sim/ash",
   sampleRate: 24000,
+  speed: null,
   encoding: { format: "wav" },
   target: t,
   signal: new AbortController().signal,

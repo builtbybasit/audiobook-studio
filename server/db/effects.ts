@@ -6,16 +6,20 @@ import { and, asc, count, eq, gte, inArray, isNotNull, max, or, sql } from "driz
 import type {
   Effect,
   EffectUses,
+  Endpoint,
   ExistingChapter,
   ExistingScope,
   RevisedLines,
   StaleSound,
 } from "@/types";
 import { chainsFor, soundOf, type EffectContext } from "@/lib/effects";
+import { speedSplit } from "@/lib/providers";
 import type { Db, Tx } from "~/db/client";
+import { readEndpoint } from "~/db/endpoints";
 import { books, chapters, characters, clips, effects, keptSounds, segments } from "~/db/schema";
 import { bumpRevision } from "~/db/script";
 import { readThoughts, writeThoughts } from "~/db/settings";
+import { bookDelivery } from "~/narration/cost";
 
 /** A fresh library's thought effect, as migrations 0031 and 0036 lay it down. */
 export const INNER_VOICE: Effect = {
@@ -206,36 +210,67 @@ export function effectUses(db: Db | Tx, id: string): EffectUses {
   };
 }
 
-/** Input to `chainsFor`, read once per book. */
-export function effectContext(db: Db | Tx, bookId: string): EffectContext {
+/** How each speaker with a speed has it made on their voice's endpoint (`speedSplit`). */
+function speedsOf(
+  db: Db | Tx,
+  bookId: string,
+  cast: { name: string; speed: number | null }[],
+): Map<string, ReturnType<typeof speedSplit>> {
+  const out = new Map<string, ReturnType<typeof speedSplit>>();
+  if (!cast.some((c) => c.speed != null)) return out;
+  const deliveryOf = bookDelivery(db, bookId);
+  const endpoints = new Map<string, Endpoint | undefined>();
+  for (const { name, speed } of cast) {
+    if (speed == null) continue;
+    const id = deliveryOf(name).endpoint;
+    if (id && !endpoints.has(id)) endpoints.set(id, readEndpoint(db, id));
+    out.set(name, speedSplit(id ? endpoints.get(id) : null, speed));
+  }
+  return out;
+}
+
+/** `chainsFor`'s input, and the speed each speaker's clips are sent at now (null = none). */
+function readContext(
+  db: Db | Tx,
+  bookId: string,
+): { ctx: EffectContext; sentOf: (speaker: string) => number | null } {
   const cast = db
     .select({
       name: characters.name,
       effect: characters.effect,
       thoughts: characters.thoughts,
       personaOf: characters.personaOf,
+      speed: characters.speed,
     })
     .from(characters)
     .where(eq(characters.bookId, bookId))
     .all();
-  return {
+  const speeds = speedsOf(db, bookId, cast);
+  const ctx: EffectContext = {
     effects: new Map(listEffects(db).map((e) => [e.id, e])),
     library: readThoughts(db),
     book: db.select({ t: books.thoughts }).from(books).where(eq(books.id, bookId)).get()?.t ?? null,
     cast: new Map(
       cast
-        .filter((c) => c.effect != null || c.thoughts != null || c.personaOf != null)
+        .map((c) => ({ ...c, stretched: speeds.get(c.name)?.stretched ?? null }))
+        .filter((c) => c.effect != null || c.thoughts != null || c.personaOf != null || c.stretched)
         .map((c) => [
           c.name,
           {
             ...(c.effect != null ? { effect: c.effect } : {}),
             ...(c.thoughts != null ? { thoughts: c.thoughts } : {}),
             ...(c.personaOf != null ? { personaOf: c.personaOf } : {}),
+            ...(c.stretched != null ? { stretched: c.stretched } : {}),
           },
         ]),
     ),
   };
+  return { ctx, sentOf: (speaker) => speeds.get(speaker)?.sent ?? null };
 }
+
+/** Input to `chainsFor`, read once per book. */
+export const effectContext = (db: Db | Tx, bookId: string): EffectContext =>
+  readContext(db, bookId).ctx;
 
 // ---------- Re-apply ----------
 
@@ -266,12 +301,13 @@ function wornBy(ctx: EffectContext, speaker: string): string[] {
 
 /**
  * Finished current/candidate clips whose sound is stale, in the chapters kept in the book; takes are
- * history and left alone, and so is a clip kept against the sound its line wants now. Effects are
- * worked out once per (thought?, speaker, line effects), not per line, for scale. A speaker's scope
- * takes in their personas, who wear their effect.
+ * history and left alone, and so is a clip kept against the sound its line wants now. So is one
+ * sent at another speed than its speaker's now: an old voice, to narrate again, not to stretch.
+ * Effects are worked out once per (thought?, speaker, line effects), not per line, for scale. A
+ * speaker's scope takes in their personas, who wear their effect.
  */
 export function staleClips(db: Db | Tx, bookId: string, scope: ExistingScope = {}): StaleClip[] {
-  const ctx = effectContext(db, bookId);
+  const { ctx, sentOf } = readContext(db, bookId);
   const rows = db
     .select({
       chapterId: clips.chapterId,
@@ -279,6 +315,7 @@ export function staleClips(db: Db | Tx, bookId: string, scope: ExistingScope = {
       url: clips.url,
       raw: clips.raw,
       sound: clips.sound,
+      speed: clips.speed,
       type: segments.type,
       speaker: segments.speaker,
       lineEffects: segments.effects,
@@ -311,8 +348,9 @@ export function staleClips(db: Db | Tx, bookId: string, scope: ExistingScope = {
   const within = scope.chapters && new Set(scope.chapters);
   const known = new Map<string, Pick<StaleClip, "effects" | "want">>();
   const out: StaleClip[] = [];
-  for (const { type, speaker, lineEffects, url, kept, keptWant, ...r } of rows) {
+  for (const { type, speaker, lineEffects, url, kept, keptWant, speed, ...r } of rows) {
     if (within && !within.has(r.chapterId)) continue;
+    if (speed !== sentOf(speaker)) continue;
     const key = JSON.stringify([type === "thought", speaker, lineEffects]);
     let line = known.get(key);
     if (!line) {

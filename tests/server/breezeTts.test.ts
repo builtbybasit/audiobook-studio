@@ -48,6 +48,7 @@ const line = (over: Partial<SpeechInput> = {}): SpeechInput => ({
   instructions: "Quietly.",
   voiceRef: "breeze/harbour",
   sampleRate: null,
+  speed: null,
   encoding: { format: "wav" },
   target: breeze,
   signal: signal(),

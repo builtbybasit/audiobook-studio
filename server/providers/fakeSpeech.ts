@@ -105,7 +105,7 @@ export function speakTone(input: SpeechInput, startedAt: number, failure?: Error
     });
     throw failure;
   }
-  const duration = fakeDuration(text);
+  const duration = fakeDuration(text) / (input.speed ?? 1);
   report({ status: "done", audioSeconds: duration, billed: true });
   return {
     bytes: toneWav(toneOf(speaker), duration, sampleRate ?? SAMPLE_RATE),

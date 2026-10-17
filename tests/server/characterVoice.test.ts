@@ -126,14 +126,15 @@ describe("the voice a persona is read in", () => {
 });
 
 describe("a delivery", () => {
-  test("gives a linked persona their character's voice and their own style", () => {
-    const sunny = { ...speaker("Sunny", "m", "ep/sunny"), style: "dry" };
+  test("gives a linked persona their character's voice and their own style and speed", () => {
+    const sunny = { ...speaker("Sunny", "m", "ep/sunny"), style: "dry", speed: 1.5 };
     const lord = { ...speaker("Lord of Shadows", "m"), style: "cold, distant", personaOf: "Sunny" };
     expect(deliveryFor([narrator("ep/narr"), sunny, lord])("Lord of Shadows")).toEqual({
       voiceRef: "ep/sunny",
       voice: "sunny",
       endpoint: "ep",
       style: "cold, distant",
+      speed: 1,
     });
   });
 });
@@ -201,10 +202,10 @@ const twoVoices = speechEndpoint({
 });
 
 /** Two chapters, everyone read in `studio/ash`; `narrated` chapters rendered. */
-async function heard(narrated: number[]) {
+async function heard(narrated: number[], endpoint = twoVoices) {
   const api = testApi();
   const id = await voicedBook(api, {
-    endpoints: [twoVoices],
+    endpoints: [endpoint],
     paragraphs: [
       "“We are short again,” said Mara.",
       "“Then we count it twice,” said Tobin.",
@@ -275,6 +276,18 @@ describe("lines left in an old voice", () => {
       );
     },
   );
+
+  // Fish takes the speed with the request; the studio's is made here, from the same clip
+  test.each([
+    ["sends it", "https://api.fish.audio/v1", true],
+    ["stretches it", twoVoices.baseUrl, false],
+  ])("after a speed change on an endpoint that %s", async (_, baseUrl, sent) => {
+    const { api, id } = await heard([1], { ...twoVoices, baseUrl });
+    await recast(api, id, "Mara", { speed: 1.5 });
+    const { body } = await oldVoice(api, id, "Mara");
+    expect(body.lines).toBe(sent ? doneBy(await script(api, id, 1), ["Mara"]) : 0);
+    expect(body.lines > 0).toBe(sent);
+  });
 
   test("re-narrate in the new voice just those lines in the chapters asked for, priced as shown", async () => {
     const { api, id } = await heard([1]);

@@ -42,6 +42,8 @@ export const gemini: SpeechProviderShape = {
           pause: fixedPauses("<short pause>", "<long pause>"),
         },
   billsFailures: false,
+  // pace only through the style prompt
+  speed: () => null,
   cloning: null,
   models: [
     "gemini-3.8-flash-tts",

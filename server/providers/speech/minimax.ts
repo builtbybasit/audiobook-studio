@@ -47,7 +47,7 @@ const checkOf =
 
 /** Exported for the tests. Only words are sent; delivery goes inline (`(laughs)`, `<#0.5#>`). */
 export function miniMaxBody(
-  input: Pick<SpeechInput, "text" | "sampleRate" | "encoding">,
+  input: Pick<SpeechInput, "text" | "sampleRate" | "encoding" | "speed">,
   model: string,
   voice: string,
 ): Record<string, unknown> {
@@ -58,7 +58,7 @@ export function miniMaxBody(
     text: input.text,
     stream: false,
     output_format: "hex",
-    voice_setting: { voice_id: voice },
+    voice_setting: { voice_id: voice, ...(input.speed != null ? { speed: input.speed } : {}) },
     audio_setting: {
       sample_rate: input.sampleRate ?? defaults.rate,
       format,

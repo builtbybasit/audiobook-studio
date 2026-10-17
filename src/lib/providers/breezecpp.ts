@@ -33,6 +33,8 @@ export const breezecpp: SpeechProviderShape = {
       "any descriptive words often work. At its default cfg_scale of 1 it often ignores them.",
   }),
   billsFailures: false,
+  // breeze-server takes `speed` and ignores it: "The model has no speed control"
+  speed: () => null,
   models: [],
   cloning: {
     maxSamples: 1,

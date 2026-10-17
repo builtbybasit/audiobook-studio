@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import type { Step } from "@/types";
+import { runnable, stretchEffect } from "@/lib/effects";
 import { lanes, PEDALBOARD, pedalboardRunner, RETRY_MS, SCRIPT } from "~/audio/effects";
 import { probeClip } from "~/audio/probe";
 import { ffmpegAvailable } from "~/providers/ffmpegEncoder";
@@ -208,6 +209,25 @@ describe.skipIf(!uv)("Pedalboard under uv", () => {
     const clip = sine(0.2);
     const out = await runner.render(clip, "wav", [[{ ...GAIN, on: false }]], live());
     expect(peak(out, 0)).toBeCloseTo(peak(clip, 0), 3);
+  });
+
+  test("a speed is stretched before the rest, only as the first chain and only from 0.5 to 2", async () => {
+    const clip = sine(0.5);
+    const speed = (x: number) => runnable(stretchEffect(x).chain);
+    const fast = await runner.render(clip, "wav", [speed(1.25), [GAIN]], live());
+    const info = await probeClip(fast, "wav");
+    expect(info.sampleRate).toBe(24000);
+    // trimmed back to the stretched clip, not the one that came in
+    expect(info.duration).toBeCloseTo(0.5 / 1.25, 2);
+    await expect(runner.render(clip, "wav", [speed(3)], live())).rejects.toThrow(
+      "a speed must be 0.5 to 2, not 3",
+    );
+    await expect(runner.render(clip, "wav", [[GAIN], speed(1.25)], live())).rejects.toThrow(
+      "TimeStretch is not a plugin this editor knows",
+    );
+    await expect(runner.parse("Pedalboard([TimeStretch(1.25)])", live())).rejects.toThrow(
+      "line 1: TimeStretch is not a plugin this editor knows",
+    );
   });
 
   test("the plugins are read from Pedalboard: the number-only ones, never a file loader", async () => {

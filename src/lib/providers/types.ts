@@ -91,6 +91,14 @@ export interface SpeechProviderShape {
   models: readonly string[];
   /** Null when the provider has no voice-cloning API; else its wire module has a `clone`. */
   cloning: CloneSupport | null;
+  /** The speed the request can carry for this model, from the provider's docs; null = none. */
+  speed(model: string): SpeedRange | null;
+}
+
+/** A multiplier: 1 is the voice's own pace, above 1 faster. */
+export interface SpeedRange {
+  min: number;
+  max: number;
 }
 
 /**

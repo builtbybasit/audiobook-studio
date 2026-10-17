@@ -25,6 +25,9 @@ NEVER = {
     "Convolution", "VST3Plugin", "AudioUnitPlugin",
 }
 NUMBER = ("float", "int")
+# A speaker's speed, as `stretchEffect` and `SPEAKER_SPEED` in src/lib give it: never a plugin.
+STRETCH = "TimeStretch"
+SPEED = (0.5, 2)
 
 # Pedalboard returns as many samples as it gets, so this pad lets a reverb ring on; what is still
 # silent afterwards comes off again (never more, so a clip never gets shorter).
@@ -153,9 +156,28 @@ def load(src, wav, ffmpeg):
         return f.read(f.frames), f.samplerate
 
 
+def stretch_of(chains):
+    """The speed a first chain of one STRETCH step asks for (1 = none), and the chains after it."""
+    first = chains[0] if chains else []
+    if not (len(first) == 1 and first[0].get("plugin") == STRETCH):
+        return 1, chains
+    params = first[0].get("params", {})
+    if set(params) != {"stretch_factor"}:
+        raise ValueError(f"{STRETCH} takes only stretch_factor")
+    factor = number(STRETCH, "stretch_factor", params["stretch_factor"])
+    if not SPEED[0] <= factor <= SPEED[1]:
+        raise ValueError(f"a speed must be {SPEED[0]} to {SPEED[1]}, not {factor}")
+    return (factor if first[0].get("on", True) else 1), chains[1:]
+
+
 def process(audio, rate, chains):
     import numpy as np
+    import pedalboard as pb
 
+    factor, chains = stretch_of(chains)
+    if factor != 1:
+        # before the board, so the pad and the trim below measure the clip at its new length
+        audio = pb.time_stretch(audio, rate, stretch_factor=factor)
     frames = audio.shape[1]
     pad = np.zeros((audio.shape[0], int(rate * PAD_SECONDS)), audio.dtype)
     wet = board(chains)(np.concatenate([audio, pad], axis=1), rate)

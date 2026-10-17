@@ -197,6 +197,7 @@ function speakerOf(
     major: c.major,
   };
   if (c.personaOf) out.personaOf = c.personaOf;
+  if (c.speed != null && c.speed !== 1) out.speed = c.speed;
   const voice = voiceHint(c.voice, endpoints);
   if (voice) out.voice = voice;
   const effect = c.effect && effectName(c.effect);

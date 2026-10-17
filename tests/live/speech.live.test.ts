@@ -43,6 +43,7 @@ describe.skipIf(!env.LIVE || !env.FISHAUDIO_TOKEN)("Fish Audio, for real", () =>
     instructions: "",
     voiceRef: `fish-free/${env.FISHAUDIO_VOICE_ID}`,
     sampleRate,
+    speed: null,
     encoding,
     target,
     signal: AbortSignal.timeout(90_000),

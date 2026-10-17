@@ -345,11 +345,12 @@ function matchChapters(
 
 /** Effects by name, as the file writes them. */
 function detailsOf(
-  c: Pick<SpeakerDetails, "gender" | "description" | "style">,
+  c: Pick<SpeakerDetails, "gender" | "description" | "style" | "speed">,
   effect: string | undefined,
   thoughts: string | undefined,
 ): SpeakerDetails {
   const d: SpeakerDetails = { gender: c.gender, description: c.description, style: c.style };
+  if (c.speed != null && c.speed !== 1) d.speed = c.speed;
   if (effect) d.effect = effect;
   if (thoughts) d.thoughts = thoughts;
   return d;
@@ -359,6 +360,7 @@ const sameDetails = (a: SpeakerDetails, b: SpeakerDetails): boolean =>
   a.gender === b.gender &&
   a.description === b.description &&
   a.style === b.style &&
+  a.speed === b.speed &&
   a.effect === b.effect &&
   a.thoughts === b.thoughts;
 

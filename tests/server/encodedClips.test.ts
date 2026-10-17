@@ -55,6 +55,7 @@ const line = (target: ProviderTarget, over: Partial<SpeechInput> = {}): SpeechIn
   instructions: "",
   voiceRef: `${target.id}/voice-1`,
   sampleRate: null,
+  speed: null,
   encoding: { format: "wav" },
   target,
   signal: new AbortController().signal,

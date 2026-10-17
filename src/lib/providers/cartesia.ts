@@ -52,5 +52,8 @@ export const cartesia: SpeechProviderShape = {
     cost: "No credits per voice, but instant cloning needs Cartesia's Pro plan or above.",
     fee: null,
   },
+  // https://docs.cartesia.ai/api-reference/tts/bytes: generation_config.speed, sonic-3 and newer;
+  // Cartesia calls it guidance rather than an exact multiplier
+  speed: () => ({ min: 0.6, max: 1.5 }),
   models: ["sonic-3.6", "sonic-3.5", "sonic-3", "sonic-latest"],
 };

@@ -19,17 +19,22 @@ import * as queue from "~/db/jobs";
 import { readScript } from "~/db/script";
 import { SCOPE_LABEL } from "@/lib/runPlan";
 import { enqueueNarration, scopeOf } from "~/jobs/narration";
+import { compareReading } from "@/lib/reading";
+import { bookDelivery, lineReading } from "~/narration/cost";
 import { retakeLines } from "~/narration/ops";
 import { fakeSpeechProvider } from "~/providers/fakeSpeech";
 import { ProviderError } from "~/providers/http";
-import type { SpeechProvider } from "~/providers/speech";
+import type { SpeechInput, SpeechProvider } from "~/providers/speech";
 import { epubFile, story } from "../support/epub";
 import {
   collectingLogger,
   gatedSpeechProvider,
   jsonBody,
+  narrateChapters,
+  speechEndpoint,
   testApi,
   testRunner,
+  voicedBook,
   type TestApi,
 } from "../support/server";
 
@@ -868,13 +873,57 @@ const lexicon = (
   });
 
 /** A provider that remembers every text it was sent, and renders it with the fake. */
-function recording(): SpeechProvider & { sent: string[] } {
+function recording(): SpeechProvider & { sent: string[]; inputs: SpeechInput[] } {
   const inner = fakeSpeechProvider();
   const sent: string[] = [];
-  return { name: inner.name, sent, speak: (input) => (sent.push(input.text), inner.speak(input)) };
+  const inputs: SpeechInput[] = [];
+  return {
+    name: inner.name,
+    sent,
+    inputs,
+    speak: (input) => (sent.push(input.text), inputs.push(input), inner.speak(input)),
+  };
 }
 
 describe("what a line is spoken as", () => {
+  test("a speaker's speed an endpoint takes is sent with their lines, their clips say so, and a new one is drift", async () => {
+    const speech = recording();
+    const api = testApi({ speech });
+    const fish = speechEndpoint({ baseUrl: "https://api.fish.audio/v1" });
+    const id = await voicedBook(api, {
+      endpoints: [fish],
+      paragraphs: dialogue(),
+      voiceOf: "studio/ash",
+    });
+    const { characters } = (await api.request<Cast>(`/api/books/${id}/cast`)).body;
+    const mara = characters.find((c) => c.name === "Mara")!;
+    await api.request(`/api/books/${id}/characters/Mara`, {
+      ...jsonBody({ ...mara, speed: 1.5 }),
+      method: "PUT",
+    });
+    await narrateChapters(api, id, [1]);
+
+    const { segments } = await scriptOf(api, id);
+    const wanted = (speaker: string) => (speaker === "Mara" ? 1.5 : null);
+    expect(segments.map((s) => s.speaker)).toContain("Mara");
+    for (const i of speech.inputs) expect(i.speed).toBe(wanted(i.speaker));
+    // done, not stale: the landing check reads the same speed back
+    for (const s of segments)
+      expect([s.audio.status, s.audio.speed ?? null]).toEqual(["done", wanted(s.speaker)]);
+
+    await api.request(`/api/books/${id}/characters/Mara`, {
+      ...jsonBody({ ...mara, speed: 1.25 }),
+      method: "PUT",
+    });
+    const deliveryOf = bookDelivery(api.db, id);
+    const drift = segments.map((s) =>
+      compareReading(s.audio, s, lineReading(api.db, id, s, deliveryOf(s.speaker))),
+    );
+    expect(drift).toEqual(
+      segments.map((s) => (s.speaker === "Mara" ? [expect.stringMatching(/^speed/)] : [])),
+    );
+  });
+
   test("a line the dictionary matches is sent the respelling, and its clip says so", async () => {
     const speech = recording();
     const { api, id } = await scripted(testApi({ speech }));

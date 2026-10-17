@@ -69,5 +69,7 @@ export const elevenlabs: SpeechProviderShape = {
     cost: "Needs a Starter plan or above, and each voice takes one of the plan's custom voice slots.",
     fee: null,
   },
+  // https://elevenlabs.io/docs/best-practices/prompting/controls: voice_settings.speed, not on v3/v4
+  speed: (model) => (/^eleven_v[34]/.test(model.trim()) ? null : { min: 0.7, max: 1.2 }),
   models: ["eleven_v3", "eleven_multilingual_v2", "eleven_flash_v2_5", "eleven_turbo_v2_5"],
 };

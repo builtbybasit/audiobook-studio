@@ -447,6 +447,7 @@ function lineRun(o: {
         instructions,
         voiceRef: who.voiceRef,
         sampleRate: ep?.sampleRate ?? null,
+        speed: reading.speed,
         encoding: ep ? encodingOf(ep) : { format: "wav" },
         target: ep ? speechTarget(db, ep) : null,
         signal: stop,

@@ -133,7 +133,7 @@ export function createApp(
   app.route(`${base}/books`, speakerSampleRoutes(db, files));
   app.route(`${base}/books`, bookUsageRoutes(db));
   app.route(`${base}/jobs`, jobRoutes(db, runner));
-  app.route(`${base}/endpoints`, endpointRoutes(db, providers, voiceFiles, gate));
+  app.route(`${base}/endpoints`, endpointRoutes(db, providers, voiceFiles, gate, runner, effects));
   app.route(`${base}/endpoints`, endpointUsageRoutes(db));
   app.route(`${base}/effects`, effectRoutes(db, files, effects));
   app.route(`${base}/settings`, settingRoutes(db));

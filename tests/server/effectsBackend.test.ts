@@ -7,7 +7,8 @@ import { and, eq } from "drizzle-orm";
 import type { Book, Cast, Character, Effect, EffectUses, ImportedBook, Step } from "@/types";
 import { SIMULATED_BASE_URL } from "@/lib/providers";
 import { effectContext } from "~/db/effects";
-import { characters, segments } from "~/db/schema";
+import { bookDelivery, lineReading } from "~/narration/cost";
+import { segments } from "~/db/schema";
 import { readScript, scriptRevision } from "~/db/script";
 import { epubFile, line, story } from "../support/epub";
 import {
@@ -294,20 +295,24 @@ describe("a book's and a speaker's choices", () => {
     expect(await maraIn(api, id)).not.toHaveProperty("effect");
   });
 
+  const LOCAL = "http://localhost:8880/v1";
+  const SIM = SIMULATED_BASE_URL;
+  const stretched = { stretched: 1.25 };
   test.each([
-    ["is sent where the endpoint takes it", SIMULATED_BASE_URL, undefined],
-    ["is stretched here where it can't", "http://localhost:8880/v1", { stretched: 1.25 }],
-  ])("a speaker's speed %s", async (_, baseUrl, want) => {
+    ["her own, is sent where the endpoint takes it", SIM, 1.25, undefined, 1.25, undefined],
+    ["her own, is stretched here where it can't", LOCAL, 1.25, undefined, null, stretched],
+    ["her voice's, is sent where the endpoint takes it", SIM, undefined, 1.25, 1.25, undefined],
+    ["her voice's, is stretched here where it can't", LOCAL, undefined, 1.25, null, stretched],
+    ["her own 1, beats her voice's", SIM, 1, 1.09, null, undefined],
+  ])("a speaker's speed, %s", async (_, baseUrl, own, voice, sent, made) => {
     const api = testApi();
-    await saveEndpoints(api, [speechEndpoint({ baseUrl })]);
+    const ash = { id: "ash", gender: "m" as const, label: "Ash", speed: voice };
+    await saveEndpoints(api, [speechEndpoint({ baseUrl, voices: [ash] })]);
     const id = await shelved(api);
-    await putMara(api, id, { voice: "studio/ash" });
-    api.db
-      .update(characters)
-      .set({ speed: 1.25 })
-      .where(and(eq(characters.bookId, id), eq(characters.name, "Mara")))
-      .run();
-    expect(effectContext(api.db, id).cast.get("Mara")).toEqual(want);
+    await putMara(api, id, { voice: "studio/ash", speed: own });
+    const who = bookDelivery(api.db, id)("Mara");
+    expect(lineReading(api.db, id, { text: "Fine.", direction: "" }, who).speed).toBe(sent);
+    expect(effectContext(api.db, id).cast.get("Mara")).toEqual(made);
   });
 
   test("removing an effect the library does not use leaves its choice alone", async () => {

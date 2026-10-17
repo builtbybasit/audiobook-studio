@@ -11,7 +11,10 @@ import type {
   Profile,
   PromptTemplate,
   ScriptSettings,
+  SpeedRange,
   Transcriber,
+  Voice,
+  VoiceRef,
 } from "@/types";
 import type { StoredEndpoint } from "@/lib/endpointTelemetry";
 import type { Db, Tx } from "~/db/client";
@@ -56,9 +59,10 @@ export function writeEndpoint(
   e: StoredEndpoint,
   position: number,
   apiKey: string | null = null,
+  speedRange: SpeedRange | null = null,
 ): void {
   db.insert(endpoints)
-    .values(rows.endpointValues(e, position, apiKey))
+    .values(rows.endpointValues(e, position, apiKey, speedRange))
     .run();
   e.voices.forEach((v, i) =>
     db
@@ -137,6 +141,30 @@ export function readEndpoints(db: Db | Tx): Endpoint[] {
     .orderBy(asc(endpoints.position))
     .all()
     .map((row) => rows.toEndpoint(row, partsOf(db, row.id)));
+}
+
+/** Every speech voice by its `<endpointId>/<voiceId>`, read at once. */
+export function voiceFinder(db: Db | Tx): (ref: VoiceRef) => Voice | undefined {
+  const all = new Map(
+    db
+      .select()
+      .from(voices)
+      .all()
+      .map((row) => [`${row.endpointId}/${row.id}`, rows.toVoice(row)]),
+  );
+  return (ref) => all.get(ref);
+}
+
+/** What the server's capabilities declared; only the server writes it. Whether it changed. */
+export function writeSpeedRange(db: Db | Tx, id: string, range: SpeedRange | null): boolean {
+  const row = db
+    .select({ speedRange: endpoints.speedRange })
+    .from(endpoints)
+    .where(eq(endpoints.id, id))
+    .get();
+  if (!row || JSON.stringify(row.speedRange) === JSON.stringify(range)) return false;
+  db.update(endpoints).set({ speedRange: range }).where(eq(endpoints.id, id)).run();
+  return true;
 }
 
 /** Speech endpoints only; a scripting profile's id reads as undefined. */
@@ -222,7 +250,12 @@ function rowId(kind: EndpointKind, id: string): string {
   }
 }
 
-type Kept = { apiKey: string | null; baseUrl: string };
+type Kept = {
+  apiKey: string | null;
+  baseUrl: string;
+  model: string;
+  speedRange: SpeedRange | null;
+};
 
 /**
  * The key is write-only: undefined keeps it, `""` forgets it. A new base URL without a new key
@@ -238,7 +271,13 @@ export function replaceEndpoints(tx: Tx, config: EndpointConfig): void {
   // read before the rows go, so a save that did not mention a key keeps it
   const kept = new Map(
     tx
-      .select({ id: endpoints.id, apiKey: endpoints.apiKey, baseUrl: endpoints.baseUrl })
+      .select({
+        id: endpoints.id,
+        apiKey: endpoints.apiKey,
+        baseUrl: endpoints.baseUrl,
+        model: endpoints.model,
+        speedRange: endpoints.speedRange,
+      })
       .from(endpoints)
       .all()
       .map(({ id, ...k }) => [id, k]),
@@ -248,7 +287,12 @@ export function replaceEndpoints(tx: Tx, config: EndpointConfig): void {
   tx.delete(endpoints).run();
   tx.delete(credentials).run();
   writeCredentials(tx, config.credentials);
-  config.endpoints.forEach((e, i) => writeEndpoint(tx, e, i, keyAfterSave(e, kept.get(e.id))));
+  config.endpoints.forEach((e, i) => {
+    const k = kept.get(e.id);
+    // what the server declared holds only for the server and model it was read from
+    const range = k?.baseUrl === e.baseUrl && k.model === e.model ? k.speedRange : null;
+    writeEndpoint(tx, e, i, keyAfterSave(e, k), range);
+  });
   config.profiles.forEach((p, i) =>
     writeProfile(tx, p, i, keyAfterSave(p, kept.get(rows.profileKey(p.id)))),
   );

@@ -21,10 +21,10 @@ import {
   X as RemoveIcon,
   Search as SearchIcon,
 } from "@lucide/vue";
-import { UiHint, UiSelect, UiSwitch, UiTooltip } from "@/ui";
+import { UiHint, UiNumber, UiSelect, UiSwitch, UiTooltip } from "@/ui";
 import { plural } from "@/lib/contents";
 import { isFishAudio } from "@/lib/endpoints";
-import { cloningOf, speechProviderOf } from "@/lib/providers";
+import { cloningOf, SPEAKER_SPEED, speechProviderOf } from "@/lib/providers";
 import {
   pickProblem,
   requestOf,
@@ -316,7 +316,17 @@ const sampleTitle = computed(() =>
         No voice matches “{{ q }}”.
       </p>
 
-      <ul v-else class="divide-y divide-zinc-100 dark:divide-zinc-800">
+      <div v-else class="label flex gap-2 pb-1">
+        <span class="w-3 shrink-0"></span><span class="w-40">Label</span>
+        <span class="w-20">
+          Speed
+          <UiHint
+            label="a voice's speed"
+            text="Speakers without a speed of their own use it. Sent to the voice’s service when it takes that speed, otherwise made here after the voice speaks."
+          />
+        </span>
+      </div>
+      <ul v-if="shown.length" class="divide-y divide-zinc-100 dark:divide-zinc-800">
         <li
           v-for="v in shown"
           :key="v.id"
@@ -328,6 +338,18 @@ const sampleTitle = computed(() =>
             v-model="v.label"
             class="input w-40 py-0.5"
             :aria-label="`Label for voice ${v.id}`"
+          />
+          <UiNumber
+            class="w-20 shrink-0"
+            :model-value="v.speed ?? null"
+            placeholder="1"
+            :min="SPEAKER_SPEED.min"
+            :max="SPEAKER_SPEED.max"
+            :step="0.01"
+            :empty="null"
+            unit="×"
+            :label="`Speed for ${v.label}`"
+            @update:model-value="(x) => endpointsStore.setVoiceSpeed(endpoint, v.id, x)"
           />
           <span class="min-w-0 flex-1 truncate font-mono text-[11px] text-zinc-500" :title="v.id">{{
             v.id

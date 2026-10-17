@@ -3,13 +3,22 @@
 // settings route and a real run; then the finished lines a voice change leaves behind.
 import { describe, expect, test } from "bun:test";
 
-import type { Book, Character, CharacterVoice, NarrationQueued, OldVoice, Segment } from "@/types";
+import type {
+  Book,
+  Character,
+  CharacterVoice,
+  Endpoint,
+  NarrationQueued,
+  OldVoice,
+  Segment,
+} from "@/types";
 import { narrator, speakerVoice } from "@/lib/cast";
 import { deliveryFor } from "~/narration/cost";
 import { story } from "../support/epub";
 import {
   jsonBody,
   narrateChapters,
+  saveEndpoints,
   speechEndpoint,
   testApi,
   voicedBook,
@@ -126,15 +135,26 @@ describe("the voice a persona is read in", () => {
 });
 
 describe("a delivery", () => {
-  test("gives a linked persona their character's voice and their own style and speed", () => {
+  const voiceOf = (ref: string) => (ref === "ep/sunny" ? { speed: 1.09 } : undefined);
+
+  test.each([
+    ["their character's voice's speed", undefined, 1.09],
+    ["their own speed, 1 too", 1, 1],
+  ])("gives a linked persona their character's voice, their own style and %s", (_, own, speed) => {
     const sunny = { ...speaker("Sunny", "m", "ep/sunny"), style: "dry", speed: 1.5 };
-    const lord = { ...speaker("Lord of Shadows", "m"), style: "cold, distant", personaOf: "Sunny" };
-    expect(deliveryFor([narrator("ep/narr"), sunny, lord])("Lord of Shadows")).toEqual({
+    const lord = {
+      ...speaker("Lord of Shadows", "m"),
+      style: "cold, distant",
+      personaOf: "Sunny",
+      speed: own,
+    };
+    const cast = [narrator("ep/narr"), sunny, lord];
+    expect(deliveryFor(cast, undefined, voiceOf)("Lord of Shadows")).toEqual({
       voiceRef: "ep/sunny",
       voice: "sunny",
       endpoint: "ep",
       style: "cold, distant",
-      speed: 1,
+      speed,
     });
   });
 });
@@ -278,12 +298,19 @@ describe("lines left in an old voice", () => {
   );
 
   // Fish takes the speed with the request; the studio's is made here, from the same clip
+  const FISH = "https://api.fish.audio/v1";
+  const own = (api: TestApi, id: string) => recast(api, id, "Mara", { speed: 1.5 });
+  const voice = (api: TestApi, _: string, e: Endpoint) =>
+    saveEndpoints(api, [{ ...e, voices: e.voices.map((v) => ({ ...v, speed: 1.5 })) }]);
   test.each([
-    ["sends it", "https://api.fish.audio/v1", true],
-    ["stretches it", twoVoices.baseUrl, false],
-  ])("after a speed change on an endpoint that %s", async (_, baseUrl, sent) => {
-    const { api, id } = await heard([1], { ...twoVoices, baseUrl });
-    await recast(api, id, "Mara", { speed: 1.5 });
+    ["her own", "sends it", FISH, own, true],
+    ["her own", "stretches it", twoVoices.baseUrl, own, false],
+    ["her voice's", "sends it", FISH, voice, true],
+    ["her voice's", "stretches it", twoVoices.baseUrl, voice, false],
+  ])("after a change to %s speed on an endpoint that %s", async (_, __, baseUrl, change, sent) => {
+    const endpoint = { ...twoVoices, baseUrl };
+    const { api, id } = await heard([1], endpoint);
+    await change(api, id, endpoint);
     const { body } = await oldVoice(api, id, "Mara");
     expect(body.lines).toBe(sent ? doneBy(await script(api, id, 1), ["Mara"]) : 0);
     expect(body.lines > 0).toBe(sent);

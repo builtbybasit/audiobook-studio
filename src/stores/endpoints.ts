@@ -55,6 +55,7 @@ import type {
 } from "@/types";
 import { defineStore } from "pinia";
 import { useCastStore } from "@/stores/cast";
+import { useExistingLinesStore } from "@/stores/existingLines";
 import { useJobsStore } from "@/stores/jobs";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptingStore } from "@/stores/scripting";
@@ -791,6 +792,24 @@ export const useEndpointsStore = defineStore("endpoints", {
       id = (id ?? "").trim();
       if (!id || ep.voices.some((v) => v.id === id)) return false;
       ep.voices.push({ id, label: (label ?? "").trim() || id, gender: gender ?? "n" });
+      return true;
+    },
+    /**
+     * A voice's pace for every speaker on it who sets none; null or 1 = its own. Once saved, asks
+     * about lines read at the old pace, in every book. False when refused.
+     */
+    async setVoiceSpeed(ep: Endpoint, voiceId: string, speed: number | null): Promise<boolean> {
+      const v = ep.voices.find((x) => x.id === voiceId);
+      if (!v) return false;
+      const now = speed ?? 1;
+      if ((v.speed ?? 1) === now) return true;
+      if (now === 1) delete v.speed;
+      else v.speed = now;
+      if ((await this.flushWrites()) === "refused") return false;
+      await useExistingLinesStore().askVoiceSpeed(
+        voiceRef(ep.id, v.id),
+        `${v.label} now reads at ${now}×`,
+      );
       return true;
     },
     /** Remove a voice silently, as undoing its add does. */

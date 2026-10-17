@@ -2,10 +2,10 @@
 // else. Retries and the ledger are `send.ts`'s, format checks `answer.ts`'s, the choice of provider
 // `registry.ts`'s; the page's description of each provider is in `lib/providers/`.
 import { call, ProviderError } from "~/providers/http";
-import type { EndpointProbe, MadeVoice, VoiceListPage } from "@/types";
+import type { EndpointBatches, EndpointProbe, MadeVoice, VoiceListPage } from "@/types";
 import type { CloneRequest } from "~/providers/clone";
 import type { SpeechCallOptions, SpeechRequest } from "~/providers/send";
-import type { BatchLimits, SpeechBatch, SpeechInput } from "~/providers/speech";
+import type { SpeechBatch, SpeechInput } from "~/providers/speech";
 import type { ProviderTarget } from "~/providers/target";
 import type { VoiceQuery } from "~/providers/voices";
 
@@ -35,11 +35,11 @@ export interface SpeechWire {
     options: SpeechCallOptions,
   ): Promise<MadeVoice>;
   /** Asked afresh; the provider caches it. Only the compatible wire has it (`batch.ts`). */
-  batchLimits?(
+  capabilities?(
     target: ProviderTarget,
     signal: AbortSignal,
     options: SpeechCallOptions,
-  ): Promise<BatchLimits | null>;
+  ): Promise<EndpointBatches>;
   /** `voices[i]` is item `i`'s voice id; items are already checked (`batch.ts`). */
   speakBatch?(
     batch: SpeechBatch,

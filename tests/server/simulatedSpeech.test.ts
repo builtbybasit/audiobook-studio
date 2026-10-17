@@ -177,7 +177,7 @@ describe("what a simulated endpoint answers without a request", () => {
     const net = noNetwork();
     const provider = endpointSpeechProvider({ fetch: net.fetch });
     const signal = new AbortController().signal;
-    expect(await provider.batchLimits!(target(), signal)).toBeNull();
+    expect(await provider.capabilities!(target(), signal)).toEqual({ limits: null, speed: null });
     expect(await provider.probe!(target(), signal)).toEqual({
       ok: true,
       message: "Simulated: answered here, without a request",

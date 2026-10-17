@@ -18,6 +18,7 @@ import {
   newSpeaker,
   personaOwner,
   sameReading,
+  speakerSpeed,
   speakerVoice,
   voiceRef,
 } from "@/lib/cast";
@@ -210,6 +211,20 @@ export const useCastStore = defineStore("cast", {
           endpoint: r?.endpoint ?? null,
         };
       };
+    },
+    /** The pace a speaker's lines get: their own, else their voice's (`speakerSpeed`). */
+    effectiveSpeed(): (bookId: string, name: string) => number {
+      const endpointsStore = useEndpointsStore();
+      const libraryStore = useLibraryStore();
+      const voiceOf = (ref: VoiceRef) => endpointsStore.resolveVoice(ref)?.voice;
+
+      return (bookId, name) =>
+        speakerSpeed(
+          name,
+          this.byName[bookId] ?? new Map(),
+          libraryStore.bookById(bookId)?.characterVoice,
+          voiceOf,
+        );
     },
     /**
      * What the empty choice in a speaker's voice picker means: "Character voice", "Narrator’s
@@ -996,23 +1011,24 @@ export const useCastStore = defineStore("cast", {
         await useExistingLinesStore().askVoice(bookId, names, "The Character voice changed");
     },
     /**
-     * A speaker's pace; 1 or null = the voice's own. Where their endpoint takes the old or new
-     * speed it is sent, so their lines want re-narrating; else it is made here, a Re-apply.
+     * A speaker's own pace, or null to follow their voice's. Where their endpoint takes the old or
+     * new pace it is sent, so their lines want re-narrating; else it is made here, a Re-apply.
      */
     async setSpeed(bookId: string, name: string, speed: number | null): Promise<boolean> {
       const c = this.characters[bookId]?.find((x) => x.name === name);
       if (!c) return false;
-      const was = c.speed ?? 1;
-      const now = speed ?? 1;
-      if (was === now) return true;
-      if (now === 1) delete c.speed;
-      else c.speed = now;
+      if ((c.speed ?? null) === speed) return true;
+      const was = this.effectiveSpeed(bookId, name);
+      if (speed == null) delete c.speed;
+      else c.speed = speed;
       if (!(await this._push(bookId, name))) return false;
       void staleMoved(bookId);
+      const now = this.effectiveSpeed(bookId, name);
+      if (was === now) return true;
       const endpoint = this.effectiveVoice(bookId, name).endpoint;
       const sent = [was, now].some((x) => speedSplit(endpoint, x).sent != null);
       const title =
-        now === 1 ? `${name} now reads at the voice’s own speed` : `${name} now reads at ${now}×`;
+        speed == null ? `${name} now reads at their voice’s speed` : `${name} now reads at ${now}×`;
       const existing = useExistingLinesStore();
       if (sent) await existing.askVoice(bookId, [name], title);
       else await existing.askEffect(bookId, name, [], "none", title);

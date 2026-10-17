@@ -13,7 +13,7 @@ export interface Reader {
   endpoint: Endpoint | null | undefined;
   voiceRef?: string | null;
   style?: string;
-  /** the speaker's own `Character.speed`; absent = 1 */
+  /** the speaker's pace (`speakerSpeed`); absent = 1 */
   speed?: number;
 }
 

@@ -16,6 +16,9 @@ import type {
   ScriptSettings,
   Transcriber,
   VoiceListPage,
+  VoiceRef,
+  VoiceSpeedLines,
+  VoiceSpeedRedone,
 } from "@/types";
 import type { StoredEndpoint } from "@/lib/endpointTelemetry";
 import { HttpClient, seg, type FetchLike } from "@/services/http";
@@ -100,6 +103,12 @@ export interface EndpointSettingsService {
    * An endpoint absent from the answer has had nothing sent since the server started.
    */
   live(): Promise<Record<string, EndpointLive>>;
+  /** After a voice's speed changed: every book's lines still at the old one. */
+  voiceSpeedLines(ref: VoiceRef): Promise<VoiceSpeedLines>;
+  /** Re-narrate (sent) and Re-apply (made here) those lines in `books`. */
+  redoVoiceSpeed(ref: VoiceRef, books: string[]): Promise<VoiceSpeedRedone>;
+  /** The made-here lines in `books` keep the old sound; how many. */
+  keepVoiceSpeed(ref: VoiceRef, books: string[]): Promise<number>;
 }
 
 export interface VoiceCloneRequest {
@@ -125,6 +134,22 @@ export class HttpEndpointSettingsService implements EndpointSettingsService {
 
   testEndpoint(kind: EndpointKind, id: string): Promise<EndpointProbe> {
     return this.http.post<EndpointProbe>("/endpoints/test", { kind, id });
+  }
+
+  voiceSpeedLines(ref: VoiceRef): Promise<VoiceSpeedLines> {
+    return this.http.post<VoiceSpeedLines>("/endpoints/voice-speed/old", { ref });
+  }
+
+  redoVoiceSpeed(ref: VoiceRef, books: string[]): Promise<VoiceSpeedRedone> {
+    return this.http.post<VoiceSpeedRedone>("/endpoints/voice-speed/redo", { ref, books });
+  }
+
+  async keepVoiceSpeed(ref: VoiceRef, books: string[]): Promise<number> {
+    const answer = await this.http.post<{ kept: number }>("/endpoints/voice-speed/keep", {
+      ref,
+      books,
+    });
+    return answer.kept;
   }
 
   batchLimits(id: string): Promise<EndpointBatches> {

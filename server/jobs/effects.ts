@@ -175,7 +175,9 @@ export function enqueueReapply(
     bookId,
     chapterId: null,
     label: LABEL,
-    ...(scope.chapters || scope.speaker != null ? { run: { effectsRun: scope } } : {}),
+    ...(scope.chapters || scope.speaker != null || scope.speakers
+      ? { run: { effectsRun: scope } }
+      : {}),
   });
   if (!created) throw conflict("This book is already re-applying its effects");
   return job;

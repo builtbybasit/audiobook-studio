@@ -85,6 +85,8 @@ export interface ExistingScope {
   chapters?: number[];
   /** only this speaker's lines, and their personas' */
   speaker?: string;
+  /** exactly these speakers' lines, personas not added: the ones a voice's speed reaches */
+  speakers?: string[];
 }
 
 /**

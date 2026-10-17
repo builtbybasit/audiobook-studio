@@ -1,7 +1,7 @@
 // A speaker's finished lines read in a voice other than the one they get now, and re-narrating
 // them. Re-voicing stales those clips with the run's jobs and narrates at `fill`, so the preview
 // prices exactly what that run renders, missing lines in the same chapters included.
-import type { Book, NarrationQueued, OldVoice, Segment, VoiceRef } from "@/types";
+import type { Book, Endpoint, NarrationQueued, OldVoice, Segment, VoiceRef } from "@/types";
 import { NARRATOR, speakerVoice } from "@/lib/cast";
 import { speedSplit } from "@/lib/providers";
 import { narrationTargets } from "@/lib/runPlan";
@@ -15,11 +15,11 @@ import { requireCharacter } from "~/cast/ops";
 import { enqueueNarration, withStale } from "~/jobs/narration";
 import type { Runner } from "~/jobs/runner";
 import { requireBook } from "~/library/ops";
-import { narrationPricer } from "~/narration/cost";
+import { bookDelivery, narrationPricer } from "~/narration/cost";
 
 interface Wanted {
   ref: VoiceRef | null;
-  /** `speedSplit(...).sent` for the speaker's own speed on that voice's endpoint */
+  /** `speedSplit(...).sent` for the speaker's pace (`speakerSpeed`) on that voice's endpoint */
   speed: number | null;
 }
 
@@ -30,6 +30,8 @@ interface Wanted {
 function voiceThrough(db: Db, bookId: string, names: ReadonlySet<string>) {
   const cast = new Map(readCast(db, bookId).map((c) => [c.name, c]));
   const cv = library.getBook(db, bookId)?.characterVoice;
+  const deliveryOf = bookDelivery(db, bookId);
+  const endpoints = new Map<string, Endpoint | undefined>();
   const memo = new Map<string, Wanted | undefined>();
   return (speaker: string): Wanted | undefined => {
     if (!memo.has(speaker)) {
@@ -39,11 +41,13 @@ function voiceThrough(db: Db, bookId: string, names: ReadonlySet<string>) {
         names.has(speaker) ||
         (v.of != null && names.has(v.of)) ||
         (names.has(NARRATOR) && via === "narrator");
-      const slash = v.ref?.indexOf("/") ?? -1;
-      const ep = moves && slash > 0 ? readEndpoint(db, v.ref!.slice(0, slash)) : null;
-      // own speed only, as `deliveryFor` gives it
-      const speed = speedSplit(ep, cast.get(speaker)?.speed).sent;
-      memo.set(speaker, moves ? { ref: v.ref, speed } : undefined);
+      if (!moves) memo.set(speaker, undefined);
+      else {
+        const { endpoint: id, speed } = deliveryOf(speaker);
+        if (id && !endpoints.has(id)) endpoints.set(id, readEndpoint(db, id));
+        const ep = id ? endpoints.get(id) : null;
+        memo.set(speaker, { ref: v.ref, speed: speedSplit(ep, speed).sent });
+      }
     }
     return memo.get(speaker);
   };

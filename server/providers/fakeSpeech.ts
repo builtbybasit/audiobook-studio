@@ -145,7 +145,7 @@ export function fakeSpeechProvider(options: FakeSpeechOptions = {}): SpeechProvi
   if (!batch) return provider;
   return {
     ...provider,
-    batchLimits: async () => batch,
+    capabilities: async () => ({ limits: batch, speed: null }),
     async speakBatch({ items, signal, answered }) {
       options.batches?.push(items.map((i) => i.text));
       if (options.delayMs) await sleep(options.delayMs, signal);

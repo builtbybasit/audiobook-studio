@@ -34,6 +34,8 @@ export interface BatchServerOptions {
   /** Capabilities' batch limits (default 16 items, 12000 chars); null serves one line at a time. */
   batch?: { max_items?: number | null; max_input_chars?: number | null } | null;
   maxItemChars?: number | null;
+  /** the model's `speed`, as written; none when absent */
+  speed?: unknown;
   /** answer the capabilities route with only this status: 404 for a server without it */
   capabilitiesStatus?: number;
   /** an item naming another fails `voice_not_found`; any voice when absent */
@@ -114,6 +116,7 @@ export function batchServer(options: BatchServerOptions = {}) {
           response_formats: ["wav", "mp3", "opus"],
           sample_rates: [BATCH_RATE],
           instructions: true,
+          ...(options.speed !== undefined ? { speed: options.speed } : {}),
           a_field_from_a_later_version: { anything: true },
         },
       ],

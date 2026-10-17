@@ -8,15 +8,17 @@ import type {
   Endpoint,
   LexEntry,
   Segment,
+  Voice,
+  VoiceRef,
 } from "@/types";
-import { speakerVoice } from "@/lib/cast";
+import { speakerSpeed, speakerVoice } from "@/lib/cast";
 import { billingOf } from "@/lib/endpoints";
 import { plannedSpeechUnits, worstCaseOf } from "@/lib/narrationCost";
 import { addUnits, estimateSpeech, noUnits, readPricing } from "@/lib/pricing";
 import { prepareReading, type ReadLine, type Reader, type Reading } from "@/lib/reading";
 import { readCast, readLexicon } from "~/db/cast";
 import type { Db, Tx } from "~/db/client";
-import { readEndpoint } from "~/db/endpoints";
+import { readEndpoint, voiceFinder } from "~/db/endpoints";
 import { getBook, readPacing } from "~/db/library";
 
 /** What a clip records about how it was asked for, so drift can compare against it later. */
@@ -25,14 +27,18 @@ export interface Delivery {
   voice: string | null;
   endpoint: string | null;
   style: string;
-  /** the speaker's own `Character.speed`, 1 when unset */
+  /** `speakerSpeed`: their own, else their voice's */
   speed: number;
 }
 
-/** The server's `effectiveVoice`: the voice `speakerVoice` gives, and the speaker's own style. */
+/**
+ * The server's `effectiveVoice`: the voice `speakerVoice` gives, the speaker's own style, and the
+ * pace `speakerSpeed` gives. `voiceOf` finds a voice on its endpoint; without it voices are at 1.
+ */
 export function deliveryFor(
   cast: Character[],
   characterVoice?: CharacterVoice,
+  voiceOf: (ref: VoiceRef) => Pick<Voice, "speed"> | undefined = () => undefined,
 ): (speaker: string) => Delivery {
   // the first of a name wins, as `find` would
   const byName = new Map<string, Character>();
@@ -45,7 +51,7 @@ export function deliveryFor(
       voice: voiceRef ? voiceRef.slice(slash + 1) : null,
       endpoint: voiceRef && slash > 0 ? voiceRef.slice(0, slash) : null,
       style: byName.get(speaker)?.style ?? "",
-      speed: byName.get(speaker)?.speed ?? 1,
+      speed: speakerSpeed(speaker, byName, characterVoice, voiceOf),
     };
   };
 }
@@ -86,7 +92,7 @@ export interface NarrationCost {
 }
 
 export function bookDelivery(db: Db | Tx, bookId: string): (speaker: string) => Delivery {
-  return deliveryFor(readCast(db, bookId), getBook(db, bookId)?.characterVoice);
+  return deliveryFor(readCast(db, bookId), getBook(db, bookId)?.characterVoice, voiceFinder(db));
 }
 
 /**

@@ -11,9 +11,11 @@ import { fakeDuration, fakeSpeechProvider, type FakeSpeechOptions } from "~/prov
 import { endpointRequests } from "~/usage/ledger";
 import { story } from "../support/epub";
 import { batchServer } from "../support/batchServer";
+import { fakeEffectRunner } from "../support/effects";
 import {
   jsonBody,
   narrateChapters,
+  saveEndpoints,
   speechEndpoint,
   testApi,
   voicedBook,
@@ -89,14 +91,42 @@ describe("narrating through an endpoint that takes batches", () => {
     const asked = await api.request("/api/endpoints/batch", jsonBody({ id: "local" }));
     expect(asked.body).toEqual({
       limits: { maxItems: 4, maxInputChars: null, maxItemChars: null },
+      speed: null,
     });
+  });
+
+  test("a speed range the server declares is kept, and its voices' speed goes with each item", async () => {
+    const server = batchServer({ voices: ["mara"], speed: { min: 0.5, max: 2 } });
+    const fx = fakeEffectRunner();
+    const api = testApi({
+      speech: endpointSpeechProvider({ fetch: server.fetch, backoffMs: () => 0 }),
+      effects: fx,
+    });
+    const quick = speech({ voices: [{ id: "mara", gender: "f", label: "Mara", speed: 1.2 }] });
+    const id = await book(api, quick);
+    await narrateChapters(api, id, [1]);
+
+    const items = server.batches().flatMap((b) => b.items);
+    expect(items.length).toBeGreaterThan(0);
+    expect(items.map((i) => i.speed)).toEqual(items.map(() => 1.2));
+    // sent, so never stretched here as well
+    expect(fx.calls.render).toEqual([]);
+    const saved = async () =>
+      (await api.request<{ endpoints: Endpoint[] }>("/api/endpoints")).body.endpoints[0];
+    expect((await saved()).speedRange).toEqual({ min: 0.5, max: 2 });
+
+    // the server's to say: a save can't set it, keeps it, and another model forgets it
+    await saveEndpoints(api, [{ ...(await saved()), speedRange: { min: 0.1, max: 9 } }]);
+    expect((await saved()).speedRange).toEqual({ min: 0.5, max: 2 });
+    await saveEndpoints(api, [{ ...(await saved()), model: "kokoro" }]);
+    expect((await saved()).speedRange).toBeUndefined();
   });
 
   test("the page is told when a server takes no batches, and refused for an endpoint not saved", async () => {
     const api = testApi({ speech: fakeSpeechProvider() });
     await book(api, speech());
     const none = await api.request("/api/endpoints/batch", jsonBody({ id: "local" }));
-    expect(none.body).toEqual({ limits: null });
+    expect(none.body).toEqual({ limits: null, speed: null });
     const missing = await api.request("/api/endpoints/batch", jsonBody({ id: "gone" }));
     expect(missing.status).toBe(404);
   });

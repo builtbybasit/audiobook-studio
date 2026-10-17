@@ -10,7 +10,7 @@ import { sendSpeech, type SpeechCallOptions } from "~/providers/send";
 import { probeSimulated, speakSimulated } from "~/providers/simulatedSpeech";
 import { wireOf } from "~/providers/speech/registry";
 import type {
-  BatchLimits,
+  EndpointBatches,
   RenderedClip,
   SpeechBatch,
   SpeechInput,
@@ -18,7 +18,7 @@ import type {
 } from "~/providers/speech";
 import type { ProviderTarget } from "~/providers/target";
 
-/** How long batch limits are cached. */
+/** How long capabilities are cached. */
 const LIMITS_KEPT_MS = 5 * 60_000;
 
 const limitsKey = (t: ProviderTarget): string =>
@@ -59,7 +59,7 @@ export interface EndpointSpeechOptions extends SpeechCallOptions {
 
 export function endpointSpeechProvider(options: EndpointSpeechOptions = {}): SpeechProvider {
   const { random = Math.random, ...calls } = options;
-  const limits = new Map<string, { at: number; limits: BatchLimits | null }>();
+  const kept = new Map<string, { at: number; answer: EndpointBatches }>();
 
   return {
     name: "Speech endpoints",
@@ -78,21 +78,20 @@ export function endpointSpeechProvider(options: EndpointSpeechOptions = {}): Spe
       return { ...audio, ms: Date.now() - started, model: target.model, voice };
     },
 
-    async batchLimits(
+    async capabilities(
       target: ProviderTarget,
       signal: AbortSignal,
       fresh = false,
-    ): Promise<BatchLimits | null> {
-      if (isSimulated(target.baseUrl)) return null;
-      const { wire } = wireOf(target);
-      if (!wire.batchLimits) return null;
+    ): Promise<EndpointBatches> {
+      const wire = isSimulated(target.baseUrl) ? null : wireOf(target).wire;
+      if (!wire?.capabilities) return { limits: null, speed: null };
       const key = limitsKey(target);
-      const kept = limits.get(key);
-      if (!fresh && kept && Date.now() - kept.at < LIMITS_KEPT_MS) return kept.limits;
+      const last = kept.get(key);
+      if (!fresh && last && Date.now() - last.at < LIMITS_KEPT_MS) return last.answer;
       // a failure to ask is thrown, not cached: the job takes it as no batches for now
       requireKey(target);
-      const answer = await wire.batchLimits(target, signal, calls);
-      limits.set(key, { at: Date.now(), limits: answer });
+      const answer = await wire.capabilities(target, signal, calls);
+      kept.set(key, { at: Date.now(), answer });
       return answer;
     },
 

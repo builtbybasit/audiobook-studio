@@ -11,12 +11,17 @@ import type {
   EndpointProbe,
   KeptVoiceSamples,
   VoiceListPage,
+  VoiceSpeedLines,
+  VoiceSpeedRedone,
 } from "@/types";
 import { tooMuchSaid } from "@/lib/voiceSamples";
 import { ENDPOINT_KINDS } from "@/lib/endpointShapes";
+import type { EffectRunner } from "~/audio/effects";
+import { keepVoiceSpeed, redoVoiceSpeed, voiceSpeedLines } from "~/cast/voiceSpeed";
 import type { Db } from "~/db/client";
 import { clipsByEndpoint } from "~/db/script";
 import { CLONE_BODY_BYTES } from "~/env";
+import type { Runner } from "~/jobs/runner";
 import * as ops from "~/endpoints/ops";
 import { fail } from "~/lib/errors";
 import {
@@ -95,11 +100,21 @@ const VoiceList = v.object({
   page: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1), v.maxValue(1000))),
 });
 
+/** `<endpointId>/<voiceId>` */
+const VoiceOf = v.object({ ref: v.pipe(v.string(), v.regex(/^[^/]+\/./), v.maxLength(400)) });
+/** absent `books` = every book the voice reaches */
+const VoiceInBooks = v.object({
+  ...VoiceOf.entries,
+  books: v.optional(v.array(v.pipe(v.string(), v.nonEmpty()))),
+});
+
 export function endpointRoutes(
   db: Db,
   providers: Providers,
   voiceFiles: VoiceFiles,
   gate: SpeechGate,
+  runner: Runner,
+  effects?: EffectRunner,
 ): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
 
@@ -271,6 +286,28 @@ export function endpointRoutes(
       "voices listed",
     );
     return c.json(answer satisfies VoiceListPage);
+  });
+
+  // ---------- a voice's speed changed: the lines at the old one, in every book ----------
+  /** A read with a body, as the cast's old-voice one. */
+  app.post("/voice-speed/old", validate("json", VoiceOf), async (c) =>
+    c.json({
+      books: voiceSpeedLines(db, c.req.valid("json").ref),
+      ready: (await effects?.available()) ?? false,
+    } satisfies VoiceSpeedLines),
+  );
+
+  app.post("/voice-speed/redo", validate("json", VoiceInBooks), async (c) => {
+    const { ref, books } = c.req.valid("json");
+    const result = redoVoiceSpeed(db, runner, ref, (await effects?.available()) ?? false, books);
+    c.var.logger.info({ ref, books: result.books.length }, "old-speed lines queued");
+    return c.json(result satisfies VoiceSpeedRedone, 202);
+  });
+
+  /** Books not redone: their old-sound lines stop counting as old. */
+  app.post("/voice-speed/keep", validate("json", VoiceInBooks), (c) => {
+    const { ref, books } = c.req.valid("json");
+    return c.json({ kept: keepVoiceSpeed(db, ref, books) });
   });
 
   return app;

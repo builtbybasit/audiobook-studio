@@ -72,13 +72,15 @@ const rows = computed(() => {
     .filter((c) => !onlyNew.value || c.isNew)
     .map((c) => {
       const of = personaOwner(c, byName)?.name;
+      const speed = castStore.effectiveSpeed(bookId, c.name);
       return {
         c,
         of,
         st: stats.value[c.name] ?? newStat(),
         voice: endpointsStore.resolveVoice(c.voice),
         borrowed: c.voice ? null : castStore.effectiveVoice(bookId, c.name),
-        speedMade: c.speed ? speedTitle(c.name, c.speed) : undefined,
+        speed,
+        speedMade: speed === 1 ? undefined : speedTitle(c.name, speed),
       };
     })
     .sort((a, b) =>
@@ -388,14 +390,17 @@ const duplicate = computed(
               Speed
               <UiHint
                 label="speed"
-                text="Sent to the voice’s service when it takes that speed, so changing it means re-narrating. Otherwise the speed is made here after the voice speaks, and a change is re-applied for free."
+                text="Blank follows their voice’s speed, set on its endpoint’s Voices tab. Sent to the voice’s service when it takes that speed, so changing it means re-narrating. Otherwise the speed is made here after the voice speaks, and a change is re-applied for free."
               />
             </th>
             <th class="w-10"></th>
           </tr>
         </thead>
         <tbody>
-          <template v-for="{ c, st, voice, borrowed, speedMade, of, nested } in rows" :key="c.name">
+          <template
+            v-for="{ c, st, voice, borrowed, speed, speedMade, of, nested } in rows"
+            :key="c.name"
+          >
             <tr
               data-row
               :data-speaker="c.name"
@@ -601,11 +606,12 @@ const duplicate = computed(
               <td class="py-1" :title="speedMade">
                 <UiNumber
                   class="w-20"
-                  :model-value="c.speed ?? 1"
+                  :model-value="c.speed ?? null"
+                  :placeholder="c.speed == null ? String(speed) : undefined"
                   :min="SPEAKER_SPEED.min"
                   :max="SPEAKER_SPEED.max"
                   :step="0.01"
-                  :empty="1"
+                  :empty="null"
                   unit="×"
                   :label="`Speed for ${c.name}`"
                   @update:model-value="(v) => castStore.setSpeed(bookId, c.name, v)"

@@ -108,29 +108,54 @@ const server = (options: BatchServerOptions = {}) => batchServer(options);
 
 describe("capabilities", () => {
   test("are read for the endpoint's model, unknown fields and all", async () => {
-    const s = server({ batch: { max_items: 8, max_input_chars: null }, maxItemChars: 900 });
-    const limits = await provider(s.fetch).batchLimits!(omni, new AbortController().signal);
-    expect(limits).toEqual({ maxItems: 8, maxInputChars: null, maxItemChars: 900 });
+    const s = server({
+      batch: { max_items: 8, max_input_chars: null },
+      maxItemChars: 900,
+      speed: { min: 0.5, max: 2 },
+    });
+    const caps = await provider(s.fetch).capabilities!(omni, new AbortController().signal);
+    expect(caps).toEqual({
+      limits: { maxItems: 8, maxInputChars: null, maxItemChars: 900 },
+      speed: { min: 0.5, max: 2 },
+    });
     expect(s.requests.map((r) => `${r.method} ${r.path}`)).toEqual([
       "GET /audio/speech/capabilities",
     ]);
+  });
+
+  test.each([
+    ["absent", undefined],
+    ["backwards", { min: 2, max: 0.5 }],
+    ["in words", { min: "0.5", max: 2 }],
+    ["unbounded", { min: 0.5, max: Infinity }],
+    ["a number", 1.5],
+  ])("read a speed range %s as none", async (_, speed) => {
+    const s = server({ speed });
+    const caps = await provider(s.fetch).capabilities!(omni, new AbortController().signal);
+    expect(caps.speed).toBeNull();
+  });
+
+  test("keep a model's speed range though it takes no batches", async () => {
+    const s = server({ batch: null, speed: { min: 0.7, max: 1.3 } });
+    const caps = await provider(s.fetch).capabilities!(omni, new AbortController().signal);
+    expect(caps).toEqual({ limits: null, speed: { min: 0.7, max: 1.3 } });
   });
 
   test("are asked once in a while, not before every chapter — a no included", async () => {
     const s = server();
     const p = provider(s.fetch);
     const signal = new AbortController().signal;
-    await p.batchLimits!(omni, signal);
-    await p.batchLimits!(omni, signal);
+    await p.capabilities!(omni, signal);
+    await p.capabilities!(omni, signal);
     expect(s.requests).toHaveLength(1);
     // another model, or the same one with a key, is another question
-    await p.batchLimits!({ ...omni, apiKey: "sk-local" }, signal);
+    await p.capabilities!({ ...omni, apiKey: "sk-local" }, signal);
     expect(s.requests).toHaveLength(2);
 
     const none = server({ capabilitiesStatus: 404 });
     const q = provider(none.fetch);
-    expect(await q.batchLimits!(omni, signal)).toBeNull();
-    expect(await q.batchLimits!(omni, signal)).toBeNull();
+    expect((await q.capabilities!(omni, signal)).limits).toBeNull();
+    expect((await q.capabilities!(omni, signal)).limits).toBeNull();
     expect(none.requests).toHaveLength(1);
   });
 
@@ -139,11 +164,11 @@ describe("capabilities", () => {
     const s = server(options);
     const p = provider(s.fetch);
     const signal = new AbortController().signal;
-    expect((await p.batchLimits!(omni, signal))?.maxItems).toBe(16);
+    expect((await p.capabilities!(omni, signal)).limits?.maxItems).toBe(16);
     options.batch = { max_items: 64 };
-    expect((await p.batchLimits!(omni, signal))?.maxItems).toBe(16);
-    expect((await p.batchLimits!(omni, signal, true))?.maxItems).toBe(64);
-    expect((await p.batchLimits!(omni, signal))?.maxItems).toBe(64);
+    expect((await p.capabilities!(omni, signal)).limits?.maxItems).toBe(16);
+    expect((await p.capabilities!(omni, signal, true)).limits?.maxItems).toBe(64);
+    expect((await p.capabilities!(omni, signal)).limits?.maxItems).toBe(64);
     expect(s.requests).toHaveLength(2);
   });
 
@@ -151,18 +176,21 @@ describe("capabilities", () => {
     const signal = new AbortController().signal;
     for (const status of [404, 405, 501]) {
       const s = server({ capabilitiesStatus: status });
-      expect(await provider(s.fetch).batchLimits!(omni, signal)).toBeNull();
+      expect((await provider(s.fetch).capabilities!(omni, signal)).limits).toBeNull();
     }
     const other = server({ model: "kokoro" });
-    expect(await provider(other.fetch).batchLimits!(omni, signal)).toBeNull();
+    expect((await provider(other.fetch).capabilities!(omni, signal)).limits).toBeNull();
     const single = server({ batch: null });
-    expect(await provider(single.fetch).batchLimits!(omni, signal)).toBeNull();
+    expect((await provider(single.fetch).capabilities!(omni, signal)).limits).toBeNull();
   });
 
   test("are never asked of a hosted provider, which has no such route", async () => {
     const s = server();
     const openai = { ...omni, baseUrl: "https://api.openai.com/v1", apiKey: "sk-openai" };
-    expect(await provider(s.fetch).batchLimits!(openai, new AbortController().signal)).toBeNull();
+    expect(await provider(s.fetch).capabilities!(openai, new AbortController().signal)).toEqual({
+      limits: null,
+      speed: null,
+    });
     expect(s.requests).toHaveLength(0);
   });
 
@@ -176,9 +204,9 @@ describe("capabilities", () => {
     const p = provider(fetch);
     const once = { ...omni, maxRetries: 0 };
     const signal = new AbortController().signal;
-    await expect(p.batchLimits!(once, signal)).rejects.toThrow(/could not be reached/);
+    await expect(p.capabilities!(once, signal)).rejects.toThrow(/could not be reached/);
     down = false;
-    expect(await p.batchLimits!(once, signal)).toMatchObject({ maxItems: 16 });
+    expect(await p.capabilities!(once, signal)).toMatchObject({ limits: { maxItems: 16 } });
   });
 });
 

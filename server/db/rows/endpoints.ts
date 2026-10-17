@@ -11,6 +11,7 @@ import type {
   ProfilePrompt,
   Promotion,
   RateWindow,
+  SpeedRange,
   Transcriber,
   TtsBilling,
   Voice,
@@ -40,6 +41,7 @@ export const toVoice = (row: VoiceRow): Voice => ({
   id: row.id,
   gender: row.gender,
   label: row.label,
+  ...(row.speed != null ? { speed: row.speed } : {}),
 });
 
 export function toRateWindow(row: WindowRow): RateWindow {
@@ -163,6 +165,7 @@ export function toEndpoint(row: EndpointRow, parts: EndpointParts): Endpoint {
   if (!row.batch) e.batch = false;
   if (row.makesVoices) e.makesVoices = true;
   if (row.server) e.server = row.server;
+  if (row.speedRange) e.speedRange = row.speedRange;
   if (row.audioFormat != null)
     e.encoding = {
       format: row.audioFormat,
@@ -264,10 +267,12 @@ const opsValues = (e: Partial<EndpointOps>) => ({
   quotaGroup: e.quotaGroup ?? null,
 });
 
+/** `speedRange` is the server's to write (`writeSpeedRange`), never the page's. */
 export function endpointValues(
   e: StoredEndpoint,
   position: number,
   apiKey: string | null = null,
+  speedRange: SpeedRange | null = null,
 ): typeof endpoints.$inferInsert {
   return {
     id: e.id,
@@ -305,6 +310,7 @@ export function endpointValues(
     batch: e.batch ?? true,
     makesVoices: e.makesVoices ?? false,
     server: e.server ?? null,
+    speedRange,
     ...opsValues(e),
   };
 }
@@ -352,6 +358,7 @@ export const voiceValues = (
   id: v.id,
   label: v.label,
   gender: v.gender,
+  speed: v.speed ?? null,
   position,
 });
 

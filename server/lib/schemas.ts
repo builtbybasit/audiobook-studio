@@ -89,6 +89,7 @@ function chainSize(steps: readonly Step[]): { depth: number; steps: number } {
 export const ExistingScopeSchema = v.object({
   chapters: v.optional(v.array(v.pipe(v.number(), v.integer(), v.minValue(1)))),
   speaker: v.optional(v.pipe(v.string(), v.nonEmpty("must not be empty"))),
+  speakers: v.optional(v.array(v.pipe(v.string(), v.nonEmpty("must not be empty")))),
 });
 
 export const ChainSchema = v.pipe(
@@ -131,7 +132,7 @@ export const CharacterSchema = v.object({
   description: v.string(),
   voice: v.nullable(v.string()),
   style: v.string(),
-  /** null, absent or 1 = the voice's own pace */
+  /** null or absent = their voice's (`speakerSpeed`) */
   speed: unset(SpeakerSpeed),
   color: v.string(),
   major: v.boolean(),
@@ -466,7 +467,9 @@ export const EndpointSchema = v.object({
   latency: v.pipe(v.number(), v.minValue(0)),
   failRate: v.pipe(v.number(), v.minValue(0), v.maxValue(1)),
   price: v.pipe(v.number(), v.minValue(0)),
-  voices: v.array(v.object({ id: Id, gender: Gender, label: v.string() })),
+  voices: v.array(
+    v.object({ id: Id, gender: Gender, label: v.string(), speed: unset(SpeakerSpeed) }),
+  ),
   billing: v.optional(
     v.object({
       unit: BillingUnit,

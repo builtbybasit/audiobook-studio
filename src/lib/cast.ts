@@ -1,6 +1,6 @@
 // Cast rules shared by the seeded world, the cast store and the server's scripting job: new
 // speakers, the voice rule (`speakerVoice`), personas, and matching the model's names to the cast.
-import type { Character, CharacterVoice, Gender, Voice, VoiceRef } from "@/types";
+import type { Age, Character, CharacterVoice, Gender, Voice, VoiceRef } from "@/types";
 import { writtenWordsOf } from "@/lib/gaps";
 import type { PromptCastMember } from "@/lib/prompt";
 
@@ -51,6 +51,8 @@ export const DIRECTIONS: string[] = [
 ];
 
 export const NARRATOR = "Narrator";
+
+export const AGES: readonly Age[] = ["child", "teen", "adult", "elderly"];
 
 export const narrator = (voice: Character["voice"] = null): Character => ({
   name: NARRATOR,

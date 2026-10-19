@@ -1,6 +1,7 @@
 // Dependency-free primitives any module in `types/` can import without a cycle.
 
 export type Gender = "m" | "f" | "n" | "?";
+export type Age = "child" | "teen" | "adult" | "elderly";
 
 /** Where a too-long segment may be cut, in fallback order. */
 export type SplitMode = "paragraph" | "sentence" | "clause" | "word" | "char";

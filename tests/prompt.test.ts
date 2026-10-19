@@ -41,13 +41,19 @@ describe("fill", () => {
     const cast = [
       { name: "Narrator" },
       { name: "Unknown" },
-      { name: "Mara", gender: "f" as const, aliases: ["Mar"], description: "A lamplighter." },
+      {
+        name: "Mara",
+        gender: "f" as const,
+        age: "adult" as const,
+        aliases: ["Mar"],
+        description: "A lamplighter.",
+      },
       { name: "Tobiah" },
     ];
-    // gender and other names go to everyone; the description only with the details
-    expect(fill("{{cast}}", vars({ cast }))).toBe("Mara (female; also called Mar), Tobiah");
+    // gender, age and other names go to everyone; the description only with the details
+    expect(fill("{{cast}}", vars({ cast }))).toBe("Mara (female, adult; also called Mar), Tobiah");
     expect(fill("{{cast.details}}", vars({ cast }))).toBe(
-      "- Mara (female; also called Mar): A lamplighter.\n- Tobiah",
+      "- Mara (female, adult; also called Mar): A lamplighter.\n- Tobiah",
     );
     expect(fill("{{cast}}", vars({ cast: [] }))).toBe("(none yet)");
   });

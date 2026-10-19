@@ -3,6 +3,7 @@
 // is appended to every request and not editable: the parser and `fidelity`
 // (server/providers/chatScripting.ts) depend on it.
 import type {
+  Age,
   BookPrompt,
   Effect,
   ScriptedTag,
@@ -152,13 +153,14 @@ Besides the lines, the answer has:
 - "cast": notes on the characters who speak or think in the excerpt — only what the known cast is missing; [] when there is nothing new. Each note has:
   - "name": as written in "speaker".
   - "gender": "male", "female", "non-binary" or "unknown".
+  - "age": "child", "teen", "adult", "elderly" or "unknown".
   - "aliases": other names they are called by, such as "Mar" or "the Captain". A description is not a name: never "the old man" or "the beautiful woman". [] when they have none.
   - "description": one short sentence on who they are, and how they sound if the text says.
   - "personaOf": only for a disguise (rule 5): who wears it, or "unknown". For an entry marked "masked, identity unknown", the wearer once the text reveals them. Otherwise null.
 - "recap": one to three sentences on where the excerpt leaves off, for whoever scripts the text that follows it: who is present, including anyone who has not spoken; where they are; who spoke last and to whom; any question left unanswered; and what the text is calling each of them. Use the names from "speaker".
 
 Answer with JSON only, in this shape:
-{"lines":[{"type":"narration","speaker":"${NARRATOR}","text":"The door opened."},{"type":"dialogue","speaker":"Mara","text":"Come in,","direction":"soft, wary"},{"type":"narration","speaker":"${NARRATOR}","text":"said Mara softly."}],"cast":[{"name":"Mara","gender":"female","aliases":["Mar"],"description":"A young lamplighter, quick and wary."}],"recap":"Mara has let a stranger in out of the cold, at her door; she spoke last, to him, and he has not answered."}`;
+{"lines":[{"type":"narration","speaker":"${NARRATOR}","text":"The door opened."},{"type":"dialogue","speaker":"Mara","text":"Come in,","direction":"soft, wary"},{"type":"narration","speaker":"${NARRATOR}","text":"said Mara softly."}],"cast":[{"name":"Mara","gender":"female","age":"adult","aliases":["Mar"],"description":"A young lamplighter, quick and wary."}],"recap":"Mara has let a stranger in out of the cold, at her door; she spoke last, to him, and he has not answered."}`;
 
 /** With no line effects offered. */
 export const OUTPUT_FORMAT = outputFormat(SCRIPT_MARKERS[0]);
@@ -224,12 +226,12 @@ export const PROMPT_TAGS: readonly PromptTag[] = [
   {
     name: "cast",
     about:
-      "The speakers this chapter names, those who spoke in it or just before it, and every persona and masked figure: names with gender, whose persona one is (or that a masked one's is unknown), and other names, comma-separated, or “(none yet)”",
+      "The speakers this chapter names, those who spoke in it or just before it, and every persona and masked figure: names with gender and age, whose persona one is (or that a masked one's is unknown), and other names, comma-separated, or “(none yet)”",
     scope: "chapter",
   },
   {
     name: "cast.details",
-    about: "One line per speaker {{cast}} lists: name, gender, other names, description",
+    about: "One line per speaker {{cast}} lists: name, gender, age, other names, description",
     scope: "chapter",
   },
   {
@@ -273,6 +275,7 @@ export interface PromptCastMember {
   name: string;
   aliases?: readonly string[];
   gender?: Gender;
+  age?: Age;
   description?: string;
   personaOf?: string;
   /** `Character.masked`; with no `personaOf`, the wearer is unknown */
@@ -307,17 +310,17 @@ function castOf(vars: PromptVars): PromptCastMember[] {
   return vars.cast.filter((c) => c.name !== NARRATOR && c.name !== UNKNOWN);
 }
 
-/** "Mara (female; also called Mar)", "Lord of Shadows (male; persona of Sunny)". */
+/** "Mara (female, adult; also called Mar)", "Lord of Shadows (male; persona of Sunny)". */
 function nameOf(c: PromptCastMember): string {
   const facts = [
-    GENDER[c.gender ?? "?"],
+    [GENDER[c.gender ?? "?"], c.age].filter(Boolean).join(", "),
     c.personaOf ? `persona of ${c.personaOf}` : c.masked ? "masked, identity unknown" : "",
     c.aliases?.length ? `also called ${c.aliases.join(", ")}` : "",
   ].filter(Boolean);
   return `${c.name}${facts.length ? ` (${facts.join("; ")})` : ""}`;
 }
 
-/** "Mara (female; also called Mar): A lamplighter." */
+/** "Mara (female, adult; also called Mar): A lamplighter." */
 export function speakerLine(c: PromptCastMember): string {
   const description = (c.description ?? "").replace(/\s+/g, " ").trim();
   return `${nameOf(c)}${description ? `: ${description}` : ""}`;

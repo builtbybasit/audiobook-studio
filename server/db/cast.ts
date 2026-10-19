@@ -37,6 +37,7 @@ export function readSpeakers(db: Db | Tx, bookId: string): PromptCastMember[] {
       name: characters.name,
       aliases: characters.aliases,
       gender: characters.gender,
+      age: characters.age,
       description: characters.description,
       personaOf: characters.personaOf,
       masked: characters.masked,
@@ -45,8 +46,9 @@ export function readSpeakers(db: Db | Tx, bookId: string): PromptCastMember[] {
     .where(eq(characters.bookId, bookId))
     .all();
   const byName = new Map(rows.map((r) => [r.name, r]));
-  return rows.map(({ personaOf, masked, ...c }) => ({
+  return rows.map(({ personaOf, masked, age, ...c }) => ({
     ...c,
+    ...(age ? { age } : {}),
     ...(personaOwner({ name: c.name, personaOf: personaOf ?? undefined }, byName)
       ? { personaOf: personaOf! }
       : {}),
@@ -201,6 +203,10 @@ export function learnCast(
     let touched = false;
     if (c.gender === "?" && note.gender && note.gender !== "?") {
       c.gender = note.gender;
+      touched = true;
+    }
+    if (!c.age && note.age) {
+      c.age = note.age;
       touched = true;
     }
     if (!c.description.trim() && note.description?.trim()) {

@@ -25,6 +25,7 @@ import type {
   Transcriber,
   VersionOrigin,
 } from "@/types";
+import { AGES } from "@/lib/cast";
 import { REASONING_EFFORTS } from "@/lib/prompt";
 import { SAMPLE_RATES } from "@/lib/speech";
 import type { StoredEndpoint } from "@/lib/endpointTelemetry";
@@ -129,6 +130,8 @@ export const CharacterSchema = v.object({
   name: v.pipe(v.string(), v.trim(), v.nonEmpty("must not be empty")),
   aliases: v.array(v.pipe(v.string(), v.trim(), v.nonEmpty())),
   gender: Gender,
+  /** null or absent = unknown */
+  age: unset(v.picklist(AGES)),
   description: v.string(),
   voice: v.nullable(v.string()),
   style: v.string(),

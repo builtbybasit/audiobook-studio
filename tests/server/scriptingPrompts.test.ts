@@ -330,7 +330,7 @@ describe("a run's prompt", () => {
     expect(parts).toBeGreaterThan(1);
     for (const [i, input] of rec.inputs.entries()) {
       expect(input.prompt!.system).toBe(
-        `Book rules for Moonlight Ledger by A. Ledger.\nNotes: Mara never shouts.\nFor OpenAI (${profile.model}): Sent to {{endpoint.name}}, kept as typed.\n\n${outputFormat(SCRIPT_MARKERS[0], [], true)}`,
+        `Book rules for Moonlight Ledger by A. Ledger.\nNotes: Mara never shouts.\nFor OpenAI (${profile.model}): Sent to {{endpoint.name}}, kept as typed.\n\n${outputFormat(SCRIPT_MARKERS[0], [], { known: [] })}`,
       );
       expect(input.prompt!.user).toBe(
         `Part ${i + 1} of ${parts}, chapter 1: One\n- Mara (female; also called M): Keeps the ledger.\n${input.text}`.trim(),
@@ -452,7 +452,10 @@ describe("what a model says beside its lines", () => {
       .run();
     api.db
       .insert(lexiconEntries)
-      .values({ bookId: id, id: 1, term: "Mara", say: "MAH-rah", enabled: true })
+      .values([
+        { bookId: id, id: 1, term: "Mara", say: "MAH-rah", enabled: true },
+        { bookId: id, id: 2, term: "aurelie", say: "oh-reh-LEE", enabled: false },
+      ])
       .run();
     await put(api, {
       profiles: [openaiProfile({ maxChars: 700, splitAt: "sentence", concurrency: 1 })],
@@ -484,10 +487,14 @@ describe("what a model says beside its lines", () => {
 
     const { characters: cast, lexicon } = (await api.request<Cast>(`/api/books/${id}/cast`)).body;
     // a term already in the dictionary, in any case, is left alone; a new one arrives switched off
-    expect(one[0].prompt!.system).toContain('- "pronounce": ');
+    // each request names the terms its excerpt has, switched off or not, as the excerpt writes them
+    expect(one[0].prompt!.system).toContain(
+      '[] when there are none. Leave out those already in the dictionary: "Aurelie".\n',
+    );
     expect(lexicon).toEqual([
       { id: 1, term: "Mara", say: "MAH-rah", enabled: true },
-      { id: 2, term: "Tobiah", say: "toe-BYE-uh", enabled: false, note: SUGGESTED },
+      { id: 2, term: "aurelie", say: "oh-reh-LEE", enabled: false },
+      { id: 3, term: "Tobiah", say: "toe-BYE-uh", enabled: false, note: SUGGESTED },
     ]);
     const named = (name: string) => cast.find((c) => c.name === name);
     expect(named("Tobiah")).toMatchObject({

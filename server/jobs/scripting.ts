@@ -24,7 +24,15 @@ import {
 import { compareReading } from "@/lib/reading";
 import { planRestore } from "@/lib/scriptHistory";
 import { tokenEstimate } from "@/lib/scripting";
-import { ensureSpeakers, learnCast, readChapterCast, readSpeakers, suggestTerms } from "~/db/cast";
+import { lexMatcher } from "@/lib/speech";
+import {
+  ensureSpeakers,
+  learnCast,
+  readChapterCast,
+  readLexicon,
+  readSpeakers,
+  suggestTerms,
+} from "~/db/cast";
 import type { Db, Tx } from "~/db/client";
 import { listEffects } from "~/db/effects";
 import { capture, keepVersion } from "~/db/history";
@@ -183,6 +191,14 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
       const effectsOf = (names: readonly string[] = []): string[] => [
         ...new Set(names.flatMap((n) => effectIds.get(n.toLowerCase()) ?? [])),
       ];
+      // switched-off terms too: they are suggestions waiting to be checked
+      const dictionary = lexMatcher(
+        readLexicon(db, job.bookId).map((e) => ({ ...e, enabled: true })),
+      );
+      /** The dictionary's terms in a chunk, once each, as the chunk writes them. */
+      const knownIn = (text: string): string[] => [
+        ...new Map(dictionary.hits(text).map((h) => [h.term.toLowerCase(), h.term])).values(),
+      ];
       const varsFor = (i: number): PromptVars => ({
         book: {
           title: book?.title ?? "",
@@ -203,7 +219,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
         },
         expressions,
         lineEffects,
-        pronounce: !book?.pronounceOff,
+        ...(book?.pronounceOff ? {} : { pronounce: { known: knownIn(chunks[i]) } }),
       });
       library.setChapterScripting(db, job.bookId, job.chapterId, "running", 0);
       ctx.note("Scripting started", "info", {

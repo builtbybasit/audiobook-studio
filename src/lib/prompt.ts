@@ -113,9 +113,10 @@ export const lineEffectsOf = (effects: readonly Effect[]): LineEffect[] =>
 export const outputFormat = (
   marker: ScriptMarker | null,
   lineEffects: readonly { name: string; useWhen: string }[] = [],
-  pronounce = false,
+  pronounce?: { known: readonly string[] },
 ): string =>
-  FORMAT_TEMPLATE.replace(PRONOUNCE_SLOT, pronounce ? PRONOUNCE : "")
+  // a function: a term is read for no `$` pattern
+  FORMAT_TEMPLATE.replace(PRONOUNCE_SLOT, () => (pronounce ? pronounceLine(pronounce.known) : ""))
     .replace(
       TAGS_SLOT,
       marker
@@ -135,7 +136,8 @@ export const outputFormat = (
 const TAGS_SLOT = "%EXPRESSION_TAGS%\n";
 const EFFECTS_SLOT = "%LINE_EFFECTS%\n";
 const PRONOUNCE_SLOT = "%PRONOUNCE%\n";
-const PRONOUNCE = `- "pronounce": names and made-up words in the excerpt that a voice engine may say wrong, each as {"term": as written, "say": respelled the way it sounds, such as "Lahn-ur"}. [] when there are none.\n`;
+const pronounceLine = (known: readonly string[]): string =>
+  `- "pronounce": names and made-up words in the excerpt that a voice engine may say wrong, each as {"term": as written, "say": respelled the way it sounds, such as "Lahn-ur"}. [] when there are none.${known.length ? ` Leave out those already in the dictionary: ${known.map((t) => `"${oneLine(t)}"`).join(", ")}.` : ""}\n`;
 
 const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
 
@@ -306,8 +308,8 @@ export interface PromptVars {
   expressions?: readonly string[];
   /** `lineEffectsOf` */
   lineEffects?: readonly { name: string; useWhen: string }[];
-  /** ask for dictionary terms (`Book.pronounceOff` unset) */
-  pronounce?: boolean;
+  /** ask for dictionary terms (`Book.pronounceOff` unset), less those the excerpt has already */
+  pronounce?: { known: readonly string[] };
 }
 
 const GENDER: Record<Gender, string> = { m: "male", f: "female", n: "non-binary", "?": "" };

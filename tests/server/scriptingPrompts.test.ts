@@ -491,6 +491,7 @@ describe("what a model says beside its lines", () => {
     expect(one[0].prompt!.system).toContain(
       '[] when there are none. Leave out those already in the dictionary: "Aurelie".\n',
     );
+    expect(one[0].prompt!.system).toEndWith(',"pronounce":[{"term":"Mara","say":"MAR-uh"}]}');
     expect(lexicon).toEqual([
       { id: 1, term: "Mara", say: "MAH-rah", enabled: true },
       { id: 2, term: "aurelie", say: "oh-reh-LEE", enabled: false },

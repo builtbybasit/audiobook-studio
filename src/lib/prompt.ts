@@ -117,6 +117,8 @@ export const outputFormat = (
 ): string =>
   // a function: a term is read for no `$` pattern
   FORMAT_TEMPLATE.replace(PRONOUNCE_SLOT, () => (pronounce ? pronounceLine(pronounce.known) : ""))
+    // without it in the sample, a model given no dictionary terms often leaves the field out
+    .replace(PRONOUNCE_SAMPLE_SLOT, pronounce ? PRONOUNCE_SAMPLE : "")
     .replace(
       TAGS_SLOT,
       marker
@@ -136,6 +138,8 @@ export const outputFormat = (
 const TAGS_SLOT = "%EXPRESSION_TAGS%\n";
 const EFFECTS_SLOT = "%LINE_EFFECTS%\n";
 const PRONOUNCE_SLOT = "%PRONOUNCE%\n";
+const PRONOUNCE_SAMPLE_SLOT = "%PRONOUNCE_SAMPLE%";
+const PRONOUNCE_SAMPLE = `,"pronounce":[{"term":"Mara","say":"MAR-uh"}]`;
 const pronounceLine = (known: readonly string[]): string =>
   `- "pronounce": names and made-up words in the excerpt that a voice engine may say wrong, each as {"term": as written, "say": respelled the way it sounds, such as "Lahn-ur"}. [] when there are none.${known.length ? ` Leave out those already in the dictionary: ${known.map((t) => `"${oneLine(t)}"`).join(", ")}.` : ""}\n`;
 
@@ -168,7 +172,7 @@ Besides the lines, the answer has:
 %PRONOUNCE%
 
 Answer with JSON only, in this shape:
-{"lines":[{"type":"narration","speaker":"${NARRATOR}","text":"The door opened."},{"type":"dialogue","speaker":"Mara","text":"Come in,","direction":"soft, wary"},{"type":"narration","speaker":"${NARRATOR}","text":"said Mara softly."}],"cast":[{"name":"Mara","gender":"female","age":"young adult","aliases":["Mar"],"description":"A young lamplighter, quick and wary."}],"recap":"Mara has let a stranger in out of the cold, at her door; she spoke last, to him, and he has not answered."}`;
+{"lines":[{"type":"narration","speaker":"${NARRATOR}","text":"The door opened."},{"type":"dialogue","speaker":"Mara","text":"Come in,","direction":"soft, wary"},{"type":"narration","speaker":"${NARRATOR}","text":"said Mara softly."}],"cast":[{"name":"Mara","gender":"female","age":"young adult","aliases":["Mar"],"description":"A young lamplighter, quick and wary."}],"recap":"Mara has let a stranger in out of the cold, at her door; she spoke last, to him, and he has not answered."%PRONOUNCE_SAMPLE%}`;
 
 /** With no line effects offered. */
 export const OUTPUT_FORMAT = outputFormat(SCRIPT_MARKERS[0]);

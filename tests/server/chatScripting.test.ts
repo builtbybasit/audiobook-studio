@@ -277,8 +277,8 @@ describe("a request", () => {
               aliases: ["the lamplighter", "Mara", "the lamplighter"],
               description: "A young  lamplighter.",
             },
-            { name: "Tobiah", gender: "man", age: "old" },
-            { name: "Kit", gender: "non-binary", age: "ageless", aliases: null },
+            { name: "Tobiah", gender: "man", age: "adult" },
+            { name: "Kit", gender: "non-binary", age: "Middle aged", aliases: null },
             { name: "Narrator", gender: "male" },
             { name: "Unknown" },
             { gender: "female" },
@@ -294,12 +294,12 @@ describe("a request", () => {
       {
         name: "Mara",
         gender: "f",
-        age: "adult",
+        age: "young adult",
         aliases: ["the lamplighter"],
         description: "A young lamplighter.",
       },
-      { name: "Tobiah", gender: "m", age: "elderly", aliases: [], description: "" },
-      { name: "Kit", gender: "n", aliases: [], description: "" },
+      { name: "Tobiah", gender: "m", aliases: [], description: "" },
+      { name: "Kit", gender: "n", age: "middle-aged", aliases: [], description: "" },
     ]);
     expect(answer.recap).toBe("Mara let a stranger in; she spoke last.");
   });

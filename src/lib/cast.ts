@@ -52,7 +52,7 @@ export const DIRECTIONS: string[] = [
 
 export const NARRATOR = "Narrator";
 
-export const AGES: readonly Age[] = ["child", "teen", "adult", "elderly"];
+export const AGES: readonly Age[] = ["child", "teen", "young adult", "middle-aged", "elderly"];
 
 export const narrator = (voice: Character["voice"] = null): Character => ({
   name: NARRATOR,

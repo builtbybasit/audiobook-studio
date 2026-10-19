@@ -6,6 +6,7 @@ import { diffArrays } from "diff";
 import * as v from "valibot";
 
 import type {
+  Age,
   EndpointProbe,
   Gender,
   PromptTemplate,
@@ -175,6 +176,7 @@ const Answer = v.object({
 const CastNote = v.object({
   name: v.string(),
   gender: v.optional(v.nullable(v.string())),
+  age: v.optional(v.nullable(v.string())),
   aliases: v.optional(v.nullable(v.array(v.string()))),
   description: v.optional(v.nullable(v.string())),
   personaOf: v.optional(v.unknown()),
@@ -203,6 +205,15 @@ function genderOf(said: string | null | undefined): Gender {
   return "?";
 }
 
+function ageOf(said: string | null | undefined): Age | undefined {
+  const a = (said ?? "").trim().toLowerCase();
+  if (/^(?:child|kid|boy|girl|baby|infant|toddler)$/.test(a)) return "child";
+  if (/^(?:teen|teenager|adolescent|youth)$/.test(a)) return "teen";
+  if (/^(?:adult|young adult|middle-aged)$/.test(a)) return "adult";
+  if (/^(?:elderly|elder|old|senior|aged)$/.test(a)) return "elderly";
+  return undefined;
+}
+
 /** The readable cast notes, skipping the Narrator, "Unknown" and aliases equal to the name. */
 function castOf(said: unknown): PromptCastMember[] {
   if (!Array.isArray(said)) return [];
@@ -218,9 +229,11 @@ function castOf(said: unknown): PromptCastMember[] {
     // a disguise: whose it is, or that nobody knows yet
     const of = typeof read.output.personaOf === "string" ? oneLine(read.output.personaOf) : "";
     const unknown = /^(?:unknown|someone unknown|\?)$/i.test(of);
+    const age = ageOf(read.output.age);
     out.push({
       name,
       gender: genderOf(read.output.gender),
+      ...(age ? { age } : {}),
       aliases,
       description: oneLine(read.output.description ?? "").slice(0, DESCRIPTION_MAX),
       ...(unknown ? { masked: true } : of && of !== name ? { personaOf: of } : {}),

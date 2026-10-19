@@ -73,10 +73,11 @@ const ANSWER_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["name", "gender", "aliases", "description", "personaOf"],
+        required: ["name", "gender", "age", "aliases", "description", "personaOf"],
         properties: {
           name: { type: "string" },
           gender: { type: "string", enum: ["male", "female", "non-binary", "unknown"] },
+          age: { type: "string", enum: ["child", "teen", "adult", "elderly", "unknown"] },
           aliases: { type: "array", items: { type: "string" } },
           description: { type: "string" },
           personaOf: { type: ["string", "null"] },

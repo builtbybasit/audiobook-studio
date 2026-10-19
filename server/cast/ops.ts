@@ -162,6 +162,7 @@ function mergeOne(
           speed: dst.speed ?? src.speed,
           description: dst.description.trim() ? dst.description : src.description,
           gender: dst.gender === "?" ? src.gender : dst.gender,
+          age: dst.age ?? src.age,
         };
   cast.upsertCharacter(tx, bookId, {
     ...dst,

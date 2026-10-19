@@ -401,10 +401,17 @@ describe("what a model says beside its lines", () => {
             {
               name: "Tobiah",
               gender: "m",
+              age: "elderly",
               aliases: ["the old man", "m"],
               description: "An innkeeper.",
             },
-            { name: "Mara", gender: "m", aliases: ["the clerk"], description: "Someone else." },
+            {
+              name: "Mara",
+              gender: "m",
+              age: "adult",
+              aliases: ["the clerk"],
+              description: "Someone else.",
+            },
             { name: "Ghost", gender: "f", aliases: [], description: "Mentioned, never heard." },
           ],
           recap: `Tobiah spoke last, in ${input.title}.`,
@@ -425,6 +432,7 @@ describe("what a model says beside its lines", () => {
         name: "Mara",
         aliases: ["M"],
         gender: "f",
+        age: "teen",
         description: "Keeps the ledger.",
         color: "#c33",
       })
@@ -455,18 +463,20 @@ describe("what a model says beside its lines", () => {
     expect(two[0].prompt!.user).toContain(
       "Where the previous chapter left off: Tobiah spoke last, in One.",
     );
-    expect(two[0].prompt!.user).toContain("Tobiah (male; also called the old man)");
+    expect(two[0].prompt!.user).toContain("Tobiah (male, elderly; also called the old man)");
 
     const { characters: cast } = (await api.request<Cast>(`/api/books/${id}/cast`)).body;
     const named = (name: string) => cast.find((c) => c.name === name);
     expect(named("Tobiah")).toMatchObject({
       gender: "m",
+      age: "elderly",
       // "m" is Mara's already, whatever its case
       aliases: ["the old man"],
       description: "An innkeeper.",
     });
     expect(named("Mara")).toMatchObject({
       gender: "f",
+      age: "teen",
       aliases: ["M", "the clerk"],
       description: "Keeps the ledger.",
     });

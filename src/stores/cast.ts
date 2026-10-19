@@ -122,6 +122,7 @@ function unmerged(now: Character, was: Character): Character {
   if (!was.speed) delete out.speed;
   if (!was.description.trim()) out.description = was.description;
   if (was.gender === "?") out.gender = "?";
+  if (!was.age) delete out.age;
   return out;
 }
 

@@ -11,7 +11,8 @@ import { UiHint, UiSelect, UiSwitch } from "@/ui";
 import SpoilerText from "@/components/SpoilerText.vue";
 import PersonaSection from "@/views/cast/persona/PersonaSection.vue";
 import { Plus as AddIcon, X as CloseIcon } from "@lucide/vue";
-import type { Character, Gender } from "@/types";
+import { AGES } from "@/lib/cast";
+import type { Age, Character, Gender } from "@/types";
 
 const props = defineProps<{
   bookId: string;
@@ -28,6 +29,10 @@ const GENDERS = (["f", "m", "n", "?"] as Gender[]).map((value) => ({
   value,
   label: GENDER[value] ?? "unknown",
 }));
+const AGE_OPTIONS = [
+  ...AGES.map((value) => ({ value, label: value })),
+  { value: "?", label: "unknown" },
+];
 
 // The description is written from the whole book, so it hides behind a button (no spoilers);
 // one empty when the record opened stays shown while typed in.
@@ -86,6 +91,22 @@ function addAlias(c: Character) {
             :aria-label="`Gender for ${c.name}`"
             @update:model-value="
               (g) => castStore.updateCharacter(bookId, c.name, { gender: g as Gender })
+            "
+          />
+        </div>
+        <div class="space-y-1 text-xs font-medium">
+          <div>Age</div>
+          <UiSelect
+            :model-value="c.age ?? '?'"
+            :options="AGE_OPTIONS"
+            size="xs"
+            class="w-32"
+            :aria-label="`Age for ${c.name}`"
+            @update:model-value="
+              (a) =>
+                castStore.updateCharacter(bookId, c.name, {
+                  age: a === '?' ? undefined : (a as Age),
+                })
             "
           />
         </div>

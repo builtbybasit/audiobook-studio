@@ -537,6 +537,18 @@ export const useLibraryStore = defineStore("library", {
         on ? "check this book by ear" : "stop checking this book by ear",
       );
     },
+    /** Whether the scripting model suggests dictionary terms for this book. */
+    async setPronounce(bookId: string, on: boolean): Promise<void> {
+      const b = this.bookById(bookId);
+      if (!b || !b.pronounceOff === on) return;
+      if (on) delete b.pronounceOff;
+      else b.pronounceOff = true;
+      await this._writeSettings(
+        bookId,
+        { pronounceOff: on ? null : true },
+        on ? "suggest pronunciations" : "stop suggesting pronunciations",
+      );
+    },
     /**
      * The book's thought effect: an effect id, "none", or null to follow the library. Existing
      * clips show in the reread old-sound count until Re-apply or a retake.

@@ -107,30 +107,35 @@ export const lineEffectsOf = (effects: readonly Effect[]): LineEffect[] =>
   effects.filter((e): e is LineEffect => !!e.useWhen?.trim());
 
 /**
- * The answer format, appended to every system prompt. With no line effects it is word for word
- * the same, so a provider's cache holds.
+ * The answer format, appended to every system prompt. With no line effects or pronunciations it is
+ * word for word the same, so a provider's cache holds.
  */
 export const outputFormat = (
   marker: ScriptMarker | null,
   lineEffects: readonly { name: string; useWhen: string }[] = [],
+  pronounce = false,
 ): string =>
-  FORMAT_TEMPLATE.replace(
-    TAGS_SLOT,
-    marker
-      ? `- Expression tags, only when your instructions ask for them: a sound the voice should make — a sigh, a laugh — goes in the line's "text" where it is heard, as ${marker[0]}sigh${marker[1]}: plain words between ${marker[0]} and ${marker[1]}, whatever brackets the instructions show. A tag is not a word of the excerpt and never takes the place of one. Never write a cue any other way, such as [sighs] or (laughs).\n- Pauses, only where your instructions call for one: a pause inside a line goes in its "text" where it falls, as ${marker[0]}pause${marker[1]} for a short one or ${marker[0]}long pause${marker[1]} for a long one. Like a tag, it is not a word of the excerpt.\n`
-      : `- Never put a cue such as [sighs] in "text".\n`,
-  ).replace(
-    EFFECTS_SLOT,
-    // last, and a function: what the library typed is read for neither a slot nor a `$` pattern
-    () =>
-      lineEffects.length
-        ? `- "effects" (optional): sound effects for how this line is heard, by name, only from this list — ${lineEffects.map((e) => `"${oneLine(e.name)}": ${oneLine(e.useWhen).replace(/\.$/, "")}`).join("; ")}. Several may apply to one line. Use one only when the text says so; most lines have none, and then leave "effects" out. A persona's disguise is already in its voice, so never add a mask effect to a persona's lines.\n`
-        : "",
-  );
+  FORMAT_TEMPLATE.replace(PRONOUNCE_SLOT, pronounce ? PRONOUNCE : "")
+    .replace(
+      TAGS_SLOT,
+      marker
+        ? `- Expression tags, only when your instructions ask for them: a sound the voice should make — a sigh, a laugh — goes in the line's "text" where it is heard, as ${marker[0]}sigh${marker[1]}: plain words between ${marker[0]} and ${marker[1]}, whatever brackets the instructions show. A tag is not a word of the excerpt and never takes the place of one. Never write a cue any other way, such as [sighs] or (laughs).\n- Pauses, only where your instructions call for one: a pause inside a line goes in its "text" where it falls, as ${marker[0]}pause${marker[1]} for a short one or ${marker[0]}long pause${marker[1]} for a long one. Like a tag, it is not a word of the excerpt.\n`
+        : `- Never put a cue such as [sighs] in "text".\n`,
+    )
+    .replace(
+      EFFECTS_SLOT,
+      // last, and a function: what the library typed is read for neither a slot nor a `$` pattern
+      () =>
+        lineEffects.length
+          ? `- "effects" (optional): sound effects for how this line is heard, by name, only from this list — ${lineEffects.map((e) => `"${oneLine(e.name)}": ${oneLine(e.useWhen).replace(/\.$/, "")}`).join("; ")}. Several may apply to one line. Use one only when the text says so; most lines have none, and then leave "effects" out. A persona's disguise is already in its voice, so never add a mask effect to a persona's lines.\n`
+          : "",
+    );
 
 /** `outputFormat` placeholders; not prompt tags. */
 const TAGS_SLOT = "%EXPRESSION_TAGS%\n";
 const EFFECTS_SLOT = "%LINE_EFFECTS%\n";
+const PRONOUNCE_SLOT = "%PRONOUNCE%\n";
+const PRONOUNCE = `- "pronounce": names and made-up words in the excerpt that a voice engine may say wrong, each as {"term": as written, "say": respelled the way it sounds, such as "Lahn-ur"}. [] when there are none.\n`;
 
 const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
 
@@ -158,6 +163,7 @@ Besides the lines, the answer has:
   - "description": one short sentence on who they are, and how they sound if the text says.
   - "personaOf": only for a disguise (rule 5): who wears it, or "unknown". For an entry marked "masked, identity unknown", the wearer once the text reveals them. Otherwise null.
 - "recap": one to three sentences on where the excerpt leaves off, for whoever scripts the text that follows it: who is present, including anyone who has not spoken; where they are; who spoke last and to whom; any question left unanswered; and what the text is calling each of them. Use the names from "speaker".
+%PRONOUNCE%
 
 Answer with JSON only, in this shape:
 {"lines":[{"type":"narration","speaker":"${NARRATOR}","text":"The door opened."},{"type":"dialogue","speaker":"Mara","text":"Come in,","direction":"soft, wary"},{"type":"narration","speaker":"${NARRATOR}","text":"said Mara softly."}],"cast":[{"name":"Mara","gender":"female","age":"young adult","aliases":["Mar"],"description":"A young lamplighter, quick and wary."}],"recap":"Mara has let a stranger in out of the cold, at her door; she spoke last, to him, and he has not answered."}`;
@@ -300,6 +306,8 @@ export interface PromptVars {
   expressions?: readonly string[];
   /** `lineEffectsOf` */
   lineEffects?: readonly { name: string; useWhen: string }[];
+  /** ask for dictionary terms (`Book.pronounceOff` unset) */
+  pronounce?: boolean;
 }
 
 const GENDER: Record<Gender, string> = { m: "male", f: "female", n: "non-binary", "?": "" };
@@ -396,7 +404,7 @@ export function fill(text: string, vars: PromptVars): string {
 export function renderPrompt(template: PromptTemplate, vars: PromptVars): RenderedPrompt {
   const system = fill(template.system, vars);
   return {
-    system: [system, outputFormat(scriptMarkerFor(vars.excerpt), vars.lineEffects)]
+    system: [system, outputFormat(scriptMarkerFor(vars.excerpt), vars.lineEffects, vars.pronounce)]
       .filter(Boolean)
       .join("\n\n"),
     user: fill(template.user, vars),

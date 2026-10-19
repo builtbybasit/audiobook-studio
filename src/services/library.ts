@@ -75,6 +75,8 @@ export interface BookSettings {
   readNotes?: boolean;
   /** `Book.checkByEar` */
   checkByEar?: boolean;
+  /** `Book.pronounceOff`; `null` = suggestions on */
+  pronounceOff?: true | null;
   /** `Book.thoughts`: an id or "none"; `null` = the library's */
   thoughts?: ThoughtChoice | null;
   /** `Book.characterVoice`; `null` = the Narrator's */

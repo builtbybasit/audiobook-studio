@@ -171,6 +171,7 @@ const Answer = v.object({
   // read apart, item by item: a malformed note must not cost a good script
   cast: v.optional(v.unknown()),
   recap: v.optional(v.unknown()),
+  pronounce: v.optional(v.unknown()),
 });
 
 const CastNote = v.object({
@@ -241,6 +242,23 @@ function castOf(said: unknown): PromptCastMember[] {
     });
   }
   return out;
+}
+
+const Term = v.object({ term: v.string(), say: v.string() });
+
+/** The readable suggestions: both halves present, one per term. */
+function termsOf(said: unknown): { term: string; say: string }[] {
+  if (!Array.isArray(said)) return [];
+  const out = new Map<string, { term: string; say: string }>();
+  for (const item of said) {
+    const read = v.safeParse(Term, item);
+    if (!read.success) continue;
+    const term = oneLine(read.output.term);
+    const say = oneLine(read.output.say);
+    if (term && say && say !== term && !out.has(term.toLowerCase()))
+      out.set(term.toLowerCase(), { term, say });
+  }
+  return [...out.values()];
 }
 
 const Completion = v.object({
@@ -376,7 +394,13 @@ export function answerOf(content: string, who: string, excerpt?: string): Script
     });
   }
   const recap = typeof parsed.recap === "string" ? oneLine(parsed.recap) : "";
-  return { lines: out, cast: castOf(parsed.cast), ...(recap ? { recap } : {}) };
+  const pronounce = termsOf(parsed.pronounce);
+  return {
+    lines: out,
+    cast: castOf(parsed.cast),
+    ...(recap ? { recap } : {}),
+    ...(pronounce.length ? { pronounce } : {}),
+  };
 }
 
 /** An answer cut off, or not the chunk's words: the failures a smaller chunk can get past. */

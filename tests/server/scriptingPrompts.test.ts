@@ -16,9 +16,18 @@ import type {
   RequestRecord,
   Segment,
 } from "@/types";
-import { BUILT_IN_PROMPT, OUTPUT_FORMAT, type PromptCastMember } from "@/lib/prompt";
+import { BUILT_IN_PROMPT, outputFormat, SCRIPT_MARKERS, type PromptCastMember } from "@/lib/prompt";
 import { scriptTelemetry } from "@/lib/scriptActivity";
-import { chapters, characters, effects, endpoints, requests, segments as lines } from "~/db/schema";
+import {
+  chapters,
+  characters,
+  effects,
+  endpoints,
+  lexiconEntries,
+  requests,
+  segments as lines,
+} from "~/db/schema";
+import { SUGGESTED } from "~/db/cast";
 import { profileKey } from "~/db/rows/endpoints";
 import { fakeScriptingProvider } from "~/providers/fake";
 import type { ScriptInput, ScriptingProvider } from "~/providers/scripting";
@@ -321,7 +330,7 @@ describe("a run's prompt", () => {
     expect(parts).toBeGreaterThan(1);
     for (const [i, input] of rec.inputs.entries()) {
       expect(input.prompt!.system).toBe(
-        `Book rules for Moonlight Ledger by A. Ledger.\nNotes: Mara never shouts.\nFor OpenAI (${profile.model}): Sent to {{endpoint.name}}, kept as typed.\n\n${OUTPUT_FORMAT}`,
+        `Book rules for Moonlight Ledger by A. Ledger.\nNotes: Mara never shouts.\nFor OpenAI (${profile.model}): Sent to {{endpoint.name}}, kept as typed.\n\n${outputFormat(SCRIPT_MARKERS[0], [], true)}`,
       );
       expect(input.prompt!.user).toBe(
         `Part ${i + 1} of ${parts}, chapter 1: One\n- Mara (female; also called M): Keeps the ledger.\n${input.text}`.trim(),
@@ -415,6 +424,10 @@ describe("what a model says beside its lines", () => {
             { name: "Ghost", gender: "f", aliases: [], description: "Mentioned, never heard." },
           ],
           recap: `Tobiah spoke last, in ${input.title}.`,
+          pronounce: [
+            { term: "Tobiah", say: "toe-BYE-uh" },
+            { term: "mara", say: "MAR-uh" },
+          ],
         };
       },
     };
@@ -436,6 +449,10 @@ describe("what a model says beside its lines", () => {
         description: "Keeps the ledger.",
         color: "#c33",
       })
+      .run();
+    api.db
+      .insert(lexiconEntries)
+      .values({ bookId: id, id: 1, term: "Mara", say: "MAH-rah", enabled: true })
       .run();
     await put(api, {
       profiles: [openaiProfile({ maxChars: 700, splitAt: "sentence", concurrency: 1 })],
@@ -465,7 +482,13 @@ describe("what a model says beside its lines", () => {
     );
     expect(two[0].prompt!.user).toContain("Tobiah (male, elderly; also called the old man)");
 
-    const { characters: cast } = (await api.request<Cast>(`/api/books/${id}/cast`)).body;
+    const { characters: cast, lexicon } = (await api.request<Cast>(`/api/books/${id}/cast`)).body;
+    // a term already in the dictionary, in any case, is left alone; a new one arrives switched off
+    expect(one[0].prompt!.system).toContain('- "pronounce": ');
+    expect(lexicon).toEqual([
+      { id: 1, term: "Mara", say: "MAH-rah", enabled: true },
+      { id: 2, term: "Tobiah", say: "toe-BYE-uh", enabled: false, note: SUGGESTED },
+    ]);
     const named = (name: string) => cast.find((c) => c.name === name);
     expect(named("Tobiah")).toMatchObject({
       gender: "m",
@@ -491,6 +514,29 @@ describe("what a model says beside its lines", () => {
       { id: 2, recap: "Tobiah spoke last, in Two." },
     ]);
   });
+});
+
+test("a book with suggestions off is not asked for pronunciations, and keeps none sent", async () => {
+  const rec = { inputs: [] as ScriptInput[] };
+  const api = testApi({
+    scripting: {
+      name: "Suggesting (test)",
+      async script(input) {
+        rec.inputs.push(input);
+        return {
+          lines: [{ type: "narration", speaker: "Narrator", text: input.text }],
+          pronounce: [{ term: "Tobiah", say: "toe-BYE-uh" }],
+        };
+      },
+    },
+  });
+  const id = await shelved(api);
+  await put(api, { profiles: [openaiProfile({ maxChars: 0 })] });
+  await api.request(`/api/books/${id}`, { ...jsonBody({ pronounceOff: true }), method: "PATCH" });
+  await api.request(`/api/books/${id}/chapters/script`, jsonBody({ ids: [1], profile: "openai" }));
+  await api.runner.idle();
+  expect(rec.inputs[0].prompt!.system).not.toContain('"pronounce"');
+  expect((await api.request<Cast>(`/api/books/${id}/cast`)).body.lexicon).toEqual([]);
 });
 
 describe("personas and line effects", () => {

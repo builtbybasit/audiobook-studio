@@ -51,7 +51,7 @@ const CODEX_OFF = [
 const ANSWER_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["lines", "cast", "recap"],
+  required: ["lines", "cast", "recap", "pronounce"],
   properties: {
     lines: {
       type: "array",
@@ -88,6 +88,15 @@ const ANSWER_SCHEMA = {
       },
     },
     recap: { type: "string" },
+    pronounce: {
+      type: ["array", "null"],
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["term", "say"],
+        properties: { term: { type: "string" }, say: { type: "string" } },
+      },
+    },
   },
 };
 

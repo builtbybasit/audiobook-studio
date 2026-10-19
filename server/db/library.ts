@@ -690,6 +690,8 @@ export interface BookSettings {
   readNotes?: boolean | null;
   /** check each chapter by ear once narrated; `null` goes back to only when asked */
   checkByEar?: boolean | null;
+  /** stop the scripting model suggesting dictionary terms; `null` lets it again */
+  pronounceOff?: boolean | null;
   /** an effect's id or "none"; `null` follows the library's */
   thoughts?: ThoughtChoice | null;
   /** the voice for speakers with none of their own; `null` goes back to the Narrator's */
@@ -716,6 +718,7 @@ export function setBookSettings(db: Db | Tx, bookId: string, s: BookSettings): v
   if (s.prompt !== undefined) Object.assign(set, bookPromptValues(s.prompt));
   if (s.readNotes !== undefined) set.readNotes = s.readNotes;
   if (s.checkByEar !== undefined) set.checkByEar = s.checkByEar;
+  if (s.pronounceOff !== undefined) set.pronounceOff = s.pronounceOff;
   if (s.thoughts !== undefined) set.thoughts = s.thoughts;
   if (s.characterVoice !== undefined) set.characterVoice = s.characterVoice;
   if (!Object.keys(set).length) return;

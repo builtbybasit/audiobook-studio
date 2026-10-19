@@ -24,7 +24,7 @@ import {
 import { compareReading } from "@/lib/reading";
 import { planRestore } from "@/lib/scriptHistory";
 import { tokenEstimate } from "@/lib/scripting";
-import { ensureSpeakers, learnCast, readChapterCast, readSpeakers } from "~/db/cast";
+import { ensureSpeakers, learnCast, readChapterCast, readSpeakers, suggestTerms } from "~/db/cast";
 import type { Db, Tx } from "~/db/client";
 import { listEffects } from "~/db/effects";
 import { capture, keepVersion } from "~/db/history";
@@ -203,6 +203,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
         },
         expressions,
         lineEffects,
+        pronounce: !book?.pronounceOff,
       });
       library.setChapterScripting(db, job.bookId, job.chapterId, "running", 0);
       ctx.note("Scripting started", "info", {
@@ -433,6 +434,13 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
             })),
             new Set(added),
           );
+          const suggested = book?.pronounceOff
+            ? []
+            : suggestTerms(
+                tx,
+                at.bookId,
+                answers.flatMap((a) => a.pronounce ?? []),
+              );
           // a script without a recap clears the old one
           library.setChapterRecap(tx, at.bookId, at.id, leftOff);
           library.setChapterScripting(tx, at.bookId, at.id, "done", 100);
@@ -445,6 +453,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
             revision,
             ...(added.length ? { speakersAdded: added.join(", ") } : {}),
             ...(learnt.length ? { speakersFilledIn: learnt.join(", ") } : {}),
+            ...(suggested.length ? { termsSuggested: suggested.join(", ") } : {}),
             ...(leftOff ? { recap: leftOff } : {}),
             ...(version != null ? { preserved: `v${version}` } : {}),
             ...(at.id !== job.chapterId ? { chapterNow: at.id } : {}),

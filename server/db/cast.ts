@@ -260,6 +260,33 @@ export function readLexicon(db: Db | Tx, bookId: string): LexEntry[] {
     .map(toLexEntry);
 }
 
+/**
+ * Add the model's suggestions for terms the dictionary lacks (any case), switched off so nothing
+ * sounds different until a person turns one on. Returns the terms added.
+ */
+export function suggestTerms(
+  db: Db | Tx,
+  bookId: string,
+  terms: readonly { term: string; say: string }[],
+): string[] {
+  const list = readLexicon(db, bookId);
+  const known = new Set(list.map((e) => e.term.trim().toLowerCase()));
+  let id = Math.max(0, ...list.map((e) => e.id));
+  const added: string[] = [];
+  for (const { term, say } of terms) {
+    if (known.has(term.toLowerCase())) continue;
+    known.add(term.toLowerCase());
+    const entry: LexEntry = { id: ++id, term, say, enabled: false, note: SUGGESTED };
+    db.insert(lexiconEntries)
+      .values(lexiconValues(bookId, entry, list.length + added.length))
+      .run();
+    added.push(term);
+  }
+  return added;
+}
+
+export const SUGGESTED = "Suggested by the scripting model";
+
 /** Replaced whole: it is short, its order matters, and Undo sends the whole list. */
 export function replaceLexicon(db: Db | Tx, bookId: string, entries: readonly LexEntry[]): void {
   db.transaction((tx) => {

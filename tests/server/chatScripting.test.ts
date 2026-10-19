@@ -285,6 +285,13 @@ describe("a request", () => {
             "Mara is a girl",
           ],
           recap: "Mara  let a stranger in;\nshe spoke last.",
+          pronounce: [
+            { term: " Lan'er ", say: "Lahn-ur" },
+            { term: "lan'er", say: "LAN-er" },
+            { term: "Mara", say: "Mara" },
+            { term: "Kit" },
+            "Tobiah: Toe-bye-uh",
+          ],
         }),
       ),
     );
@@ -302,6 +309,8 @@ describe("a request", () => {
       { name: "Kit", gender: "n", age: "middle-aged", aliases: [], description: "" },
     ]);
     expect(answer.recap).toBe("Mara let a stranger in; she spoke last.");
+    // one per term, whatever its case; none said as written
+    expect(answer.pronounce).toEqual([{ term: "Lan'er", say: "Lahn-ur" }]);
   });
 
   test("reads a disguise: whose it is, that nobody knows yet, or nothing", async () => {

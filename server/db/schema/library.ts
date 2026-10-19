@@ -44,6 +44,8 @@ export const books = sqliteTable("books", {
   readNotes: integer("read_notes", { mode: "boolean" }),
   /** null = only when asked */
   checkByEar: integer("check_by_ear", { mode: "boolean" }),
+  /** null = the scripting model suggests dictionary terms */
+  pronounceOff: integer("pronounce_off", { mode: "boolean" }),
   /** an effect id or "none"; null = the library's */
   thoughts: text("thoughts"),
   /** for speakers with no voice of their own; null = the Narrator's */

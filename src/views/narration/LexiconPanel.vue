@@ -106,6 +106,17 @@ const INLINE = [
           >
           · applied to every request, never to the book text</span
         >
+        <div v-if="book" class="ml-auto flex items-center gap-1.5 text-[11px] text-zinc-500">
+          <UiSwitch
+            :model-value="!book.pronounceOff"
+            label="Suggest from scripting"
+            @update:model-value="(on: boolean) => libraryStore.setPronounce(bookId, on)"
+          />
+          <UiHint
+            label="suggested terms"
+            text="The scripting model adds names and made-up words a voice may say wrong. They arrive switched off: check one in its preview, then switch it on."
+          />
+        </div>
       </div>
 
       <form :class="[GRID, 'mb-1 text-xs']" @submit.prevent="add">

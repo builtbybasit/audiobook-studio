@@ -185,6 +185,8 @@ export interface Book {
    * Absent = only on request.
    */
   checkByEar?: boolean;
+  /** the scripting model does not suggest dictionary terms; absent = it does */
+  pronounceOff?: boolean;
   /** Effect for `thought` lines: an id or "none". Absent = the library's (`src/lib/effects.ts`). */
   thoughts?: ThoughtChoice;
   /** the voice a speaker with none of their own is read in; absent = the Narrator's */

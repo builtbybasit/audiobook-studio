@@ -56,6 +56,8 @@ export interface ScriptAnswer {
   cast?: PromptCastMember[];
   /** where the excerpt leaves off, for whoever scripts the text after it */
   recap?: string;
+  /** dictionary terms the model suggests */
+  pronounce?: { term: string; say: string }[];
 }
 
 export interface ScriptingProvider {

@@ -209,7 +209,8 @@ function ageOf(said: string | null | undefined): Age | undefined {
   const a = (said ?? "").trim().toLowerCase();
   if (/^(?:child|kid|boy|girl|baby|infant|toddler)$/.test(a)) return "child";
   if (/^(?:teen|teenager|adolescent|youth)$/.test(a)) return "teen";
-  if (/^(?:adult|young adult|middle-aged)$/.test(a)) return "adult";
+  if (/^(?:young adult|young)$/.test(a)) return "young adult";
+  if (/^(?:middle[- ]aged)$/.test(a)) return "middle-aged";
   if (/^(?:elderly|elder|old|senior|aged)$/.test(a)) return "elderly";
   return undefined;
 }

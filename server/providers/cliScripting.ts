@@ -77,7 +77,10 @@ const ANSWER_SCHEMA = {
         properties: {
           name: { type: "string" },
           gender: { type: "string", enum: ["male", "female", "non-binary", "unknown"] },
-          age: { type: "string", enum: ["child", "teen", "adult", "elderly", "unknown"] },
+          age: {
+            type: "string",
+            enum: ["child", "teen", "young adult", "middle-aged", "elderly", "unknown"],
+          },
           aliases: { type: "array", items: { type: "string" } },
           description: { type: "string" },
           personaOf: { type: ["string", "null"] },

@@ -153,14 +153,14 @@ Besides the lines, the answer has:
 - "cast": notes on the characters who speak or think in the excerpt — only what the known cast is missing; [] when there is nothing new. Each note has:
   - "name": as written in "speaker".
   - "gender": "male", "female", "non-binary" or "unknown".
-  - "age": "child", "teen", "adult", "elderly" or "unknown".
+  - "age": "child", "teen", "young adult", "middle-aged", "elderly" or "unknown".
   - "aliases": other names they are called by, such as "Mar" or "the Captain". A description is not a name: never "the old man" or "the beautiful woman". [] when they have none.
   - "description": one short sentence on who they are, and how they sound if the text says.
   - "personaOf": only for a disguise (rule 5): who wears it, or "unknown". For an entry marked "masked, identity unknown", the wearer once the text reveals them. Otherwise null.
 - "recap": one to three sentences on where the excerpt leaves off, for whoever scripts the text that follows it: who is present, including anyone who has not spoken; where they are; who spoke last and to whom; any question left unanswered; and what the text is calling each of them. Use the names from "speaker".
 
 Answer with JSON only, in this shape:
-{"lines":[{"type":"narration","speaker":"${NARRATOR}","text":"The door opened."},{"type":"dialogue","speaker":"Mara","text":"Come in,","direction":"soft, wary"},{"type":"narration","speaker":"${NARRATOR}","text":"said Mara softly."}],"cast":[{"name":"Mara","gender":"female","age":"adult","aliases":["Mar"],"description":"A young lamplighter, quick and wary."}],"recap":"Mara has let a stranger in out of the cold, at her door; she spoke last, to him, and he has not answered."}`;
+{"lines":[{"type":"narration","speaker":"${NARRATOR}","text":"The door opened."},{"type":"dialogue","speaker":"Mara","text":"Come in,","direction":"soft, wary"},{"type":"narration","speaker":"${NARRATOR}","text":"said Mara softly."}],"cast":[{"name":"Mara","gender":"female","age":"young adult","aliases":["Mar"],"description":"A young lamplighter, quick and wary."}],"recap":"Mara has let a stranger in out of the cold, at her door; she spoke last, to him, and he has not answered."}`;
 
 /** With no line effects offered. */
 export const OUTPUT_FORMAT = outputFormat(SCRIPT_MARKERS[0]);
@@ -310,7 +310,7 @@ function castOf(vars: PromptVars): PromptCastMember[] {
   return vars.cast.filter((c) => c.name !== NARRATOR && c.name !== UNKNOWN);
 }
 
-/** "Mara (female, adult; also called Mar)", "Lord of Shadows (male; persona of Sunny)". */
+/** "Mara (female, young adult; also called Mar)", "Lord of Shadows (male; persona of Sunny)". */
 function nameOf(c: PromptCastMember): string {
   const facts = [
     [GENDER[c.gender ?? "?"], c.age].filter(Boolean).join(", "),
@@ -320,7 +320,7 @@ function nameOf(c: PromptCastMember): string {
   return `${c.name}${facts.length ? ` (${facts.join("; ")})` : ""}`;
 }
 
-/** "Mara (female, adult; also called Mar): A lamplighter." */
+/** "Mara (female, young adult; also called Mar): A lamplighter." */
 export function speakerLine(c: PromptCastMember): string {
   const description = (c.description ?? "").replace(/\s+/g, " ").trim();
   return `${nameOf(c)}${description ? `: ${description}` : ""}`;

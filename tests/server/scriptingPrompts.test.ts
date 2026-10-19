@@ -408,7 +408,7 @@ describe("what a model says beside its lines", () => {
             {
               name: "Mara",
               gender: "m",
-              age: "adult",
+              age: "young adult",
               aliases: ["the clerk"],
               description: "Someone else.",
             },

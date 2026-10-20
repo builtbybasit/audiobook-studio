@@ -1,11 +1,12 @@
 // The local-server routes over a fake launcher: a saved `launch` read back for every kind, Start
-// finding the saved endpoint by its key, Stop leaving outside servers alone, and the demo (no
-// launcher) listing nothing.
+// finding the saved endpoint by its key and answering servers and GPUs, Stop's 409 for a server
+// the app doesn't control, and the demo (no launcher) listing nothing.
 import { describe, expect, test } from "bun:test";
 
 import type {
   Endpoint,
   EndpointKind,
+  GpuInfo,
   LocalServer,
   LocalServerStatus,
   Profile,
@@ -13,7 +14,7 @@ import type {
 } from "@/types";
 import { serverKey } from "@/lib/localServers";
 import { newProfile } from "@/lib/scripting";
-import type { Launchable, LocalServers } from "~/servers/localServers";
+import { type Launchable, type LocalServers, OutsideServerError } from "~/servers/localServers";
 import { jsonBody, speechEndpoint, testApi, type TestApi } from "../support/server";
 
 interface Config {
@@ -46,16 +47,29 @@ const profile = (over: Partial<Profile> = {}): Profile => ({
   ...over,
 });
 
-/** Records what was asked of it; `status` is what it reports. */
+const GPU: GpuInfo = {
+  index: 0,
+  name: "RTX 4060 Laptop GPU",
+  memoryUsedMb: 5600,
+  memoryTotalMb: 8188,
+  utilization: 40,
+  temperature: 61,
+};
+
+/** Records what was asked of it; `status` is what it reports, and Stop refuses an outside one. */
 function fakeServers(status: Record<string, LocalServerStatus> = {}) {
   const started: Launchable[] = [];
   const stopped: string[] = [];
   const servers: LocalServers = {
     use: () => Promise.reject(new Error("no request goes in these tests")),
     start: async (target) => void started.push(target),
-    stop: async (key) => void stopped.push(key),
+    async stop(key) {
+      if (status[key]?.state === "outside") throw new OutsideServerError(`${key} is outside`);
+      stopped.push(key);
+    },
     status: () => status,
     stopAll: async () => {},
+    gpus: async () => [GPU],
   };
   return { servers, started, stopped };
 }
@@ -67,7 +81,7 @@ const save = (api: TestApi, config: Partial<Config>) =>
   });
 
 const start = (api: TestApi, key: string) =>
-  api.request<{ servers: Record<string, LocalServerStatus> }>(
+  api.request<{ servers: Record<string, LocalServerStatus>; gpus: GpuInfo[] }>(
     "/api/endpoints/servers/start",
     jsonBody({ key }),
   );
@@ -115,7 +129,7 @@ describe("local servers", () => {
     expect(c.read((await api.request<Config>("/api/endpoints")).body).launch).toEqual(LAUNCH);
 
     const key = serverKey(c.kind, c.id);
-    expect(await start(api, key)).toEqual({ status: 200, body: { servers: {} } });
+    expect(await start(api, key)).toEqual({ status: 200, body: { servers: {}, gpus: [GPU] } });
     expect(started.map((t) => t.localServer)).toEqual([{ ...LAUNCH, key }]);
   });
 
@@ -133,13 +147,16 @@ describe("local servers", () => {
     },
   );
 
-  test("Stop leaves a server the app didn't start running", async () => {
+  test("Stop answers 409 for a server the app doesn't control", async () => {
     const { servers, stopped } = fakeServers({
       outside: { ...RUNNING, state: "outside" },
       mine: RUNNING,
     });
     const api = testApi({ servers });
-    expect((await stop(api, "outside")).status).toBe(409);
+    expect(await stop(api, "outside")).toMatchObject({
+      status: 409,
+      body: { error: { message: "outside is outside" } },
+    });
     expect((await stop(api, "mine")).status).toBe(200);
     expect(stopped).toEqual(["mine"]);
   });
@@ -147,7 +164,7 @@ describe("local servers", () => {
   test("without a launcher, as in the demo, nothing is listed, started or stopped", async () => {
     const api = testApi();
     await save(api, { endpoints: [speechEndpoint({ launch: LAUNCH })] });
-    expect((await api.request("/api/endpoints/servers")).body).toEqual({ servers: {} });
+    expect((await api.request("/api/endpoints/servers")).body).toEqual({ servers: {}, gpus: [] });
     expect((await start(api, "studio")).status).toBe(404);
     expect((await stop(api, "studio")).status).toBe(404);
   });

@@ -48,7 +48,9 @@ Turn an EPUB into a full-cast audiobook, with a different voice for every charac
 
 - Any endpoint can name a folder and a start command. The app starts that server when a request needs it and stops it when the app quits.
 - Mark servers that need most of the GPU **Heavy**: only one heavy server runs at a time. The app switches once the running one has had nothing to do for a few seconds, so a chapter's lines for one server all go before the switch. Light servers (a CPU model) run beside anything.
-- Start, Stop, status and the server's last output are on the endpoint's Connection tab. A server you started yourself is used as it is and never stopped.
+- Works on Windows, macOS and Linux. For a server in WSL or Docker, give a **Stop command** (`wsl.exe -e pkill -f "uvicorn main:app"`, `docker stop phonon`): killing the `wsl.exe` or `docker run` client doesn't stop what runs inside. A server only counts as stopped once its URL goes quiet.
+- Start, Stop, status and the server's last output are on the endpoint's Connection tab. A server you started yourself is used as it is, and stopped only through its Stop command.
+- With an NVIDIA GPU, the Endpoints page shows VRAM, load and temperature from `nvidia-smi`, and each server's measured VRAM.
 
 ### 💸 Costs you can see
 

@@ -6,3 +6,10 @@ export const serverKey = (kind: EndpointKind, id: string): string =>
   kind === "tts" ? id : `${kind}:${id}`;
 
 export const DEFAULT_READY_SEC = 300;
+
+/**
+ * The page can't know the server's OS, so both spellings pass: `/home/me`, `C:\servers`,
+ * `C:/servers`, `\\host\share`. Empty means the user's home folder.
+ */
+export const isFolder = (dir: string): boolean =>
+  dir === "" || /^(\/|[A-Za-z]:[\\/]|\\\\)/.test(dir);

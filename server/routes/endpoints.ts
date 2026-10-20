@@ -36,7 +36,7 @@ import { serveFile } from "~/lib/serve";
 import type { SpeechGate } from "~/providers/gate";
 import { validate } from "~/lib/validate";
 import type { Providers } from "~/providers/target";
-import type { LocalServers } from "~/servers/localServers";
+import { OutsideServerError, type LocalServers } from "~/servers/localServers";
 import type { VoiceFiles } from "~/voices/files";
 import * as clone from "~/voices/clone";
 import * as samples from "~/voices/ops";
@@ -154,10 +154,14 @@ export function endpointRoutes(
 
   // ---------- local servers (`~/servers/localServers`) ----------
   /** A key missing from `servers` is stopped and was never started by this process. */
-  app.get("/servers", (c) => c.json({ servers: servers?.status() ?? {} }));
+  const listed = async () => ({
+    servers: servers?.status() ?? {},
+    gpus: servers ? await servers.gpus() : [],
+  });
+  app.get("/servers", async (c) => c.json(await listed()));
 
   /** Answers once the start is under way; the status shows it starting, then running or failed. */
-  app.post("/servers/start", validate("json", ServerKey), (c) => {
+  app.post("/servers/start", validate("json", ServerKey), async (c) => {
     const { key } = c.req.valid("json");
     if (!servers) fail(404, "This library starts no local servers");
     const target = ops.launchTarget(db, key);
@@ -166,18 +170,22 @@ export function endpointRoutes(
       .start(target)
       .catch((err) => logger.warn({ err, key }, "local server not started"));
     logger.info({ key }, "local server starting");
-    return c.json({ servers: servers.status() });
+    return c.json(await listed());
   });
 
-  /** No saved endpoint needed, so a server whose endpoint was removed can still be stopped. */
+  /**
+   * No saved endpoint needed, so a server whose endpoint was removed can still be stopped. 409 when
+   * the app doesn't control it: it found it running, or it still answers after the stop.
+   */
   app.post("/servers/stop", validate("json", ServerKey), async (c) => {
     const { key } = c.req.valid("json");
     if (!servers) fail(404, "This library starts no local servers");
-    if (servers.status()[key]?.state === "outside")
-      fail(409, "The app didn't start that server, so it leaves it running");
-    await servers.stop(key);
+    await servers.stop(key).catch((e: unknown) => {
+      if (e instanceof OutsideServerError) fail(409, e.message);
+      throw e;
+    });
     c.var.logger.info({ key }, "local server stopped");
-    return c.json({ servers: servers.status() });
+    return c.json(await listed());
   });
 
   /** The Test button: one small real request with the saved key. */

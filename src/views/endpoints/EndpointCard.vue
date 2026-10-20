@@ -8,7 +8,7 @@ import type { LiveActivity } from "@/views/endpoints/live";
 import { FORMAT_LABEL, encodingOf } from "@/lib/endpointShapes";
 import type { EndpointKind } from "@/types";
 import { useLocalServers } from "@/queries/localServers";
-import { serverStateOf, serverStatusOf } from "@/views/endpoints/state";
+import { gb, serverStateOf, serverStatusOf } from "@/views/endpoints/state";
 
 const props = defineProps<{
   u: UnifiedEndpoint;
@@ -19,8 +19,16 @@ const props = defineProps<{
 const emit = defineEmits<{ select: []; toggle: [boolean] }>();
 const pricing = () => pricingLabel(props.u);
 const { data: servers } = useLocalServers();
-const server = () =>
-  props.u.entry.launch ? serverStateOf(serverStatusOf(servers.value, props.u)) : null;
+/** The local server's state, with the VRAM it took when known. */
+const server = () => {
+  if (!props.u.entry.launch) return null;
+  const status = serverStatusOf(servers.value?.servers, props.u);
+  const { label, tone } = serverStateOf(status);
+  return {
+    tone,
+    label: status.vramMb == null ? label : `${label}, ≈ ${gb(status.vramMb)} GB VRAM`,
+  };
+};
 const TAG: Record<EndpointKind, string> = { scripting: "script", tts: "TTS", transcription: "STT" };
 </script>
 

@@ -8,6 +8,7 @@ import {
   applyDraft,
   draftChanges,
   draftFor,
+  gb,
   launchOf,
   launchProblem,
   type LaunchDraft,
@@ -24,6 +25,7 @@ afterEach(() => pinia.stop());
 const typed = (d: Partial<LaunchDraft>): LaunchDraft => ({
   dir: "",
   command: "",
+  stopCommand: "",
   heavy: false,
   readySec: null,
   ...d,
@@ -31,11 +33,16 @@ const typed = (d: Partial<LaunchDraft>): LaunchDraft => ({
 
 describe("the local server draft", () => {
   test.each<[string, Partial<LaunchDraft>, LocalServer | null]>([
-    ["both texts empty is none", { dir: "  ", heavy: true, readySec: 60 }, null],
+    ["every text empty is none", { dir: "  ", stopCommand: " ", heavy: true, readySec: 60 }, null],
     [
-      "texts trimmed, no ready time left out",
-      { dir: " /srv/tts ", command: " ./run.sh ", heavy: true },
+      "texts trimmed, no ready time or stop command left out",
+      { dir: " /srv/tts ", command: " ./run.sh ", stopCommand: "  ", heavy: true },
       { dir: "/srv/tts", command: "./run.sh", heavy: true },
+    ],
+    [
+      "a stop command kept, trimmed",
+      { command: "docker run phonon", stopCommand: " docker stop phonon " },
+      { dir: "", command: "docker run phonon", stopCommand: "docker stop phonon", heavy: false },
     ],
     [
       "ready time a whole second",
@@ -49,9 +56,14 @@ describe("the local server draft", () => {
   test.each<[string, Partial<LaunchDraft>, boolean]>([
     ["nothing typed", {}, false],
     ["a relative folder", { dir: "srv", command: "go" }, true],
-    ["a command with no folder", { command: "go" }, true],
+    ["a dot-relative Windows folder", { dir: ".\\srv", command: "go" }, true],
+    ["no folder (the home folder)", { command: "go" }, false],
+    ["a POSIX folder", { dir: "/srv", command: "go" }, false],
+    ["a Windows folder", { dir: "C:\\servers\\breeze", command: "go" }, false],
+    ["a Windows folder with slashes", { dir: "C:/servers", command: "go" }, false],
+    ["a UNC folder", { dir: "\\\\host\\share", command: "go" }, false],
     ["a folder with no command", { dir: "/srv" }, true],
-    ["an absolute folder and a command", { dir: "/srv", command: "go" }, false],
+    ["a stop command with no start command", { stopCommand: "docker stop phonon" }, true],
   ])("%s: refused %p", (_, d, refused) => {
     expect(launchProblem(typed(d)) !== null).toBe(refused);
   });
@@ -74,6 +86,8 @@ describe("the local server draft", () => {
       applyDraft(u);
       expect(u.entry.launch).toEqual({ dir: "/srv", command: "go", heavy: true });
       expect(draftChanges(u)).not.toContain("launch");
+      draftFor(u).launch.stopCommand = "docker stop tts";
+      expect(draftChanges(u)).toContain("launch");
 
       draftFor(u).launch = typed({ heavy: true });
       applyDraft(u);
@@ -81,4 +95,11 @@ describe("the local server draft", () => {
       expect(draftChanges(u)).toEqual([]);
     },
   );
+});
+
+test.each([
+  [8192, "8.0"],
+  [5734, "5.6"],
+])("%p MiB of VRAM reads %p GB", (mb, shown) => {
+  expect(gb(mb)).toBe(shown);
 });

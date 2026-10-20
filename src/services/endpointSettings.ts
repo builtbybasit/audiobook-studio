@@ -11,6 +11,7 @@ import type {
   EndpointBatches,
   EndpointProbe,
   KeptVoiceSamples,
+  GpuInfo,
   LocalServerStatus,
   Profile,
   PromptTemplate,
@@ -110,7 +111,7 @@ export interface EndpointSettingsService {
   redoVoiceSpeed(ref: VoiceRef, books: string[]): Promise<VoiceSpeedRedone>;
   /** The made-here lines in `books` keep the old sound; how many. */
   keepVoiceSpeed(ref: VoiceRef, books: string[]): Promise<number>;
-  /** Local servers by `serverKey`; one absent has not run since the server process started. */
+  /** Local servers and the machine's GPUs. */
   servers(): Promise<LocalServers>;
   /** Start the *saved* endpoint's local server; answers before it is ready. */
   startServer(key: string): Promise<LocalServers>;
@@ -118,7 +119,12 @@ export interface EndpointSettingsService {
   stopServer(key: string): Promise<LocalServers>;
 }
 
-export type LocalServers = Record<string, LocalServerStatus>;
+export interface LocalServers {
+  /** by `serverKey`; one absent has not run since the server process started */
+  servers: Record<string, LocalServerStatus>;
+  /** empty without an NVIDIA GPU */
+  gpus: GpuInfo[];
+}
 
 export interface VoiceCloneRequest {
   title: string;
@@ -204,18 +210,16 @@ export class HttpEndpointSettingsService implements EndpointSettingsService {
       .endpoints;
   }
 
-  async servers(): Promise<LocalServers> {
-    return (await this.http.get<{ servers: LocalServers }>("/endpoints/servers")).servers;
+  servers(): Promise<LocalServers> {
+    return this.http.get<LocalServers>("/endpoints/servers");
   }
 
-  async startServer(key: string): Promise<LocalServers> {
-    return (await this.http.post<{ servers: LocalServers }>("/endpoints/servers/start", { key }))
-      .servers;
+  startServer(key: string): Promise<LocalServers> {
+    return this.http.post<LocalServers>("/endpoints/servers/start", { key });
   }
 
-  async stopServer(key: string): Promise<LocalServers> {
-    return (await this.http.post<{ servers: LocalServers }>("/endpoints/servers/stop", { key }))
-      .servers;
+  stopServer(key: string): Promise<LocalServers> {
+    return this.http.post<LocalServers>("/endpoints/servers/stop", { key });
   }
 
   keptSampleFile(id: string, voice: string, file: string): Promise<Blob> {

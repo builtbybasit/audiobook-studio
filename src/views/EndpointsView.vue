@@ -24,6 +24,7 @@ import {
   TriangleAlert as WarnIcon,
 } from "@lucide/vue";
 import EndpointCard from "@/views/endpoints/EndpointCard.vue";
+import GpuBar from "@/views/endpoints/GpuBar.vue";
 import OverviewTab from "@/views/endpoints/OverviewTab.vue";
 import ConnectionTab from "@/views/endpoints/ConnectionTab.vue";
 import RequestsTab from "@/views/endpoints/RequestsTab.vue";
@@ -349,6 +350,7 @@ function pickBucket(b: MetricBucket | null) {
         </span>
       </button>
     </dl>
+    <GpuBar />
 
     <div class="grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
       <aside class="min-w-0 space-y-2">

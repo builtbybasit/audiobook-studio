@@ -181,12 +181,17 @@ export interface Transcriber extends Partial<EndpointOps> {
  * (`server/servers/localServers.ts`). Heavy ones take the GPU, so only one runs at a time.
  */
 export interface LocalServer {
-  /** absolute; the command runs here */
+  /** absolute; the command runs here. Empty = the user's home folder */
   dir: string;
-  /** run by `/bin/sh -c` */
+  /** run by `/bin/sh -c`, or `cmd.exe /c` on Windows */
   command: string;
+  /**
+   * Run, in the same folder, to stop it where killing the process tree doesn't (a `wsl.exe` or
+   * `docker run` client). Absent = kill the tree.
+   */
+  stopCommand?: string;
   heavy: boolean;
-  /** how long it may take to answer at its base URL; absent = 300 */
+  /** how long it may take until `/health` says ready; absent = 300 */
   readySec?: number;
 }
 
@@ -218,6 +223,22 @@ export interface LocalServerStatus {
   exitCode?: number | null;
   /** the last lines it printed, stdout and stderr together, oldest first */
   output: string[];
+  /** queued: the heavy server's name it waits for to finish */
+  blockedBy?: string;
+  /** MB of GPU memory it took, measured from `nvidia-smi` around its start and while it ran */
+  vramMb?: number;
+}
+
+/** One GPU as `nvidia-smi` reports it; none without an NVIDIA GPU. */
+export interface GpuInfo {
+  index: number;
+  name: string;
+  memoryUsedMb: number;
+  memoryTotalMb: number;
+  /** percent; null when the driver doesn't say */
+  utilization: number | null;
+  /** °C; null when the driver doesn't say */
+  temperature: number | null;
 }
 
 /**

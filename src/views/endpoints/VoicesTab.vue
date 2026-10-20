@@ -3,6 +3,7 @@ import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { SAMPLE_TITLE, sampleId, useVoiceSample } from "@/composables/useVoiceSample";
 import { useLibraryStore } from "@/stores/library";
+import { useUiStore } from "@/stores/ui";
 
 // One speech endpoint's voice catalogue, the only place voices are added, edited or removed.
 // Characters store `<endpoint>/<voice>`, so removing one unroutes speakers in every book; usage is
@@ -180,10 +181,23 @@ function preview(v: Voice) {
   return playSample(props.endpoint, v.id, v.label, next.id, next.text);
 }
 const sourceId = (v: Voice) => `source:${props.endpoint.id}/${v.id}`;
-async function playSource(v: Voice) {
+async function playSource(v: Voice, e: MouseEvent) {
   const k = kept.value[v.id];
+  if (e.shiftKey) return copyTranscript(k);
   const url = k && (await endpointsStore.sourceRecording(props.endpoint, k));
   if (url) await playUrl(sourceId(v), url, `${v.label} · recording`);
+}
+// the first sample's, as that is the recording the button plays
+const uiStore = useUiStore();
+async function copyTranscript(k: KeptVoiceSamples) {
+  const transcript = k.samples[0]?.transcript;
+  if (!transcript) return uiStore.toast("No transcript kept for this recording");
+  try {
+    await navigator.clipboard.writeText(transcript);
+    uiStore.toast("Transcript copied", { kind: "success", timeout: 2500 });
+  } catch {
+    uiStore.toast("Could not copy the transcript", { kind: "error" });
+  }
 }
 const sampleTitle = computed(() =>
   needsKeyFirst.value
@@ -399,17 +413,20 @@ const sampleTitle = computed(() =>
             >
               Keep its samples…
             </button>
-            <button
+            <UiTooltip
               v-else
-              class="btn-ghost btn-xs shrink-0"
-              :aria-label="`${playingId(sourceId(v)) ? 'Pause' : 'Play'} the recording ${v.label} was made from`"
-              title="The recording this voice was made from, not the voice itself"
-              :disabled="!!sampling && sampling !== sourceId(v)"
-              @click="playSource(v)"
+              text="The recording this voice was made from, not the voice itself · shift-click copies its transcript"
             >
-              <PauseIcon v-if="playingId(sourceId(v))" class="icon-sm icon-fill" />
-              <SourceIcon v-else class="icon-sm" />
-            </button>
+              <button
+                class="btn-ghost btn-xs shrink-0"
+                :aria-label="`${playingId(sourceId(v)) ? 'Pause' : 'Play'} the recording ${v.label} was made from`"
+                :disabled="!!sampling && sampling !== sourceId(v)"
+                @click="playSource(v, $event)"
+              >
+                <PauseIcon v-if="playingId(sourceId(v))" class="icon-sm icon-fill" />
+                <SourceIcon v-else class="icon-sm" />
+              </button>
+            </UiTooltip>
           </template>
           <button
             class="btn-ghost btn-xs shrink-0"

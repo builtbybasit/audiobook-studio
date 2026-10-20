@@ -33,14 +33,6 @@ import { testPinia, type TestPinia } from "./support/pinia";
 
 const TELEMETRY = ["history", "failures", "rateLimits", "backoffUntil", "lastError", "fetching"];
 
-/** What the server answers for one voice's kept recordings. */
-const keptOf = (voiceId: string): KeptVoiceSamples => ({
-  voiceId,
-  title: "Mara",
-  madeAt: 1,
-  samples: [{ file: `${"a".repeat(32)}.wav`, name: "take.wav", format: "wav", bytes: 8 }],
-});
-
 /** What the server keeps, and every write it was sent. */
 class FakeService implements EndpointSettingsService {
   held: EndpointConfig | null = null;
@@ -168,13 +160,14 @@ class FakeService implements EndpointSettingsService {
   };
   redoVoiceSpeed = this.voiceSpeedLines;
   keepVoiceSpeed = this.voiceSpeedLines;
-  forgot: string[] = [];
-  async forgetSamples(_id: string, voice: string): Promise<void> {
-    this.forgot.push(voice);
+  deleted: string[] = [];
+  deleteAnswer: ApiError | null = null;
+  async deleteVoice(_id: string, voice: string): Promise<void> {
+    if (this.deleteAnswer) throw this.deleteAnswer;
+    this.deleted.push(voice);
   }
-  async restoreSamples(_id: string, voice: string): Promise<KeptVoiceSamples> {
-    this.forgot = this.forgot.filter((v) => v !== voice);
-    return keptOf(voice);
+  async keptSampleFile(): Promise<Blob> {
+    throw new ApiError("not used here", 500);
   }
   async sampleVoice(id: string, voice: string): Promise<VoiceSample> {
     this.sampled.push({ id, voice, puts: this.puts.length });
@@ -739,13 +732,15 @@ describe("voice samples with a server answering", () => {
     const first = await endpointsStore.sampleVoice(ep, "ash");
     expect(await endpointsStore.sampleVoice(ep, "ash")).toBe(first);
     expect(svc.sampled).toHaveLength(1);
-    // another voice is another sample
+    // another voice is another sample, and so is another line
     await endpointsStore.sampleVoice(ep, "other");
     expect(svc.sampled).toHaveLength(2);
+    expect(await endpointsStore.sampleVoice(ep, "ash", "Hello there.")).not.toBe(first);
+    expect(svc.sampled).toHaveLength(3);
     // and so is the same voice from another model
     ep.model = "tts-2";
     expect(await endpointsStore.sampleVoice(ep, "ash")).not.toBe(first);
-    expect(svc.sampled).toHaveLength(3);
+    expect(svc.sampled).toHaveLength(4);
   });
 
   test("a refused sample is said, and nothing is kept to replay", async () => {
@@ -804,21 +799,25 @@ describe("cloning a voice with a server answering", () => {
     expect(ep.voices).toHaveLength(before);
   });
 
-  test("forgetting a voice's recordings can be undone, and the undo hands them back", async () => {
-    svc.held = server();
+  test("removing a voice where the server makes them deletes it there first, with no undo", async () => {
+    const cfg = server();
+    cfg.endpoints[0].makesVoices = true;
+    cfg.endpoints[0].voices.push({ id: "mara", label: "Mara", gender: "f" });
+    svc.held = cfg;
     await endpointsStore.load();
     const ep = endpointsStore.endpoints[0];
-    let undo: (() => void) | null | undefined;
+    let undo: unknown = "unset";
     useUiStore().toast = (_msg, opts) => ((undo = opts?.undo), "");
-    const back: KeptVoiceSamples[] = [];
-    expect(await endpointsStore.forgetVoiceSamples(ep, keptOf("v1"), (k) => back.push(k))).toBe(
-      true,
-    );
-    expect(svc.forgot).toEqual(["v1"]);
-    undo!();
-    await drain();
-    expect(svc.forgot).toEqual([]);
-    expect(back).toEqual([keptOf("v1")]);
+
+    svc.deleteAnswer = new ApiError("Server speech could not be reached", 502);
+    expect(await endpointsStore.removeVoice(ep, "mara")).toBe(false);
+    expect(ep.voices.map((v) => v.id)).toContain("mara");
+
+    svc.deleteAnswer = null;
+    expect(await endpointsStore.removeVoice(ep, "mara")).toBe(true);
+    expect(svc.deleted).toEqual(["mara"]);
+    expect(ep.voices.map((v) => v.id)).not.toContain("mara");
+    expect(undo).toBeUndefined();
   });
 });
 

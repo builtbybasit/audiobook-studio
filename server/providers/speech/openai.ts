@@ -136,6 +136,25 @@ async function makeVoice(
   return voice;
 }
 
+/** `DELETE /audio/voices/{id}` per the batch speech API; 404 is a voice already gone. */
+async function deleteVoice(
+  target: ProviderTarget,
+  voice: string,
+  signal: AbortSignal,
+  options: SpeechCallOptions,
+): Promise<void> {
+  try {
+    await call(
+      target,
+      `${target.baseUrl}/audio/voices/${encodeURIComponent(voice)}`,
+      { method: "DELETE", headers: authHeaders(target) },
+      { signal, ...options },
+    );
+  } catch (e) {
+    if (!(e instanceof ProviderError && e.status === 404)) throw e;
+  }
+}
+
 /** `hosted` is OpenAI's own API. */
 function openaiShaped(hosted: boolean): SpeechWire {
   const shape = hosted ? openai : compatible;
@@ -227,6 +246,7 @@ export const openaiWire = openaiShaped(true);
 export const compatibleWire: SpeechWire = {
   ...openaiShaped(false),
   clone: makeVoice,
+  deleteVoice,
   capabilities: batchCapabilities,
   speakBatch: sendBatch,
 };

@@ -30,13 +30,14 @@ export interface HeardSample {
 export interface HeardFiles {
   /** The first of `made` kept for the voice; null when none is. */
   read(endpointId: string, voiceId: string, made: readonly string[]): Promise<HeardSample | null>;
-  /** Replaces anything kept for the voice before. */
+  /** Drops anything kept for the voice before, but what `alsoKept` names. */
   keep(
     endpointId: string,
     voiceId: string,
     made: string,
     bytes: Uint8Array,
     format: SampleFormat,
+    alsoKept?: readonly string[],
   ): Promise<void>;
   /** Forget every endpoint but these. */
   keepOnly(endpointIds: readonly string[]): Promise<void>;
@@ -102,7 +103,7 @@ function heardFiles(dir: string): HeardFiles {
       }
       return null;
     },
-    async keep(endpointId, voiceId, made, bytes, format) {
+    async keep(endpointId, voiceId, made, bytes, format, alsoKept = []) {
       const at = voiceDir(endpointId, voiceId);
       const name = `${hash(made)}.${format}`;
       await mkdir(at, { recursive: true });
@@ -110,7 +111,10 @@ function heardFiles(dir: string): HeardFiles {
       const part = join(at, `${name}.part`);
       await writeFile(part, bytes);
       await rename(part, join(at, name));
-      const stale = (await listed(at)).filter((n) => n !== name && isSampleFile(n));
+      const keeping = new Set([made, ...alsoKept].map(hash));
+      const stale = (await listed(at)).filter(
+        (n) => isSampleFile(n) && !keeping.has(n.slice(0, n.indexOf("."))),
+      );
       await Promise.all(stale.map((n) => rm(join(at, n), { force: true })));
     },
     async keepOnly(endpointIds) {

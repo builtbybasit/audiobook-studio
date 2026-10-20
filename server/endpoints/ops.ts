@@ -15,7 +15,7 @@ import { isSimulated } from "@/lib/providers";
 import { billingOf } from "@/lib/endpoints";
 import { worstCaseOf } from "@/lib/narrationCost";
 import { AUDIO_CHARS_PER_SECOND, estimateSpeech, measureSpeech, readPricing } from "@/lib/pricing";
-import { encodingOf, VOICE_SAMPLE } from "@/lib/endpointShapes";
+import { encodingOf, SAMPLE_LINES, VOICE_SAMPLE } from "@/lib/endpointShapes";
 import type { Db, Tx } from "~/db/client";
 import {
   readEndpoint,
@@ -252,20 +252,20 @@ export interface VoiceSampleAudio {
 const RECORDING = "recording";
 
 /** The cache key for a rendered sample: everything that changes how it sounds. */
-const renderedAs = (ep: Endpoint): string =>
-  JSON.stringify([
-    "rendered",
-    ep.baseUrl,
-    ep.model,
-    encodingOf(ep),
-    ep.sampleRate ?? null,
-    VOICE_SAMPLE,
-  ]);
+const renderedAs = (ep: Endpoint, text: string): string =>
+  JSON.stringify(["rendered", ep.baseUrl, ep.model, encodingOf(ep), ep.sampleRate ?? null, text]);
+
+/** What stays kept beside a new clip: the recording and every built-in line as it sounds now. */
+const stillHeard = (ep: Endpoint): string[] => [
+  RECORDING,
+  ...SAMPLE_LINES.map((t) => renderedAs(ep, t)),
+];
 
 /**
  * A voice's demo audio, cheapest first: the copy kept on disk, the provider's own free recording
- * (Fish keeps one), else `VOICE_SAMPLE` rendered in the endpoint's format, billed once and kept.
- * Simulated samples are never kept. One attempt, so a failure shows at once.
+ * (Fish keeps one), else `text` rendered in the endpoint's format, billed once and kept. Only the
+ * default line plays the recording. Simulated samples are never kept. One attempt, so a failure
+ * shows at once.
  */
 export async function sampleVoice(
   db: Db,
@@ -274,11 +274,13 @@ export async function sampleVoice(
   id: string,
   voiceId: string,
   signal: AbortSignal,
+  text = VOICE_SAMPLE,
 ): Promise<VoiceSampleAudio> {
   const ep = readEndpoint(db, id);
   if (!ep) throw notFound("There is no saved speech endpoint by that id", `id: ${id}`);
   const simulated = isSimulated(ep.baseUrl);
-  const rendered = renderedAs(ep);
+  const rendered = renderedAs(ep, text);
+  const asDefault = text === VOICE_SAMPLE;
   const heard = (
     bytes: Uint8Array,
     format: SampleFormat,
@@ -294,11 +296,22 @@ export async function sampleVoice(
   });
 
   if (!simulated) {
-    const kept = await files.heard.read(ep.id, voiceId, [RECORDING, rendered]);
+    const kept = await files.heard.read(
+      ep.id,
+      voiceId,
+      asDefault ? [RECORDING, rendered] : [rendered],
+    );
     if (kept) return heard(kept.bytes, kept.format, kept.made, true);
-    const recording = await ownRecording(db, providers, ep, voiceId, signal);
+    const recording = asDefault ? await ownRecording(db, providers, ep, voiceId, signal) : null;
     if (recording) {
-      await files.heard.keep(ep.id, voiceId, RECORDING, recording.bytes, recording.format);
+      await files.heard.keep(
+        ep.id,
+        voiceId,
+        RECORDING,
+        recording.bytes,
+        recording.format,
+        stillHeard(ep),
+      );
       return heard(recording.bytes, recording.format, RECORDING, false);
     }
   }
@@ -307,7 +320,7 @@ export async function sampleVoice(
   const speaker = voice?.label || voiceId;
   const provider = providers.samples ?? endpointSpeechProvider();
   // billed like a line of narration, so held to the endpoint's daily limit
-  const cost = sampleWorstCase(ep);
+  const cost = sampleWorstCase(ep, text);
   assertWithinBudget(db, null, {
     kind: "narration",
     cost,
@@ -328,7 +341,7 @@ export async function sampleVoice(
   let clip;
   try {
     clip = await provider.speak({
-      text: VOICE_SAMPLE,
+      text,
       speaker,
       type: "narration",
       direction: "",
@@ -349,17 +362,17 @@ export async function sampleVoice(
   // kept before answering, so the next press finds it; a failure to keep only logs
   if (!simulated)
     await warnIfFails(
-      files.heard.keep(ep.id, voiceId, rendered, clip.bytes, clip.format),
+      files.heard.keep(ep.id, voiceId, rendered, clip.bytes, clip.format, stillHeard(ep)),
       "voice sample not kept",
       { id, voiceId },
     );
   return heard(clip.bytes, clip.format, rendered, false, clip.duration);
 }
 
-function sampleWorstCase(ep: Endpoint): number {
+function sampleWorstCase(ep: Endpoint, text: string): number {
   const billing = billingOf(ep);
   const units = measureSpeech(
-    { text: VOICE_SAMPLE, audioSeconds: VOICE_SAMPLE.length / AUDIO_CHARS_PER_SECOND },
+    { text, audioSeconds: text.length / AUDIO_CHARS_PER_SECOND },
     billing,
   );
   return worstCaseOf(estimateSpeech(billing, readPricing(ep), units, Date.now()));

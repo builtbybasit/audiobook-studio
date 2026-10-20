@@ -151,6 +151,25 @@ export async function cloneVoice(
   };
 }
 
+/** Deletes a voice on the endpoint's server; the endpoint's own list is the page's to save. */
+export async function deleteVoice(
+  db: Db,
+  providers: Providers,
+  endpointId: string,
+  voiceId: string,
+  signal: AbortSignal,
+): Promise<void> {
+  const ep = clonableEndpoint(db, endpointId);
+  if (!ep.cloning.deletes) throw badRequest(`${ep.name} cannot delete a voice on its server`);
+  const cloner = providers.cloner ?? endpointVoiceCloner();
+  if (!cloner.remove) throw badRequest(`${ep.name} cannot delete a voice on its server`);
+  try {
+    await cloner.remove(speechTarget(db, ep), voiceId, signal);
+  } catch (e) {
+    throw e instanceof ProviderError ? providerFailure(e) : e;
+  }
+}
+
 /** Replaces an existing voice's kept samples, held to the same limits; nothing is sent. */
 export async function keepForVoice(
   db: Db,

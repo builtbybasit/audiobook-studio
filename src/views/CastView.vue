@@ -14,7 +14,8 @@ import { useBookId } from "@/composables/useBookId";
 import { useBookScripts, useCast, useEffects } from "@/queries";
 import { GENDER } from "@/lib/scriptReview";
 import { applySpan, useRangeSelect } from "@/composables/useRangeSelect";
-import { UiSelect, UiCheckbox, UiHint, UiNumber, UiTooltip } from "@/ui";
+import { UiSelect, UiCheckbox, UiHint, UiTooltip } from "@/ui";
+import SpeedPicker from "@/components/SpeedPicker.vue";
 import VoicePicker from "@/components/VoicePicker.vue";
 import SpoilerText from "@/components/SpoilerText.vue";
 import ReadFailure, { scriptsUnread } from "@/components/ReadFailure.vue";
@@ -27,7 +28,7 @@ import ReapplyBar from "@/views/cast/effects/ReapplyBar.vue";
 import type { EffectSubject } from "@/views/cast/effects/subject";
 import { nestPersonas } from "@/views/cast/persona/rows";
 import { personaOwner, voiced as isVoiced } from "@/lib/cast";
-import { SPEAKER_SPEED, speedSplit } from "@/lib/providers";
+import { speedSplit } from "@/lib/providers";
 import type { Character, Gender } from "@/types";
 
 const castStore = useCastStore();
@@ -604,15 +605,10 @@ const duplicate = computed(
                 </div>
               </td>
               <td class="py-1" :title="speedMade">
-                <UiNumber
-                  class="w-20"
+                <SpeedPicker
                   :model-value="c.speed ?? null"
-                  :placeholder="c.speed == null ? String(speed) : undefined"
-                  :min="SPEAKER_SPEED.min"
-                  :max="SPEAKER_SPEED.max"
-                  :step="0.01"
-                  :empty="null"
-                  unit="×"
+                  :fallback="speed"
+                  reset-label="Follow the voice"
                   :label="`Speed for ${c.name}`"
                   @update:model-value="(v) => castStore.setSpeed(bookId, c.name, v)"
                 />

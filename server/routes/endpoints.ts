@@ -15,7 +15,7 @@ import type {
   VoiceSpeedRedone,
 } from "@/types";
 import { tooMuchSaid } from "@/lib/voiceSamples";
-import { ENDPOINT_KINDS } from "@/lib/endpointShapes";
+import { ENDPOINT_KINDS, MAX_SAMPLE_TEXT } from "@/lib/endpointShapes";
 import type { EffectRunner } from "~/audio/effects";
 import { keepVoiceSpeed, redoVoiceSpeed, voiceSpeedLines } from "~/cast/voiceSpeed";
 import type { Db } from "~/db/client";
@@ -62,6 +62,7 @@ const Saved = v.object({ id: v.pipe(v.string(), v.nonEmpty()) });
 const Sample = v.object({
   id: v.pipe(v.string(), v.nonEmpty()),
   voice: v.pipe(v.string(), v.nonEmpty(), v.maxLength(200)),
+  text: v.optional(v.pipe(v.string(), v.trim(), v.nonEmpty(), v.maxLength(MAX_SAMPLE_TEXT))),
 });
 
 const VoiceParam = v.object({
@@ -180,8 +181,16 @@ export function endpointRoutes(
    * `x-audio-duration` how long it plays when known.
    */
   app.post("/sample", validate("json", Sample), async (c) => {
-    const { id, voice } = c.req.valid("json");
-    const sample = await ops.sampleVoice(db, providers, voiceFiles, id, voice, c.req.raw.signal);
+    const { id, voice, text } = c.req.valid("json");
+    const sample = await ops.sampleVoice(
+      db,
+      providers,
+      voiceFiles,
+      id,
+      voice,
+      c.req.raw.signal,
+      text,
+    );
     c.var.logger.info({ id, voice, source: sample.source, kept: sample.kept }, "voice sampled");
     // copied onto a plain ArrayBuffer, which a response body is typed to take
     return c.body(new Uint8Array(sample.bytes), 200, {
@@ -259,6 +268,14 @@ export function endpointRoutes(
     });
     c.var.logger.info({ id, voice, samples: kept.samples.length }, "voice samples kept");
     return c.json(kept satisfies KeptVoiceSamples);
+  });
+
+  /** On the endpoint's server, for good; the page then drops it from the endpoint. */
+  app.delete("/:id/voices/:voice", validate("param", VoiceParam), async (c) => {
+    const { id, voice } = c.req.valid("param");
+    await clone.deleteVoice(db, providers, id, voice, c.req.raw.signal);
+    c.var.logger.info({ id, voice }, "voice deleted on the server");
+    return c.json({ voiceId: voice });
   });
 
   /** The voice stays, and the forget can be taken back for a while. */

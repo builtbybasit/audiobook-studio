@@ -77,6 +77,23 @@ describe("the compatible cloner", () => {
   });
 });
 
+describe("deleting a voice on a compatible server", () => {
+  test.each([204, 404])("sends DELETE /audio/voices/{id}; %i means it is gone", async (status) => {
+    const f = answering(() => new Response(null, { status }));
+    await f.cloner.remove!(target, "mara two", signal());
+    expect(f.sent.map((s) => [s.init.method, s.url])).toEqual([
+      ["DELETE", "http://127.0.0.1:8000/v1/audio/voices/mara%20two"],
+    ]);
+  });
+
+  test("another refusal is the server's to say", async () => {
+    const f = answering(() => new Response("locked", { status: 409 }));
+    await expect(f.cloner.remove!(target, "mara", signal())).rejects.toThrow(
+      "OmniVoice answered 409: locked",
+    );
+  });
+});
+
 describe("a compatible clone, through the route", () => {
   const omni = (makesVoices?: boolean) =>
     cloneEndpoint({
@@ -100,6 +117,21 @@ describe("a compatible clone, through the route", () => {
     expect(status).toBe(201);
     expect(body).toMatchObject({ id: "mara", label: "Mara" });
     expect((f.sent[0].init.body as FormData).get("transcript")).toBe("We are short again.");
+  });
+
+  test("a delete goes to the server only where it makes voices", async () => {
+    const del = (api: ReturnType<typeof testApi>) =>
+      api.request<{ error?: { message: string } }>("/api/endpoints/omni/voices/mara", {
+        method: "DELETE",
+      });
+    const f = answering(() => new Response(null, { status: 204 }));
+    const api = testApi({ cloner: f.cloner });
+    await saved(api, omni());
+    expect((await del(api)).status).toBe(400);
+    expect(f.sent).toHaveLength(0);
+    await saved(api, omni(true));
+    expect((await del(api)).status).toBe(200);
+    expect(f.sent.map((s) => s.init.method)).toEqual(["DELETE"]);
   });
 
   test("is refused, with nothing sent, where it does not", async () => {

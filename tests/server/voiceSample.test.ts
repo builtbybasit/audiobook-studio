@@ -5,7 +5,7 @@
 import { describe, expect, test } from "bun:test";
 
 import type { Endpoint, RequestRecord } from "@/types";
-import { VOICE_SAMPLE } from "@/lib/endpointShapes";
+import { SAMPLE_LINES, VOICE_SAMPLE } from "@/lib/endpointShapes";
 import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import { endpointVoiceLister } from "~/providers/voices";
 import { voiceFiles } from "~/voices/files";
@@ -47,8 +47,8 @@ function recording(): { provider: SpeechProvider; asked: SpeechInput[] } {
   };
 }
 
-const sample = (api: TestApi, id: string, voice: string, signal?: AbortSignal) =>
-  api.fetch("/api/endpoints/sample", { ...jsonBody({ id, voice }), signal });
+const sample = (api: TestApi, id: string, voice: string, signal?: AbortSignal, text?: string) =>
+  api.fetch("/api/endpoints/sample", { ...jsonBody({ id, voice, text }), signal });
 
 const ledger = async (api: TestApi, id = "studio") =>
   (
@@ -179,6 +179,23 @@ describe("a voice heard before", () => {
 
     expect(asked).toHaveLength(1);
     expect(await ledger(api)).toHaveLength(1);
+  });
+
+  test("says the line asked for, and keeps every built-in line beside the others", async () => {
+    const { provider, asked } = recording();
+    const api = testApi({ samples: provider });
+    await saved(api, speech());
+    const say = async (text?: string) =>
+      (await sample(api, "studio", "ash", undefined, text)).headers.get("x-sample-kept");
+
+    expect(await say()).toBe("0");
+    expect(await say(SAMPLE_LINES[1])).toBe("0");
+    expect(asked.map((a) => a.text)).toEqual([VOICE_SAMPLE, SAMPLE_LINES[1]]);
+    // a typed line is kept only until another is typed; the built-in ones stay
+    expect(await say("Hello there.")).toBe("0");
+    expect(await say("Something else.")).toBe("0");
+    expect(await say("Hello there.")).toBe("0");
+    expect([await say(), await say(SAMPLE_LINES[1])]).toEqual(["1", "1"]);
   });
 
   test("is made again once the endpoint would sound different, in place of the old one", async () => {

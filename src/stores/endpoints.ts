@@ -14,6 +14,7 @@ import {
   voiceRef,
 } from "@/lib/endpoints";
 import { ensurePricing } from "@/lib/pricing";
+import { cloningOf } from "@/lib/providers";
 import { configErrors, expressionId, withBrackets } from "@/lib/expressions";
 import { newProfile, profileErrors } from "@/lib/scripting";
 import { BUILT_IN_PROMPT, profilePromptProblems, promptProblems } from "@/lib/prompt";
@@ -202,8 +203,18 @@ export interface HeardSample {
  * this only saves the round trip.
  */
 const samples = new Map<string, HeardSample>();
-const sampleKey = (ep: Endpoint, voiceId: string): string =>
-  JSON.stringify([ep.id, ep.baseUrl, ep.model, encodingOf(ep), ep.sampleRate ?? null, voiceId]);
+const sampleKey = (ep: Endpoint, voiceId: string, text = ""): string =>
+  JSON.stringify([
+    ep.id,
+    ep.baseUrl,
+    ep.model,
+    encodingOf(ep),
+    ep.sampleRate ?? null,
+    voiceId,
+    text,
+  ]);
+/** Object urls of the recordings voices were made from, by endpoint, voice and file. */
+const sources = new Map<string, string>();
 
 /** Off, and priced as free until a rate is set. */
 const blankTranscriber = (): Transcriber => ({
@@ -817,16 +828,33 @@ export const useEndpointsStore = defineStore("endpoints", {
       const ep = this.endpoints.find((e) => e.id === endpointId);
       if (ep) ep.voices = ep.voices.filter((v) => v.id !== voiceId);
     },
-    removeVoice(ep: Endpoint, id: string): void {
+    /** On a server that makes voices it is deleted there first, for good; false when refused. */
+    async removeVoice(ep: Endpoint, id: string): Promise<boolean> {
       const uiStore = useUiStore();
 
       const i = ep.voices.findIndex((v) => v.id === id);
-      if (i < 0) return;
+      if (i < 0) return false;
       const v = ep.voices[i];
+      if (cloningOf(ep)?.deletes) {
+        try {
+          // the server reads the saved endpoint
+          await this.flushWrites();
+          await this._service().deleteVoice(ep.id, id);
+        } catch (cause) {
+          toastFailure(`delete ${v.label} on ${ep.name}`, cause);
+          return false;
+        }
+        ep.voices = ep.voices.filter((x) => x.id !== id);
+        uiStore.toast(`Deleted voice ${v.label} from ${ep.name}`, {
+          description: "It is gone from the server too.",
+        });
+        return true;
+      }
       ep.voices.splice(i, 1);
       uiStore.toast(`Removed voice ${v.label} from ${ep.name}`, {
         undo: () => ep.voices.splice(Math.min(i, ep.voices.length), 0, v),
       });
+      return true;
     },
     // Voice discovery runs on the server (`POST /endpoints/voices`): most OpenAI-compatible servers
     // expose GET /audio/voices; Fish Audio has an authenticated per-account model catalogue, mapped
@@ -876,16 +904,17 @@ export const useEndpointsStore = defineStore("endpoints", {
       return added.length;
     },
     /**
-     * Hear a voice: the provider's recording, or a real (priced) request the server makes once
-     * and keeps. Replayed from this tab after. Null on failure, which has been said.
+     * Hear a voice say `text`, else the default line (or the provider's recording): a real
+     * (priced) request the server makes once and keeps. Replayed from this tab after. Null on
+     * failure, which has been said.
      */
-    async sampleVoice(ep: Endpoint, voiceId: string): Promise<HeardSample | null> {
-      const key = sampleKey(ep, voiceId);
+    async sampleVoice(ep: Endpoint, voiceId: string, text?: string): Promise<HeardSample | null> {
+      const key = sampleKey(ep, voiceId, text);
       const heard = samples.get(key);
       if (heard) return heard;
       try {
         await this.flushWrites();
-        const { blob, duration, source } = await this._service().sampleVoice(ep.id, voiceId);
+        const { blob, duration, source } = await this._service().sampleVoice(ep.id, voiceId, text);
         const sample = { url: URL.createObjectURL(blob), duration, source };
         samples.set(key, sample);
         return sample;
@@ -895,6 +924,24 @@ export const useEndpointsStore = defineStore("endpoints", {
       } finally {
         // a request may have reached the provider either way
         void invalidate({ key: keys.endpointRequests });
+      }
+    },
+    /** The first recording `kept` was made from, to play; null on failure, which has been said. */
+    async sourceRecording(ep: Endpoint, kept: KeptVoiceSamples): Promise<string | null> {
+      const [first] = kept.samples;
+      if (!first) return null;
+      const key = JSON.stringify([ep.id, kept.voiceId, first.file]);
+      const known = sources.get(key);
+      if (known) return known;
+      try {
+        const url = URL.createObjectURL(
+          await this._service().keptSampleFile(ep.id, kept.voiceId, first.file),
+        );
+        sources.set(key, url);
+        return url;
+      } catch (cause) {
+        toastFailure("play the recording", cause);
+        return null;
       }
     },
     /**
@@ -954,32 +1001,6 @@ export const useEndpointsStore = defineStore("endpoints", {
         toastFailure("keep the samples", cause);
         return null;
       }
-    },
-    /**
-     * Forget a voice's kept samples; the voice stays. The server only hides them until a later
-     * save, so Undo works and `restored` hands them back. False when the forget failed.
-     */
-    async forgetVoiceSamples(
-      ep: Endpoint,
-      kept: KeptVoiceSamples,
-      restored: (k: KeptVoiceSamples) => void,
-    ): Promise<boolean> {
-      const svc = this._service();
-      const uiStore = useUiStore();
-      try {
-        await svc.forgetSamples(ep.id, kept.voiceId);
-      } catch (cause) {
-        toastFailure("forget the samples", cause);
-        return false;
-      }
-      uiStore.toast(`Forgot the samples of ${kept.title}`, {
-        description: "The voice stays. The samples go from this server for good after a day.",
-        undo: () =>
-          void svc
-            .restoreSamples(ep.id, kept.voiceId)
-            .then(restored, (cause) => toastFailure("bring the samples back", cause)),
-      });
-      return true;
     },
     /**
      * One page of Fish Audio's public voice search. Results are only shown; `addVoice` adds one.

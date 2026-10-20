@@ -135,6 +135,8 @@ export interface CloneSupport {
    * shape covers every unknown server, most of which make none.
    */
   optIn?: boolean;
+  /** Remove deletes the voice on the server too (`SpeechWire.deleteVoice`), so it has no Undo. */
+  deletes?: boolean;
 }
 
 export interface CloneFee {

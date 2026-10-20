@@ -232,3 +232,15 @@ export const fishApiRoot = (baseUrl: string): string =>
 
 /** One ordinary sentence of narration, the same for every voice. */
 export const VOICE_SAMPLE = "The mountain mist thinned as dawn crept over the outer sect grounds.";
+
+/** What the Voices tab's Preview cycles through, each kept once heard: a question, joy, a hush. */
+export const SAMPLE_LINES: readonly string[] = [
+  VOICE_SAMPLE,
+  "Are you sure this is the right road? It looks nothing like the map.",
+  "We did it! I can't believe we actually made it in time!",
+  "Quiet now. Someone is listening on the other side of the door.",
+  "Long ago, before the cities rose, the river had no name at all.",
+];
+
+/** The longest line a person may type for a preview. */
+export const MAX_SAMPLE_TEXT = 300;

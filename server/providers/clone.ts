@@ -35,6 +35,8 @@ export interface VoiceCloner {
     signal: AbortSignal,
     wentOut?: () => void,
   ): Promise<MadeVoice>;
+  /** Delete a made voice on the provider; one already gone is not a failure. */
+  remove?(target: ProviderTarget, voice: string, signal: AbortSignal): Promise<void>;
 }
 
 // ---------- what a sample is ----------
@@ -111,6 +113,14 @@ export function endpointVoiceCloner(options: VoiceClonerOptions = {}): VoiceClon
           return send(url, init);
         }) as typeof fetch,
       });
+    },
+
+    async remove(target, voice, signal) {
+      const wire = speechProviderOf(target).cloning?.deletes ? wireOf(target).wire : null;
+      if (!wire?.deleteVoice)
+        throw new ProviderError(`${target.name} cannot delete a voice on its server`, 0, false);
+      requireKey(target);
+      await wire.deleteVoice(target, voice, signal, callOptions);
     },
   };
 }

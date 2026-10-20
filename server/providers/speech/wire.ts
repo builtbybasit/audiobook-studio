@@ -34,6 +34,13 @@ export interface SpeechWire {
     signal: AbortSignal,
     options: SpeechCallOptions,
   ): Promise<MadeVoice>;
+  /** Only for a provider whose `cloning.deletes`; a voice already gone is not a failure. */
+  deleteVoice?(
+    target: ProviderTarget,
+    voice: string,
+    signal: AbortSignal,
+    options: SpeechCallOptions,
+  ): Promise<void>;
   /** Asked afresh; the provider caches it. Only the compatible wire has it (`batch.ts`). */
   capabilities?(
     target: ProviderTarget,

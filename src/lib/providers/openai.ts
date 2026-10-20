@@ -65,6 +65,7 @@ export const compatible: SpeechProviderShape = {
     cost: null,
     fee: null,
     optIn: true,
+    deletes: true,
   },
   // unknown servers: many ignore `speed`, so it is stretched here
   speed: () => null,

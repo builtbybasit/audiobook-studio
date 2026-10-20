@@ -80,10 +80,14 @@ export interface EndpointSettingsService {
   batchLimits(id: string): Promise<EndpointBatches>;
   /** Ask the *saved* speech endpoint, with the key the server holds, what voices it offers. */
   listVoices(id: string, query: VoiceListQuery): Promise<VoiceListPage>;
-  /** Have the *saved* speech endpoint say a sentence in one voice. A real, priced request. */
-  sampleVoice(id: string, voice: string): Promise<VoiceSample>;
+  /** Have the *saved* speech endpoint say `text` (else the default line) in one voice. Priced. */
+  sampleVoice(id: string, voice: string, text?: string): Promise<VoiceSample>;
+  /** One recording a voice was made from, as kept on the server. */
+  keptSampleFile(id: string, voice: string, file: string): Promise<Blob>;
   /** Clone on the *saved* endpoint's provider; the server keeps the samples and says if it did. */
   cloneVoice(id: string, request: VoiceCloneRequest): Promise<ClonedVoice>;
+  /** Delete a voice on the *saved* endpoint's server, for good. */
+  deleteVoice(id: string, voice: string): Promise<void>;
   /** Every voice of the *saved* endpoint whose samples are kept. */
   keptSamples(id: string): Promise<KeptVoiceSamples[]>;
   /** Keep samples for a voice cloned before samples were kept. Nothing is sent to the provider. */
@@ -92,10 +96,6 @@ export interface EndpointSettingsService {
     voice: string,
     request: Omit<VoiceCloneRequest, "title">,
   ): Promise<KeptVoiceSamples>;
-  /** Forget one voice's kept samples; the voice stays. */
-  forgetSamples(id: string, voice: string): Promise<void>;
-  /** Undo a forget no save has made final yet. */
-  restoreSamples(id: string, voice: string): Promise<KeptVoiceSamples>;
   /** On transcriber `id`, or the first enabled one. A real request, priced by the minute sent. */
   transcribe(file: File, id?: string): Promise<{ text: string }>;
   /**
@@ -167,6 +167,10 @@ export class HttpEndpointSettingsService implements EndpointSettingsService {
     return this.http.postFormData<ClonedVoice>("/endpoints/voices/clone", form);
   }
 
+  async deleteVoice(id: string, voice: string): Promise<void> {
+    await this.http.delete<null>(`/endpoints/${seg(id)}/voices/${seg(voice)}`);
+  }
+
   transcribe(file: File, id?: string): Promise<{ text: string }> {
     const form = new FormData();
     form.set("file", file, file.name);
@@ -186,21 +190,21 @@ export class HttpEndpointSettingsService implements EndpointSettingsService {
     return this.http.postFormData<KeptVoiceSamples>(samplesPath(id, voice), samplesForm(request));
   }
 
-  async forgetSamples(id: string, voice: string): Promise<void> {
-    await this.http.delete<null>(samplesPath(id, voice));
-  }
-
-  restoreSamples(id: string, voice: string): Promise<KeptVoiceSamples> {
-    return this.http.post<KeptVoiceSamples>(`${samplesPath(id, voice)}/restore`);
-  }
-
   async live(): Promise<Record<string, EndpointLive>> {
     return (await this.http.get<{ endpoints: Record<string, EndpointLive> }>("/endpoints/live"))
       .endpoints;
   }
 
-  async sampleVoice(id: string, voice: string): Promise<VoiceSample> {
-    const { blob, headers } = await this.http.postForFile("/endpoints/sample", { id, voice });
+  keptSampleFile(id: string, voice: string, file: string): Promise<Blob> {
+    return this.http.getBlob(`${samplesPath(id, voice)}/${seg(file)}`);
+  }
+
+  async sampleVoice(id: string, voice: string, text?: string): Promise<VoiceSample> {
+    const { blob, headers } = await this.http.postForFile("/endpoints/sample", {
+      id,
+      voice,
+      ...(text ? { text } : {}),
+    });
     return {
       blob,
       duration: Number(headers.get("x-audio-duration")) || null,

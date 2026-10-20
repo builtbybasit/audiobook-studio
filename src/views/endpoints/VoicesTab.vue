@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { sizeLabel } from "@/lib/audioFormat";
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { SAMPLE_TITLE, sampleId, useVoiceSample } from "@/composables/useVoiceSample";
@@ -12,6 +11,7 @@ import { computed, reactive, ref, watch } from "vue";
 import { keyInPlace } from "@/services/endpointSettings";
 import {
   Archive as KeptIcon,
+  AudioLines as SourceIcon,
   LoaderCircle as BusyIcon,
   Pause as PauseIcon,
   Play as PlayIcon,
@@ -21,10 +21,11 @@ import {
   X as RemoveIcon,
   Search as SearchIcon,
 } from "@lucide/vue";
-import { UiHint, UiNumber, UiSelect, UiSwitch, UiTooltip } from "@/ui";
+import { UiHint, UiSelect, UiSwitch, UiTooltip } from "@/ui";
 import { plural } from "@/lib/contents";
 import { isFishAudio } from "@/lib/endpoints";
-import { cloningOf, SPEAKER_SPEED, speechProviderOf } from "@/lib/providers";
+import { cloningOf, speechProviderOf } from "@/lib/providers";
+import { MAX_SAMPLE_TEXT, SAMPLE_LINES } from "@/lib/endpointShapes";
 import {
   pickProblem,
   requestOf,
@@ -35,6 +36,7 @@ import CloneVoicePanel from "@/views/endpoints/CloneVoicePanel.vue";
 import FishVoiceSearch from "@/views/endpoints/FishVoiceSearch.vue";
 import { GENDER_ICON, GENDERS } from "@/views/endpoints/genders";
 import SamplePicker from "@/views/endpoints/SamplePicker.vue";
+import SpeedPicker from "@/components/SpeedPicker.vue";
 import type { Endpoint, Gender, KeptVoiceSamples, Voice } from "@/types";
 
 const props = defineProps<{ endpoint: Endpoint }>();
@@ -96,8 +98,7 @@ const cloningOptIn = computed(() => !!speechProviderOf(props.endpoint).cloning?.
 
 // ---------- kept samples ----------
 // The server can't tell a cloned voice without kept samples from any other, so every voice without
-// them offers to keep them. A removed voice's samples last a day so Undo restores them; the list
-// is re-read whenever the voices change.
+// them offers to keep them. The list is re-read whenever the voices change.
 const kept = ref<Record<string, KeptVoiceSamples>>({});
 async function loadKept() {
   const list = clonable.value ? await endpointsStore.keptSamples(props.endpoint) : [];
@@ -108,10 +109,6 @@ watch(
   loadKept,
   { immediate: true },
 );
-const keptTitle = (k: KeptVoiceSamples) =>
-  `${plural(k.samples.length, "sample")} kept on this server, ${sizeLabel(
-    k.samples.reduce((n, x) => n + x.bytes, 0),
-  )}`;
 
 const keep = reactive({
   voiceId: null as string | null,
@@ -156,19 +153,38 @@ async function keepSamples() {
     keep.busy = false;
   }
 }
-async function forgetKept(v: Voice) {
-  const k = kept.value[v.id];
-  if (!k) return;
-  const restored = (back: KeptVoiceSamples) => (kept.value = { ...kept.value, [v.id]: back });
-  if (!(await endpointsStore.forgetVoiceSamples(props.endpoint, k, restored))) return;
-  const { [v.id]: _, ...rest } = kept.value;
-  kept.value = rest;
-}
 
 // ---------- samples ----------
 // The provider's own recording, or else a real, priced request made once and kept by the server.
-const { loading: sampling, play: playSample, playingId } = useVoiceSample();
+// Each press says the next of `SAMPLE_LINES`, or the line typed above the list; a press while
+// one plays pauses it.
+const { loading: sampling, play: playSample, playUrl, playingId } = useVoiceSample();
 const idOf = (v: Voice) => sampleId(props.endpoint.id, v.id);
+const ownLine = ref("");
+const nextLine: Record<string, number> = {};
+/** what each voice's button last played, under its player id */
+const heard = ref<Record<string, { id: string; text?: string }>>({});
+const busyOn = (v: Voice) => !!sampling.value?.startsWith(idOf(v));
+const playingOn = (v: Voice) => !!heard.value[v.id] && playingId(heard.value[v.id].id);
+function preview(v: Voice) {
+  let next = heard.value[v.id];
+  if (!next || !playingId(next.id)) {
+    const own = ownLine.value.trim();
+    const n = nextLine[v.id] ?? 0;
+    if (!own) nextLine[v.id] = (n + 1) % SAMPLE_LINES.length;
+    next = own
+      ? { id: `${idOf(v)}#own:${own}`, text: own }
+      : { id: `${idOf(v)}#${n}`, ...(n ? { text: SAMPLE_LINES[n] } : {}) };
+    heard.value = { ...heard.value, [v.id]: next };
+  }
+  return playSample(props.endpoint, v.id, v.label, next.id, next.text);
+}
+const sourceId = (v: Voice) => `source:${props.endpoint.id}/${v.id}`;
+async function playSource(v: Voice) {
+  const k = kept.value[v.id];
+  const url = k && (await endpointsStore.sourceRecording(props.endpoint, k));
+  if (url) await playUrl(sourceId(v), url, `${v.label} · recording`);
+}
 const sampleTitle = computed(() =>
   needsKeyFirst.value
     ? "Save a key for this endpoint first: a sample is a real request"
@@ -290,16 +306,27 @@ const sampleTitle = computed(() =>
             text="Renaming a voice re-routes nothing, since the id is what is sent; removing one leaves its speakers unrouted in every book, undoable from the toast."
           />
         </h3>
-        <div v-if="endpoint.voices.length > 8" class="relative">
-          <SearchIcon
-            class="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-zinc-400 icon"
-          />
+        <div class="flex flex-wrap items-center gap-2">
           <input
-            v-model="q"
-            class="input w-48 pl-7!"
-            placeholder="Filter voices…"
-            aria-label="Filter voices by name or id"
+            v-if="endpoint.voices.length"
+            v-model="ownLine"
+            class="input w-40 transition-[width] focus:w-72 not-placeholder-shown:w-72"
+            :maxlength="MAX_SAMPLE_TEXT"
+            placeholder="Preview line…"
+            title="What Preview says. Left blank, each press says the next of a few built-in lines."
+            aria-label="What Preview says"
           />
+          <div v-if="endpoint.voices.length > 8" class="relative">
+            <SearchIcon
+              class="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-zinc-400 icon"
+            />
+            <input
+              v-model="q"
+              class="input w-48 pl-7!"
+              placeholder="Filter voices…"
+              aria-label="Filter voices by name or id"
+            />
+          </div>
         </div>
       </div>
 
@@ -318,7 +345,7 @@ const sampleTitle = computed(() =>
 
       <div v-else class="label flex gap-2 pb-1">
         <span class="w-3 shrink-0"></span><span class="w-40">Label</span>
-        <span class="w-20">
+        <span class="w-14 shrink-0 whitespace-nowrap">
           Speed
           <UiHint
             label="a voice's speed"
@@ -339,15 +366,8 @@ const sampleTitle = computed(() =>
             class="input w-40 py-0.5"
             :aria-label="`Label for voice ${v.id}`"
           />
-          <UiNumber
-            class="w-20 shrink-0"
+          <SpeedPicker
             :model-value="v.speed ?? null"
-            placeholder="1"
-            :min="SPEAKER_SPEED.min"
-            :max="SPEAKER_SPEED.max"
-            :step="0.01"
-            :empty="null"
-            unit="×"
             :label="`Speed for ${v.label}`"
             @update:model-value="(x) => endpointsStore.setVoiceSpeed(endpoint, v.id, x)"
           />
@@ -362,40 +382,16 @@ const sampleTitle = computed(() =>
             :aria-label="`Gender for ${v.label}`"
             @update:model-value="(g) => (v.gender = g as Gender)"
           />
-          <UiTooltip
-            :text="
-              countOf(v)
-                ? usageTitle(v)
-                : 'Not assigned to any speaker. Removing it affects nothing.'
-            "
-          >
+          <UiTooltip v-if="countOf(v)" :text="usageTitle(v)">
             <span
-              class="w-24 shrink-0 cursor-help text-right text-[11px]"
-              :class="countOf(v) ? 'text-violet-600 dark:text-violet-300' : 'text-zinc-400'"
-              >{{ countOf(v) ? plural(countOf(v), "speaker") : "unused" }}</span
+              class="w-24 shrink-0 cursor-help text-right text-[11px] text-violet-600 dark:text-violet-300"
+              >{{ plural(countOf(v), "speaker") }}</span
             >
           </UiTooltip>
+          <span v-else class="w-24 shrink-0"></span>
           <template v-if="clonable">
-            <UiTooltip v-if="kept[v.id]" :text="keptTitle(kept[v.id])">
-              <span
-                class="flex shrink-0 cursor-help items-center gap-1 text-[11px] text-emerald-700 dark:text-emerald-400"
-                ><KeptIcon class="icon-sm" />{{
-                  plural(kept[v.id].samples.length, "sample")
-                }}
-                kept</span
-              >
-            </UiTooltip>
             <button
-              v-if="kept[v.id]"
-              class="btn-ghost btn-xs shrink-0 hover:text-red-500"
-              :aria-label="`Forget the samples kept for ${v.label}`"
-              title="Forget the samples kept for this voice — the voice stays"
-              @click="forgetKept(v)"
-            >
-              <RemoveIcon class="icon-sm" /> Forget
-            </button>
-            <button
-              v-else
+              v-if="!kept[v.id]"
               class="btn-ghost btn-xs shrink-0"
               :aria-expanded="keep.voiceId === v.id"
               title="Keep the samples this voice was made from, so it can go with a book's script"
@@ -403,26 +399,36 @@ const sampleTitle = computed(() =>
             >
               Keep its samples…
             </button>
+            <button
+              v-else
+              class="btn-ghost btn-xs shrink-0"
+              :aria-label="`${playingId(sourceId(v)) ? 'Pause' : 'Play'} the recording ${v.label} was made from`"
+              title="The recording this voice was made from, not the voice itself"
+              :disabled="!!sampling && sampling !== sourceId(v)"
+              @click="playSource(v)"
+            >
+              <PauseIcon v-if="playingId(sourceId(v))" class="icon-sm icon-fill" />
+              <SourceIcon v-else class="icon-sm" />
+            </button>
           </template>
           <button
             class="btn-ghost btn-xs shrink-0"
-            :aria-label="`${playingId(idOf(v)) ? 'Pause' : 'Preview'} ${v.label}`"
+            :aria-label="`${playingOn(v) ? 'Pause' : 'Preview'} ${v.label}`"
             :title="sampleTitle"
-            :disabled="needsKeyFirst || (!!sampling && sampling !== idOf(v))"
-            :aria-busy="sampling === idOf(v)"
-            @click="playSample(endpoint, v.id, v.label)"
+            :disabled="needsKeyFirst || (!!sampling && !busyOn(v))"
+            :aria-busy="busyOn(v)"
+            @click="preview(v)"
           >
-            <BusyIcon v-if="sampling === idOf(v)" class="icon-sm animate-spin" />
-            <PauseIcon v-else-if="playingId(idOf(v))" class="icon-sm icon-fill" />
+            <BusyIcon v-if="busyOn(v)" class="icon-sm animate-spin" />
+            <PauseIcon v-else-if="playingOn(v)" class="icon-sm icon-fill" />
             <PlayIcon v-else class="icon-sm icon-fill" />
           </button>
           <button
             class="btn-ghost btn-xs shrink-0 hover:text-red-500"
             :aria-label="`Remove ${v.label}`"
             :title="
-              countOf(v)
-                ? `Remove — ${countOf(v)} speaker(s) lose their routing until repicked`
-                : 'Remove'
+              (cloning?.deletes ? 'Delete on the server, for good' : 'Remove') +
+              (countOf(v) ? ` — ${countOf(v)} speaker(s) lose their routing until repicked` : '')
             "
             @click="endpointsStore.removeVoice(endpoint, v.id)"
           >

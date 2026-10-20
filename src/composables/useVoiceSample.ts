@@ -32,17 +32,18 @@ export function useVoiceSample() {
   }
 
   /**
-   * Play a voice's sample under `id` (the public search passes its own for unlisted voices). A
-   * sample without a server-known duration has its file read first.
+   * Play a voice's sample under `id` (the public search passes its own for unlisted voices), saying
+   * `text` if given. A sample without a server-known duration has its file read first.
    */
   function play(
     ep: Endpoint,
     voiceId: string,
     title = voiceId,
     id = sampleId(ep.id, voiceId),
+    text?: string,
   ): Promise<void> {
     return oneAtATime(id, async () => {
-      const sample = await endpointsStore.sampleVoice(ep, voiceId);
+      const sample = await endpointsStore.sampleVoice(ep, voiceId, text);
       if (!sample) return;
       if (sample.duration) player.play(id, sample.duration, sample.url);
       else await player.playFile(id, sample.url, title);

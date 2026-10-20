@@ -117,13 +117,13 @@ body {
 
 .btn-primary,
 .btn-ghost {
-  @apply inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-40 disabled:pointer-events-none;
+  @apply inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-40;
 }
 .btn-primary {
-  @apply bg-violet-600 text-white hover:bg-violet-500;
+  @apply bg-violet-600 text-white enabled:hover:bg-violet-500;
 }
 .btn-ghost {
-  @apply border border-zinc-300 hover:bg-zinc-200 dark:border-zinc-700 dark:hover:bg-zinc-800;
+  @apply border border-zinc-300 enabled:hover:bg-zinc-200 dark:border-zinc-700 dark:enabled:hover:bg-zinc-800;
 }
 .btn-xs {
   @apply px-2 py-0.5 text-xs;

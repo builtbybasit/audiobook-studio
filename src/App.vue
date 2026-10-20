@@ -32,6 +32,7 @@ import { useShell } from "@/composables/useShell";
 import { modKey } from "@/lib/format";
 import { isDemo } from "@/services/mode";
 import { TooltipProvider } from "reka-ui";
+import { UiTipLayer } from "@/ui";
 import { showCovers } from "@/views/library/shared";
 
 const uiStore = useUiStore();
@@ -201,5 +202,6 @@ const palette = ref<InstanceType<typeof CommandPalette> | null>(null);
       <MiniPlayer />
       <Toasts />
     </div>
+    <UiTipLayer />
   </TooltipProvider>
 </template>

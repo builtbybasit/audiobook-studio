@@ -5,7 +5,8 @@
 import { cpus } from "node:os";
 import { fileURLToPath } from "node:url";
 
-import type { AudioFormat, Step } from "@/types";
+import type { Step } from "@/types";
+import type { SampleFormat } from "~/providers/clone";
 
 export const SCRIPT = fileURLToPath(new URL("./effects.py", import.meta.url));
 export const PEDALBOARD = "pedalboard==0.9.26";
@@ -25,7 +26,7 @@ export interface EffectRunner {
   /** The chains in order; answers 16-bit WAV bytes. */
   render(
     bytes: Uint8Array,
-    format: AudioFormat,
+    format: SampleFormat,
     chains: Step[][],
     signal: AbortSignal,
   ): Promise<Uint8Array>;

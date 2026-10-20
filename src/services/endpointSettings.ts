@@ -67,6 +67,8 @@ export interface VoiceSample {
   duration: number | null;
   /** the provider's own recording of the voice, or the endpoint saying the sample sentence */
   source: "recording" | "rendered";
+  /** the voice's speed is made on the server and could not be: it plays at 1× */
+  unstretched: boolean;
 }
 
 export interface EndpointSettingsService {
@@ -236,6 +238,7 @@ export class HttpEndpointSettingsService implements EndpointSettingsService {
       blob,
       duration: Number(headers.get("x-audio-duration")) || null,
       source: headers.get("x-sample-source") === "recording" ? "recording" : "rendered",
+      unstretched: headers.get("x-sample-unstretched") === "1",
     };
   }
 }

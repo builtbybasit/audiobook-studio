@@ -14,7 +14,8 @@ import type { SpeechInput, SpeechProvider } from "~/providers/speech";
 import { readWavHeader } from "~/providers/wav";
 import { heldToday } from "~/usage/budget";
 import { saved } from "../support/cloning";
-import { jsonBody, testApi, type TestApi } from "../support/server";
+import { fakeEffectRunner } from "../support/effects";
+import { jsonBody, testApi, type TestApi, type TestApiOptions } from "../support/server";
 
 const speech = (over: Partial<Endpoint> = {}): Endpoint => ({
   id: "studio",
@@ -261,7 +262,7 @@ describe("a Fish voice", () => {
     });
 
   /** Fish, answering the model with `samples` and the recording's file from its CDN. */
-  function fishApi(samples: unknown[] | Response) {
+  function fishApi(samples: unknown[] | Response, over: TestApiOptions = {}) {
     const seen: string[] = [];
     const fetch = (async (input: string | URL | Request) => {
       const url = input instanceof Request ? input.url : input.toString();
@@ -276,6 +277,7 @@ describe("a Fish voice", () => {
     const api = testApi({
       samples: speaking.provider,
       voices: endpointVoiceLister({ fetch, backoffMs: () => 0 }),
+      ...over,
     });
     return { api, seen, asked: speaking.asked };
   }
@@ -327,5 +329,51 @@ describe("a Fish voice", () => {
     expect(res.headers.get("x-sample-source")).toBe("rendered");
     expect(seen).toEqual([`https://api.fish.audio/model/${FISH_VOICE}`]);
     expect(asked).toHaveLength(1);
+  });
+
+  test("at a speed Fish takes is rendered at it, as the recording can't carry it", async () => {
+    const { api, asked } = fishApi([{ title: "s", text: "Hello there.", audio: RECORDING }]);
+    const eren = (speed: number) => [
+      { id: FISH_VOICE, gender: "m" as const, label: "Eren", speed },
+    ];
+    await saved(api, fish({ voices: eren(1.5) }));
+    expect((await sample(api, "fish", FISH_VOICE)).headers.get("x-sample-source")).toBe("rendered");
+
+    await saved(api, fish({ voices: eren(1) }));
+    expect((await sample(api, "fish", FISH_VOICE)).headers.get("x-sample-source")).toBe(
+      "recording",
+    );
+    expect(asked.map((a) => a.speed)).toEqual([1.5]);
+  });
+});
+
+describe("a voice with a speed of its own", () => {
+  const ash = (speed: number) => [{ id: "ash", gender: "m" as const, label: "Ash", speed }];
+  // `speech()` is a server whose speed is unknown, so a speed is made here
+  test("stretches one the endpoint can't take, keeping the 1× it was made from", async () => {
+    const { provider, asked } = recording();
+    const fx = fakeEffectRunner();
+    const api = testApi({ samples: provider, effects: fx });
+    await saved(api, speech({ voices: ash(1.5) }));
+
+    expect((await sample(api, "studio", "ash")).headers.get("x-sample-unstretched")).toBeNull();
+    const again = await sample(api, "studio", "ash");
+    expect(again.headers.get("x-sample-kept")).toBe("1");
+    expect(asked.map((a) => a.speed)).toEqual([null]);
+    expect(fx.calls.render.map((r) => r.chains)).toEqual([
+      [[{ plugin: "TimeStretch", params: { stretch_factor: 1.5 }, on: true }]],
+      [[{ plugin: "TimeStretch", params: { stretch_factor: 1.5 }, on: true }]],
+    ]);
+  });
+
+  test("plays at 1×, and says so, where the stretch can't run", async () => {
+    const fx = fakeEffectRunner();
+    fx.ready = false;
+    const api = testApi({ samples: fakeSpeechProvider(), effects: fx });
+    await saved(api, speech({ voices: ash(1.5) }));
+    const res = await sample(api, "studio", "ash");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-sample-unstretched")).toBe("1");
+    expect(fx.calls.render).toEqual([]);
   });
 });

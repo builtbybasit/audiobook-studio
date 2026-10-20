@@ -211,6 +211,7 @@ const sampleKey = (ep: Endpoint, voiceId: string, text = ""): string =>
     encodingOf(ep),
     ep.sampleRate ?? null,
     voiceId,
+    ep.voices.find((v) => v.id === voiceId)?.speed ?? 1,
     text,
   ]);
 /** Object urls of the recordings voices were made from, by endpoint, voice and file. */
@@ -914,9 +915,19 @@ export const useEndpointsStore = defineStore("endpoints", {
       if (heard) return heard;
       try {
         await this.flushWrites();
-        const { blob, duration, source } = await this._service().sampleVoice(ep.id, voiceId, text);
+        const { blob, duration, source, unstretched } = await this._service().sampleVoice(
+          ep.id,
+          voiceId,
+          text,
+        );
         const sample = { url: URL.createObjectURL(blob), duration, source };
-        samples.set(key, sample);
+        // not kept, so the next press tries the speed again
+        if (unstretched)
+          useUiStore().toast("Played at 1×", {
+            kind: "warning",
+            description: "This voice's speed is made with Pedalboard, which needs uv.",
+          });
+        else samples.set(key, sample);
         return sample;
       } catch (cause) {
         toastFailure("play the sample", cause);

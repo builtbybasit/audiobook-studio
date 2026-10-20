@@ -11,7 +11,8 @@ import type {
   VoiceListPage,
 } from "@/types";
 import { profilePromptProblems, promptProblems, resolvePrompt } from "@/lib/prompt";
-import { isSimulated } from "@/lib/providers";
+import { isSimulated, speedSplit } from "@/lib/providers";
+import { runnable, stretchEffect } from "@/lib/effects";
 import { billingOf } from "@/lib/endpoints";
 import { worstCaseOf } from "@/lib/narrationCost";
 import { AUDIO_CHARS_PER_SECOND, estimateSpeech, measureSpeech, readPricing } from "@/lib/pricing";
@@ -34,6 +35,7 @@ import { AppError, badRequest, notFound } from "~/lib/errors";
 import { refusePrompt } from "~/lib/schemas";
 import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import { ProviderError } from "~/providers/http";
+import type { EffectRunner } from "~/audio/effects";
 import { SAMPLE_HEAD_BYTES, SAMPLE_MIME, sniffSample, type SampleFormat } from "~/providers/clone";
 import {
   scriptTarget,
@@ -276,31 +278,43 @@ export interface VoiceSampleAudio {
   source: "recording" | "rendered";
   /** served from disk, without asking the provider */
   kept: boolean;
+  /** the voice's speed is made here and could not be: it plays at 1× */
+  unstretched: boolean;
 }
 
 /** The cache key for a provider's own recording; the same whatever the endpoint's settings. */
 const RECORDING = "recording";
 
-/** The cache key for a rendered sample: everything that changes how it sounds. */
-const renderedAs = (ep: Endpoint, text: string): string =>
-  JSON.stringify(["rendered", ep.baseUrl, ep.model, encodingOf(ep), ep.sampleRate ?? null, text]);
+/** The cache key for a rendered sample: everything the provider is asked that changes its sound. */
+const renderedAs = (ep: Endpoint, text: string, speed: number | null): string =>
+  JSON.stringify([
+    "rendered",
+    ep.baseUrl,
+    ep.model,
+    encodingOf(ep),
+    ep.sampleRate ?? null,
+    text,
+    ...(speed == null ? [] : [speed]),
+  ]);
 
 /** What stays kept beside a new clip: the recording and every built-in line as it sounds now. */
-const stillHeard = (ep: Endpoint): string[] => [
+const stillHeard = (ep: Endpoint, speed: number | null): string[] => [
   RECORDING,
-  ...SAMPLE_LINES.map((t) => renderedAs(ep, t)),
+  ...SAMPLE_LINES.map((t) => renderedAs(ep, t, speed)),
 ];
 
 /**
  * A voice's demo audio, cheapest first: the copy kept on disk, the provider's own free recording
  * (Fish keeps one), else `text` rendered in the endpoint's format, billed once and kept. Only the
  * default line plays the recording. Simulated samples are never kept. One attempt, so a failure
- * shows at once.
+ * shows at once. At the voice's speed as narration makes it: sent with the request (so not the
+ * recording, which can't carry it), else stretched here and never kept, so 1× stays on disk.
  */
 export async function sampleVoice(
   db: Db,
   providers: Providers,
   files: VoiceFiles,
+  effects: EffectRunner | undefined,
   id: string,
   voiceId: string,
   signal: AbortSignal,
@@ -309,21 +323,38 @@ export async function sampleVoice(
   const ep = readEndpoint(db, id);
   if (!ep) throw notFound("There is no saved speech endpoint by that id", `id: ${id}`);
   const simulated = isSimulated(ep.baseUrl);
-  const rendered = renderedAs(ep, text);
-  const asDefault = text === VOICE_SAMPLE;
-  const heard = (
+  const voice = ep.voices.find((v) => v.id === voiceId);
+  const { sent, stretched } = speedSplit(ep, voice?.speed);
+  const rendered = renderedAs(ep, text, sent);
+  const asDefault = text === VOICE_SAMPLE && sent == null;
+  const heard = async (
     bytes: Uint8Array,
     format: SampleFormat,
     made: string,
     kept: boolean,
     duration: number | null = null,
-  ): VoiceSampleAudio => ({
-    bytes,
-    mime: SAMPLE_MIME[format],
-    duration,
-    source: made === RECORDING ? "recording" : "rendered",
-    kept,
-  });
+  ): Promise<VoiceSampleAudio> => {
+    const source = made === RECORDING ? "recording" : "rendered";
+    if (!stretched) {
+      return { bytes, mime: SAMPLE_MIME[format], duration, source, kept, unstretched: false };
+    }
+    if (!(await effects?.available())) {
+      return { bytes, mime: SAMPLE_MIME[format], duration, source, kept, unstretched: true };
+    }
+    let wav: Uint8Array;
+    try {
+      wav = await effects!.render(
+        bytes,
+        format,
+        [runnable(stretchEffect(stretched).chain)],
+        signal,
+      );
+    } catch (e) {
+      if (signal.aborted) throw e;
+      throw badRequest(`The voice's speed could not be made: ${(e as Error).message}`);
+    }
+    return { bytes: wav, mime: SAMPLE_MIME.wav, duration: null, source, kept, unstretched: false };
+  };
 
   if (!simulated) {
     const kept = await files.heard.read(
@@ -340,13 +371,12 @@ export async function sampleVoice(
         RECORDING,
         recording.bytes,
         recording.format,
-        stillHeard(ep),
+        stillHeard(ep, sent),
       );
       return heard(recording.bytes, recording.format, RECORDING, false);
     }
   }
 
-  const voice = ep.voices.find((v) => v.id === voiceId);
   const speaker = voice?.label || voiceId;
   const provider = providers.samples ?? endpointSpeechProvider();
   // billed like a line of narration, so held to the endpoint's daily limit
@@ -378,7 +408,7 @@ export async function sampleVoice(
       instructions: "",
       voiceRef: `${ep.id}/${voiceId}`,
       sampleRate: ep.sampleRate ?? null,
-      speed: null,
+      speed: sent,
       encoding: encodingOf(ep),
       target: { ...speechTarget(db, ep), maxRetries: 0 },
       signal,
@@ -392,7 +422,7 @@ export async function sampleVoice(
   // kept before answering, so the next press finds it; a failure to keep only logs
   if (!simulated)
     await warnIfFails(
-      files.heard.keep(ep.id, voiceId, rendered, clip.bytes, clip.format, stillHeard(ep)),
+      files.heard.keep(ep.id, voiceId, rendered, clip.bytes, clip.format, stillHeard(ep, sent)),
       "voice sample not kept",
       { id, voiceId },
     );

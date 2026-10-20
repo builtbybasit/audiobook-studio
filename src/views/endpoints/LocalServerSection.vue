@@ -52,7 +52,7 @@ const canStop = computed(() =>
       />
     </h3>
     <div class="grid gap-3 sm:grid-cols-2">
-      <div class="space-y-1 text-xs font-medium">
+      <div class="space-y-1 text-xs font-medium sm:col-span-2">
         <span
           ><span :id="`${u.key}-dir-label`">Folder</span>
           <UiHint label="the folder" text="Leave it empty to start in your home folder."
@@ -80,7 +80,7 @@ const canStop = computed(() =>
           :aria-labelledby="`${u.key}-command-label`"
         />
       </div>
-      <div class="space-y-1 text-xs font-medium sm:col-span-2">
+      <div class="space-y-1 text-xs font-medium">
         <span
           ><span :id="`${u.key}-stop-label`">Stop command</span>
           <UiHint

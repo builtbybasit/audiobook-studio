@@ -3,7 +3,7 @@
 // them as text rather than as part of "Open …".
 import { computed, ref } from "vue";
 import { plural } from "@/lib/contents";
-import { hours, TONE } from "@/views/library/shared";
+import { hours, showCovers, TONE } from "@/views/library/shared";
 import { useBookFacts } from "@/views/library/bookFacts";
 import BookMenu from "@/views/library/BookMenu.vue";
 import BookCover from "@/components/BookCover.vue";
@@ -122,19 +122,27 @@ const audiobook = computed(() => {
       data-card-open
       @click="emit('open')"
     >
-      <BookCover :book="book" class="aspect-[4/5] p-4">
+      <BookCover
+        :book="book"
+        class="aspect-[4/5] p-4"
+        :class="showCovers ? 'text-white' : 'text-zinc-700 dark:text-zinc-200'"
+      >
         <!-- a soft vignette so white text reads on the paler covers -->
         <div
+          v-if="showCovers"
           class="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/35 via-transparent to-black/10"
         ></div>
         <div class="relative pr-6">
-          <div class="font-serif text-lg font-semibold leading-tight text-white drop-shadow">
+          <div
+            class="font-serif text-lg font-semibold leading-tight"
+            :class="showCovers && 'drop-shadow'"
+          >
             {{ book.title }}
           </div>
-          <div class="mt-1 text-xs text-white/85">{{ book.author }}</div>
+          <div class="mt-1 text-xs opacity-85">{{ book.author }}</div>
         </div>
         <div
-          class="absolute inset-x-0 bottom-0 flex items-center justify-between px-4 pb-3 text-[11px] text-white/90"
+          class="absolute inset-x-0 bottom-0 flex items-center justify-between px-4 pb-3 text-[11px] opacity-90"
         >
           <span
             >{{ plural(contents.included, "chapter")

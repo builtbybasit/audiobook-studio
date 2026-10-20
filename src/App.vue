@@ -13,6 +13,8 @@ import DemoTools from "@/components/DemoTools.vue";
 import {
   X as CloseIcon,
   Headphones as LogoIcon,
+  Image as CoversIcon,
+  ImageOff as NoCoversIcon,
   Menu as MenuIcon,
   Moon as MoonIcon,
   Search as SearchIcon,
@@ -30,6 +32,7 @@ import { useShell } from "@/composables/useShell";
 import { modKey } from "@/lib/format";
 import { isDemo } from "@/services/mode";
 import { TooltipProvider } from "reka-ui";
+import { showCovers } from "@/views/library/shared";
 
 const uiStore = useUiStore();
 const player = usePlayer();
@@ -171,6 +174,14 @@ const palette = ref<InstanceType<typeof CommandPalette> | null>(null);
                 class="hidden rounded border border-zinc-200 px-1 font-mono text-[10px] sm:inline dark:border-zinc-700"
                 >{{ modKey }} K</kbd
               >
+            </button>
+            <button
+              class="btn-ghost btn-xs"
+              :title="showCovers ? 'Hide book covers' : 'Show book covers'"
+              :aria-pressed="showCovers"
+              @click="showCovers = !showCovers"
+            >
+              <component :is="showCovers ? NoCoversIcon : CoversIcon" class="icon" />
             </button>
             <DemoTools />
             <JobIndicator />

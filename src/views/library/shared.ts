@@ -1,6 +1,7 @@
 // The one thing worth doing on this book, as a verb and where it happens.
 // One chain for the shelf card and the overview banner, so they agree: `label` is the button,
 // `text` the sentence where there is room.
+import { useStorage } from "@vueuse/core";
 import { plural } from "@/lib/contents";
 import type { BookProgress, ExportUpdate } from "@/types";
 
@@ -158,6 +159,9 @@ export const TONE_TEXT: Record<NextStep["tone"], string> = {
   zinc: "text-zinc-500",
   red: "text-red-600 dark:text-red-400",
 };
+
+/** Real covers are opt-in from the header; a gray placeholder stands in until then. */
+export const showCovers = useStorage("audiobook-ui.covers", false);
 
 /** The generated cover, as an inline style. */
 export const coverStyle = (cover: [string, string]) => ({

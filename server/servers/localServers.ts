@@ -31,7 +31,7 @@ import type { LaunchTarget } from "~/providers/target";
 export interface Launchable {
   /** for messages */
   name: string;
-  /** asked until anything answers, even a 404 */
+  /** ready once `/health` at its origin says so (`isReady`) */
   baseUrl: string;
   localServer: LaunchTarget;
 }
@@ -64,6 +64,8 @@ const TRY_MS = 2000;
 const RECHECK_MS = 10_000;
 /** enough of a log's end for `OUTPUT_LINES` lines */
 const TAIL_BYTES = 16 * 1024;
+/** a `/health` status still loading the model: OmniVoice answers 200 `{status: "loading"}` */
+const LOADING = /load|start|init|warm/i;
 // oxlint-disable-next-line no-control-regex -- the escape that starts a colour code
 const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
 
@@ -159,6 +161,18 @@ function race<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
     signal.addEventListener("abort", abort, { once: true });
     p.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
   });
+}
+
+/**
+ * Servers listen before their model loads, so answering isn't ready. A 404 means no health route,
+ * and answering is all it can say.
+ */
+export async function isReady(res: Response): Promise<boolean> {
+  if (res.status === 404) return true;
+  if (!res.ok) return false;
+  const body: unknown = await res.json().catch(() => null);
+  const status = (body as { status?: unknown } | null)?.status;
+  return !(typeof status === "string" && LOADING.test(status));
 }
 
 function readSaved(file: string): Saved[] {
@@ -320,14 +334,25 @@ export function createLocalServers(options: LocalServersOptions = {}): LocalServ
     }
   }
 
+  async function healthy(baseUrl: string, signal: AbortSignal): Promise<boolean> {
+    try {
+      const res = await send(new URL("/health", baseUrl), {
+        signal: AbortSignal.any([signal, AbortSignal.timeout(TRY_MS)]),
+      });
+      return await isReady(res);
+    } catch {
+      return false;
+    }
+  }
+
   async function ready(r: Run, signal: AbortSignal): Promise<void> {
     const sec = r.launch.readySec ?? DEFAULT_READY_SEC;
     const deadline = Date.now() + sec * 1000;
     for (;;) {
       if (signal.aborted) throw signal.reason;
-      if (await answers(r.baseUrl, signal)) return;
+      if (await healthy(r.baseUrl, signal)) return;
       if (signal.aborted) throw signal.reason;
-      if (Date.now() >= deadline) throw new Error(`it didn't answer within ${sec} s`);
+      if (Date.now() >= deadline) throw new Error(`it wasn't ready within ${sec} s`);
       await sleep(pollMs, signal);
     }
   }

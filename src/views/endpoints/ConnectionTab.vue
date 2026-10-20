@@ -7,6 +7,7 @@ import { plural } from "@/lib/contents";
 // Edits are staged (see state.ts); with work in flight, Save asks first.
 import { computed, ref, watch } from "vue";
 import { keyInPlace } from "@/services/endpointSettings";
+import LocalServerSection from "@/views/endpoints/LocalServerSection.vue";
 import ServerKeyField from "@/views/endpoints/ServerKeyField.vue";
 import { UiHint, UiSelect, UiSwitch, UiTooltip } from "@/ui";
 import {
@@ -35,6 +36,7 @@ import {
   discardDraft,
   draftChanges,
   draftFor,
+  launchProblem,
   stagePreset,
   ui,
 } from "@/views/endpoints/state";
@@ -140,6 +142,7 @@ function save() {
   const name = draft.value.name.trim() || props.u.name;
   const rerouted = providerChanged.value;
   const preset = draft.value.preset?.label;
+  const relaunched = changes.value.includes("launch");
   const repaired = applyDraft(props.u);
   confirming.value = false;
   uiStore.toast(`${name} connection saved`, {
@@ -148,7 +151,9 @@ function save() {
       ? "New jobs use it from now on. Jobs already queued keep the connection they were created with."
       : preset
         ? `Nothing was re-routed. ${preset}’s prices and limits apply from the next request.`
-        : "Nothing was re-routed — only this configuration’s labels changed.",
+        : relaunched
+          ? "Nothing was re-routed. The local server settings apply the next time it starts."
+          : "Nothing was re-routed — only this configuration’s labels changed.",
   });
   // its own toast, so it isn't lost inside the saved message
   if (repaired.length)
@@ -217,7 +222,13 @@ const probeSays = computed(() =>
 );
 const changeList = computed(() =>
   changes.value
-    .map((c) => (c === "preset" ? `prices and limits from ${draft.value.preset?.label}` : c))
+    .map((c) =>
+      c === "preset"
+        ? `prices and limits from ${draft.value.preset?.label}`
+        : c === "launch"
+          ? "local server"
+          : c,
+    )
     .join(", "),
 );
 
@@ -242,7 +253,11 @@ function newCredential() {
         >
         <span class="ml-auto flex gap-2">
           <button class="btn-ghost btn-xs" @click="discard">Discard</button>
-          <button class="btn-primary btn-xs" @click="save">
+          <button
+            class="btn-primary btn-xs"
+            :disabled="!!launchProblem(draft.launch)"
+            @click="save"
+          >
             {{ confirming ? "Yes, apply to new jobs" : "Save connection" }}
           </button>
         </span>
@@ -412,6 +427,8 @@ function newCredential() {
         </div>
       </section>
     </div>
+
+    <LocalServerSection v-if="!simulated && !cli" :u="u" />
 
     <!-- quota group + who shares what -->
     <section class="card p-3">

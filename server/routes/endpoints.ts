@@ -36,6 +36,7 @@ import { serveFile } from "~/lib/serve";
 import type { SpeechGate } from "~/providers/gate";
 import { validate } from "~/lib/validate";
 import type { Providers } from "~/providers/target";
+import type { LocalServers } from "~/servers/localServers";
 import type { VoiceFiles } from "~/voices/files";
 import * as clone from "~/voices/clone";
 import * as samples from "~/voices/ops";
@@ -58,6 +59,9 @@ const Probe = v.object({
 });
 
 const Saved = v.object({ id: v.pipe(v.string(), v.nonEmpty()) });
+
+/** `serverKey`: an endpoint's row id */
+const ServerKey = v.object({ key: v.pipe(v.string(), v.nonEmpty(), v.maxLength(300)) });
 
 const Sample = v.object({
   id: v.pipe(v.string(), v.nonEmpty()),
@@ -116,6 +120,8 @@ export function endpointRoutes(
   gate: SpeechGate,
   runner: Runner,
   effects?: EffectRunner,
+  /** none in the demo: nothing listed, nothing started */
+  servers?: LocalServers,
 ): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
 
@@ -144,6 +150,34 @@ export function endpointRoutes(
       "endpoints saved",
     );
     return c.json(saved);
+  });
+
+  // ---------- local servers (`~/servers/localServers`) ----------
+  /** A key missing from `servers` is stopped and was never started by this process. */
+  app.get("/servers", (c) => c.json({ servers: servers?.status() ?? {} }));
+
+  /** Answers once the start is under way; the status shows it starting, then running or failed. */
+  app.post("/servers/start", validate("json", ServerKey), (c) => {
+    const { key } = c.req.valid("json");
+    if (!servers) fail(404, "This library starts no local servers");
+    const target = ops.launchTarget(db, key);
+    const logger = c.var.logger;
+    void servers
+      .start(target)
+      .catch((err) => logger.warn({ err, key }, "local server not started"));
+    logger.info({ key }, "local server starting");
+    return c.json({ servers: servers.status() });
+  });
+
+  /** No saved endpoint needed, so a server whose endpoint was removed can still be stopped. */
+  app.post("/servers/stop", validate("json", ServerKey), async (c) => {
+    const { key } = c.req.valid("json");
+    if (!servers) fail(404, "This library starts no local servers");
+    if (servers.status()[key]?.state === "outside")
+      fail(409, "The app didn't start that server, so it leaves it running");
+    await servers.stop(key);
+    c.var.logger.info({ key }, "local server stopped");
+    return c.json({ servers: servers.status() });
   });
 
   /** The Test button: one small real request with the saved key. */

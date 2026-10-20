@@ -2,6 +2,7 @@
 // ledger; the estimate and diff are what the Scripting page shows before and after a run.
 import type { Age, Gender, SplitMode } from "@/types/common";
 import type { PricingConfig, RateEstimate } from "@/types/pricing";
+import type { LocalServer } from "@/types/endpoint";
 import type { ScriptedTag } from "@/types/expression";
 import type { Segment, SegmentType } from "@/types/segment";
 
@@ -111,6 +112,8 @@ export interface Profile {
   reasoning?: ReasoningEffort | null;
   /** absent is `default` with no text */
   prompt?: ProfilePrompt | null;
+  /** as on `Endpoint` */
+  launch?: LocalServer | null;
 }
 
 export interface ScriptSettings {

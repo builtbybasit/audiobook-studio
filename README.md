@@ -44,6 +44,12 @@ Turn an EPUB into a full-cast audiobook, with a different voice for every charac
 - Versioned builds: when the book changes, an export shows exactly what's out of date. The old version stays until the new one lands.
 - Script transfer: export a book's script, cast and voice samples, and import them into another copy.
 
+### 🖥️ Local servers
+
+- Any endpoint can name a folder and a start command. The app starts that server when a request needs it and stops it when the app quits.
+- Mark servers that need most of the GPU **Heavy**: only one heavy server runs at a time. The app switches once the running one has had nothing to do for a few seconds, so a chapter's lines for one server all go before the switch. Light servers (a CPU model) run beside anything.
+- Start, Stop, status and the server's last output are on the endpoint's Connection tab. A server you started yourself is used as it is and never stopped.
+
 ### 💸 Costs you can see
 
 - Every request is in a usage ledger with its own receipt.

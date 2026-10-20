@@ -8,6 +8,7 @@ import type {
   AudioFormat,
   EndpointKind,
   Gender,
+  LocalServer,
   ParkedRates,
   ProfilePrompt,
   PromotionScope,
@@ -64,6 +65,8 @@ export const endpoints = sqliteTable(
     /** speech only: the range the server's capabilities declared when last read; never PUT */
     speedRange: text("speed_range", { mode: "json" }).$type<SpeedRange>(),
     position: integer("position").notNull().default(0),
+    /** any kind: a server on this machine the app starts and stops; null = started elsewhere */
+    launch: text("launch", { mode: "json" }).$type<LocalServer>(),
 
     // ---- scripting rates: USD per 1M tokens ----
     inPrice: real("in_price"),

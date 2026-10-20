@@ -4,11 +4,13 @@ import type {
   Endpoint,
   EndpointKind,
   EndpointOps,
+  LocalServer,
   Profile,
   SpeechServer,
   Transcriber,
 } from "@/types";
 import { OPS_DEFAULTS } from "@/lib/endpointShapes";
+import { serverKey } from "@/lib/localServers";
 import { isSimulated } from "@/lib/providers";
 import { cliOf } from "@/lib/providers/cli";
 import type { Db, Tx } from "~/db/client";
@@ -48,6 +50,13 @@ export interface ProviderTarget {
   server?: SpeechServer | null;
   /** only for a simulated target (`isSimulated(baseUrl)`) */
   simulation?: Simulation;
+  /** started before a request goes (`~/servers/localServers`); absent = it runs on its own */
+  localServer?: LaunchTarget;
+}
+
+export interface LaunchTarget extends LocalServer {
+  /** `serverKey` */
+  key: string;
 }
 
 export interface Simulation {
@@ -96,6 +105,9 @@ function targetOf(
     timeoutSec: e.timeoutSec ?? d.timeoutSec,
     maxRetries: e.maxRetries ?? d.maxRetries,
     cooldownSec: e.cooldownSec ?? d.cooldownSec,
+    ...(e.launch &&
+      !isSimulated(e.baseUrl) &&
+      !cliOf(e.baseUrl) && { localServer: { ...e.launch, key: serverKey(kind, e.id) } }),
     ...(isSimulated(e.baseUrl) && {
       simulation: {
         // a profile has no latency: a tenth of its chunk estimate, the browser demo's pace

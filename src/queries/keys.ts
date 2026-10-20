@@ -35,6 +35,8 @@ export const keys = {
   endpointRequests: ["endpoints", "requests"] as const,
   /** each speech endpoint's lines out and held, and cooldowns */
   endpointLive: ["endpoints", "live"] as const,
+  /** the local servers the app starts, by `serverKey` */
+  localServers: ["endpoints", "servers"] as const,
   /** the library's voice effects and its thought effect, read together */
   effects: ["effects"] as const,
   /** how many of a book's clips have an old sound (`StaleSound`) */

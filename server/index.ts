@@ -9,6 +9,7 @@ import { CLONE_BODY_BYTES, env, importBodyBytes, scriptBodyBytes } from "~/env";
 import { DEMO_BASE, openLibrary, REAL_BASE, serveLibraries } from "~/libraries";
 import { log } from "~/log";
 import { ffmpegAvailable, ffmpegEncoders } from "~/providers/ffmpegEncoder";
+import { localServers } from "~/servers/localServers";
 
 const boot = log.child({ name: "boot" });
 
@@ -94,11 +95,14 @@ boot.info(
 );
 
 // Running jobs go back to their queue before the listener closes, so a restart loses nothing.
+// The local servers stop after, once no request is out at them.
 for (const signal of ["SIGINT", "SIGTERM"] as const)
   process.once(signal, () => {
     boot.info({ signal }, "stopping");
-    void Promise.all(libraries.map((l) => l.runner.stop())).then(() => {
-      void server.stop(true);
-      process.exit(0);
-    });
+    void Promise.all(libraries.map((l) => l.runner.stop()))
+      .then(() => localServers.stopAll())
+      .finally(() => {
+        void server.stop(true);
+        process.exit(0);
+      });
   });

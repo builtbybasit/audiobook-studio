@@ -26,6 +26,7 @@ import {
   writeSpeedRange,
   type EndpointConfig,
 } from "~/db/endpoints";
+import { PROFILE_KEY, TRANSCRIBER_KEY } from "~/db/rows/endpoints";
 import { readLibraryPrompt } from "~/db/settings";
 import { reconcileClones } from "~/db/voiceSamples";
 import { inBackground, warnIfFails } from "~/lib/background";
@@ -34,7 +35,14 @@ import { refusePrompt } from "~/lib/schemas";
 import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import { ProviderError } from "~/providers/http";
 import { SAMPLE_HEAD_BYTES, SAMPLE_MIME, sniffSample, type SampleFormat } from "~/providers/clone";
-import { scriptTarget, speechTarget, transcriberTarget, type Providers } from "~/providers/target";
+import {
+  scriptTarget,
+  speechTarget,
+  transcriberTarget,
+  type ProviderTarget,
+  type Providers,
+} from "~/providers/target";
+import type { Launchable } from "~/servers/localServers";
 import { endpointTranscriber, type Transcript } from "~/providers/transcription";
 import { endpointVoiceLister, type VoiceQuery } from "~/providers/voices";
 import { assertWithinBudget } from "~/usage/budget";
@@ -178,6 +186,28 @@ export async function testEndpoint(
     template: { system, user },
     notes: profile.prompt?.notes ?? "",
   });
+}
+
+function savedTarget(db: Db | Tx, key: string): ProviderTarget | undefined {
+  if (key.startsWith(PROFILE_KEY)) {
+    const p = readProfiles(db).find((p) => p.id === key.slice(PROFILE_KEY.length));
+    return p && scriptTarget(db, p);
+  }
+  if (key.startsWith(TRANSCRIBER_KEY)) {
+    const t = readTranscriber(db, key.slice(TRANSCRIBER_KEY.length));
+    return t && transcriberTarget(db, t);
+  }
+  const e = readEndpoint(db, key);
+  return e && speechTarget(db, e);
+}
+
+/** The saved endpoint (never a draft) a local server's `serverKey` names, ready to start. */
+export function launchTarget(db: Db | Tx, key: string): Launchable {
+  const target = savedTarget(db, key);
+  // the key check also catches `transcription:` alone, which reads as the first one switched on
+  if (!target?.localServer || target.localServer.key !== key)
+    throw notFound("No saved endpoint by that key starts a local server", `key: ${key}`);
+  return { name: target.name, baseUrl: target.baseUrl, localServer: target.localServer };
 }
 
 const untestable = (name: string): EndpointProbe => ({

@@ -10,6 +10,7 @@ import { useLocalServerActions, useLocalServers } from "@/queries/localServers";
 import {
   draftChanges,
   draftFor,
+  gb,
   launchProblem,
   savedLaunch,
   serverStateOf,
@@ -26,7 +27,7 @@ const unsaved = computed(() => draftChanges(props.u).includes("launch"));
 const { data: servers } = useLocalServers();
 const { start, stop } = useLocalServerActions();
 const key = computed(() => serverKey(props.u.kind, props.u.id));
-const status = computed(() => serverStatusOf(servers.value, props.u));
+const status = computed(() => serverStatusOf(servers.value?.servers, props.u));
 const shown = computed(() => serverStateOf(status.value));
 const pending = computed(
   () => start.asyncStatus.value === "loading" || stop.asyncStatus.value === "loading",
@@ -34,7 +35,11 @@ const pending = computed(
 const canStart = computed(
   () => !unsaved.value && (status.value.state === "stopped" || status.value.state === "crashed"),
 );
-const canStop = computed(() => ["queued", "starting", "running"].includes(status.value.state));
+// one the app didn't start can still be ended by its stop command
+const stoppable = computed(() => status.value.state !== "outside" || !!saved.value?.stopCommand);
+const canStop = computed(() =>
+  ["queued", "starting", "running", "outside"].includes(status.value.state),
+);
 </script>
 
 <template>
@@ -43,24 +48,29 @@ const canStop = computed(() => ["queued", "starting", "running"].includes(status
       Local server
       <UiHint
         label="local servers"
-        text="For a server on this computer: the app starts it when a request needs it and stops it when the app quits. Leave the folder and command empty for one you run yourself or a hosted provider."
+        text="For a server on this computer: the app starts it when a request needs it and stops it when the app quits. Leave the fields empty for one you run yourself or a hosted provider."
       />
     </h3>
     <div class="grid gap-3 sm:grid-cols-2">
-      <label class="block space-y-1 text-xs font-medium"
-        ><span>Folder</span
-        ><input
+      <div class="space-y-1 text-xs font-medium">
+        <span
+          ><span :id="`${u.key}-dir-label`">Folder</span>
+          <UiHint label="the folder" text="Leave it empty to start in your home folder."
+        /></span>
+        <input
           v-model="launch.dir"
           class="input w-full font-mono"
           spellcheck="false"
-          placeholder="/Users/you/servers/tts"
-      /></label>
+          placeholder="C:\servers\breeze"
+          :aria-labelledby="`${u.key}-dir-label`"
+        />
+      </div>
       <div class="space-y-1 text-xs font-medium">
         <span
           ><span :id="`${u.key}-command-label`">Start command</span>
           <UiHint
             label="the start command"
-            text="Run in the folder with sh -c. The app starts it when a request needs it and stops it when the app quits; a server already answering at the base URL is used as it is."
+            text="Run in the folder by the system shell (cmd on Windows, sh elsewhere). The app starts it when a request needs it and stops it when the app quits; a server already answering at the base URL is used as it is."
         /></span>
         <input
           v-model="launch.command"
@@ -68,6 +78,21 @@ const canStop = computed(() => ["queued", "starting", "running"].includes(status
           spellcheck="false"
           placeholder="./serve.sh --port 8000"
           :aria-labelledby="`${u.key}-command-label`"
+        />
+      </div>
+      <div class="space-y-1 text-xs font-medium sm:col-span-2">
+        <span
+          ><span :id="`${u.key}-stop-label`">Stop command</span>
+          <UiHint
+            label="the stop command"
+            text='Optional. Empty: Stop ends the process the app started. For a server in WSL or Docker, killing that process leaves the server running, so name the command that stops it there, such as wsl.exe -e pkill -f "uvicorn main:app" or docker stop phonon.'
+        /></span>
+        <input
+          v-model="launch.stopCommand"
+          class="input w-full font-mono"
+          spellcheck="false"
+          placeholder="docker stop phonon"
+          :aria-labelledby="`${u.key}-stop-label`"
         />
       </div>
       <div class="flex items-center gap-1.5 text-xs font-medium">
@@ -107,6 +132,9 @@ const canStop = computed(() => ["queued", "starting", "running"].includes(status
       <div class="flex flex-wrap items-center gap-2 text-xs" role="status">
         <span class="h-2 w-2 shrink-0 rounded-full" :class="DOT[shown.tone]"></span>
         <b :class="TEXT[shown.tone]">{{ shown.label }}</b>
+        <span v-if="status.vramMb != null" class="text-zinc-500"
+          >≈ {{ gb(status.vramMb) }} GB VRAM</span
+        >
         <span v-if="status.waiting || status.active" class="text-zinc-500"
           ><template v-if="status.waiting">{{ status.waiting }} waiting</template
           ><template v-if="status.waiting && status.active"> · </template
@@ -121,7 +149,7 @@ const canStop = computed(() => ["queued", "starting", "running"].includes(status
             <StartIcon class="icon-sm" /> Start
           </button>
           <button
-            v-if="status.state !== 'outside'"
+            v-if="stoppable"
             class="btn-ghost btn-xs"
             :disabled="!canStop || pending"
             @click="stop.mutate(key)"

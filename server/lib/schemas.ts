@@ -2,6 +2,7 @@
 // than `@/types`: what the domain leaves optional is optional here.
 import * as v from "valibot";
 
+import { isFolder } from "@/lib/localServers";
 import { SPEAKER_SPEED } from "@/lib/providers";
 
 import type {
@@ -449,8 +450,9 @@ const Ops = {
 
 /** Absolute: the server's process resolves nothing against the app's own folder. */
 const LocalServerSchema = v.object({
-  dir: v.pipe(v.string(), v.trim(), v.startsWith("/", "must be an absolute folder")),
+  dir: v.pipe(v.string(), v.trim(), v.check(isFolder, "must be an absolute folder, or empty")),
   command: v.pipe(v.string(), v.trim(), v.nonEmpty("must name a command")),
+  stopCommand: v.optional(v.pipe(v.string(), v.trim())),
   heavy: v.boolean(),
   readySec: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1))),
 });

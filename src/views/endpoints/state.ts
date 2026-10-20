@@ -2,7 +2,7 @@
 // Not domain state, so not in the store: module-scope, keyed by `<kind>:<id>`.
 import { reactive } from "vue";
 import { opsOf, type HealthTone } from "@/lib/endpoints";
-import { serverKey } from "@/lib/localServers";
+import { isFolder, serverKey } from "@/lib/localServers";
 import { encodingChanged, repairEncoding } from "@/lib/audioFormat";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
 import { libraryPrompt } from "@/lib/prompt";
@@ -72,6 +72,7 @@ export interface ConnectionDraft {
 export interface LaunchDraft {
   dir: string;
   command: string;
+  stopCommand: string;
   heavy: boolean;
   /** null = `DEFAULT_READY_SEC` */
   readySec: number | null;
@@ -80,22 +81,31 @@ export interface LaunchDraft {
 export const launchDraft = (l: LocalServer | null | undefined): LaunchDraft => ({
   dir: l?.dir ?? "",
   command: l?.command ?? "",
+  stopCommand: l?.stopCommand ?? "",
   heavy: l?.heavy ?? false,
   readySec: l?.readySec ?? null,
 });
 
-/** Both texts empty is no local server. */
+/** Every text empty is no local server; an empty folder alone is the home folder. */
 export function launchOf(d: LaunchDraft): LocalServer | null {
   const dir = d.dir.trim();
   const command = d.command.trim();
-  if (!dir && !command) return null;
+  const stopCommand = d.stopCommand.trim();
+  if (!dir && !command && !stopCommand) return null;
   const readySec = d.readySec == null ? undefined : Math.max(1, Math.round(d.readySec));
-  return { dir, command, heavy: d.heavy, ...(readySec ? { readySec } : {}) };
+  return {
+    dir,
+    command,
+    ...(stopCommand ? { stopCommand } : {}),
+    heavy: d.heavy,
+    ...(readySec ? { readySec } : {}),
+  };
 }
 
 export const sameLaunch = (a: LocalServer | null, b: LocalServer | null): boolean =>
   a?.dir === b?.dir &&
   a?.command === b?.command &&
+  a?.stopCommand === b?.stopCommand &&
   a?.heavy === b?.heavy &&
   a?.readySec === b?.readySec;
 
@@ -103,7 +113,8 @@ export const sameLaunch = (a: LocalServer | null, b: LocalServer | null): boolea
 export function launchProblem(d: LaunchDraft): string | null {
   const l = launchOf(d);
   if (!l) return null;
-  if (!l.dir.startsWith("/")) return "The folder must be an absolute path, starting with /.";
+  if (!isFolder(l.dir))
+    return "The folder must be a full path, such as C:\\servers\\tts or /srv/tts.";
   if (!l.command) return "Name the command that starts the server.";
   return null;
 }
@@ -117,6 +128,9 @@ export const serverStatusOf = (
   u: UnifiedEndpoint,
 ): LocalServerStatus => servers?.[serverKey(u.kind, u.id)] ?? STOPPED;
 
+/** `nvidia-smi`'s MiB as GB with one decimal, so an 8 GB card reads 8.0. */
+export const gb = (mb: number): string => (mb / 1024).toFixed(1);
+
 const STOPPED: LocalServerStatus = {
   state: "stopped",
   since: 0,
@@ -127,6 +141,8 @@ const STOPPED: LocalServerStatus = {
 
 export function serverStateOf(s: LocalServerStatus): { label: string; tone: HealthTone } {
   if (s.state === "crashed") return { label: s.failed ? "Didn’t start" : "Crashed", tone: "bad" };
+  if (s.state === "queued" && s.blockedBy)
+    return { label: `Queued — waiting for ${s.blockedBy} to finish`, tone: "warn" };
   return SERVER_STATE[s.state];
 }
 

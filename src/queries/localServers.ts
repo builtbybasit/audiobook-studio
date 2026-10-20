@@ -1,6 +1,6 @@
-// The local servers the app starts (`GET /endpoints/servers`), polled while a reader is mounted:
-// they start, crash and stop on their own. Start and Stop answer with the whole map, so it goes
-// straight into the cache.
+// The local servers the app starts and the GPUs (`GET /endpoints/servers`), polled while a reader
+// is mounted: servers start, crash and stop on their own. Start and Stop answer the same way, so
+// the answer goes straight into the cache.
 import { defineQuery, useMutation, useQuery, useQueryCache } from "@pinia/colada";
 
 import { keys } from "@/queries/keys";
@@ -22,7 +22,7 @@ export const useLocalServers = defineQuery(() =>
 /** Start and Stop by `serverKey`. Start sends the saved config, so unsent edits go first. */
 export function useLocalServerActions() {
   const queryCache = useQueryCache();
-  const install = (servers: LocalServers) => queryCache.setQueryData(keys.localServers, servers);
+  const install = (answer: LocalServers) => queryCache.setQueryData(keys.localServers, answer);
   const start = useMutation({
     mutation: async (key: string) => {
       await useEndpointsStore().flushWrites();

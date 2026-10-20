@@ -145,7 +145,7 @@ const label = (at: number) =>
         ]"
         :data-gap="p.at"
         :aria-label="label(p.at)"
-        :title="label(p.at)"
+        :data-tip="label(p.at)"
         @mouseenter="emit('hover', p.at)"
         @click.stop="emit('pick', p.at, $event.currentTarget as HTMLElement)"
       >
@@ -155,7 +155,7 @@ const label = (at: number) =>
         type="button"
         class="expression-chip"
         :class="p.a.annotationId === movingId ? 'expression-chip-moving' : p.look.class"
-        :title="p.look.title"
+        :data-tip="p.look.title"
         @click.stop="emit('chip', p.a.annotationId, $event.currentTarget as HTMLElement)"
       >
         <PauseIcon v-if="p.a.kind === 'pause'" class="-mt-px inline size-3" aria-hidden="true" />{{

@@ -29,7 +29,7 @@ const effects = computed(() =>
   <span
     class="flex items-center gap-1 rounded-full px-2 py-0.5 font-medium"
     :style="{ background: color + '33', color }"
-    :title="persona && !persona.masked ? `${persona.of} as ${s.speaker}` : undefined"
+    :data-tip="persona && !persona.masked ? `${persona.of} as ${s.speaker}` : undefined"
   >
     <span class="opacity-70">{{ s.type === "thought" ? "…" : "“" }}</span>
     <MaskIcon v-if="persona" class="icon-sm" aria-hidden="true" />
@@ -39,7 +39,7 @@ const effects = computed(() =>
     v-for="e in effects"
     :key="e.id"
     class="flex shrink-0 items-center gap-1 whitespace-nowrap rounded bg-sky-500/10 px-1.5 py-0.5 text-[11px] text-sky-700 dark:text-sky-300"
-    :title="e.useWhen ? `Line effect · use when ${e.useWhen}` : 'Line effect'"
+    :data-tip="e.useWhen ? `Line effect · use when ${e.useWhen}` : 'Line effect'"
     ><EffectIcon class="icon-sm" aria-hidden="true" />{{ e.name }}</span
   >
 </template>

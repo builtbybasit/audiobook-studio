@@ -184,7 +184,7 @@ const now = Date.now();
           <div v-if="d.siteCheck" class="flex shrink-0 items-center gap-1 py-2.5 pr-4">
             <button
               class="btn-ghost btn-xs"
-              :title="
+              :data-tip="
                 d.siteCheck.suggest === 'watermark'
                   ? 'Mark it as site text — kept in the script, left out of the audio'
                   : 'Read it as narration'
@@ -197,7 +197,7 @@ const now = Date.now();
             </button>
             <button
               class="btn-ghost btn-xs"
-              title="Leave the line as it is and drop the suggestion"
+              data-tip="Leave the line as it is and drop the suggestion"
               @click="
                 scriptsStore.dismissSiteCheck(bookId, d.siteCheck.chapterId, d.siteCheck.segmentId)
               "

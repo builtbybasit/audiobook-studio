@@ -126,7 +126,7 @@ async function copy() {
         </div>
         <!-- the server's label and the chapter id, which the logs are filed under, stay on hover
              and in small print -->
-        <DialogTitle class="break-words text-lg font-semibold" :title="job.label">{{
+        <DialogTitle class="break-words text-lg font-semibold" :data-tip="job.label">{{
           jobsStore.labelOf(job)
         }}</DialogTitle>
         <DialogDescription class="mt-1 text-sm text-zinc-500"
@@ -150,7 +150,7 @@ async function copy() {
           <button
             v-if="runLeft"
             class="btn-ghost btn-xs ml-auto"
-            title="stop the chapters this run has not started; chapters it already finished keep their results"
+            data-tip="stop the chapters this run has not started; chapters it already finished keep their results"
             @click="confirmCancel = !confirmCancel"
           >
             Cancel the rest ({{ runLeft }})
@@ -158,7 +158,7 @@ async function copy() {
           <button
             v-else-if="runFailed"
             class="btn-ghost btn-xs ml-auto"
-            title="run only the chapters of this run that failed, as one run again"
+            data-tip="run only the chapters of this run that failed, as one run again"
             @click="jobsStore.retryRunFailures(job.bulk!.id)"
           >
             Retry {{ runFailed }} failed

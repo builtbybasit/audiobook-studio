@@ -177,7 +177,7 @@ const editingLines = ref(false);
         <ul v-if="lineEffects.length" class="space-y-0.5 text-xs">
           <li v-for="e in lineEffects" :key="e.id" class="flex items-baseline gap-2">
             <span class="shrink-0 font-medium">{{ e.name }}</span>
-            <span class="min-w-0 flex-1 truncate text-zinc-500" :title="e.useWhen">{{
+            <span class="min-w-0 flex-1 truncate text-zinc-500" :data-tip="e.useWhen">{{
               e.useWhen
             }}</span>
           </li>

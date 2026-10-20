@@ -239,7 +239,7 @@ const summary = (u: ExportUpdate) => {
                 <RouterLink to="/queue" class="btn-ghost btn-xs">See the activity log</RouterLink>
                 <button
                   class="btn-ghost btn-xs text-red-500"
-                  :title="deleteTitle"
+                  :data-tip="deleteTitle"
                   @click="remove(e.id)"
                 >
                   {{ confirming === e.id ? "Discard for good?" : "Discard" }}
@@ -305,7 +305,7 @@ const summary = (u: ExportUpdate) => {
             v-if="diskPath(e)"
             class="mt-3 flex items-center gap-1 rounded bg-zinc-50 px-2 py-1 font-mono text-[10px] text-zinc-500 dark:bg-zinc-800/60"
           >
-            <span class="min-w-0 flex-1 truncate" :title="diskPath(e)!">{{ diskPath(e) }}</span
+            <span class="min-w-0 flex-1 truncate" :data-tip="diskPath(e)!">{{ diskPath(e) }}</span
             ><button
               class="shrink-0 text-violet-500 hover:underline"
               @click="copyPath(diskPath(e)!)"
@@ -317,7 +317,7 @@ const summary = (u: ExportUpdate) => {
           <div class="mt-2 flex flex-wrap items-center gap-1">
             <button
               class="btn-ghost btn-xs"
-              title="Run the playhead along this version's own timeline — the chapters and the gaps as they were when it was built, not as the book stands now. No audio is rendered in this prototype, so it runs silent."
+              data-tip="Run the playhead along this version's own timeline — the chapters and the gaps as they were when it was built, not as the book stands now. No audio is rendered in this prototype, so it runs silent."
               @click="listen(e)"
             >
               <component
@@ -342,7 +342,7 @@ const summary = (u: ExportUpdate) => {
             <button
               class="btn-ghost btn-xs ml-auto text-red-500"
               :aria-label="`Delete ${e.filename}`"
-              :title="deleteTitle"
+              :data-tip="deleteTitle"
               @click="remove(e.id)"
             >
               <span v-if="confirming === e.id" class="text-xs">Delete for good?</span>
@@ -367,7 +367,7 @@ const summary = (u: ExportUpdate) => {
           >
             <li v-for="f in e.files" :key="f.name" class="flex items-center gap-2 text-xs">
               <FileIcon class="icon-sm shrink-0 text-zinc-400" />
-              <span class="min-w-0 flex-1 truncate font-mono" :title="f.name">{{ f.name }}</span>
+              <span class="min-w-0 flex-1 truncate font-mono" :data-tip="f.name">{{ f.name }}</span>
               <span class="shrink-0 font-mono text-[11px] text-zinc-400"
                 >{{ f.chapterIds.length }} ch · {{ hms(f.duration) }} · {{ mb(f.size) }}</span
               >
@@ -397,7 +397,12 @@ const summary = (u: ExportUpdate) => {
                 >{{ o.chapters }} ch · {{ mb(o.size) }} · {{ o.createdAt }}</span
               >
               <span>{{ o.status }}</span>
-              <button class="hover:text-red-500" :title="deleteTitle" @click="remove(o.id)">
+              <button
+                class="hover:text-red-500"
+                :aria-label="deleteTitle"
+                :data-tip="deleteTitle"
+                @click="remove(o.id)"
+              >
                 <span v-if="confirming === o.id" class="text-xs">Delete for good?</span>
                 <CloseIcon v-else class="icon-sm" />
               </button>

@@ -32,7 +32,7 @@ function close() {
     :class="(open || isDemo) && 'chip-on'"
     :aria-expanded="open"
     aria-controls="demo-drawer"
-    :title="title"
+    :data-tip="title"
     :aria-label="isDemo ? 'Demo tools · in demo mode' : 'Demo · on your own library'"
     @click="open = !open"
   >

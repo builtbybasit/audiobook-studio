@@ -173,7 +173,7 @@ const colors = computed(() =>
         <PauseIcon v-if="playing" class="icon-sm icon-fill" />
         <PlayIcon v-else class="icon-sm icon-fill" />
       </button>
-      <span class="min-w-0 flex-1 truncate" :title="name">{{ name }}</span>
+      <span class="min-w-0 flex-1 truncate" :data-tip="name">{{ name }}</span>
       <span class="shrink-0 text-[11px] text-zinc-500 tabular-nums"
         >{{ audio ? `${clockDuration(audio.duration)} · ` : ""
         }}{{ sizeLabel(row.file.size) }}</span

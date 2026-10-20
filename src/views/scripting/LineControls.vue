@@ -100,7 +100,7 @@ function toggle(id: string) {
         class="chip"
         :class="on.has(e.id) ? 'chip-on' : 'chip-off'"
         :aria-pressed="on.has(e.id)"
-        :title="e.useWhen ? `Use when ${e.useWhen}` : 'No longer offered to the model'"
+        :data-tip="e.useWhen ? `Use when ${e.useWhen}` : 'No longer offered to the model'"
         @click="toggle(e.id)"
       >
         {{ e.name }}

@@ -353,7 +353,7 @@ const trackSample = computed(() =>
             <button
               v-if="book.pacing"
               class="btn-ghost btn-xs"
-              :title="`back to ${secs(DEFAULT_PACING.line)} / ${secs(DEFAULT_PACING.turn)}`"
+              :data-tip="`back to ${secs(DEFAULT_PACING.line)} / ${secs(DEFAULT_PACING.turn)}`"
               @click="castStore.resetPacing(bookId)"
             >
               Reset to the default

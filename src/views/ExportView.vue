@@ -195,17 +195,17 @@ async function build() {
               <span
                 v-if="building"
                 class="h-1.5 w-1.5 animate-pulse rounded-full bg-violet-500"
-                title="a build is running"
+                data-tip="a build is running"
               ></span>
               <span
                 v-else-if="failedBuilds"
                 class="h-1.5 w-1.5 rounded-full bg-red-500"
-                :title="`${failedBuilds} failed`"
+                :data-tip="`${failedBuilds} failed`"
               ></span>
               <span
                 v-else-if="needUpdate"
                 class="h-1.5 w-1.5 rounded-full bg-violet-500"
-                :title="`${needUpdate} need updating`"
+                :data-tip="`${needUpdate} need updating`"
               ></span>
             </template>
           </template>

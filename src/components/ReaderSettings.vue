@@ -10,7 +10,7 @@ const reader = useReader();
   <PopoverRoot>
     <PopoverTrigger
       class="btn-ghost btn-xs font-serif data-[state=open]:bg-zinc-200 dark:data-[state=open]:bg-zinc-800"
-      title="Reader settings"
+      data-tip="Reader settings"
       >Aa</PopoverTrigger
     >
     <PopoverPortal>

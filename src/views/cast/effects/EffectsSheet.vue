@@ -213,7 +213,7 @@ function setSlot(s: EffectSlot) {
           <button
             class="min-w-0 flex-1 truncate text-left text-xs"
             :class="!shown && 'select-none blur-[4px]'"
-            :title="shown ? undefined : 'Show the line'"
+            :data-tip="shown ? undefined : 'Show the line'"
             @click="shown = !shown"
           >
             {{ line?.text }}

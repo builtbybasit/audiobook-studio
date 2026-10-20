@@ -82,7 +82,7 @@ const line = (c: Chapter) => excerptOf(p.textOf(c), 120);
             <button
               class="block max-w-full truncate text-left hover:underline"
               :class="c.excluded && 'line-through'"
-              :title="c.title"
+              :data-tip="c.title"
               @click="p.open(c.id)"
             >
               {{ c.title }}

@@ -99,7 +99,7 @@ const palette = ref<InstanceType<typeof CommandPalette> | null>(null);
         <div class="flex items-center gap-2 px-4 py-4" :class="!uiStore.railExpanded && 'lg:px-3'">
           <div
             class="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-violet-600 text-white"
-            :title="
+            :data-tip="
               isDemo
                 ? 'Audiobook Studio · demo mode: a demo library on the server, on simulated endpoints. No provider is called and nothing is billed.'
                 : 'Audiobook Studio'
@@ -113,7 +113,7 @@ const palette = ref<InstanceType<typeof CommandPalette> | null>(null);
             <div
               v-if="isDemo"
               class="text-[10px] uppercase tracking-wider text-amber-500"
-              title="A demo library on the server, seeded with books and on simulated endpoints. No provider is called and nothing is billed."
+              data-tip="A demo library on the server, seeded with books and on simulated endpoints. No provider is called and nothing is billed."
             >
               demo library · nothing billed
             </div>
@@ -132,7 +132,7 @@ const palette = ref<InstanceType<typeof CommandPalette> | null>(null);
         <div class="mt-auto flex gap-2 p-3" :class="!uiStore.railExpanded && 'lg:flex-col lg:p-2'">
           <button
             class="btn-ghost flex-1 justify-center"
-            :title="uiStore.dark ? 'Light theme' : 'Dark theme'"
+            :data-tip="uiStore.dark ? 'Light theme' : 'Dark theme'"
             @click="uiStore.dark = !uiStore.dark"
           >
             <component :is="uiStore.dark ? SunIcon : MoonIcon" class="icon" />
@@ -142,7 +142,8 @@ const palette = ref<InstanceType<typeof CommandPalette> | null>(null);
           </button>
           <button
             class="btn-ghost justify-center"
-            title="keyboard shortcuts (?)"
+            data-tip="keyboard shortcuts (?)"
+            aria-label="Keyboard shortcuts"
             @click="shortcuts = true"
           >
             ?
@@ -178,7 +179,7 @@ const palette = ref<InstanceType<typeof CommandPalette> | null>(null);
             </button>
             <button
               class="btn-ghost btn-xs"
-              :title="showCovers ? 'Hide book covers' : 'Show book covers'"
+              :data-tip="showCovers ? 'Hide book covers' : 'Show book covers'"
               :aria-pressed="showCovers"
               @click="showCovers = !showCovers"
             >

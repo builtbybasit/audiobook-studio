@@ -101,13 +101,13 @@ function rowTitle(e: EndpointEstimate): string {
       <!-- billable characters, not chapter length: respellings, tags and instructions count too -->
       <span
         class="text-zinc-500"
-        title="Billable characters of what will actually be submitted — after pronunciation replacements and expression tags, plus any voice instructions. Not the length of the chapter."
+        data-tip="Billable characters of what will actually be submitted — after pronunciation replacements and expression tags, plus any voice instructions. Not the length of the chapter."
         >Characters</span
       ><span class="text-right font-mono">{{ k(est.units.chars) }}</span>
       <template v-if="bytesDiffer">
         <span
           class="text-zinc-500"
-          title="The same content, metered the way a byte-billed endpoint meters it. Non-ASCII text is more bytes than characters."
+          data-tip="The same content, metered the way a byte-billed endpoint meters it. Non-ASCII text is more bytes than characters."
           >UTF-8 bytes</span
         ><span class="text-right font-mono">{{ k(est.units.bytes) }}</span>
       </template>
@@ -117,7 +117,7 @@ function rowTitle(e: EndpointEstimate): string {
         }}<span
           v-if="est.split"
           class="text-amber-600"
-          :title="`${est.split} segments exceed their endpoint’s per-request limit and are sent in parts`"
+          :data-tip="`${est.split} segments exceed their endpoint’s per-request limit and are sent in parts`"
         >
           · {{ est.split }} split</span
         ></span
@@ -188,13 +188,13 @@ function rowTitle(e: EndpointEstimate): string {
         >
         <span
           class="font-mono text-zinc-500"
-          :title="`${e.segments} segments · ${e.requests} requests${e.endpoint.maxChars ? ' · limit ' + e.endpoint.maxChars : ''}`"
+          :data-tip="`${e.segments} segments · ${e.requests} requests${e.endpoint.maxChars ? ' · limit ' + e.endpoint.maxChars : ''}`"
           >{{ e.requests }} req</span
         >
         <span
           class="w-20 text-right font-mono"
           :class="e.cost == null ? 'text-amber-600 dark:text-amber-400' : 'text-zinc-500'"
-          :title="rowTitle(e)"
+          :data-tip="rowTitle(e)"
           >{{ e.cost == null ? "unknown" : e.cost === 0 ? "free" : money(e.cost) }}</span
         >
       </div>

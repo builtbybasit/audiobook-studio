@@ -152,7 +152,7 @@ const blocked = computed(() => resolved.value.routes.filter((r) => status(r.endp
       <RouterLink
         to="/endpoints"
         class="btn-ghost btn-xs ml-auto"
-        title="health, spend, voices and request history for every endpoint"
+        data-tip="health, spend, voices and request history for every endpoint"
         >Manage endpoints <ArrowIcon class="icon-sm"
       /></RouterLink>
     </div>
@@ -242,7 +242,7 @@ const blocked = computed(() => resolved.value.routes.filter((r) => status(r.endp
             v-for="s in r.speakers.slice(0, 12)"
             :key="s.name"
             class="inline-flex items-center gap-1 rounded-full border border-zinc-200 py-0.5 pl-2 pr-1.5 text-[11px] dark:border-zinc-700"
-            :title="`${s.name} → ${s.voice}${s.borrowed} · ${s.lines} line${s.lines === 1 ? '' : 's'}`"
+            :data-tip="`${s.name} → ${s.voice}${s.borrowed} · ${s.lines} line${s.lines === 1 ? '' : 's'}`"
           >
             <span :class="s.from !== 'own' && 'text-zinc-400'">{{ s.name }}</span>
             <span class="text-zinc-400">{{ s.voice }}</span>

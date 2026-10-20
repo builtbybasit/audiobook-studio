@@ -78,7 +78,9 @@ const open = ref(false);
         modelValue == null && nullValue !== undefined && 'italic text-zinc-400',
         current.missing && 'italic text-amber-600',
       ]"
-      :title="current.missing ? 'The saved choice is not one of these options any more' : undefined"
+      :data-tip="
+        current.missing ? 'The saved choice is not one of these options any more' : undefined
+      "
     >
       <SelectValue :placeholder="placeholder" class="min-w-0 flex-1 truncate text-left">
         <slot name="value" :label="current.label" :missing="current.missing">{{

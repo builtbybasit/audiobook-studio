@@ -398,14 +398,14 @@ const colorOf = (name: string): string =>
           <span
             v-if="isSiteText(line.type)"
             class="max-w-[9rem] shrink-0 truncate rounded-full bg-zinc-100 px-1.5 py-px font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
-            :title="`${TYPE_LABEL[line.type]} · not read unless the book reads notes`"
+            :data-tip="`${TYPE_LABEL[line.type]} · not read unless the book reads notes`"
             >{{ TYPE_LABEL[line.type] }}</span
           >
           <span
             v-else
             class="max-w-[9rem] shrink-0 truncate rounded-full px-1.5 py-px font-medium"
             :style="{ background: colorOf(line.speaker) + '26', color: colorOf(line.speaker) }"
-            :title="`${line.speaker} · ${TYPE_LABEL[line.type]}`"
+            :data-tip="`${line.speaker} · ${TYPE_LABEL[line.type]}`"
             ><span v-if="line.type !== 'narration'" class="opacity-70" aria-hidden="true">{{
               line.type === "thought" ? "…" : "“"
             }}</span>
@@ -422,7 +422,7 @@ const colorOf = (name: string): string =>
               ><span
                 v-if="'tag' in piece"
                 class="expression-chip"
-                title="An expression tag the model wrote"
+                data-tip="An expression tag the model wrote"
                 >{{ piece.tag.label }}</span
               ><template v-else>{{ piece.text }}</template></template
             ><span v-if="line.direction" class="ml-1 italic text-zinc-500"
@@ -431,7 +431,7 @@ const colorOf = (name: string): string =>
               v-for="name in line.effects ?? []"
               :key="name"
               class="ml-1 rounded-full bg-violet-500/10 px-1.5 py-px text-[10px] text-violet-700 dark:text-violet-300"
-              title="A line effect the model named"
+              data-tip="A line effect the model named"
               >{{ name }}</span
             ></span
           >
@@ -443,13 +443,13 @@ const colorOf = (name: string): string =>
         class="space-y-1.5 text-[11px] leading-snug text-zinc-600 dark:text-zinc-300"
       >
         <div v-if="result.answer.cast.length">
-          <dt class="label" title="A run fills in only what the cast leaves blank">
+          <dt class="label" data-tip="A run fills in only what the cast leaves blank">
             What it said of the cast
           </dt>
           <dd v-for="c in result.answer.cast" :key="c.name">{{ speakerLine(c) }}</dd>
         </div>
         <div v-if="result.answer.recap">
-          <dt class="label" title="A run sends it with the next chapter">Where it leaves off</dt>
+          <dt class="label" data-tip="A run sends it with the next chapter">Where it leaves off</dt>
           <dd>{{ result.answer.recap }}</dd>
         </div>
       </dl>

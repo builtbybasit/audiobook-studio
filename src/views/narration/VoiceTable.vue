@@ -138,7 +138,7 @@ function applyAssignments() {
           <span
             v-if="c.gender === '?'"
             class="text-[11px] text-amber-600 dark:text-amber-400"
-            title="Auto-assign pools voices by gender and skips a speaker without one"
+            data-tip="Auto-assign pools voices by gender and skips a speaker without one"
             >unknown gender</span
           >
           <span v-else class="text-[11px] text-zinc-400">{{ genderLabel(c.gender) }}</span>
@@ -147,7 +147,7 @@ function applyAssignments() {
             class="icon-btn"
             :class="c.gender === '?' && 'icon-btn-flag'"
             :aria-label="`Edit ${c.name}’s full record`"
-            :title="`Gender, description, aliases and main cast for ${c.name} — opens the Cast page on this speaker`"
+            :data-tip="`Gender, description, aliases and main cast for ${c.name} — opens the Cast page on this speaker`"
           >
             <EditCastIcon class="icon-sm" />
           </RouterLink>
@@ -246,7 +246,7 @@ function applyAssignments() {
               <span
                 v-if="c.gender === '?'"
                 class="text-amber-600 dark:text-amber-400"
-                title="Auto-assign pools voices by gender and skips a speaker without one"
+                data-tip="Auto-assign pools voices by gender and skips a speaker without one"
                 >unknown</span
               >
               <span v-else class="text-zinc-500">{{ genderLabel(c.gender) }}</span>
@@ -268,7 +268,7 @@ function applyAssignments() {
                 class="icon-btn"
                 :class="c.gender === '?' && 'icon-btn-flag'"
                 :aria-label="`Edit ${c.name}’s full record`"
-                :title="`Gender, description, aliases and main cast for ${c.name} — opens the Cast page on this speaker`"
+                :data-tip="`Gender, description, aliases and main cast for ${c.name} — opens the Cast page on this speaker`"
               >
                 <EditCastIcon class="icon-sm" />
               </RouterLink>

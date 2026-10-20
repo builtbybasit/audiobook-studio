@@ -70,7 +70,8 @@ function toggleRepeat() {
       <button
         class="icon-btn h-6 w-6 rounded-full"
         :disabled="!isThis"
-        title="previous line (k)"
+        aria-label="previous line (k)"
+        data-tip="previous line (k)"
         @click="prev()"
       >
         <PrevIcon class="icon-sm" />
@@ -78,7 +79,8 @@ function toggleRepeat() {
       <button
         class="icon-btn h-6 w-6 rounded-full"
         :disabled="!isThis"
-        title="back 10 seconds (,)"
+        aria-label="back 10 seconds (,)"
+        data-tip="back 10 seconds (,)"
         @click="skip(-10)"
       >
         <BackIcon class="icon-sm" />
@@ -87,7 +89,7 @@ function toggleRepeat() {
         class="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-violet-600 text-white disabled:opacity-40"
         :disabled="!total"
         :aria-label="isThis && p.playing ? 'Pause' : 'Play this chapter'"
-        :title="isThis && p.playing ? 'pause (space)' : 'play this chapter (space)'"
+        :data-tip="isThis && p.playing ? 'pause (space)' : 'play this chapter (space)'"
         @click="emit('play')"
       >
         <component :is="isThis && p.playing ? PauseIcon : PlayIcon" class="icon icon-fill" />
@@ -95,7 +97,8 @@ function toggleRepeat() {
       <button
         class="icon-btn h-6 w-6 rounded-full"
         :disabled="!isThis"
-        title="forward 10 seconds (.)"
+        aria-label="forward 10 seconds (.)"
+        data-tip="forward 10 seconds (.)"
         @click="skip(10)"
       >
         <FwdIcon class="icon-sm" />
@@ -103,7 +106,8 @@ function toggleRepeat() {
       <button
         class="icon-btn h-6 w-6 rounded-full"
         :disabled="!isThis"
-        title="next line (j)"
+        aria-label="next line (j)"
+        data-tip="next line (j)"
         @click="next()"
       >
         <NextIcon class="icon-sm" />
@@ -112,7 +116,7 @@ function toggleRepeat() {
       <span
         class="ml-1.5 inline-block h-2 w-2 shrink-0 rounded-full transition-colors"
         :style="{ background: segment ? color : 'transparent' }"
-        :title="segment?.speaker"
+        :data-tip="segment?.speaker"
       ></span>
       <div
         class="relative min-w-0 flex-1 cursor-pointer py-2"
@@ -138,7 +142,9 @@ function toggleRepeat() {
       </div>
       <button
         class="shrink-0 font-mono text-[11px] tabular-nums text-zinc-500 hover:text-violet-600"
-        :title="remaining ? 'time left — click for time gone' : 'time gone — click for time left'"
+        :data-tip="
+          remaining ? 'time left — click for time gone' : 'time gone — click for time left'
+        "
         @click="remaining = !remaining"
       >
         {{ p.loading && isThis ? "…" : clock }}
@@ -149,7 +155,8 @@ function toggleRepeat() {
         class="icon-btn"
         :class="repeating && 'icon-btn-on'"
         :disabled="!isThis || !p.clipId"
-        :title="repeating ? 'repeating this line — click to stop (r)' : 'repeat this line (r)'"
+        :aria-label="repeating ? 'repeating this line — click to stop (r)' : 'repeat this line (r)'"
+        :data-tip="repeating ? 'repeating this line — click to stop (r)' : 'repeat this line (r)'"
         @click="toggleRepeat()"
       >
         <RepeatIcon class="icon-sm" />
@@ -164,7 +171,7 @@ function toggleRepeat() {
       />
       <button
         class="rounded border border-zinc-200 px-1 font-mono text-[10px] text-zinc-500 hover:border-violet-400 hover:text-violet-500 dark:border-zinc-700"
-        title="playback speed"
+        data-tip="playback speed"
         @click="cycleRate()"
       >
         {{ p.rate }}×
@@ -172,7 +179,8 @@ function toggleRepeat() {
       <button
         class="icon-btn"
         :class="follow && 'icon-btn-on'"
-        :title="follow ? 'the page follows the reading — click to stop' : 'follow the reading'"
+        :aria-label="follow ? 'the page follows the reading — click to stop' : 'follow the reading'"
+        :data-tip="follow ? 'the page follows the reading — click to stop' : 'follow the reading'"
         @click="emit('follow', !follow)"
       >
         <FollowIcon class="icon-sm" />
@@ -180,7 +188,8 @@ function toggleRepeat() {
       <button
         class="icon-btn"
         :class="p.stopAtEnd && 'icon-btn-on'"
-        :title="
+        aria-label="Stop at the end of the chapter"
+        :data-tip="
           p.stopAtEnd
             ? 'stops at the end of this chapter — click to run on'
             : 'runs on into the next chapter — click to stop at the end'

@@ -281,14 +281,14 @@ function pickBucket(b: MetricBucket | null) {
         </button>
         <button
           class="btn-ghost btn-xs"
-          title="Download every endpoint, profile and script setting as JSON. Keys are never included."
+          data-tip="Download every endpoint, profile and script setting as JSON. Keys are never included."
           @click="exportSettings"
         >
           <ExportIcon class="icon-sm" /> Export
         </button>
         <label
           class="btn-ghost btn-xs cursor-pointer"
-          title="Merge a settings JSON into what is configured here"
+          data-tip="Merge a settings JSON into what is configured here"
           ><ImportIcon class="icon-sm" /> Import<input
             type="file"
             accept="application/json"
@@ -442,13 +442,13 @@ function pickBucket(b: MetricBucket | null) {
                 <span
                   v-if="draftDirty(selected) || profilePromptDirty(selected)"
                   class="chip chip-on"
-                  :title="`You have unsaved ${draftDirty(selected) ? 'connection' : 'prompt'} changes`"
+                  :data-tip="`You have unsaved ${draftDirty(selected) ? 'connection' : 'prompt'} changes`"
                   >unsaved</span
                 >
               </div>
               <p
                 class="mt-0.5 truncate font-mono text-[11px] text-zinc-500"
-                :title="`${selected.model || 'model required'} · ${selected.baseUrl}`"
+                :data-tip="`${selected.model || 'model required'} · ${selected.baseUrl}`"
               >
                 {{ selected.model || "model required" }} · {{ selected.baseUrl }}
               </p>

@@ -68,7 +68,7 @@ const pick = (p: Profile) => (scriptingStore.scriptSettings.profile = p.id);
             : '/endpoints'
         "
         class="inline-flex items-center gap-1 text-violet-600 hover:underline dark:text-violet-400"
-        :title="
+        :data-tip="
           rows.length
             ? 'connection, limits and pricing, with the request history'
             : 'Add a scripting endpoint'
@@ -124,7 +124,7 @@ const pick = (p: Profile) => (scriptingStore.scriptSettings.profile = p.id);
         </span>
         <span
           class="mt-0.5 flex items-center justify-end gap-1.5 font-mono text-[11px] text-zinc-500"
-          title="success rate this week · average latency"
+          data-tip="success rate this week · average latency"
         >
           <template v-if="r.week"
             >{{ r.success }} · {{ r.latency === null ? "—" : r.latency.toFixed(1) + "s" }}</template

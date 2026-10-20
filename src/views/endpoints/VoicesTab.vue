@@ -327,7 +327,7 @@ const sampleTitle = computed(() =>
             class="input w-40 transition-[width] focus:w-72 not-placeholder-shown:w-72"
             :maxlength="MAX_SAMPLE_TEXT"
             placeholder="Preview line…"
-            title="What Preview says. Left blank, each press says the next of a few built-in lines."
+            data-tip="What Preview says. Left blank, each press says the next of a few built-in lines."
             aria-label="What Preview says"
           />
           <div v-if="endpoint.voices.length > 8" class="relative">
@@ -385,9 +385,11 @@ const sampleTitle = computed(() =>
             :label="`Speed for ${v.label}`"
             @update:model-value="(x) => endpointsStore.setVoiceSpeed(endpoint, v.id, x)"
           />
-          <span class="min-w-0 flex-1 truncate font-mono text-[11px] text-zinc-500" :title="v.id">{{
-            v.id
-          }}</span>
+          <span
+            class="min-w-0 flex-1 truncate font-mono text-[11px] text-zinc-500"
+            :data-tip="v.id"
+            >{{ v.id }}</span
+          >
           <UiSelect
             :model-value="v.gender"
             :options="GENDERS"
@@ -408,30 +410,27 @@ const sampleTitle = computed(() =>
               v-if="!kept[v.id]"
               class="btn-ghost btn-xs shrink-0"
               :aria-expanded="keep.voiceId === v.id"
-              title="Keep the samples this voice was made from, so it can go with a book's script"
+              data-tip="Keep the samples this voice was made from, so it can go with a book's script"
               @click="openKeep(v)"
             >
               Keep its samples…
             </button>
-            <UiTooltip
+            <button
               v-else
-              text="The recording this voice was made from, not the voice itself · shift-click copies its transcript"
+              data-tip="The recording this voice was made from, not the voice itself · shift-click copies its transcript"
+              class="btn-ghost btn-xs shrink-0"
+              :aria-label="`${playingId(sourceId(v)) ? 'Pause' : 'Play'} the recording ${v.label} was made from`"
+              :disabled="!!sampling && sampling !== sourceId(v)"
+              @click="playSource(v, $event)"
             >
-              <button
-                class="btn-ghost btn-xs shrink-0"
-                :aria-label="`${playingId(sourceId(v)) ? 'Pause' : 'Play'} the recording ${v.label} was made from`"
-                :disabled="!!sampling && sampling !== sourceId(v)"
-                @click="playSource(v, $event)"
-              >
-                <PauseIcon v-if="playingId(sourceId(v))" class="icon-sm icon-fill" />
-                <SourceIcon v-else class="icon-sm" />
-              </button>
-            </UiTooltip>
+              <PauseIcon v-if="playingId(sourceId(v))" class="icon-sm icon-fill" />
+              <SourceIcon v-else class="icon-sm" />
+            </button>
           </template>
           <button
             class="btn-ghost btn-xs shrink-0"
             :aria-label="`${playingOn(v) ? 'Pause' : 'Preview'} ${v.label}`"
-            :title="sampleTitle"
+            :data-tip="sampleTitle"
             :disabled="needsKeyFirst || (!!sampling && !busyOn(v))"
             :aria-busy="busyOn(v)"
             @click="preview(v)"
@@ -443,7 +442,7 @@ const sampleTitle = computed(() =>
           <button
             class="btn-ghost btn-xs shrink-0 hover:text-red-500"
             :aria-label="`Remove ${v.label}`"
-            :title="
+            :data-tip="
               (cloning?.deletes ? 'Delete on the server, for good' : 'Remove') +
               (countOf(v) ? ` — ${countOf(v)} speaker(s) lose their routing until repicked` : '')
             "

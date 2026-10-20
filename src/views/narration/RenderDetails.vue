@@ -173,14 +173,14 @@ const takePlaying = (s: Segment, t: Take | undefined) => !!t && onClip(takeId(s,
             <RouterLink
               :to="lineLink({ bookId, chapterId }, segment)"
               class="text-violet-500 hover:underline"
-              title="open this line in the reader"
+              data-tip="open this line in the reader"
               @click.stop
             >
               <EditIcon class="icon-sm" /> edit line
             </RouterLink>
             <button
               class="text-violet-500 hover:underline"
-              title="what this clip recorded about the request that made it, as JSON — the provider's own requests are on the endpoint's Activity tab"
+              data-tip="what this clip recorded about the request that made it, as JSON — the provider's own requests are on the endpoint's Activity tab"
               @click.stop="copyRecord(segment)"
             >
               copy clip record
@@ -245,7 +245,7 @@ const takePlaying = (s: Segment, t: Take | undefined) => !!t && onClip(takeId(s,
             :key="t.n"
             class="chip"
             :class="[t.current && 'chip-on', t.rejected && 'chip-off']"
-            :title="takeTitle(t)"
+            :data-tip="takeTitle(t)"
             @click.stop="
               t.current
                 ? play('seg' + segment.id, segment.audio.duration, segment.audio.url)

@@ -315,7 +315,7 @@ function openPeek(c: Chapter, e: MouseEvent) {
             <RouterLink
               :to="`/book/${bookId}/contents`"
               class="underline decoration-zinc-300"
-              title="review contents"
+              data-tip="review contents"
               >{{ counts.excluded }} skipped</RouterLink
             ></span
           >
@@ -325,7 +325,7 @@ function openPeek(c: Chapter, e: MouseEvent) {
       <div class="flex shrink-0 gap-1">
         <button
           class="btn-ghost btn-xs"
-          :title="
+          :data-tip="
             q
               ? `select the ${visiblePickable.length} chapters matching “${q}”`
               : 'select every chapter in the book'
@@ -337,7 +337,7 @@ function openPeek(c: Chapter, e: MouseEvent) {
         <button
           v-if="q"
           class="btn-ghost btn-xs"
-          title="ignore the filter and select every chapter in the book"
+          data-tip="ignore the filter and select every chapter in the book"
           @click="allEligible"
         >
           Whole book ({{ eligible.length }})
@@ -353,7 +353,7 @@ function openPeek(c: Chapter, e: MouseEvent) {
           v-for="g in shortcuts"
           :key="g.id"
           class="btn-ghost btn-xs"
-          :title="g.title"
+          :data-tip="g.title"
           @click="select(g.ids)"
         >
           {{ g.label }} <span class="text-zinc-400">{{ g.ids.length }}</span>
@@ -362,7 +362,7 @@ function openPeek(c: Chapter, e: MouseEvent) {
       </div>
       <p
         class="mt-1 truncate text-[11px]"
-        :title="summary.text"
+        :data-tip="summary.text"
         :class="
           summary.counts.done || summary.counts.stale
             ? 'text-amber-700 dark:text-amber-400'
@@ -412,7 +412,7 @@ function openPeek(c: Chapter, e: MouseEvent) {
               class="mr-1 icon-sm text-zinc-400"
             />{{ v.name }}
           </button>
-          <span class="shrink-0 font-mono text-[10px] text-zinc-400" :title="v.file"
+          <span class="shrink-0 font-mono text-[10px] text-zinc-400" :data-tip="v.file"
             >{{ v.done }}/{{ v.rows.length }}</span
           >
         </div>
@@ -439,7 +439,7 @@ function openPeek(c: Chapter, e: MouseEvent) {
             />
             <span
               :class="dotClass(c.excluded ? 'none' : status)"
-              :title="c.excluded ? 'none' : status"
+              :data-tip="c.excluded ? 'none' : status"
             ></span>
             <button
               class="min-w-0 flex-1 truncate text-left"
@@ -456,7 +456,7 @@ function openPeek(c: Chapter, e: MouseEvent) {
             <button
               data-peek
               class="rounded px-1 text-[11px] text-zinc-400 opacity-0 hover:text-violet-500 focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
-              title="peek at the chapter text"
+              data-tip="peek at the chapter text"
               :aria-label="`Preview and exclude ${n == null ? 'skipped chapter' : `chapter ${n}`}, ${c.title}`"
               aria-haspopup="dialog"
               :aria-expanded="peekOpen && peekId === c.id"
@@ -482,7 +482,7 @@ function openPeek(c: Chapter, e: MouseEvent) {
                 <circle cx="12" cy="12" r="3" />
               </svg>
             </button>
-            <span v-if="tag" class="text-[11px]" :class="tag.class" :title="tag.title">{{
+            <span v-if="tag" class="text-[11px]" :class="tag.class" :data-tip="tag.title">{{
               tag.text
             }}</span>
           </div>
@@ -499,13 +499,13 @@ function openPeek(c: Chapter, e: MouseEvent) {
     />
 
     <div class="border-t border-zinc-200 p-2 dark:border-zinc-800">
-      <p v-if="runNote" class="mb-1 truncate text-[11px] text-zinc-500" :title="runNote">
+      <p v-if="runNote" class="mb-1 truncate text-[11px] text-zinc-500" :data-tip="runNote">
         {{ runNote }}
       </p>
       <p
         v-if="runSkipped"
         class="mb-1 truncate text-[11px] text-amber-700 dark:text-amber-400"
-        :title="runSkipped"
+        :data-tip="runSkipped"
       >
         {{ runSkipped }}
       </p>

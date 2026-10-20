@@ -174,7 +174,7 @@ const kindOf = (w: RateWindow): "percent" | "rates" => (w.rates ? "rates" : "per
           <span
             v-else-if="active(w)"
             class="chip chip-off"
-            title="This window covers right now, but an earlier one in the list wins — windows never stack."
+            data-tip="This window covers right now, but an earlier one in the list wins — windows never stack."
             >covered, outranked</span
           >
           <span class="ml-auto flex items-center gap-1">

@@ -55,7 +55,7 @@ const TAG: Record<EndpointKind, string> = { scripting: "script", tts: "TTS", tra
         <span
           v-if="server()"
           class="ml-auto inline-flex shrink-0 items-center gap-1 rounded border border-zinc-200 px-1 text-[9px] uppercase tracking-wide text-zinc-500 dark:border-zinc-700"
-          :title="`Local server: ${server()!.label}`"
+          :data-tip="`Local server: ${server()!.label}`"
           ><span class="h-1.5 w-1.5 rounded-full" :class="DOT[server()!.tone]"></span>server<span
             class="sr-only"
             >: {{ server()!.label }}</span

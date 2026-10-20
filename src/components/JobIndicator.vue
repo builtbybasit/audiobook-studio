@@ -25,7 +25,7 @@ const jobsStore = useJobsStore();
     <span
       v-if="jobsStore.eta"
       class="hidden text-[11px] text-zinc-500 sm:inline"
-      :title="'estimated finish ' + hhmm(jobsStore.eta.at)"
+      :data-tip="'estimated finish ' + hhmm(jobsStore.eta.at)"
       >~{{
         jobsStore.eta.seconds < 60 ? "<1m" : Math.round(jobsStore.eta.seconds / 60) + "m"
       }}</span

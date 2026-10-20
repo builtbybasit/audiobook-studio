@@ -101,7 +101,7 @@ const INLINE = [
         <span class="label">Dictionary</span>
         <span class="text-[11px] text-zinc-500"
           >{{ plural(list.length, "term")
-          }}<span v-if="unused" :title="`not found in the scripted chapters`">
+          }}<span v-if="unused" :data-tip="`not found in the scripted chapters`">
             · {{ unused }} unused</span
           >
           · applied to every request, never to the book text</span
@@ -179,7 +179,7 @@ const INLINE = [
                   ? 'text-zinc-500 hover:text-violet-500'
                   : 'text-zinc-300 dark:text-zinc-600'
               "
-              :title="
+              :data-tip="
                 uses[e.id]
                   ? `${uses[e.id]} occurrence${uses[e.id] === 1 ? '' : 's'} in the scripted chapters — click for the preview`
                   : 'this spelling does not occur in the scripted chapters'
@@ -197,7 +197,8 @@ const INLINE = [
             >
             <button
               class="icon-btn shrink-0 hover:!border-red-400 hover:!text-red-500"
-              title="remove this term"
+              data-tip="remove this term"
+              aria-label="remove this term"
               @click="castStore.removeTerm(bookId, e.id)"
             >
               <RemoveIcon class="icon-sm" />
@@ -346,7 +347,7 @@ const INLINE = [
       <button
         v-if="book?.pacing"
         class="btn-ghost btn-xs mt-3"
-        :title="`back to ${secs(DEFAULT_PACING.line)} / ${secs(DEFAULT_PACING.turn)}, pauses ${secs(DEFAULT_PACING.inlineShort)} / ${secs(DEFAULT_PACING.inlineLong)}`"
+        :data-tip="`back to ${secs(DEFAULT_PACING.line)} / ${secs(DEFAULT_PACING.turn)}, pauses ${secs(DEFAULT_PACING.inlineShort)} / ${secs(DEFAULT_PACING.inlineLong)}`"
         @click="castStore.resetPacing(bookId)"
       >
         Reset to default
@@ -363,7 +364,7 @@ const INLINE = [
             :key="o.chId + '-' + o.seg.id"
             class="chip"
             :to="`/book/${bookId}/scripting?ch=${o.chId}&seg=${o.seg.id}`"
-            :title="o.seg.text.slice(0, 70)"
+            :data-tip="o.seg.text.slice(0, 70)"
           >
             {{ libraryStore.chapterRef(bookId, o.chId) }} · #{{ o.seg.id }} ·
             {{ o.seg.pause === 0 ? "no gap" : secs(o.seg.pause!) }}

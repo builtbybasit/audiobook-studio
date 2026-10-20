@@ -85,7 +85,7 @@ async function discard() {
           <button
             class="btn-primary"
             :disabled="!p.included.value"
-            :title="!p.included.value ? 'Include at least one chapter' : ''"
+            :data-tip="!p.included.value ? 'Include at least one chapter' : ''"
             @click="p.confirm()"
           >
             {{ p.actionLabel.value }}

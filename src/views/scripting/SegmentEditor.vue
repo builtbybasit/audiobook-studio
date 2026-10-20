@@ -96,7 +96,7 @@ const sameSpeakerCount = (x: Segment) =>
       <button
         v-if="!isSiteText(s.type)"
         class="btn-ghost btn-xs ml-auto"
-        title="This line is the website’s text, not the story — keep its words in the script and leave it out of the audio"
+        data-tip="This line is the website’s text, not the story — keep its words in the script and leave it out of the audio"
         @click="scriptsStore.setLineType(bookId, chapterId, s.id, 'watermark')"
       >
         <SiteTextIcon class="icon-sm" /> Mark as site text
@@ -104,7 +104,7 @@ const sameSpeakerCount = (x: Segment) =>
       <button
         v-else
         class="btn-ghost btn-xs ml-auto"
-        title="This line is the story — read it as narration"
+        data-tip="This line is the story — read it as narration"
         @click="scriptsStore.setLineType(bookId, chapterId, s.id, 'narration')"
       >
         Not site text
@@ -113,13 +113,13 @@ const sameSpeakerCount = (x: Segment) =>
         class="btn-ghost btn-xs"
         :class="editingText === s.id && 'border-violet-400 text-violet-700 dark:text-violet-300'"
         :aria-pressed="editingText === s.id"
-        title="Correct the words of this line — a mis-heard name, a doubled sentence, a note that isn’t story"
+        data-tip="Correct the words of this line — a mis-heard name, a doubled sentence, a note that isn’t story"
         @click="editingText === s.id ? (editingText = null) : startTextEdit(s)"
       >
         <TextIcon class="icon-sm" /> Edit text
         <kbd class="rounded bg-zinc-100 px-1 text-[10px] dark:bg-zinc-800">e</kbd>
       </button>
-      <button class="btn-ghost btn-xs" title="Close the editor (Esc)" @click="close">
+      <button class="btn-ghost btn-xs" data-tip="Close the editor (Esc)" @click="close">
         Done
         <kbd class="rounded bg-zinc-100 px-1 text-[10px] dark:bg-zinc-800">esc</kbd>
       </button>
@@ -265,7 +265,7 @@ const sameSpeakerCount = (x: Segment) =>
           <button
             v-if="segments.length > 1"
             class="btn-ghost btn-xs hover:border-red-300 hover:text-red-600 dark:hover:text-red-400"
-            :title="`Drop #${s.id} from the chapter — the prose closes over it. Undoable from the toast.`"
+            :data-tip="`Drop #${s.id} from the chapter — the prose closes over it. Undoable from the toast.`"
             @click="dropSegment(s)"
           >
             <TrashIcon class="icon-sm" /> Delete line

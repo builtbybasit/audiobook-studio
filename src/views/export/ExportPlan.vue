@@ -233,7 +233,7 @@ const ACTION_LABEL: Record<string, string> = {
           v-if="plan.files.length"
           class="chip"
           :class="playing && 'chip-on'"
-          title="Play the export on its own timeline — the pauses and the running time are the ones the file would have. No audio is rendered in this prototype, so it runs silent."
+          data-tip="Play the export on its own timeline — the pauses and the running time are the ones the file would have. No audio is rendered in this prototype, so it runs silent."
           @click="listen(selected, plan.label)"
         >
           <component :is="playing ? PauseIcon : PlayIcon" class="icon-sm icon-fill" />
@@ -271,7 +271,7 @@ const ACTION_LABEL: Record<string, string> = {
             class="flex items-center gap-2 text-sm"
           >
             <FileIcon class="icon shrink-0 text-zinc-400" />
-            <span class="min-w-0 flex-1 truncate font-mono text-xs" :title="f.name">{{
+            <span class="min-w-0 flex-1 truncate font-mono text-xs" :data-tip="f.name">{{
               f.name
             }}</span>
             <span
@@ -379,7 +379,7 @@ const ACTION_LABEL: Record<string, string> = {
             </p>
             <p
               class="mt-1 line-clamp-2 text-[11px] text-zinc-500"
-              :title="chapterNames(b.ids).join('\n')"
+              :data-tip="chapterNames(b.ids).join('\n')"
             >
               {{ chapterNames(b.ids).slice(0, 3).join(" · ")
               }}<template v-if="b.ids.length > 3"> · +{{ b.ids.length - 3 }} more</template>

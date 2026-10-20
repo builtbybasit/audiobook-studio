@@ -146,7 +146,7 @@ const FIELDS = [
           type="button"
           class="btn-ghost btn-xs"
           :disabled="atReset"
-          :title="`${resetLabel}: both messages put back`"
+          :data-tip="`${resetLabel}: both messages put back`"
           @click="reset"
         >
           <ResetIcon class="icon-sm" /> {{ resetLabel }}
@@ -159,7 +159,7 @@ const FIELDS = [
           :key="t.name"
           type="button"
           class="chip font-mono"
-          :title="t.about"
+          :data-tip="t.about"
           :aria-label="`Insert ${tagOf(t.name)}: ${t.about}`"
           @mousedown.prevent
           @click="insert(t.name)"

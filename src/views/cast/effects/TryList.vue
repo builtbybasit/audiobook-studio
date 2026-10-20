@@ -274,7 +274,9 @@ onUnmounted(() => {
               >This book</span
             >
           </div>
-          <div class="truncate text-[11px] text-zinc-500" :title="c.summary">{{ c.summary }}</div>
+          <div class="truncate text-[11px] text-zinc-500" :data-tip="c.summary">
+            {{ c.summary }}
+          </div>
         </div>
         <button
           v-if="choice.canRaise(c.id)"
@@ -287,7 +289,7 @@ onUnmounted(() => {
           <button
             class="shrink-0 rounded p-1 text-zinc-400 hover:text-violet-600"
             :aria-label="`Duplicate ${c.name}`"
-            title="Duplicate"
+            data-tip="Duplicate"
             @click.stop="duplicate(c)"
           >
             <CopyIcon class="icon-sm" />
@@ -295,7 +297,7 @@ onUnmounted(() => {
           <button
             class="shrink-0 rounded p-1 text-zinc-400 hover:text-violet-600"
             :aria-label="`Edit ${c.name}`"
-            title="Edit"
+            data-tip="Edit"
             @click.stop="emit('edit', c.id)"
           >
             <EditIcon class="icon-sm" />

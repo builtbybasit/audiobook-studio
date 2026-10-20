@@ -126,7 +126,7 @@ const whole = () => ({ name: props.v.name, all: props.v.all, chapters: props.v.a
         <span
           v-else
           class="min-w-0 truncate px-1 font-semibold"
-          title="Double-click to rename"
+          data-tip="Double-click to rename"
           @dblclick.stop="startRename"
           >{{ v.name }}</span
         >
@@ -136,7 +136,8 @@ const whole = () => ({ name: props.v.name, all: props.v.all, chapters: props.v.a
             <button
               class="icon-btn"
               :disabled="!v.room.back"
-              title="start one chapter earlier (shift-click: ten)"
+              data-tip="start one chapter earlier (shift-click: ten)"
+              aria-label="Start one chapter earlier"
               @click.stop="p.moveStart(v.first.id, $event.shiftKey ? -10 : -1)"
             >
               <BackIcon class="icon-sm" />
@@ -147,13 +148,16 @@ const whole = () => ({ name: props.v.name, all: props.v.all, chapters: props.v.a
             <button
               class="icon-btn"
               :disabled="!v.room.forward"
-              title="start one chapter later (shift-click: ten)"
+              data-tip="start one chapter later (shift-click: ten)"
+              aria-label="Start one chapter later"
               @click.stop="p.moveStart(v.first.id, $event.shiftKey ? 10 : 1)"
             >
               <FwdIcon class="icon-sm" />
             </button>
           </template>
-          <span v-else class="font-semibold" title="the book starts here">{{ v.from ?? "—" }}</span>
+          <span v-else class="font-semibold" data-tip="the book starts here">{{
+            v.from ?? "—"
+          }}</span>
           <span class="text-zinc-400">–</span>
           <span>{{ v.to ?? "—" }}</span>
         </div>
@@ -165,13 +169,13 @@ const whole = () => ({ name: props.v.name, all: props.v.all, chapters: props.v.a
         </span>
         <span
           class="min-w-0 truncate font-mono text-[10px] text-zinc-400"
-          :title="`The export writes ${fileName}`"
+          :data-tip="`The export writes ${fileName}`"
           >{{ fileName }}</span
         >
         <button
           class="icon-btn border-red-300 text-red-600 hover:border-red-500 hover:bg-red-50 hover:text-red-700 dark:border-red-500/50 dark:text-red-400 dark:hover:bg-red-500/10"
           :class="!v.startsHere && 'invisible'"
-          :title="`Join with ${before?.name ?? 'the volume before'} (Undo in the toast)`"
+          :data-tip="`Join with ${before?.name ?? 'the volume before'} (Undo in the toast)`"
           :aria-label="`Join ${v.name} with ${before?.name ?? 'the volume before'}`"
           @click.stop="v.startsHere && p.joinAt(v.first.id)"
         >
@@ -229,7 +233,8 @@ const whole = () => ({ name: props.v.name, all: props.v.all, chapters: props.v.a
         <button
           class="icon-btn ml-auto"
           :class="reveal && 'icon-btn-on'"
-          :title="reveal ? 'Hide every title' : 'Show every title (spoilers)'"
+          :data-tip="reveal ? 'Hide every title' : 'Show every title (spoilers)'"
+          :aria-label="reveal ? 'Hide every title' : 'Show every title'"
           @click="reveal = !reveal"
         >
           <component :is="reveal ? EyeOffIcon : EyeIcon" class="icon-sm" />
@@ -252,14 +257,14 @@ const whole = () => ({ name: props.v.name, all: props.v.all, chapters: props.v.a
               c.excluded && 'line-through',
             ]"
             :aria-hidden="!(reveal || shown.has(c.id))"
-            :title="reveal || shown.has(c.id) ? c.title : 'Click to read the title'"
+            :data-tip="reveal || shown.has(c.id) ? c.title : 'Click to read the title'"
             @click="show(c.id)"
             >{{ c.title }}</span
           >
           <button
             v-if="c.id !== v.first.id"
             class="icon-btn opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-            title="New volume from here"
+            data-tip="New volume from here"
             :aria-label="`New volume from chapter ${p.numbers.value?.get(c.id) ?? 'here'}`"
             @click="p.cutAt(c.id)"
           >

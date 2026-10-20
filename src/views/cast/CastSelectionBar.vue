@@ -53,7 +53,7 @@ function remove() {
     />
     <button
       class="btn-ghost btn-xs text-red-600 dark:text-red-400"
-      title="Their lines go to the Narrator"
+      data-tip="Their lines go to the Narrator"
       @click="remove"
     >
       Remove

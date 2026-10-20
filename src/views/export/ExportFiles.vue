@@ -87,7 +87,7 @@ const shown = computed(() => props.plan.files);
                 class="icon-sm shrink-0 text-zinc-400"
               />
               <span class="w-6 shrink-0 font-mono text-[11px] text-zinc-400">{{ fi + 1 }}</span>
-              <span class="min-w-0 flex-1 truncate font-mono text-xs" :title="f.name">{{
+              <span class="min-w-0 flex-1 truncate font-mono text-xs" :data-tip="f.name">{{
                 f.name
               }}</span>
             </button>
@@ -96,7 +96,8 @@ const shown = computed(() => props.plan.files);
             >
             <button
               class="icon-btn shrink-0"
-              :title="`preview ${f.name}`"
+              :aria-label="`preview ${f.name}`"
+              :data-tip="`preview ${f.name}`"
               @click="emit('preview', f.chapterIds, f.name)"
             >
               <PlayIcon class="icon-sm icon-fill" />

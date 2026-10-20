@@ -44,7 +44,7 @@ const COLUMNS: { label: string; sort?: ShelfSort; cls?: string; w: string }[] = 
               v-if="c.sort"
               class="inline-flex items-center gap-1 uppercase hover:text-zinc-800 dark:hover:text-zinc-100"
               :class="sort === c.sort && 'text-violet-700 dark:text-violet-300'"
-              :title="`Order by ${c.label.toLowerCase()}`"
+              :data-tip="`Order by ${c.label.toLowerCase()}`"
               @click="emit('sort', c.sort)"
             >
               {{ c.label }} <SortIcon v-if="sort === c.sort" class="icon-sm" />

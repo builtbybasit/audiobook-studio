@@ -62,16 +62,29 @@ defineExpose({ playChapter });
   >
     <div class="flex items-center gap-3">
       <div class="flex shrink-0 items-center gap-0.5">
-        <button class="icon-btn" :disabled="!isChapter" title="previous line" @click="prev()">
+        <button
+          class="icon-btn"
+          :disabled="!isChapter"
+          data-tip="previous line"
+          aria-label="previous line"
+          @click="prev()"
+        >
           <PrevIcon class="icon-sm" />
         </button>
-        <button class="icon-btn" :disabled="!isChapter" title="back 10 seconds" @click="skip(-10)">
+        <button
+          class="icon-btn"
+          :disabled="!isChapter"
+          data-tip="back 10 seconds"
+          aria-label="back 10 seconds"
+          @click="skip(-10)"
+        >
           <BackIcon class="icon-sm" />
         </button>
         <button
           class="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-violet-600 text-white disabled:opacity-40"
           :disabled="!total"
-          title="play the stitched chapter (space)"
+          data-tip="play the stitched chapter (space)"
+          aria-label="play the stitched chapter"
           @click="playChapter()"
         >
           <component
@@ -82,12 +95,19 @@ defineExpose({ playChapter });
         <button
           class="icon-btn"
           :disabled="!isChapter"
-          title="forward 10 seconds"
+          data-tip="forward 10 seconds"
+          aria-label="forward 10 seconds"
           @click="skip(10)"
         >
           <FwdIcon class="icon-sm" />
         </button>
-        <button class="icon-btn" :disabled="!isChapter" title="next line" @click="next()">
+        <button
+          class="icon-btn"
+          :disabled="!isChapter"
+          data-tip="next line"
+          aria-label="next line"
+          @click="next()"
+        >
           <NextIcon class="icon-sm" />
         </button>
       </div>
@@ -107,7 +127,7 @@ defineExpose({ playChapter });
           <span class="flex items-center gap-2">
             <button
               class="rounded border border-zinc-200 px-1 font-mono text-[10px] text-zinc-500 hover:border-violet-400 hover:text-violet-500 dark:border-zinc-700"
-              title="playback speed"
+              data-tip="playback speed"
               @click="cycleRate()"
             >
               {{ p.rate }}×
@@ -127,13 +147,13 @@ defineExpose({ playChapter });
                   background: colorOf(x.s.speaker),
                   opacity: x.s.audio.status === 'stale' ? 0.35 : 0.75,
                 }"
-                :title="`#${x.s.id} ${x.s.speaker}`"
+                :data-tip="`#${x.s.id} ${x.s.speaker}`"
               ></div>
               <div
                 v-if="x.gap"
                 class="h-full bg-zinc-200 dark:bg-zinc-700"
                 :style="{ width: (x.gap / total) * 100 + '%' }"
-                :title="`${secs(x.gap)} of silence${x.s.pause != null ? ' — set on this line' : ''}`"
+                :data-tip="`${secs(x.gap)} of silence${x.s.pause != null ? ' — set on this line' : ''}`"
               ></div>
             </template>
             <div v-if="!timeline.length" class="h-full w-full bg-zinc-200 dark:bg-zinc-800"></div>

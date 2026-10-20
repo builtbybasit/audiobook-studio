@@ -30,23 +30,34 @@ function scrub(e: MouseEvent) {
     class="card fixed bottom-4 left-4 right-4 z-40 p-2 shadow-xl sm:right-auto sm:w-[400px] lg:left-60"
   >
     <div class="flex items-center gap-1.5">
-      <button class="icon-btn" title="previous line" @click="prev()">
+      <button class="icon-btn" data-tip="previous line" aria-label="previous line" @click="prev()">
         <PrevIcon class="icon-sm" />
       </button>
-      <button class="icon-btn" title="back 10 seconds" @click="skip(-10)">
+      <button
+        class="icon-btn"
+        data-tip="back 10 seconds"
+        aria-label="back 10 seconds"
+        @click="skip(-10)"
+      >
         <BackIcon class="icon-sm" />
       </button>
       <button
         class="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-violet-600 text-white"
-        :title="p.playing ? 'pause (space)' : 'play (space)'"
+        :data-tip="p.playing ? 'pause (space)' : 'play (space)'"
+        :aria-label="p.playing ? 'Pause' : 'Play'"
         @click="toggle()"
       >
         <component :is="p.playing ? PauseIcon : PlayIcon" class="icon icon-fill" />
       </button>
-      <button class="icon-btn" title="forward 10 seconds" @click="skip(10)">
+      <button
+        class="icon-btn"
+        data-tip="forward 10 seconds"
+        aria-label="forward 10 seconds"
+        @click="skip(10)"
+      >
         <FwdIcon class="icon-sm" />
       </button>
-      <button class="icon-btn" title="next line" @click="next()">
+      <button class="icon-btn" data-tip="next line" aria-label="next line" @click="next()">
         <NextIcon class="icon-sm" />
       </button>
 
@@ -56,7 +67,7 @@ function scrub(e: MouseEvent) {
             v-if="p.href"
             :to="p.href!"
             class="truncate font-medium hover:text-violet-500"
-            :title="`back to ${p.title}`"
+            :data-tip="`back to ${p.title}`"
             >{{ p.title || "Playing" }}</RouterLink
           >
           <span v-else class="truncate font-medium">{{ p.title || "Playing" }}</span>
@@ -71,12 +82,14 @@ function scrub(e: MouseEvent) {
 
       <button
         class="shrink-0 rounded border border-zinc-200 px-1 font-mono text-[10px] text-zinc-500 hover:border-violet-400 hover:text-violet-500 dark:border-zinc-700"
-        title="playback speed"
+        data-tip="playback speed"
         @click="cycleRate()"
       >
         {{ p.rate }}×
       </button>
-      <button class="icon-btn" title="stop" @click="stop()"><CloseIcon class="icon-sm" /></button>
+      <button class="icon-btn" data-tip="stop" aria-label="stop" @click="stop()">
+        <CloseIcon class="icon-sm" />
+      </button>
     </div>
     <div
       class="mt-1.5 h-1 cursor-pointer overflow-hidden rounded bg-zinc-200 dark:bg-zinc-800"

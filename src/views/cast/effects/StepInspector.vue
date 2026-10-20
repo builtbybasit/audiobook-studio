@@ -280,7 +280,7 @@ watch(
       <button
         class="icon-btn h-7 w-7"
         aria-label="Move up (Alt ↑)"
-        title="Move up (Alt ↑)"
+        data-tip="Move up (Alt ↑)"
         @click="move(-1)"
       >
         <UpIcon class="icon-sm" />
@@ -288,7 +288,7 @@ watch(
       <button
         class="icon-btn h-7 w-7"
         aria-label="Move down (Alt ↓)"
-        title="Move down (Alt ↓)"
+        data-tip="Move down (Alt ↓)"
         @click="move(1)"
       >
         <DownIcon class="icon-sm" />

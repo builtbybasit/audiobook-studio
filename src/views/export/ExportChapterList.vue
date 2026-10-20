@@ -280,7 +280,7 @@ const tone: Record<string, string> = {
           />
           <button
             class="min-w-0 flex-1 truncate text-left font-semibold"
-            :title="v.name"
+            :data-tip="v.name"
             @click="toggleCollapse(v.id)"
           >
             <component
@@ -315,9 +315,9 @@ const tone: Record<string, string> = {
             />
             <span
               :class="dotClass(READINESS[readiness.get(c.id)!].dot)"
-              :title="READINESS[readiness.get(c.id)!].dot"
+              :data-tip="READINESS[readiness.get(c.id)!].dot"
             ></span>
-            <span class="min-w-0 flex-1 truncate" :title="c.title">
+            <span class="min-w-0 flex-1 truncate" :data-tip="c.title">
               <span class="mr-1.5 font-mono text-[11px] text-zinc-400">{{
                 numberCell(numbers?.get(c.id), String(numbers?.size ?? 0).length)
               }}</span
@@ -327,7 +327,7 @@ const tone: Record<string, string> = {
               v-if="readiness.get(c.id) !== 'ready'"
               class="shrink-0 whitespace-nowrap text-[11px]"
               :class="tone[READINESS[readiness.get(c.id)!].tone]"
-              :title="READINESS[readiness.get(c.id)!].label"
+              :data-tip="READINESS[readiness.get(c.id)!].label"
               >{{ READINESS[readiness.get(c.id)!].short }}</span
             >
             <span v-else class="shrink-0 font-mono text-[11px] text-zinc-400">{{

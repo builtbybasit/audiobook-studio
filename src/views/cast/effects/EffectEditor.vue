@@ -286,7 +286,7 @@ onUnmounted(() => {
         />
       </div>
       <div v-if="others.length" class="flex items-center gap-2 text-xs text-zinc-500">
-        <span class="min-w-0 flex-1 truncate" :title="others.join(', ')"
+        <span class="min-w-0 flex-1 truncate" :data-tip="others.join(', ')"
           >Also on {{ listed(others) }}</span
         >
         <UiHint

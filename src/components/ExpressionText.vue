@@ -39,7 +39,7 @@ const pieces = computed(() =>
       v-if="'tag' in piece"
       class="expression-chip"
       :class="piece.look.class"
-      :title="piece.look.title"
+      :data-tip="piece.look.title"
       ><PauseIcon
         v-if="piece.tag.kind === 'pause'"
         class="-mt-px inline size-3"

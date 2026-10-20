@@ -232,7 +232,7 @@ async function toggleNotify() {
                     <span
                       v-if="j.bulk"
                       class="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-500 dark:bg-zinc-800"
-                      :title="`${j.bulk.op}${j.bulk.scope ? ' · ' + j.bulk.scope : ''}`"
+                      :data-tip="`${j.bulk.op}${j.bulk.scope ? ' · ' + j.bulk.scope : ''}`"
                       >{{ j.bulk.index }}/{{ j.bulk.total }}</span
                     >
                   </div>
@@ -396,7 +396,8 @@ async function toggleNotify() {
                     </button>
                     <button
                       class="ml-1 rounded px-1.5 py-0.5 text-xs text-zinc-400 hover:bg-zinc-100 hover:text-red-500 dark:hover:bg-zinc-800"
-                      title="Remove from history"
+                      data-tip="Remove from history"
+                      aria-label="Remove from history"
                       @click="jobsStore.removeJob(j.id)"
                     >
                       <CloseIcon class="icon-sm" />
@@ -456,7 +457,7 @@ async function toggleNotify() {
           <RouterLink
             to="/endpoints"
             class="btn-ghost btn-xs mt-2 w-full justify-center"
-            title="Health, keys, voices, spend and concurrency for every endpoint"
+            data-tip="Health, keys, voices, spend and concurrency for every endpoint"
             >Manage endpoints</RouterLink
           >
         </div>

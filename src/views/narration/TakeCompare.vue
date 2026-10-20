@@ -188,7 +188,7 @@ function seekTake(id: string, duration: number, url: string | undefined, frac: n
         <template v-if="!['queued', 'generating'].includes(segment.candidate!.status)">
           <button
             class="btn-ghost btn-xs"
-            :title="
+            :data-tip="
               segment.candidate!.duration
                 ? 'keep the clip the book already uses (x)'
                 : 'drop this retake (x)'
@@ -206,7 +206,7 @@ function seekTake(id: string, duration: number, url: string | undefined, frac: n
           <button
             v-if="segment.candidate!.duration"
             class="btn-primary btn-xs"
-            title="put the new clip in the book and clear the flag (a)"
+            data-tip="put the new clip in the book and clear the flag (a)"
             aria-keyshortcuts="a"
             @click="$emit('decide', 'new')"
           >

@@ -162,7 +162,7 @@ const name = (row: Row) =>
             class="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-violet-500 dark:hover:bg-zinc-800"
             :class="r.position === 1 && 'invisible'"
             :aria-label="`Run ${name(r)} next`"
-            title="Run next"
+            data-tip="Run next"
             @click="jobsStore.runNext(r.jobs.map((j) => j.id))"
           >
             <RunNextIcon class="icon-sm" />
@@ -172,7 +172,7 @@ const name = (row: Row) =>
             :aria-label="
               r.run != null ? `Cancel ${r.jobs.length} jobs of ${name(r)}` : `Cancel ${name(r)}`
             "
-            title="Cancel"
+            data-tip="Cancel"
             @click="jobsStore.cancelJobs(r.jobs.map((j) => j.id))"
           >
             <CancelIcon class="icon-sm" />

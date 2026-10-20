@@ -131,7 +131,7 @@ async function remove() {
           <button
             class="ui-item w-full hover:bg-violet-50 dark:hover:bg-violet-500/15"
             :aria-expanded="exporting"
-            title="The whole book's script, cast and dictionary as a .script.zip"
+            data-tip="The whole book's script, cast and dictionary as a .script.zip"
             @click="exporting = !exporting"
           >
             <ExportIcon class="mr-1 icon-sm" /> Export script…
@@ -158,7 +158,7 @@ async function remove() {
           v-else-if="checking"
           class="ui-item w-full opacity-50"
           disabled
-          title="Checking whether any voice keeps its recordings"
+          data-tip="Checking whether any voice keeps its recordings"
         >
           <ExportIcon class="mr-1 icon-sm" /> Export script
           <span class="ml-auto text-[10px] text-zinc-500">checking…</span>
@@ -168,14 +168,14 @@ async function remove() {
           class="ui-item w-full hover:bg-violet-50 dark:hover:bg-violet-500/15"
           :href="scriptExportUrl(book.id)"
           download
-          title="The whole book's script, cast and dictionary as a .script.zip"
+          data-tip="The whole book's script, cast and dictionary as a .script.zip"
           @click="menu = false"
         >
           <ExportIcon class="mr-1 icon-sm" /> Export script
         </a>
         <button
           class="ui-item w-full hover:bg-violet-50 dark:hover:bg-violet-500/15"
-          title="Read a script file into this book"
+          data-tip="Read a script file into this book"
           @click="go('script-import')"
         >
           <ImportIcon class="mr-1 icon-sm" /> Import script…
@@ -183,7 +183,7 @@ async function remove() {
         <div class="my-1 border-t border-zinc-100 dark:border-zinc-800"></div>
         <button
           class="ui-item w-full items-start text-red-600 hover:bg-red-500/10 dark:text-red-400"
-          :title="removeWarning"
+          :data-tip="removeWarning"
           @click="remove"
         >
           <RemoveIcon class="mr-1 mt-0.5 icon-sm" />

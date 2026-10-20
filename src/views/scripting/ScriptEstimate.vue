@@ -157,16 +157,16 @@ const runs = computed(() =>
         />
       </div>
       <div class="mt-2 flex h-1.5 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700">
-        <span class="bg-zinc-500" :style="{ width: share(spent ?? 0) }" title="spent"></span>
+        <span class="bg-zinc-500" :style="{ width: share(spent ?? 0) }" data-tip="spent"></span>
         <span
           class="bg-zinc-400"
           :style="{ width: share(held) }"
-          title="held by running jobs"
+          data-tip="held by running jobs"
         ></span>
         <span
           class="bg-violet-500"
           :style="{ width: share(ready ? est.cost : 0) }"
-          title="this run"
+          data-tip="this run"
         ></span>
       </div>
       <p

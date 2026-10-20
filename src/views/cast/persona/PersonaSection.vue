@@ -243,7 +243,7 @@ function add() {
         >
         <button
           class="btn-ghost btn-xs ml-auto"
-          :title="`Remove ${p.masked ? 'this persona' : p.name} from this book’s cast — their lines go to the Narrator`"
+          :data-tip="`Remove ${p.masked ? 'this persona' : p.name} from this book’s cast — their lines go to the Narrator`"
           @click="castStore.deleteCharacter(bookId, p.name)"
         >
           Remove

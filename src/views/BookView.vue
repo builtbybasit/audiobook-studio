@@ -202,7 +202,7 @@ const next = computed(() =>
 <template>
   <div v-if="book" class="mx-auto max-w-6xl space-y-5 p-4 sm:p-6">
     <div class="flex flex-col gap-5 sm:flex-row">
-      <label class="group relative h-40 w-28 shrink-0 cursor-pointer" title="Change cover">
+      <label class="group relative h-40 w-28 shrink-0 cursor-pointer" data-tip="Change cover">
         <BookCover :book="book" class="h-full w-full rounded-lg shadow-lg" />
         <span
           class="absolute inset-0 flex items-center justify-center rounded-lg bg-black/50 text-xs font-medium text-white opacity-0 transition group-focus-within:opacity-100 group-hover:opacity-100"
@@ -352,18 +352,20 @@ const next = computed(() =>
               <button
                 class="text-[10px] leading-none hover:text-violet-500 disabled:invisible"
                 :disabled="vi === 0"
-                title="move up"
+                aria-label="move up"
+                data-tip="move up"
                 @click="libraryStore.moveVolume(bookId, v.id, vi - 1)"
               >
                 <MoveUpIcon class="icon-sm" />
               </button>
-              <span class="cursor-grab select-none leading-none" title="drag to reorder"
+              <span class="cursor-grab select-none leading-none" data-tip="drag to reorder"
                 ><GripIcon class="icon"
               /></span>
               <button
                 class="text-[10px] leading-none hover:text-violet-500 disabled:invisible"
                 :disabled="vi === book.volumes.length - 1"
-                title="move down"
+                aria-label="move down"
+                data-tip="move down"
                 @click="libraryStore.moveVolume(bookId, v.id, vi + 1)"
               >
                 <MoveDownIcon class="icon-sm" />
@@ -394,7 +396,7 @@ const next = computed(() =>
                 <span class="truncate text-sm font-medium">{{ v.name }}</span
                 ><button
                   class="text-[11px] text-zinc-400 opacity-0 hover:text-violet-500 group-hover:opacity-100"
-                  title="rename volume"
+                  data-tip="rename volume"
                   @click="
                     editing = v.id;
                     draft = v.name;
@@ -445,7 +447,7 @@ const next = computed(() =>
             <button
               v-else
               class="text-[11px] text-zinc-400 hover:text-red-500"
-              :title="removeWarning(v)"
+              :data-tip="removeWarning(v)"
               @click="remove(v)"
             >
               {{ book.volumes.length === 1 ? "remove the novel" : "remove volume" }}

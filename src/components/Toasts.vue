@@ -142,7 +142,7 @@ const btnCls = (b: { id?: string }) =>
                 <kbd
                   v-if="b.id === 'undo' && newestUndoId === toast.id"
                   class="rounded border border-zinc-200 px-1 font-mono text-[10px] text-zinc-400 dark:border-zinc-700"
-                  title="undo from anywhere"
+                  data-tip="undo from anywhere"
                   >{{ modKey }} Z</kbd
                 >
               </template>

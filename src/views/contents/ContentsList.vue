@@ -123,7 +123,7 @@ defineExpose({ focusRow });
           :model-value="volState(v).all ? true : volState(v).some ? 'indeterminate' : false"
           size="xs"
           :aria-label="`Include every chapter of ${v.name} in the audiobook`"
-          :title="
+          :data-tip="
             volState(v).all
               ? `Skip all ${v.all.length} chapters of this volume`
               : `Include all ${v.all.length} chapters of this volume`
@@ -132,7 +132,7 @@ defineExpose({ focusRow });
         />
         <button
           class="min-w-0 flex-1 truncate text-left font-semibold"
-          :title="v.name"
+          :data-tip="v.name"
           :aria-expanded="!collapsed.has(v.id)"
           @click="toggleCollapse(v.id)"
         >
@@ -148,7 +148,7 @@ defineExpose({ focusRow });
         </button>
         <span
           class="shrink-0 font-mono text-[10px] text-zinc-400"
-          :title="`${volState(v).on} of ${v.all.length} chapters in the audiobook`"
+          :data-tip="`${volState(v).on} of ${v.all.length} chapters in the audiobook`"
           >{{ volState(v).on }}/{{ v.all.length }} in<template
             v-if="narrowed && volState(v).hidden"
           >
@@ -177,7 +177,7 @@ defineExpose({ focusRow });
             class="mt-0.5"
             :model-value="!c.excluded"
             :aria-label="`Include ${named(c)}, ${c.title}, in the audiobook`"
-            :title="c.excluded ? 'Include in the audiobook' : 'Skip for the audiobook'"
+            :data-tip="c.excluded ? 'Include in the audiobook' : 'Skip for the audiobook'"
             @click="emit('toggle', c, $event)"
           />
           <span class="mt-0.5 font-mono text-[11px] text-zinc-400">{{
@@ -190,7 +190,7 @@ defineExpose({ focusRow });
                 opened === c.id && 'font-semibold',
                 c.excluded && 'text-zinc-500 line-through decoration-zinc-400',
               ]"
-              :title="c.title"
+              :data-tip="c.title"
               tabindex="-1"
               @click="emit('open', c.id)"
             >

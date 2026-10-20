@@ -300,7 +300,7 @@ const SKIPPED = {
           <button
             v-if="plan"
             class="btn-ghost"
-            title="Put this file aside"
+            data-tip="Put this file aside"
             @click="transferStore.forget(bookId)"
           >
             <ClearIcon class="icon-sm" /> Another file

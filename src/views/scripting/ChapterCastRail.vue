@@ -53,7 +53,7 @@ function commitRename() {
       <span class="label">In this chapter · {{ inChapter.length }} speakers</span>
       <button
         class="icon-btn ml-auto"
-        title="hide the cast (c)"
+        data-tip="hide the cast (c)"
         aria-label="Hide the cast"
         @click="reader.showCast = false"
       >
@@ -107,7 +107,7 @@ function commitRename() {
           v-if="c.isNew"
           :to="`/book/${bookId}/cast`"
           class="rounded bg-amber-400/20 px-1 font-semibold text-amber-600 hover:underline"
-          title="review this name on the Cast page — rename it, or merge it into the speaker it belongs to"
+          data-tip="review this name on the Cast page — rename it, or merge it into the speaker it belongs to"
           >new · alias?</RouterLink
         >
       </div>

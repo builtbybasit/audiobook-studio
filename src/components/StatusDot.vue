@@ -3,5 +3,5 @@ import { dotClass } from "@/components/statusDot";
 defineProps<{ status?: string }>();
 </script>
 <template>
-  <span :class="dotClass(status)" :title="status"></span>
+  <span :class="dotClass(status)" :data-tip="status"></span>
 </template>

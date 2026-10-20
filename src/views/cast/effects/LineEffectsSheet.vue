@@ -49,7 +49,7 @@ function tune(id: string) {
         :key="e.id"
         class="grid grid-cols-[minmax(0,10rem)_minmax(0,1fr)_auto] items-center gap-x-3 border-b border-zinc-100 py-1.5 last:border-0 dark:border-zinc-800/70"
       >
-        <span class="truncate" :title="e.name">{{ e.name }}</span>
+        <span class="truncate" :data-tip="e.name">{{ e.name }}</span>
         <input
           :value="e.useWhen ?? ''"
           maxlength="300"

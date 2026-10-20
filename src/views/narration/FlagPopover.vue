@@ -76,7 +76,8 @@ function clear() {
     <PopoverTrigger
       class="icon-btn"
       :class="segment.flag ? 'icon-btn-flag' : 'hover:!border-amber-400 hover:!text-amber-600'"
-      :title="
+      :aria-label="segment.flag ? 'flagged clip' : 'flag this clip'"
+      :data-tip="
         segment.flag
           ? `flagged: ${FLAG_LABEL[segment.flag.kind]}${segment.flag.note ? ' — ' + segment.flag.note : ''}`
           : 'flag what is wrong with this clip (f)'

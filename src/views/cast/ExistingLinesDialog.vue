@@ -143,7 +143,7 @@ async function act() {
               v-for="c in ask.chapters"
               :key="c.id"
               class="flex items-center gap-1"
-              :title="plural(c.lines, 'line')"
+              :data-tip="plural(c.lines, 'line')"
             >
               <UiCheckbox
                 size="xs"

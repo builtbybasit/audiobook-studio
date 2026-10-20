@@ -94,7 +94,7 @@ function save() {
           >
         </h2>
         <span class="chip chip-off">{{ endpointsStore.prompt ? "edited" : "built-in" }}</span>
-        <span v-if="dirty" class="chip chip-on" title="You have unsaved prompt changes"
+        <span v-if="dirty" class="chip chip-on" data-tip="You have unsaved prompt changes"
           >unsaved</span
         >
       </div>

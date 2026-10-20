@@ -218,7 +218,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
     >
       <span class="text-zinc-500"
         >{{ chapter.title }} · {{ fmt(total) }}
-        <span v-if="silence" :title="`silence stitched between clips (Pronunciation tab)`"
+        <span v-if="silence" :data-tip="`silence stitched between clips (Pronunciation tab)`"
           >(incl. {{ secs(silence) }} of pauses)</span
         >
         · {{ chapter.narration }}
@@ -226,7 +226,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
           v-if="unread"
           :to="{ path: `/book/${bookId}/scripting`, query: { ch: chapterId, lines: 'site' } }"
           class="underline decoration-dotted hover:text-violet-500"
-          title="Site text, and notes this book does not read — open them in the reader"
+          data-tip="Site text, and notes this book does not read — open them in the reader"
           >· {{ unread }} not read</RouterLink
         ></span
       >
@@ -234,7 +234,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
         <button
           v-if="changed && chapter.narration !== 'running'"
           class="btn-primary btn-xs"
-          :title="
+          :data-tip="
             unrendered
               ? `${counts.stale} edited after narration, ${unrendered} never rendered (new halves of a split)`
               : 'lines edited after narration'
@@ -253,7 +253,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
         <button
           v-if="counts.failed && chapter.narration !== 'running'"
           class="btn-ghost btn-xs"
-          title="render only the requests that failed — finished clips are not touched"
+          data-tip="render only the requests that failed — finished clips are not touched"
           @click="narrationStore.retryFailed(bookId, chapterId)"
         >
           Retry failed ({{ counts.failed }})
@@ -261,7 +261,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
         <button
           class="btn-ghost btn-xs"
           :disabled="!!cannotCheck"
-          :title="
+          :data-tip="
             cannotCheck ||
             'hear each clip on a transcription endpoint and flag the lines that say something else'
           "
@@ -272,7 +272,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
         <button
           v-if="chapter.narration !== 'running'"
           class="btn-ghost btn-xs"
-          title="render every line again — each clip in the book keeps playing until its replacement lands, and the clip it displaces joins that line’s take list"
+          data-tip="render every line again — each clip in the book keeps playing until its replacement lands, and the clip it displaces joins that line’s take list"
           @click="narrationStore.startRun(bookId, [chapterId], { scope: 'all' })"
         >
           Re-narrate all
@@ -307,7 +307,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                 hasDetails(s) && 'cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800/40',
                 expanded.has(s.id) && 'bg-zinc-50 dark:bg-zinc-800/40',
               ]"
-              :title="hasDetails(s) ? 'click for render details' : undefined"
+              :data-tip="hasDetails(s) ? 'click for render details' : undefined"
               @click="hasDetails(s) && toggleDetails(s.id)"
               @keydown="onRowKey($event, s)"
             >
@@ -316,13 +316,13 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                 <span
                   v-if="!spoken(s)"
                   class="inline-block h-2 w-2 rounded-full border border-zinc-300 dark:border-zinc-600"
-                  title="not read aloud"
+                  data-tip="not read aloud"
                 ></span>
                 <span
                   v-else
                   class="inline-block h-2 w-2 rounded-full"
                   :class="STATUS_BG[s.audio.status]"
-                  :title="s.audio.status"
+                  :data-tip="s.audio.status"
                 ></span>
               </td>
               <td class="hidden py-1 pr-2 leading-tight sm:table-cell">
@@ -335,7 +335,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                 </div>
                 <div
                   class="truncate pl-3.5 text-[10px] text-zinc-400"
-                  :title="`${voiceOf(s.speaker)} · ${epName(s.audio.endpoint)}`"
+                  :data-tip="`${voiceOf(s.speaker)} · ${epName(s.audio.endpoint)}`"
                 >
                   {{ voiceOf(s.speaker) }}
                   <span class="text-zinc-300 dark:text-zinc-600"
@@ -373,7 +373,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                   ><span
                     v-if="s.flag"
                     class="rounded bg-amber-400/20 px-1 font-semibold text-amber-700 dark:text-amber-300"
-                    :title="FLAG_LABEL[s.flag.kind]"
+                    :data-tip="FLAG_LABEL[s.flag.kind]"
                     ><FlagIcon class="icon-sm" />
                     <template v-if="s.flag.kind === 'heard' && s.flag.note">{{
                       s.flag.note
@@ -394,14 +394,14 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                   ><span
                     v-if="(s.audio.parts ?? 0) > 1"
                     class="shrink-0 text-zinc-400"
-                    :title="`${s.text.length} characters, over this endpoint's per-request limit`"
+                    :data-tip="`${s.text.length} characters, over this endpoint's per-request limit`"
                     >{{ s.audio.parts }} parts</span
                   ><span v-if="(s.audio.n ?? 1) > 1" class="shrink-0 text-zinc-400"
                     >take {{ s.audio.n }}/{{ (s.audio.takes?.length ?? 0) + 1 }}</span
                   ><span
                     v-if="s.candidate"
                     class="shrink-0 font-semibold text-sky-600 dark:text-sky-400"
-                    :title="`take ${s.candidate.n} is ${['queued', 'generating'].includes(s.candidate.status) ? 'rendering' : s.candidate.status === 'failed' ? 'failed' : 'waiting for your verdict'} — the book still uses take ${s.audio.n ?? 1}`"
+                    :data-tip="`take ${s.candidate.n} is ${['queued', 'generating'].includes(s.candidate.status) ? 'rendering' : s.candidate.status === 'failed' ? 'failed' : 'waiting for your verdict'} — the book still uses take ${s.audio.n ?? 1}`"
                     >{{
                       ["queued", "generating"].includes(s.candidate.status)
                         ? `take ${s.candidate.n} rendering…`
@@ -412,7 +412,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                   ><span
                     v-if="s.pause != null"
                     class="shrink-0 text-zinc-400"
-                    :title="`this line holds its own pause, instead of the book's ${secs(bookGap(s))}`"
+                    :data-tip="`this line holds its own pause, instead of the book's ${secs(bookGap(s))}`"
                     ><PauseIcon class="icon-sm" />
                     {{ s.pause === 0 ? "runs on" : secs(s.pause) }}</span
                   >
@@ -420,7 +420,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
               </td>
               <td
                 class="hidden text-right font-mono text-xs text-zinc-500 sm:table-cell"
-                :title="s.audio.ms ? `rendered in ${(s.audio.ms / 1000).toFixed(1)}s` : ''"
+                :data-tip="s.audio.ms ? `rendered in ${(s.audio.ms / 1000).toFixed(1)}s` : ''"
               >
                 {{ spoken(s) && s.audio.duration ? s.audio.duration.toFixed(1) + "s" : "" }}
               </td>
@@ -431,7 +431,8 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                     <button
                       v-if="s.audio.duration"
                       class="icon-btn icon-btn-play"
-                      title="play this segment (↵)"
+                      data-tip="play this segment (↵)"
+                      aria-label="play this segment"
                       @click="play('seg' + s.id, s.audio.duration, s.audio.url)"
                     >
                       <component
@@ -442,7 +443,8 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                     <button
                       v-else-if="s.audio.status === 'failed'"
                       class="icon-btn border-red-400 text-red-500 hover:border-red-500 hover:text-red-600"
-                      title="retry this segment (r)"
+                      data-tip="retry this segment (r)"
+                      aria-label="retry this segment"
                       @click="narrationStore.retrySegment(bookId, chapterId, s.id)"
                     >
                       <RetryIcon class="icon-sm" />
@@ -457,7 +459,8 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                     <button
                       v-if="s.audio.duration"
                       class="icon-btn row-tool"
-                      title="play the chapter from here"
+                      data-tip="play the chapter from here"
+                      aria-label="play the chapter from here"
                       @click="playFrom(s)"
                     >
                       <PlayFromIcon class="icon-sm icon-fill" />
@@ -467,7 +470,8 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                     <button
                       v-if="s.audio.duration && chapter.narration !== 'running'"
                       class="icon-btn row-tool"
-                      title="retake — render it again and compare (t)"
+                      data-tip="retake — render it again and compare (t)"
+                      aria-label="retake"
                       @click="narrationStore.retakeSegment(bookId, chapterId, s.id)"
                     >
                       <RetryIcon class="icon-sm" />

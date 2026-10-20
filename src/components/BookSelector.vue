@@ -47,7 +47,7 @@ function onEnter() {
       <button
         class="flex min-w-0 items-center gap-2 rounded-md py-0.5 pl-0.5 pr-1.5 text-left hover:bg-zinc-100 data-[state=open]:bg-zinc-100 dark:hover:bg-zinc-800 dark:data-[state=open]:bg-zinc-800"
         :class="dim && 'opacity-70 hover:opacity-100'"
-        title="Switch book"
+        data-tip="Switch book"
       >
         <BookCover :book="book" as="span" class="h-7 w-5 shrink-0 rounded-sm shadow-sm" />
         <span

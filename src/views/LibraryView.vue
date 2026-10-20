@@ -212,7 +212,7 @@ onUnmounted(() => {
             "
             :aria-pressed="view === v.key"
             :aria-label="v.label"
-            :title="v.label"
+            :data-tip="v.label"
             @click="setView(v.key)"
           >
             <component :is="v.icon" class="icon" />

@@ -135,7 +135,7 @@ async function playFound(v: FoundVoice) {
         class="btn-primary btn-xs"
         type="submit"
         :disabled="search.busy || needsKeyFirst"
-        :title="needsKeyFirst ? 'Set the API key on the Connection tab first' : undefined"
+        :data-tip="needsKeyFirst ? 'Set the API key on the Connection tab first' : undefined"
       >
         <SearchIcon class="icon-sm" /> {{ search.busy ? "Searching…" : "Search" }}
       </button>
@@ -162,16 +162,16 @@ async function playFound(v: FoundVoice) {
           class="flex flex-wrap items-center gap-2 py-1.5 text-sm"
         >
           <component :is="GENDER_ICON[v.gender]" class="icon-sm shrink-0 text-zinc-400" />
-          <span class="min-w-0 flex-1 truncate" :title="v.label">{{ v.label }}</span>
+          <span class="min-w-0 flex-1 truncate" :data-tip="v.label">{{ v.label }}</span>
           <span
             class="hidden w-40 shrink-0 truncate font-mono text-[11px] text-zinc-500 sm:inline"
-            :title="v.id"
+            :data-tip="v.id"
             >{{ v.id }}</span
           >
           <button
             class="btn-ghost btn-xs shrink-0"
             :aria-label="`${playingId(foundId(v)) ? 'Pause' : 'Preview'} ${v.label}`"
-            :title="foundTitle(v)"
+            :data-tip="foundTitle(v)"
             :disabled="!!sampling && sampling !== foundId(v)"
             :aria-busy="sampling === foundId(v)"
             @click="playFound(v)"

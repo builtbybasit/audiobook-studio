@@ -138,7 +138,7 @@ watch([() => props.comparison, filter], () => (shown.value = PAGE));
           <button
             v-if="jumpable && c.toIds.length"
             class="btn-ghost btn-xs ml-auto"
-            :title="`Open line #${c.toIds[0]} in the reader`"
+            :data-tip="`Open line #${c.toIds[0]} in the reader`"
             @click="emit('jump', c.toIds[0])"
           >
             <JumpIcon class="icon-sm" /> Open the line

@@ -202,13 +202,13 @@ function onClosed(e: Event) {
                 <span
                   v-if="usedBy[`${g.endpoint.id}/${v.id}`]"
                   class="ml-2 rounded bg-zinc-100 px-1 text-[10px] text-zinc-500 dark:bg-zinc-800"
-                  :title="usedBy[`${g.endpoint.id}/${v.id}`].join(', ')"
+                  :data-tip="usedBy[`${g.endpoint.id}/${v.id}`].join(', ')"
                   >{{ usedBy[`${g.endpoint.id}/${v.id}`].length }} using</span
                 >
                 <span class="ml-auto flex items-center gap-1 pl-2">
                   <button
                     class="rounded px-1 text-zinc-400 hover:bg-zinc-200 hover:text-violet-500 dark:hover:bg-zinc-700"
-                    :title="SAMPLE_TITLE"
+                    :data-tip="SAMPLE_TITLE"
                     :aria-label="`${voiceSample.playing(`${g.endpoint.id}/${v.id}`) ? 'Pause' : 'Hear'} ${v.label}`"
                     :aria-busy="voiceSample.fetching(`${g.endpoint.id}/${v.id}`)"
                     @click.stop.prevent="voiceSample.play(g.endpoint, v.id, v.label)"

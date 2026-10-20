@@ -553,7 +553,7 @@ function clearAll() {
               class="cursor-pointer border-b border-zinc-100 outline-none last:border-0 hover:bg-zinc-50 focus-visible:bg-zinc-100 dark:border-zinc-800/70 dark:hover:bg-zinc-800/40 dark:focus-visible:bg-zinc-800"
               :class="expanded.has(r.id) && 'bg-zinc-50 dark:bg-zinc-800/40'"
               :aria-expanded="expanded.has(r.id)"
-              title="click for the request's audit trail"
+              data-tip="click for the request's audit trail"
               @click="toggle(r.id)"
               @keydown.enter.prevent="toggle(r.id)"
               @keydown.space.prevent="toggle(r.id)"
@@ -570,7 +570,7 @@ function clearAll() {
                 />
               </td>
               <td class="py-1.5 pr-3">
-                <span class="inline-block max-w-[190px] truncate align-middle" :title="r.label">
+                <span class="inline-block max-w-[190px] truncate align-middle" :data-tip="r.label">
                   <ExpandIcon
                     class="icon-sm text-zinc-400 transition-transform"
                     :class="expanded.has(r.id) && 'rotate-90'"
@@ -579,7 +579,7 @@ function clearAll() {
                 <span
                   v-if="!r.simulated"
                   class="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-violet-500 align-middle"
-                  title="Sent to a real provider"
+                  data-tip="Sent to a real provider"
                   ><span class="sr-only">sent to a real provider</span></span
                 >
                 <span
@@ -595,13 +595,13 @@ function clearAll() {
                 <span
                   v-if="r.attempts > 1"
                   class="ml-1 rounded bg-amber-400/15 px-1 text-[10px] text-amber-700 dark:text-amber-300"
-                  :title="`${r.attempts} attempts — retried ${r.attempts - 1}×`"
+                  :data-tip="`${r.attempts} attempts — retried ${r.attempts - 1}×`"
                   >×{{ r.attempts }}</span
                 >
                 <span
                   v-if="cacheUnknown(r)"
                   class="ml-1 rounded bg-zinc-200 px-1 text-[10px] text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300"
-                  title="This provider reported no cache detail, so the cost is an upper bound rather than a fact. Open the row for what is unknown."
+                  data-tip="This provider reported no cache detail, so the cost is an upper bound rather than a fact. Open the row for what is unknown."
                   >cache ?</span
                 >
               </td>
@@ -610,7 +610,7 @@ function clearAll() {
                   v-if="r.bookId && r.chapterId"
                   :to="`/book/${r.bookId}/${CHAPTER_PAGE[u.kind]}?ch=${r.chapterId}`"
                   class="block truncate hover:text-violet-500"
-                  :title="where(r)"
+                  :data-tip="where(r)"
                   @click.stop
                   >{{ where(r) }}</RouterLink
                 >
@@ -645,7 +645,7 @@ function clearAll() {
               </td>
               <td
                 class="whitespace-nowrap py-1.5 pr-3 text-right font-mono text-zinc-400"
-                :title="clockOf(r.finishedAt ?? r.startedAt ?? r.queuedAt)"
+                :data-tip="clockOf(r.finishedAt ?? r.startedAt ?? r.queuedAt)"
               >
                 {{ hhmm(r.finishedAt ?? r.startedAt ?? r.queuedAt) }}
               </td>
@@ -784,7 +784,7 @@ function clearAll() {
                             f.mono && 'font-mono',
                             f.tone === 'warn' && 'text-amber-600 dark:text-amber-400',
                           ]"
-                          :title="f.value"
+                          :data-tip="f.value"
                         >
                           {{ f.value }}
                         </div>
@@ -792,7 +792,7 @@ function clearAll() {
                           v-if="f.hint"
                           class="text-[10px] text-zinc-400"
                           :class="f.wide ? 'leading-snug' : 'truncate'"
-                          :title="f.hint"
+                          :data-tip="f.hint"
                         >
                           {{ f.hint }}
                         </div>
@@ -800,7 +800,7 @@ function clearAll() {
                     </div>
                     <button
                       class="shrink-0 text-[11px] text-violet-600 hover:underline dark:text-violet-400"
-                      title="this request as JSON, with the error body redacted"
+                      data-tip="this request as JSON, with the error body redacted"
                       @click.stop="copyDiagnostics(r)"
                     >
                       <CopyIcon class="icon-sm" /> Copy

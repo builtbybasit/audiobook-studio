@@ -159,7 +159,7 @@ function discard() {
         <span
           v-for="(tag, index) in draft.tags"
           :key="tag.id"
-          :title="tag.label"
+          :data-tip="tag.label"
           class="inline-flex items-center gap-0.5 rounded-full border border-zinc-200 py-0.5 pl-2.5 pr-1 font-mono text-xs dark:border-zinc-700"
           >{{ tag.token
           }}<button

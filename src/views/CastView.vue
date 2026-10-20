@@ -482,7 +482,7 @@ const duplicate = computed(
                   <span
                     v-if="waiting(c.name).length"
                     class="rounded bg-violet-500/15 px-1 text-[10px] font-semibold text-violet-600 dark:text-violet-300"
-                    title="Voice samples from an imported script are waiting — open the speaker to clone or discard them"
+                    data-tip="Voice samples from an imported script are waiting — open the speaker to clone or discard them"
                     >samples</span
                   >
                   <span
@@ -584,7 +584,7 @@ const duplicate = computed(
                     class="chip min-w-0 max-w-[7.5rem]"
                     :class="effectOf(c.effect) ? 'chip-on' : 'chip-off'"
                     :aria-label="`${c.name}’s effect`"
-                    :title="of && !c.masked ? `Worn after ${of}’s effect` : undefined"
+                    :data-tip="of && !c.masked ? `Worn after ${of}’s effect` : undefined"
                     @click="editEffect({ kind: 'speaker', name: c.name, slot: 'effect' })"
                   >
                     <span class="truncate">{{ effectOf(c.effect)?.name ?? "None" }}</span>
@@ -594,7 +594,7 @@ const duplicate = computed(
                     type="button"
                     class="chip chip-on min-w-0 max-w-[6.5rem]"
                     :aria-label="`${c.name}’s own thought effect`"
-                    title="Their own thought effect"
+                    data-tip="Their own thought effect"
                     @click="editEffect({ kind: 'speaker', name: c.name, slot: 'thoughts' })"
                   >
                     <ThoughtIcon class="icon-sm shrink-0" aria-hidden="true" /><span
@@ -604,7 +604,7 @@ const duplicate = computed(
                   </button>
                 </div>
               </td>
-              <td class="py-1" :title="speedMade">
+              <td class="py-1" :data-tip="speedMade">
                 <SpeedPicker
                   :model-value="c.speed ?? null"
                   :fallback="speed"
@@ -618,7 +618,7 @@ const duplicate = computed(
                   v-if="c.name !== 'Narrator'"
                   class="text-xs text-zinc-400 hover:text-red-500"
                   @click="castStore.deleteCharacter(bookId, c.name)"
-                  title="Remove — their lines go to the Narrator"
+                  data-tip="Remove — their lines go to the Narrator"
                   :aria-label="`Remove ${c.name}`"
                 >
                   <svg

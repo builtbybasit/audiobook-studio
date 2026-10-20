@@ -210,7 +210,7 @@ const countCls = (i: Item) =>
     <button
       class="mt-1 flex h-8 items-center gap-3 rounded-lg text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
       :class="uiStore.railExpanded ? 'w-full px-2.5' : 'w-9 justify-center'"
-      :title="uiStore.railExpanded ? 'Collapse the sidebar' : 'Expand the sidebar'"
+      :data-tip="uiStore.railExpanded ? 'Collapse the sidebar' : 'Expand the sidebar'"
       :aria-expanded="uiStore.railExpanded"
       @click="uiStore.railExpanded = !uiStore.railExpanded"
     >

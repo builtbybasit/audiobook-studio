@@ -17,7 +17,7 @@ const parts = computed(() => marks(props.text, castStore.lexiconOf(props.bookId)
       ><span
         v-if="m.say"
         class="lex"
-        :title="`said as “${m.say}” — the dictionary rewrites it on the way to the endpoint`"
+        :data-tip="`said as “${m.say}” — the dictionary rewrites it on the way to the endpoint`"
         >{{ m.text }}</span
       ><template v-else>{{ m.text }}</template></template
     ></span

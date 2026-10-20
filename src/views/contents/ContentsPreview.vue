@@ -75,7 +75,7 @@ const noticeWords = computed(() =>
         <div class="flex shrink-0 items-center gap-1">
           <button
             class="icon-btn"
-            title="previous chapter"
+            data-tip="previous chapter"
             aria-label="Previous chapter"
             @click="emit('prev')"
           >
@@ -83,7 +83,7 @@ const noticeWords = computed(() =>
           </button>
           <button
             class="icon-btn"
-            title="next chapter"
+            data-tip="next chapter"
             aria-label="Next chapter"
             @click="emit('next')"
           >
@@ -92,7 +92,7 @@ const noticeWords = computed(() =>
           <button
             v-if="sheet"
             class="icon-btn"
-            title="close"
+            data-tip="close"
             aria-label="Close the chapter"
             @click="emit('close')"
           >
@@ -177,7 +177,7 @@ const noticeWords = computed(() =>
       <button
         v-if="undecidedLeft"
         class="btn-ghost btn-xs ml-auto"
-        title="Open the next chapter that still needs a decision (n)"
+        data-tip="Open the next chapter that still needs a decision (n)"
         @click="emit('nextUndecided')"
       >
         Next to decide <span class="text-zinc-400">{{ undecidedLeft }}</span>

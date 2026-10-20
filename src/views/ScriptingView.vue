@@ -124,7 +124,7 @@ function scriptFirst() {
         class="btn-ghost btn-xs"
         :class="rail && 'bg-zinc-200 dark:bg-zinc-800'"
         :aria-pressed="rail"
-        :title="rail ? 'Hide the chapter list' : 'Show the chapter list'"
+        :data-tip="rail ? 'Hide the chapter list' : 'Show the chapter list'"
         @click="rail = !rail"
       >
         <ChaptersIcon class="icon-sm" /> Chapters
@@ -137,7 +137,8 @@ function scriptFirst() {
       <button
         class="btn-ghost btn-xs"
         :disabled="!prev"
-        title="Previous chapter"
+        aria-label="Previous chapter"
+        data-tip="Previous chapter"
         @click="prev && openChapter(prev.id)"
       >
         <PrevIcon class="icon-sm" />
@@ -149,14 +150,15 @@ function scriptFirst() {
       <button
         class="btn-ghost btn-xs"
         :disabled="!next"
-        title="Next chapter"
+        aria-label="Next chapter"
+        data-tip="Next chapter"
         @click="next && openChapter(next.id)"
       >
         <NextIcon class="icon-sm" />
       </button>
 
       <PopoverRoot>
-        <PopoverTrigger class="btn-ghost btn-xs" title="The endpoint runs go to, and its health">
+        <PopoverTrigger class="btn-ghost btn-xs" data-tip="The endpoint runs go to, and its health">
           <span
             class="h-1.5 w-1.5 rounded-full"
             :class="profile?.enabled ? 'bg-emerald-500' : 'bg-zinc-400'"
@@ -171,7 +173,7 @@ function scriptFirst() {
         </PopoverPortal>
       </PopoverRoot>
       <PopoverRoot>
-        <PopoverTrigger class="btn-ghost btn-xs font-mono" title="What this run would cost">
+        <PopoverTrigger class="btn-ghost btn-xs font-mono" data-tip="What this run would cost">
           {{ estimateLabel }}
           <OpenIcon class="icon-sm opacity-60" />
         </PopoverTrigger>
@@ -192,7 +194,7 @@ function scriptFirst() {
       <button
         class="btn-primary btn-xs"
         :disabled="runDisabled"
-        :title="runNote"
+        :data-tip="runNote"
         @click="scriptingStore.startRun(bookId, selected)"
       >
         <RunIcon class="icon-sm icon-fill" /> {{ runActionLabel(plan) }} ({{
@@ -307,7 +309,7 @@ function scriptFirst() {
             v-if="failure.smaller"
             class="btn-ghost"
             :disabled="waiting || !scriptingStore.runProfile"
-            :title="
+            :data-tip="
               scriptingStore.runProfile
                 ? `Halves ${scriptingStore.runProfile.name}'s chunks — for every book it scripts`
                 : 'No scripting endpoint can run'

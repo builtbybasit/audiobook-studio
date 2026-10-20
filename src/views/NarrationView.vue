@@ -188,7 +188,7 @@ const openedRequests = computed(() =>
             <span
               v-else-if="t.value === 'routing' && routes.total"
               :class="routes.usable < routes.total ? 'text-amber-600' : 'text-zinc-400'"
-              :title="`${routes.usable} of the ${plural(routes.total, 'endpoint')} this book’s voices are on can take its lines`"
+              :data-tip="`${routes.usable} of the ${plural(routes.total, 'endpoint')} this book’s voices are on can take its lines`"
               >{{ routes.usable }}/{{ routes.total }} ready</span
             >
             <span v-else-if="t.value === 'pronunciation'" class="text-zinc-400">{{
@@ -246,7 +246,10 @@ const openedRequests = computed(() =>
           <UiToggleGroup v-model="scope" :options="scopes" block size="xs" />
           <div class="mt-1.5 flex items-center gap-2 text-xs">
             <template v-if="!loaded">
-              <span v-if="loadError" class="min-w-0 flex-1 truncate text-red-600" :title="loadError"
+              <span
+                v-if="loadError"
+                class="min-w-0 flex-1 truncate text-red-600"
+                :data-tip="loadError"
                 ><WarnIcon class="icon-sm" /> {{ loadError }}</span
               >
               <span v-else class="min-w-0 flex-1 truncate text-zinc-500"
@@ -262,7 +265,9 @@ const openedRequests = computed(() =>
             </template>
             <template v-else>
               <template v-if="run.blockers.length">
-                <span class="min-w-0 flex-1 truncate text-amber-600" :title="run.blockers.join(' ')"
+                <span
+                  class="min-w-0 flex-1 truncate text-amber-600"
+                  :data-tip="run.blockers.join(' ')"
                   ><WarnIcon class="icon-sm" /> {{ run.blockers[0] }}</span
                 >
               </template>

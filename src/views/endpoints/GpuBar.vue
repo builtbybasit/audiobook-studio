@@ -10,7 +10,9 @@ const used = (mb: number, total: number) => Math.min(100, (mb / total) * 100 || 
 <template>
   <section v-if="data?.gpus.length" class="card space-y-1.5 px-3 py-2" aria-label="GPUs">
     <div v-for="g in data.gpus" :key="g.index" class="flex items-center gap-3 text-xs">
-      <span class="w-40 shrink-0 truncate font-medium sm:w-56" :title="g.name">{{ g.name }}</span>
+      <span class="w-40 shrink-0 truncate font-medium sm:w-56" :data-tip="g.name">{{
+        g.name
+      }}</span>
       <span
         class="h-1.5 min-w-12 flex-1 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800"
         aria-hidden="true"

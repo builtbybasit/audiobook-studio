@@ -125,7 +125,7 @@ const whole = (v: VolumeRowInfo) => ({ name: v.name, all: v.all, chapters: v.all
             i > 0 && 'border-l-2 border-white dark:border-zinc-950',
           ]"
           :style="{ width: pct(boundary(i + 1) - boundary(i)) }"
-          :title="`${v.name} · ${v.all.length} chapters · right-click for more`"
+          :data-tip="`${v.name} · ${v.all.length} chapters · right-click for more`"
           @click="emit('pick', v.id)"
           @dblclick="cutAtIndex(indexAt($event))"
           @mouseenter="emit('hover', v.id)"
@@ -200,7 +200,7 @@ const whole = (v: VolumeRowInfo) => ({ name: v.name, all: v.all, chapters: v.all
           as="button"
           class="absolute top-1/2 z-10 h-5 w-2 -translate-x-1/2 -translate-y-1/2 cursor-grab touch-none rounded-sm bg-zinc-900 shadow ring-2 ring-white outline-none focus-visible:ring-violet-500 active:cursor-grabbing dark:bg-white dark:ring-zinc-950"
           :style="{ left: pct(boundary(i)) }"
-          :title="`Before ch ${num(boundary(i))} · drag to move · ← → keys · Delete joins · right-click for more`"
+          :data-tip="`Before ch ${num(boundary(i))} · drag to move · ← → keys · Delete joins · right-click for more`"
           :aria-label="`${v.name} starts before chapter ${num(boundary(i))}`"
           @pointerdown="onHandleDown($event, i)"
           @pointermove="onHandleMove"

@@ -265,7 +265,8 @@ onBeforeUnmount(() => {
         <button
           class="icon-btn"
           :disabled="!before"
-          title="previous narrated chapter"
+          aria-label="previous narrated chapter"
+          data-tip="previous narrated chapter"
           @click="before && open(before.id)"
         >
           <ChevronLeft class="icon-sm" />
@@ -279,7 +280,8 @@ onBeforeUnmount(() => {
         <button
           class="icon-btn"
           :disabled="!after"
-          title="next narrated chapter"
+          aria-label="next narrated chapter"
+          data-tip="next narrated chapter"
           @click="after && open(after.id)"
         >
           <ChevronRight class="icon-sm" />

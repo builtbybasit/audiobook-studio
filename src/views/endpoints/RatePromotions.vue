@@ -200,7 +200,7 @@ function preview(p: Promotion): string {
             <span
               v-else-if="shadowed(p)"
               class="chip chip-off text-amber-700 dark:text-amber-400"
-              title="Another promotion makes every rate this one covers cheaper, and discounts do not stack."
+              data-tip="Another promotion makes every rate this one covers cheaper, and discounts do not stack."
               ><WarnIcon class="icon-sm" /> outranked</span
             >
             <span v-else-if="promotionPending(p, now)" class="chip chip-off">not started</span>

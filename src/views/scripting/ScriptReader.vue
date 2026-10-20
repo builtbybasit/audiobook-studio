@@ -322,7 +322,7 @@ watch(open, (v) => {
             → jump
           </button>
           <PopoverRoot v-model:open="rescriptOpen">
-            <PopoverTrigger class="btn-ghost btn-xs" title="run the LLM again on this chapter"
+            <PopoverTrigger class="btn-ghost btn-xs" data-tip="run the LLM again on this chapter"
               ><RetryIcon class="icon-sm" /> Re-script</PopoverTrigger
             >
             <PopoverPortal>
@@ -365,7 +365,7 @@ watch(open, (v) => {
             class="btn-ghost btn-xs"
             :class="history && 'border-violet-400 text-violet-700 dark:text-violet-300'"
             :aria-pressed="history"
-            :title="
+            :data-tip="
               history
                 ? 'Back to the current script (Esc)'
                 : 'Earlier versions of this chapter’s script — preview, compare and restore'
@@ -386,7 +386,7 @@ watch(open, (v) => {
           <button
             class="btn-ghost btn-xs"
             :class="focusMode && 'bg-zinc-200 dark:bg-zinc-800'"
-            :title="focusMode ? 'Exit reader focus mode (Esc or F)' : 'Focus the reader (F)'"
+            :data-tip="focusMode ? 'Exit reader focus mode (Esc or F)' : 'Focus the reader (F)'"
             @click="emit('toggle-focus')"
           >
             <component :is="focusMode ? ExitFocusIcon : FocusIcon" class="icon-sm" />
@@ -411,7 +411,7 @@ watch(open, (v) => {
               ·
               <button
                 class="underline decoration-dotted hover:text-violet-500"
-                title="Show the lines marked as site text or notes"
+                data-tip="Show the lines marked as site text or notes"
                 @click="((mode = 'site'), (speaker = ''))"
               >
                 {{ hiddenSite }} marked not shown
@@ -439,7 +439,7 @@ watch(open, (v) => {
           <button
             class="flex min-w-0 flex-1 items-center gap-3 text-left"
             :aria-expanded="warnOpen"
-            :title="warnOpen ? 'hide the detail' : 'what this means'"
+            :data-tip="warnOpen ? 'hide the detail' : 'what this means'"
             @click="warnOpen = !warnOpen"
           >
             <WarnIcon class="icon shrink-0" />
@@ -608,7 +608,7 @@ watch(open, (v) => {
               /></span>
               <span
                 class="mt-1 shrink-0 whitespace-nowrap rounded bg-zinc-100 px-1.5 py-0.5 font-sans text-[10px] font-medium leading-none text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
-                :title="
+                :data-tip="
                   spoken(s)
                     ? 'This book reads its notes aloud (Overview → Reading)'
                     : 'Kept in the script, left out of the audio'
@@ -617,7 +617,7 @@ watch(open, (v) => {
               >
               <button
                 class="btn-ghost btn-xs mt-0.5 shrink-0 font-sans leading-none"
-                :title="`#${s.id} is the story — read it as narration`"
+                :data-tip="`#${s.id} is the story — read it as narration`"
                 @click.stop="scriptsStore.setLineType(bookId, chapterId, s.id, 'narration')"
               >
                 Not site text
@@ -627,7 +627,7 @@ watch(open, (v) => {
                 class="icon-btn line-tool mt-0.5 shrink-0"
                 :class="onClip(s) ? 'icon-btn-play is-on' : focus === s.id && 'is-on'"
                 :aria-label="`${onClip(s) ? 'Pause' : 'Play'} line ${s.id}`"
-                :title="`Play the chapter from this line (p) · ${secs(s.audio.duration)}`"
+                :data-tip="`Play the chapter from this line (p) · ${secs(s.audio.duration)}`"
                 @click.stop="playLine(s)"
               >
                 <component :is="onClip(s) ? PauseIcon : PlayIcon" class="icon-sm icon-fill" />
@@ -652,7 +652,7 @@ watch(open, (v) => {
                 ><ExpressionText :book-id="bookId" :segment="s" /><span
                   v-if="s.flag"
                   class="ml-2 rounded bg-amber-400/20 px-1 font-sans text-[10px] font-semibold leading-none text-amber-700 dark:text-amber-300"
-                  :title="s.flag.note"
+                  :data-tip="s.flag.note"
                   ><FlagIcon class="icon-sm" /> {{ s.flag.kind }}</span
                 ><span
                   v-if="s.direction"
@@ -666,7 +666,7 @@ watch(open, (v) => {
                 class="icon-btn line-tool mt-0.5 shrink-0"
                 :class="onClip(s) ? 'icon-btn-play is-on' : focus === s.id && 'is-on'"
                 :aria-label="`${onClip(s) ? 'Pause' : 'Play'} line ${s.id}`"
-                :title="`Play the chapter from this line (p) · ${secs(s.audio.duration)}`"
+                :data-tip="`Play the chapter from this line (p) · ${secs(s.audio.duration)}`"
                 @click.stop="playLine(s)"
               >
                 <component :is="onClip(s) ? PauseIcon : PlayIcon" class="icon-sm icon-fill" />
@@ -698,13 +698,13 @@ watch(open, (v) => {
                 <span
                   v-if="s.audio.status === 'stale'"
                   class="rounded bg-amber-400/20 px-1 text-[10px] font-semibold text-amber-600"
-                  title="Edited after narration — audio no longer matches"
+                  data-tip="Edited after narration — audio no longer matches"
                   >audio stale</span
                 >
                 <span
                   v-if="s.flag"
                   class="rounded bg-amber-400/20 px-1 text-[10px] font-semibold text-amber-600"
-                  :title="`Flagged in the ledger: ${s.flag.note || s.flag.kind}`"
+                  :data-tip="`Flagged in the ledger: ${s.flag.note || s.flag.kind}`"
                   ><FlagIcon class="icon-sm" /> {{ s.flag.kind }}</span
                 >
                 <span v-if="s.direction" class="truncate italic text-zinc-500"
@@ -716,7 +716,7 @@ watch(open, (v) => {
                   class="icon-btn line-tool ml-auto shrink-0"
                   :class="onClip(s) ? 'icon-btn-play is-on' : focus === s.id && 'is-on'"
                   :aria-label="`${onClip(s) ? 'Pause' : 'Play'} ${s.speaker}’s line ${s.id}`"
-                  :title="`Play the chapter from this line (p) · ${secs(s.audio.duration)}`"
+                  :data-tip="`Play the chapter from this line (p) · ${secs(s.audio.duration)}`"
                   @click.stop="playLine(s)"
                 >
                   <component :is="onClip(s) ? PauseIcon : PlayIcon" class="icon-sm icon-fill" />
@@ -743,7 +743,7 @@ watch(open, (v) => {
               >
               <button
                 class="btn-ghost btn-xs"
-                :title="
+                :data-tip="
                   s.siteCheck.suggest === 'watermark'
                     ? 'Mark it as site text — kept in the script, left out of the audio'
                     : 'Read it as narration'
@@ -754,7 +754,7 @@ watch(open, (v) => {
               </button>
               <button
                 class="btn-ghost btn-xs"
-                :title="`Keep it as ${TYPE_LABEL[s.type].toLowerCase()} and drop the suggestion`"
+                :data-tip="`Keep it as ${TYPE_LABEL[s.type].toLowerCase()} and drop the suggestion`"
                 @click.stop="scriptsStore.dismissSiteCheck(bookId, chapterId, s.id)"
               >
                 Dismiss
@@ -773,7 +773,7 @@ watch(open, (v) => {
               <span class="h-px flex-1 bg-zinc-200 dark:bg-zinc-800"></span>
               <button
                 class="chip"
-                :title="`this line sets its own pause instead of the book's ${secs(bookGap(s))} — click to clear it`"
+                :data-tip="`this line sets its own pause instead of the book's ${secs(bookGap(s))} — click to clear it`"
                 @click="setPause(s, null)"
               >
                 <PauseIcon class="icon-sm icon-fill" />

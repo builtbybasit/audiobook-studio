@@ -11,6 +11,7 @@ import { call, ProviderError } from "~/providers/http";
 import type { ProviderTarget } from "~/providers/target";
 import {
   createLocalServers,
+  isReady,
   type Launchable,
   type LocalServers,
   type LocalServersOptions,
@@ -40,15 +41,20 @@ async function freePort(): Promise<number> {
   return port;
 }
 
-const serving = (port: number): string[] => [
+/** `/health` says loading for `loadingMs`, as OmniVoice does while its model loads */
+const serving = (port: number, loadingMs = 0): string[] => [
   process.execPath,
   "-e",
-  `Bun.serve({ hostname: "127.0.0.1", port: ${port}, fetch: () => new Response("ok") }); console.log("listening")`,
+  `const t = Date.now(); Bun.serve({ hostname: "127.0.0.1", port: ${port}, fetch: (r) => new URL(r.url).pathname === "/health" ? Response.json({ status: Date.now() - t < ${loadingMs} ? "loading" : "ok" }) : new Response("ok") }); console.log("listening")`,
 ];
 
-async function local(key: string, over: Partial<LocalServer> = {}): Promise<Launchable> {
+async function local(
+  key: string,
+  over: Partial<LocalServer> = {},
+  loadingMs = 0,
+): Promise<Launchable> {
   const port = await freePort();
-  const [bun, flag, code] = serving(port);
+  const [bun, flag, code] = serving(port, loadingMs);
   return {
     name: key,
     baseUrl: `http://127.0.0.1:${port}`,
@@ -74,10 +80,12 @@ function alive(pid: number): boolean {
 const never = new AbortController().signal;
 
 describe("local servers", () => {
-  test("a request starts its server and goes once it answers", async () => {
+  test("a request starts its server and goes once its health says it is ready", async () => {
     const s = servers();
-    const a = await local("a");
+    const a = await local("a", {}, 400);
+    const asked = Date.now();
     const release = await s.use(a, never);
+    expect(Date.now() - asked).toBeGreaterThanOrEqual(400);
     expect(s.status().a).toMatchObject({ state: "running", active: 1 });
     expect((await fetch(a.baseUrl)).ok).toBe(true);
     release();
@@ -197,5 +205,19 @@ describe("local servers", () => {
     expect(s.status().a!.active).toBe(1);
     expect(await res.text()).toBe("ok");
     expect(s.status().a!.active).toBe(0);
+  });
+
+  test.each([
+    ["no health route", new Response("nope", { status: 404 }), true],
+    ["still loading (OmniVoice)", Response.json({ status: "loading" }), false],
+    [
+      "loading model (llama.cpp style)",
+      Response.json({ status: "loading model" }, { status: 503 }),
+      false,
+    ],
+    ["ok", Response.json({ status: "ok" }), true],
+    ["a plain 200", new Response("ok"), true],
+  ])("health: %s", async (_, res, ready) => {
+    expect(await isReady(res)).toBe(ready);
   });
 });

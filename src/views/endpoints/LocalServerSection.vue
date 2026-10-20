@@ -34,9 +34,7 @@ const pending = computed(
 const canStart = computed(
   () => !unsaved.value && (status.value.state === "stopped" || status.value.state === "crashed"),
 );
-const canStop = computed(
-  () => ["queued", "starting", "running"].includes(status.value.state),
-);
+const canStop = computed(() => ["queued", "starting", "running"].includes(status.value.state));
 </script>
 
 <template>
@@ -84,7 +82,7 @@ const canStop = computed(
           >Ready within
           <UiHint
             label="ready within"
-            text="How long it may take to answer at the base URL after starting before the start counts as failed."
+            text="How long it may take after starting until GET /health says it is ready (a server without /health: until it answers). Longer than that counts as a failed start."
         /></span>
         <UiNumber
           v-model="launch.readySec"

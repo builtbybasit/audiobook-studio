@@ -118,6 +118,7 @@ class FakeService implements EndpointSettingsService {
     blob: new Blob([new Uint8Array([82, 73, 70, 70])], { type: "audio/wav" }),
     duration: 3.5,
     source: "rendered",
+    unstretched: false,
   };
   /** what each clone was asked, with how many writes had gone out by then */
   cloned: { id: string; title: string; samples: number; puts: number }[] = [];
@@ -740,10 +741,14 @@ describe("voice samples with a server answering", () => {
     expect(svc.sampled).toHaveLength(2);
     expect(await endpointsStore.sampleVoice(ep, "ash", "Hello there.")).not.toBe(first);
     expect(svc.sampled).toHaveLength(3);
-    // and so is the same voice from another model
+    // and so is the same voice from another model, or at another speed
     ep.model = "tts-2";
     expect(await endpointsStore.sampleVoice(ep, "ash")).not.toBe(first);
     expect(svc.sampled).toHaveLength(4);
+    const second = await endpointsStore.sampleVoice(ep, "ash");
+    ep.voices = [{ id: "ash", gender: "m", label: "Ash", speed: 1.5 }];
+    expect(await endpointsStore.sampleVoice(ep, "ash")).not.toBe(second);
+    expect(svc.sampled).toHaveLength(5);
   });
 
   test("a refused sample is said, and nothing is kept to replay", async () => {
@@ -753,8 +758,19 @@ describe("voice samples with a server answering", () => {
     svc.sampleAnswer = new ApiError("Speech server needs an API key", 400);
     expect(await endpointsStore.sampleVoice(ep, "ash")).toBeNull();
     expect(toasts).toEqual([{ msg: "Speech server needs an API key", kind: "error" }]);
-    svc.sampleAnswer = { blob: new Blob([]), duration: 1, source: "rendered" };
+    svc.sampleAnswer = { blob: new Blob([]), duration: 1, source: "rendered", unstretched: false };
     expect(await endpointsStore.sampleVoice(ep, "ash")).not.toBeNull();
+    expect(svc.sampled).toHaveLength(2);
+  });
+
+  test("one the server could not bring to the voice's speed is warned of and asked for again", async () => {
+    svc.held = server();
+    await endpointsStore.load();
+    const ep = endpointsStore.endpoints[0];
+    svc.sampleAnswer = { blob: new Blob([]), duration: 1, source: "rendered", unstretched: true };
+    expect(await endpointsStore.sampleVoice(ep, "ash")).not.toBeNull();
+    expect(toasts.map((t) => t.kind)).toEqual(["warning"]);
+    await endpointsStore.sampleVoice(ep, "ash");
     expect(svc.sampled).toHaveLength(2);
   });
 });

@@ -3,15 +3,16 @@
 // fail or to report itself unavailable.
 import { readFile } from "node:fs/promises";
 
-import type { AudioFormat, Step } from "@/types";
+import type { Step } from "@/types";
 import { formatOfFile } from "~/audio/files";
 import { probeClip } from "~/audio/probe";
 import type { EffectJob, EffectRunner } from "~/audio/effects";
+import type { SampleFormat } from "~/providers/clone";
 import { wavHeader } from "~/providers/wav";
 
 export interface FakeEffectRunner extends EffectRunner {
   calls: {
-    render: { format: AudioFormat; chains: Step[][] }[];
+    render: { format: SampleFormat; chains: Step[][] }[];
     batch: EffectJob[][];
     parse: string[];
   };
@@ -22,8 +23,9 @@ export interface FakeEffectRunner extends EffectRunner {
 }
 
 /** What the fake renders: a WAV as it is, anything else as silence as long as it plays. */
-async function rendered(bytes: Uint8Array, format: AudioFormat): Promise<Uint8Array> {
+async function rendered(bytes: Uint8Array, format: SampleFormat): Promise<Uint8Array> {
   if (format === "wav") return bytes.slice();
+  if (format === "m4a" || format === "flac") throw new Error(`the fake cannot read ${format}`);
   const { sampleRate, channels, duration } = await probeClip(bytes, format);
   const data = Math.round(duration * sampleRate) * channels * 2;
   const out = new Uint8Array(44 + data);

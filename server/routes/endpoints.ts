@@ -219,8 +219,9 @@ export function endpointRoutes(
 
   /**
    * A voice's sample audio, made once, billed and kept (`sampleVoice`). `x-sample-source` says
-   * where it came from, `x-sample-kept` that nothing was asked of the provider this time, and
-   * `x-audio-duration` how long it plays when known.
+   * where it came from, `x-sample-kept` that nothing was asked of the provider this time,
+   * `x-sample-unstretched` that its speed could not be made here, and `x-audio-duration` how long
+   * it plays when known.
    */
   app.post("/sample", validate("json", Sample), async (c) => {
     const { id, voice, text } = c.req.valid("json");
@@ -228,6 +229,7 @@ export function endpointRoutes(
       db,
       providers,
       voiceFiles,
+      effects,
       id,
       voice,
       c.req.raw.signal,
@@ -240,6 +242,7 @@ export function endpointRoutes(
       "cache-control": "no-store",
       "x-sample-source": sample.source,
       "x-sample-kept": sample.kept ? "1" : "0",
+      ...(sample.unstretched ? { "x-sample-unstretched": "1" } : {}),
       ...(sample.duration != null ? { "x-audio-duration": String(sample.duration) } : {}),
     });
   });

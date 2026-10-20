@@ -31,6 +31,7 @@ import { endpointSpeechProvider } from "~/providers/endpointSpeech";
 import { createSpeechGate } from "~/providers/gate";
 import type { Providers } from "~/providers/target";
 import { endpointTranscriber } from "~/providers/transcription";
+import { localServers, type LocalServers } from "~/servers/localServers";
 import { voiceFiles as voiceFilesIn } from "~/voices/files";
 
 export const REAL_BASE = "/api";
@@ -53,6 +54,8 @@ export interface LibraryOptions {
   speechRate?: SpeechRate;
   log?: Logger;
   providers?: Providers;
+  /** the real library's local servers; the process-wide ones by default, none for the demo */
+  servers?: LocalServers;
   /** seeded when fresh, gets reset/situation routes and a pace, makes seeded clip files on read */
   demo?: boolean;
   /**
@@ -176,6 +179,7 @@ export function openLibrary(options: LibraryOptions): Library {
     gate,
     effects: options.effects,
     demo,
+    servers: options.demo ? undefined : (options.servers ?? localServers),
   });
   return {
     name,

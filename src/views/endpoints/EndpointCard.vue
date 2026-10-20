@@ -7,6 +7,8 @@ import type { Health, UnifiedEndpoint } from "@/lib/endpoints";
 import type { LiveActivity } from "@/views/endpoints/live";
 import { FORMAT_LABEL, encodingOf } from "@/lib/endpointShapes";
 import type { EndpointKind } from "@/types";
+import { useLocalServers } from "@/queries/localServers";
+import { serverStateOf, serverStatusOf } from "@/views/endpoints/state";
 
 const props = defineProps<{
   u: UnifiedEndpoint;
@@ -16,6 +18,9 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ select: []; toggle: [boolean] }>();
 const pricing = () => pricingLabel(props.u);
+const { data: servers } = useLocalServers();
+const server = () =>
+  props.u.entry.launch ? serverStateOf(serverStatusOf(servers.value, props.u)) : null;
 const TAG: Record<EndpointKind, string> = { scripting: "script", tts: "TTS", transcription: "STT" };
 </script>
 
@@ -40,7 +45,17 @@ const TAG: Record<EndpointKind, string> = { scripting: "script", tts: "TTS", tra
           u.name || "Untitled endpoint"
         }}</span>
         <span
-          class="ml-auto shrink-0 rounded border border-zinc-200 px-1 text-[9px] uppercase tracking-wide text-zinc-500 dark:border-zinc-700"
+          v-if="server()"
+          class="ml-auto inline-flex shrink-0 items-center gap-1 rounded border border-zinc-200 px-1 text-[9px] uppercase tracking-wide text-zinc-500 dark:border-zinc-700"
+          :title="`Local server: ${server()!.label}`"
+          ><span class="h-1.5 w-1.5 rounded-full" :class="DOT[server()!.tone]"></span>server<span
+            class="sr-only"
+            >: {{ server()!.label }}</span
+          ></span
+        >
+        <span
+          class="shrink-0 rounded border border-zinc-200 px-1 text-[9px] uppercase tracking-wide text-zinc-500 dark:border-zinc-700"
+          :class="!server() && 'ml-auto'"
           >{{ TAG[u.kind] }}</span
         >
       </span>

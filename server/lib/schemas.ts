@@ -447,6 +447,14 @@ const Ops = {
   quotaGroup: v.optional(v.nullable(v.string())),
 };
 
+/** Absolute: the server's process resolves nothing against the app's own folder. */
+const LocalServerSchema = v.object({
+  dir: v.pipe(v.string(), v.trim(), v.startsWith("/", "must be an absolute folder")),
+  command: v.pipe(v.string(), v.trim(), v.nonEmpty("must name a command")),
+  heavy: v.boolean(),
+  readySec: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1))),
+});
+
 const Common = {
   id: Id,
   name: v.string(),
@@ -462,6 +470,7 @@ const Common = {
   maxChars: Count,
   splitAt: SplitMode,
   pricing: v.optional(PricingSchema),
+  launch: v.optional(v.nullable(LocalServerSchema)),
   ...Ops,
 };
 
@@ -600,6 +609,7 @@ export const TranscriberSchema = v.object({
   hotwordLambda: v.optional(v.pipe(v.number(), v.minValue(0), v.maxValue(100))),
   resample16k: v.optional(v.boolean()),
   pricing: v.optional(PricingSchema),
+  launch: Common.launch,
   ...Ops,
 }) satisfies v.GenericSchema<unknown, Transcriber>;
 

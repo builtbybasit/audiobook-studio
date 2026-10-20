@@ -6,6 +6,7 @@ import type {
   EndpointOps,
   ExpressionConfig,
   ExpressionTag,
+  LocalServer,
   PricingConfig,
   Profile,
   ProfilePrompt,
@@ -166,6 +167,7 @@ export function toEndpoint(row: EndpointRow, parts: EndpointParts): Endpoint {
   if (row.makesVoices) e.makesVoices = true;
   if (row.server) e.server = row.server;
   if (row.speedRange) e.speedRange = row.speedRange;
+  if (row.launch) e.launch = row.launch;
   if (row.audioFormat != null)
     e.encoding = {
       format: row.audioFormat,
@@ -235,6 +237,7 @@ export function toProfile(row: EndpointRow, parts: EndpointParts): Profile {
       ? { reasoning: row.reasoningEffort }
       : {}),
     ...(prompt ? { prompt } : {}),
+    ...(row.launch ? { launch: row.launch } : {}),
   };
 }
 
@@ -255,16 +258,18 @@ export function toTranscriber(row: EndpointRow, parts: EndpointParts): Transcrib
     ...(pricing ? { pricing } : {}),
     ...(row.apiKey ? { hasKey: true } : {}),
     ...ops(row),
+    ...(row.launch ? { launch: row.launch } : {}),
   };
 }
 
-const opsValues = (e: Partial<EndpointOps>) => ({
+const opsValues = (e: Partial<EndpointOps> & { launch?: LocalServer | null }) => ({
   timeoutSec: e.timeoutSec ?? null,
   maxRetries: e.maxRetries ?? null,
   cooldownSec: e.cooldownSec ?? null,
   spendLimit: e.spendLimit ?? null,
   credentialId: e.credentialId ?? null,
   quotaGroup: e.quotaGroup ?? null,
+  launch: e.launch ?? null,
 });
 
 /** `speedRange` is the server's to write (`writeSpeedRange`), never the page's. */

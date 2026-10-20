@@ -36,6 +36,7 @@ import { scriptRoutes } from "~/routes/script";
 import { speakerSampleRoutes } from "~/routes/speakerSamples";
 import { transferRoutes } from "~/routes/transfer";
 import { bookUsageRoutes, endpointUsageRoutes } from "~/routes/usage";
+import type { LocalServers } from "~/servers/localServers";
 import { voiceFiles as voiceFilesIn, type VoiceFiles } from "~/voices/files";
 
 /** Messages for Hono refusals that come without one. */
@@ -74,6 +75,8 @@ export interface AppOptions {
   effects?: EffectRunner;
   /** `<base>/demo/*` controls; given to the demo library alone so the real one can't be emptied */
   demo?: DemoControls;
+  /** the servers on this machine the endpoints start; none = none listed or started (the demo) */
+  servers?: LocalServers;
 }
 
 export function createApp(
@@ -89,6 +92,7 @@ export function createApp(
     gate = createSpeechGate(),
     effects,
     demo,
+    servers,
   }: AppOptions = {},
 ): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
@@ -133,7 +137,10 @@ export function createApp(
   app.route(`${base}/books`, speakerSampleRoutes(db, files));
   app.route(`${base}/books`, bookUsageRoutes(db));
   app.route(`${base}/jobs`, jobRoutes(db, runner));
-  app.route(`${base}/endpoints`, endpointRoutes(db, providers, voiceFiles, gate, runner, effects));
+  app.route(
+    `${base}/endpoints`,
+    endpointRoutes(db, providers, voiceFiles, gate, runner, effects, servers),
+  );
   app.route(`${base}/endpoints`, endpointUsageRoutes(db));
   app.route(`${base}/effects`, effectRoutes(db, files, effects));
   app.route(`${base}/settings`, settingRoutes(db));

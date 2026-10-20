@@ -75,6 +75,8 @@ const Env = v.object({
   EXPORT_DIR: v.optional(v.string(), "./data/exports"),
   /** a cloned voice's source recordings, one directory per voice */
   VOICE_DIR: v.optional(v.string(), "./data/voices"),
+  /** the local servers the app started, so a restart adopts them rather than starting them twice */
+  LOCAL_SERVERS_FILE: v.optional(v.string(), "./data/local-servers.json"),
   /** the demo's `audio/`, `exports/` and `voices/`; a demo reset removes all three */
   DEMO_DIR: v.optional(v.string(), "./data/demo"),
 });

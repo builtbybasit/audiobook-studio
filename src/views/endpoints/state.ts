@@ -1,7 +1,8 @@
 // Endpoints page state that outlives the route (tab, half-typed forms, activity filters).
 // Not domain state, so not in the store: module-scope, keyed by `<kind>:<id>`.
 import { reactive } from "vue";
-import { opsOf } from "@/lib/endpoints";
+import { opsOf, type HealthTone } from "@/lib/endpoints";
+import { serverKey } from "@/lib/localServers";
 import { encodingChanged, repairEncoding } from "@/lib/audioFormat";
 import type { UnifiedEndpoint } from "@/lib/endpoints";
 import { libraryPrompt } from "@/lib/prompt";
@@ -9,6 +10,9 @@ import type {
   ConnectionTest,
   Endpoint,
   EndpointKind,
+  LocalServer,
+  LocalServerState,
+  LocalServerStatus,
   Profile,
   ProfilePrompt,
   PromptTemplate,
@@ -59,9 +63,84 @@ export interface ConnectionDraft {
   quotaGroup: string;
   /** speech only: the server named for a base URL that cannot say (`Endpoint.server`) */
   server: SpeechServer | null;
+  /** the local server's fields as typed; `launchOf` reads them */
+  launch: LaunchDraft;
   /** a preset's non-connection fields (prices, limits), applied on Save, dropped on Discard */
   preset: StagedPreset | null;
 }
+
+export interface LaunchDraft {
+  dir: string;
+  command: string;
+  heavy: boolean;
+  /** null = `DEFAULT_READY_SEC` */
+  readySec: number | null;
+}
+
+export const launchDraft = (l: LocalServer | null | undefined): LaunchDraft => ({
+  dir: l?.dir ?? "",
+  command: l?.command ?? "",
+  heavy: l?.heavy ?? false,
+  readySec: l?.readySec ?? null,
+});
+
+/** Both texts empty is no local server. */
+export function launchOf(d: LaunchDraft): LocalServer | null {
+  const dir = d.dir.trim();
+  const command = d.command.trim();
+  if (!dir && !command) return null;
+  const readySec = d.readySec == null ? undefined : Math.max(1, Math.round(d.readySec));
+  return { dir, command, heavy: d.heavy, ...(readySec ? { readySec } : {}) };
+}
+
+export const sameLaunch = (a: LocalServer | null, b: LocalServer | null): boolean =>
+  a?.dir === b?.dir &&
+  a?.command === b?.command &&
+  a?.heavy === b?.heavy &&
+  a?.readySec === b?.readySec;
+
+/** What the server would refuse in the typed local server, or null. */
+export function launchProblem(d: LaunchDraft): string | null {
+  const l = launchOf(d);
+  if (!l) return null;
+  if (!l.dir.startsWith("/")) return "The folder must be an absolute path, starting with /.";
+  if (!l.command) return "Name the command that starts the server.";
+  return null;
+}
+
+/** The saved local server; absent is none. */
+export const savedLaunch = (u: UnifiedEndpoint): LocalServer | null => u.entry.launch ?? null;
+
+/** Its status in `GET /endpoints/servers`; one missing has not run, so it is stopped. */
+export const serverStatusOf = (
+  servers: Record<string, LocalServerStatus> | undefined,
+  u: UnifiedEndpoint,
+): LocalServerStatus => servers?.[serverKey(u.kind, u.id)] ?? STOPPED;
+
+const STOPPED: LocalServerStatus = {
+  state: "stopped",
+  since: 0,
+  waiting: 0,
+  active: 0,
+  output: [],
+};
+
+export function serverStateOf(s: LocalServerStatus): { label: string; tone: HealthTone } {
+  if (s.state === "crashed") return { label: s.failed ? "Didn’t start" : "Crashed", tone: "bad" };
+  return SERVER_STATE[s.state];
+}
+
+const SERVER_STATE: Record<
+  Exclude<LocalServerState, "crashed">,
+  { label: string; tone: HealthTone }
+> = {
+  stopped: { label: "Stopped", tone: "muted" },
+  queued: { label: "Queued…", tone: "warn" },
+  starting: { label: "Starting…", tone: "warn" },
+  running: { label: "Running", tone: "good" },
+  stopping: { label: "Stopping…", tone: "warn" },
+  outside: { label: "Started outside the app", tone: "good" },
+};
 
 /** A preset's other fields, waiting for Save. `fields` is a copy, never the preset's own objects. */
 export interface StagedPreset {
@@ -136,6 +215,7 @@ export function draftFor(u: UnifiedEndpoint): ConnectionDraft {
     credentialId: opsOf(u).credentialId,
     quotaGroup: opsOf(u).quotaGroup ?? "",
     server: u.endpoint?.server ?? null,
+    launch: launchDraft(savedLaunch(u)),
     preset: null,
   });
 }
@@ -179,9 +259,12 @@ export function draftChanges(u: UnifiedEndpoint): (keyof ConnectionDraft)[] {
     credentialId: ops.credentialId,
     quotaGroup: ops.quotaGroup ?? "",
     server: u.endpoint?.server ?? null,
+    launch: d.launch,
     preset: null,
   };
-  return (Object.keys(current) as (keyof ConnectionDraft)[]).filter((k) => d[k] !== current[k]);
+  return (Object.keys(current) as (keyof ConnectionDraft)[]).filter((k) =>
+    k === "launch" ? !sameLaunch(launchOf(d.launch), savedLaunch(u)) : d[k] !== current[k],
+  );
 }
 
 export const draftDirty = (u: UnifiedEndpoint): boolean => draftChanges(u).length > 0;
@@ -203,6 +286,10 @@ export function applyDraft(u: UnifiedEndpoint): string[] {
   target.needsKey = d.needsKey;
   target.credentialId = d.credentialId;
   target.quotaGroup = d.quotaGroup.trim() || null;
+  // left out rather than null: the server leaves it out, and the write-behind compares answers
+  const launch = launchOf(d.launch);
+  if (launch) target.launch = launch;
+  else delete target.launch;
   let notes: string[] = [];
   if (u.endpoint) {
     // before the encoding is held to the formats: Breeze offers no Opus
@@ -225,6 +312,7 @@ export function applyDraft(u: UnifiedEndpoint): string[] {
     credentialId: d.credentialId,
     quotaGroup: d.quotaGroup.trim(),
     server: d.server,
+    launch: launchDraft(launch),
     preset: null,
   };
   return notes;

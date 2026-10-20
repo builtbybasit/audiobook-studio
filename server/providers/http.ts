@@ -3,6 +3,7 @@
 // records it as cancelled rather than failed.
 import { sleep } from "~/providers/fake";
 import type { ProviderTarget } from "~/providers/target";
+import { localServers, type LocalServers } from "~/servers/localServers";
 
 /**
  * `status` is the HTTP status, or the provider's own code for a refusal inside a 200 (MiniMax's
@@ -106,6 +107,8 @@ export interface CallOptions {
    * clock (`speech/batch.ts`). Otherwise a stalled body is cut off like no answer.
    */
   headersOnly?: boolean;
+  /** where a target with `localServer` gets its server started; tests pass their own */
+  servers?: LocalServers;
 }
 
 export interface CallStats {
@@ -120,6 +123,65 @@ const defaultBackoff = (attempt: number, t: ProviderTarget): number =>
 
 /** Throws the last `ProviderError` once retries run out, or the signal's reason on a cancel. */
 export async function call(
+  target: ProviderTarget,
+  url: string,
+  init: RequestInit,
+  options: CallOptions,
+): Promise<Response> {
+  const { signal } = options;
+  // before any attempt's clock: a server loading a model may take minutes
+  const release = target.localServer
+    ? await (options.servers ?? localServers).use(
+        { name: target.name, baseUrl: target.baseUrl, localServer: target.localServer },
+        signal,
+      )
+    : null;
+  let streaming = false;
+  try {
+    const res = await withRetries(target, url, init, options);
+    if (release && options.headersOnly) {
+      streaming = true;
+      return releasedAtEnd(res, release);
+    }
+    return res;
+  } finally {
+    if (!streaming) release?.();
+  }
+}
+
+/** A stream read after `call` returns holds its server until the body ends, fails or is cancelled. */
+function releasedAtEnd(res: Response, release: () => void): Response {
+  const reader = res.body?.getReader();
+  if (!reader) {
+    release();
+    return res;
+  }
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          release();
+          controller.close();
+        } else controller.enqueue(value);
+      } catch (e) {
+        release();
+        controller.error(e);
+      }
+    },
+    cancel(reason) {
+      release();
+      return reader.cancel(reason);
+    },
+  });
+  return new Response(body, {
+    status: res.status,
+    statusText: res.statusText,
+    headers: res.headers,
+  });
+}
+
+async function withRetries(
   target: ProviderTarget,
   url: string,
   init: RequestInit,

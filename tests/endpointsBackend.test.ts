@@ -160,6 +160,9 @@ class FakeService implements EndpointSettingsService {
   };
   redoVoiceSpeed = this.voiceSpeedLines;
   keepVoiceSpeed = this.voiceSpeedLines;
+  servers = this.voiceSpeedLines;
+  startServer = this.voiceSpeedLines;
+  stopServer = this.voiceSpeedLines;
   deleted: string[] = [];
   deleteAnswer: ApiError | null = null;
   async deleteVoice(_id: string, voice: string): Promise<void> {

@@ -11,6 +11,7 @@ import type {
   EndpointBatches,
   EndpointProbe,
   KeptVoiceSamples,
+  LocalServerStatus,
   Profile,
   PromptTemplate,
   ScriptSettings,
@@ -109,7 +110,15 @@ export interface EndpointSettingsService {
   redoVoiceSpeed(ref: VoiceRef, books: string[]): Promise<VoiceSpeedRedone>;
   /** The made-here lines in `books` keep the old sound; how many. */
   keepVoiceSpeed(ref: VoiceRef, books: string[]): Promise<number>;
+  /** Local servers by `serverKey`; one absent has not run since the server process started. */
+  servers(): Promise<LocalServers>;
+  /** Start the *saved* endpoint's local server; answers before it is ready. */
+  startServer(key: string): Promise<LocalServers>;
+  /** Stop a local server the app started; answers once it has stopped. */
+  stopServer(key: string): Promise<LocalServers>;
 }
+
+export type LocalServers = Record<string, LocalServerStatus>;
 
 export interface VoiceCloneRequest {
   title: string;
@@ -193,6 +202,20 @@ export class HttpEndpointSettingsService implements EndpointSettingsService {
   async live(): Promise<Record<string, EndpointLive>> {
     return (await this.http.get<{ endpoints: Record<string, EndpointLive> }>("/endpoints/live"))
       .endpoints;
+  }
+
+  async servers(): Promise<LocalServers> {
+    return (await this.http.get<{ servers: LocalServers }>("/endpoints/servers")).servers;
+  }
+
+  async startServer(key: string): Promise<LocalServers> {
+    return (await this.http.post<{ servers: LocalServers }>("/endpoints/servers/start", { key }))
+      .servers;
+  }
+
+  async stopServer(key: string): Promise<LocalServers> {
+    return (await this.http.post<{ servers: LocalServers }>("/endpoints/servers/stop", { key }))
+      .servers;
   }
 
   keptSampleFile(id: string, voice: string, file: string): Promise<Blob> {

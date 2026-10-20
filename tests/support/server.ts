@@ -33,6 +33,7 @@ import type { RenderedClip, SpeechInput, SpeechProvider } from "~/providers/spee
 import type { VoiceCloner } from "~/providers/clone";
 import type { TranscriptionProvider } from "~/providers/transcription";
 import type { VoiceLister } from "~/providers/voices";
+import type { LocalServers } from "~/servers/localServers";
 import { voiceFiles } from "~/voices/files";
 import type { FetchLike } from "@/services/http";
 import type { Book, Character, Endpoint, Job } from "@/types";
@@ -96,6 +97,8 @@ export interface TestApiOptions {
   effects?: EffectRunner;
   /** what a thought line is given where `effects` cannot run; none by default, nor ffmpeg */
   thoughtEffect?: ThoughtEffect;
+  /** the local servers the endpoint routes start and stop; none by default, as in the demo */
+  servers?: LocalServers;
 }
 
 /** Per-test directories, so no two suites read each other's files. */
@@ -207,6 +210,7 @@ export function testApi(options: TestApiOptions = {}): TestApi {
     voiceFiles: voiceFiles(voiceDir),
     gate,
     effects: options.effects,
+    servers: options.servers,
   });
 
   const request = async <T>(path: string, init?: RequestInit) => {

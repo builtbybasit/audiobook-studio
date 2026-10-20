@@ -100,6 +100,8 @@ export interface Endpoint {
    * when last read. Before the provider's own (`speedOf`); absent = the provider's.
    */
   speedRange?: SpeedRange | null;
+  /** a server on this machine the app starts and stops; absent = started some other way */
+  launch?: LocalServer | null;
 }
 
 /** A server known only by being named, never by its address: Breeze-TTS-2.cpp. */
@@ -170,6 +172,52 @@ export interface Transcriber extends Partial<EndpointOps> {
    */
   resample16k?: boolean;
   pricing?: PricingConfig;
+  /** as on `Endpoint` */
+  launch?: LocalServer | null;
+}
+
+/**
+ * A TTS, ASR or LLM server on this machine that the app starts when a request needs it
+ * (`server/servers/localServers.ts`). Heavy ones take the GPU, so only one runs at a time.
+ */
+export interface LocalServer {
+  /** absolute; the command runs here */
+  dir: string;
+  /** run by `/bin/sh -c` */
+  command: string;
+  heavy: boolean;
+  /** how long it may take to answer at its base URL; absent = 300 */
+  readySec?: number;
+}
+
+export type LocalServerState =
+  /** not running; a request starts it */
+  | "stopped"
+  /** a start under way that hasn't spawned: asking its URL, or waiting for a heavy one to finish */
+  | "queued"
+  | "starting"
+  | "running"
+  | "stopping"
+  /** exited on its own; `failed` says whether it ever answered */
+  | "crashed"
+  /** its base URL answered before the app started it: used, but never stopped by the app */
+  | "outside";
+
+/** `GET /api/endpoints/servers`, keyed by `serverKey`. Never stored. */
+export interface LocalServerStatus {
+  state: LocalServerState;
+  /** epoch ms the state began */
+  since: number;
+  pid?: number;
+  /** requests waiting for it to start or for a heavy one to finish */
+  waiting: number;
+  /** requests out at it now */
+  active: number;
+  /** crashed before it ever answered: requests are refused until Start is pressed */
+  failed?: boolean;
+  exitCode?: number | null;
+  /** the last lines it printed, stdout and stderr together, oldest first */
+  output: string[];
 }
 
 /**

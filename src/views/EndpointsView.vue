@@ -51,7 +51,7 @@ import {
   ui,
 } from "@/views/endpoints/state";
 import type { TabId } from "@/views/endpoints/state";
-import type { EndpointKind, MetricBucket, SettingsFile } from "@/types";
+import type { EndpointKind, MetricBucket } from "@/types";
 
 const endpointsStore = useEndpointsStore();
 const jobsStore = useJobsStore();
@@ -213,37 +213,34 @@ function applyQuery() {
 onMounted(applyQuery);
 watch(() => [route.query.endpoint, route.query.tab], applyQuery);
 
-// Settings file: endpoints, scripting profiles and script settings as JSON, never keys.
+// Backup: endpoints, profiles, script settings and cloned voices' samples as a zip, never keys.
 function exportSettings() {
-  const blob = new Blob([JSON.stringify(endpointsStore.exportSettings(), null, 2)], {
-    type: "application/json",
-  });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = "audiobook-studio-settings.json";
-  a.click();
-  URL.revokeObjectURL(a.href);
-  uiStore.toast("Settings exported", {
-    kind: "success",
-    description: "audiobook-studio-settings.json — API keys are never included.",
-    timeout: 4000,
-  });
+  void uiStore.toastLoading(
+    endpointsStore.exportBackup().then((blob) => {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "audiobook-studio-settings.zip";
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }),
+    {
+      loading: "Exporting settings\u2026",
+      success: () => "Settings exported — API keys are never included",
+      error: (e) => `Could not export settings: ${e instanceof Error ? e.message : String(e)}`,
+    },
+  );
 }
 function importSettings(event: Event) {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
-  if (!file) return;
-  void file.text().then((text: string) => {
-    try {
-      endpointsStore.importSettings(JSON.parse(text) as SettingsFile);
-    } catch (error) {
-      uiStore.toast("Could not import settings", {
-        kind: "error",
-        description: error instanceof Error ? error.message : String(error),
-      });
-    }
-  });
   input.value = "";
+  if (!file) return;
+  endpointsStore.importBackup(file).catch((error: unknown) =>
+    uiStore.toast("Could not import settings", {
+      kind: "error",
+      description: error instanceof Error ? error.message : String(error),
+    }),
+  );
 }
 
 // sample text for the split preview: a real chapter when a book is open
@@ -281,17 +278,17 @@ function pickBucket(b: MetricBucket | null) {
         </button>
         <button
           class="btn-ghost btn-xs"
-          data-tip="Download every endpoint, profile and script setting as JSON. Keys are never included."
+          data-tip="Download every endpoint, profile and script setting, with the samples cloned voices were made from. Keys are never included."
           @click="exportSettings"
         >
           <ExportIcon class="icon-sm" /> Export
         </button>
         <label
           class="btn-ghost btn-xs cursor-pointer"
-          data-tip="Merge a settings JSON into what is configured here"
+          data-tip="Merge an exported settings file into what is configured here, and keep its voice samples again"
           ><ImportIcon class="icon-sm" /> Import<input
             type="file"
-            accept="application/json"
+            accept=".zip,.json"
             class="hidden"
             aria-label="Import a settings file"
             @change="importSettings"

@@ -6,12 +6,12 @@ import { join } from "node:path";
 
 import { eq } from "drizzle-orm";
 
-import type { Endpoint, KeptVoiceSamples, Voice } from "@/types";
+import type { Character, ClonedVoice, Endpoint, KeptVoiceSamples, Voice } from "@/types";
 import { MAX_SAMPLE_BYTES, MAX_TRANSCRIPT_CHARS, MAX_VOICE_SAMPLES } from "@/lib/voiceSamples";
 import { SPEECH_PROVIDERS } from "@/lib/providers";
 import { fish } from "@/lib/providers/fish";
 import { readSamples } from "~/voices/clone";
-import { clonedVoices } from "~/db/schema";
+import { books, clips, clonedVoices } from "~/db/schema";
 import { sniffSample, type CloneRequest } from "~/providers/clone";
 import { SPEECH_WIRES } from "~/providers/speech/registry";
 import { keepSampleFiles } from "~/voices/ops";
@@ -28,7 +28,15 @@ import {
   saved,
   cloneEndpoint,
 } from "../support/cloning";
-import { jsonBody, tempVoiceDir, testApi, type TestApi } from "../support/server";
+import { line } from "../support/epub";
+import {
+  jsonBody,
+  narrateChapters,
+  tempVoiceDir,
+  testApi,
+  voicedBook,
+  type TestApi,
+} from "../support/server";
 
 describe("which providers clone", () => {
   test("a provider described with cloning has a clone in its wire module, and only those", () => {
@@ -604,5 +612,57 @@ describe("the recordings a voice was made from", () => {
     expect(
       (await api.request<{ endpoints: Endpoint[] }>("/api/endpoints")).body.endpoints[0].voices,
     ).toEqual([old]);
+  });
+});
+
+describe("making a voice again", () => {
+  test("clones it from its kept samples and moves every speaker, character voice and clip to it", async () => {
+    const { cloner, asked } = remembering();
+    const api = testApi({ cloner });
+    const old: Voice = { id: "old-voice", label: "Old Tomas", gender: "m" };
+    const id = await voicedBook(api, {
+      endpoints: [cloneEndpoint({ voices: [old] })],
+      paragraphs: [line("One")],
+      voiceOf: "fish/old-voice",
+    });
+    await narrateChapters(api, id, [1]);
+    const cv = { by: "one" as const, one: "fish/old-voice", male: null, female: null, other: null };
+    api.db.update(books).set({ characterVoice: cv }).where(eq(books.id, id)).run();
+    const remake = (voice: string) =>
+      api.request<ClonedVoice>(`/api/endpoints/fish/voices/${voice}/remake`, {
+        ...jsonBody({}),
+        method: "POST",
+      });
+    expect((await remake("old-voice")).status).toBe(404);
+    await api.request("/api/endpoints/fish/voices/old-voice/samples", {
+      method: "POST",
+      body: cloneForm(
+        {},
+        [sampleFile("a.wav"), sampleFile("b.wav", HEADS.wav, "audio/wav", 2048)],
+        ["Come in.", ""],
+      ),
+    });
+
+    const { status, body } = await remake("old-voice");
+    expect([status, body.id, body.samplesKept]).toEqual([201, "new-voice-id", true]);
+    expect(asked[0].title).toBe("Old Tomas");
+    expect(asked[0].samples.map((s) => [s.name, s.transcript])).toEqual([
+      ["a.wav", "Come in."],
+      ["b.wav", undefined],
+    ]);
+    const cast = await api.request<{ characters: Character[] }>(`/api/books/${id}/cast`);
+    expect(cast.body.characters.filter((c) => c.voice).map((c) => c.voice)).toContain(
+      "fish/new-voice-id",
+    );
+    expect(cast.body.characters.some((c) => c.voice === "fish/old-voice")).toBe(false);
+    const refs = api.db.select({ ref: clips.voiceRef }).from(clips).all();
+    expect(refs.length).toBeGreaterThan(0);
+    expect(refs.every((r) => r.ref === "fish/new-voice-id")).toBe(true);
+    const book = api.db.select().from(books).where(eq(books.id, id)).get();
+    expect(book?.characterVoice?.one).toBe("fish/new-voice-id");
+    expect((await samplesOf(api)).body.samples.map((s) => s.transcript)).toEqual([
+      "Come in.",
+      undefined,
+    ]);
   });
 });

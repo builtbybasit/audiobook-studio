@@ -15,6 +15,7 @@ import {
   transcriptTooLongSaid,
   wrongFormatSaid,
 } from "@/lib/voiceSamples";
+import { moveVoiceRefs } from "~/db/cast";
 import type { Db } from "~/db/client";
 import { readEndpoint } from "~/db/endpoints";
 import { providerFailure } from "~/endpoints/ops";
@@ -149,6 +150,47 @@ export async function cloneVoice(
     voice: { ...made, samplesKept: true, ...(warning ? { warning } : {}) },
     samples: samples.length,
   };
+}
+
+/**
+ * Makes `voiceId` again from its kept samples, for a server that lost it, and moves every speaker,
+ * character voice and clip on it to the new voice. Swapping it into the endpoint's list is the
+ * page's save.
+ */
+export async function remakeVoice(
+  db: Db,
+  providers: Providers,
+  voiceFiles: VoiceFiles,
+  endpointId: string,
+  voiceId: string,
+  signal: AbortSignal,
+): Promise<Cloned> {
+  const ep = clonableEndpoint(db, endpointId);
+  const voice = ep.voices.find((v) => v.id === voiceId);
+  if (!voice) throw notFound(`${ep.name} has no saved voice by that id`, `voice: ${voiceId}`);
+  const kept = keptOf(db, ep.id, voiceId);
+  const files = await Promise.all(
+    kept.samples.map(async (s) => {
+      const path = voiceFiles.path(ep.id, voiceId, s.file);
+      if (!path || !(await Bun.file(path).exists()))
+        throw notFound(`A sample of ${voice.label} is missing on disk`, `file: ${s.file}`);
+      return new File([await Bun.file(path).bytes()], s.name, { type: SAMPLE_MIME[s.format] });
+    }),
+  );
+  const cloned = await cloneVoice(
+    db,
+    providers,
+    voiceFiles,
+    {
+      endpointId: ep.id,
+      title: voice.label,
+      files,
+      transcripts: kept.samples.map((s) => s.transcript ?? ""),
+    },
+    signal,
+  );
+  db.transaction((tx) => moveVoiceRefs(tx, `${ep.id}/${voiceId}`, `${ep.id}/${cloned.voice.id}`));
+  return cloned;
 }
 
 /** Deletes a voice on the endpoint's server; the endpoint's own list is the page's to save. */

@@ -315,6 +315,19 @@ export function endpointRoutes(
     return c.json(kept satisfies KeptVoiceSamples);
   });
 
+  /** Made again from its kept samples; speakers move to the new voice, which the page swaps in. */
+  app.post("/:id/voices/:voice/remake", validate("param", VoiceParam), async (c) => {
+    const { id, voice } = c.req.valid("param");
+    const made = await clone.remakeVoice(db, providers, voiceFiles, id, voice, c.req.raw.signal);
+    if (made.keepError)
+      c.var.logger.warn(
+        { err: made.keepError, id, voice },
+        "remade, but the samples were not kept",
+      );
+    c.var.logger.info({ id, voice, as: made.voice.id }, "voice remade");
+    return c.json(made.voice satisfies ClonedVoice, 201);
+  });
+
   /** On the endpoint's server, for good; the page then drops it from the endpoint. */
   app.delete("/:id/voices/:voice", validate("param", VoiceParam), async (c) => {
     const { id, voice } = c.req.valid("param");

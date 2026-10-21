@@ -3,7 +3,7 @@
 // done together in server/cast/ops.ts.
 import { and, asc, desc, eq, inArray, lt, max, sql } from "drizzle-orm";
 
-import type { Character, LexEntry } from "@/types";
+import type { Character, CharacterVoice, LexEntry, VoiceRef } from "@/types";
 import {
   NARRATOR,
   chapterCast,
@@ -14,7 +14,7 @@ import {
 } from "@/lib/cast";
 import type { PromptCastMember } from "@/lib/prompt";
 import type { Db, Tx } from "~/db/client";
-import { chapters, characters, lexiconEntries, segments } from "~/db/schema";
+import { books, chapters, characters, clips, lexiconEntries, segments } from "~/db/schema";
 import { characterValues, lexiconValues, toCharacter, toLexEntry } from "~/db/rows";
 
 export function readCast(db: Db | Tx, bookId: string): Character[] {
@@ -309,4 +309,21 @@ export function relinkPersonas(db: Db | Tx, bookId: string, from: string, to: st
     .set({ personaOf: to })
     .where(and(eq(characters.bookId, bookId), eq(characters.personaOf, from)))
     .run();
+}
+
+/** Every book's speakers, character voice and clips on `from` move to `to`, as if always on it. */
+export function moveVoiceRefs(tx: Tx, from: VoiceRef, to: VoiceRef): void {
+  tx.update(characters).set({ voice: to }).where(eq(characters.voice, from)).run();
+  tx.update(clips)
+    .set({ voiceRef: to, voice: to.slice(to.indexOf("/") + 1) })
+    .where(eq(clips.voiceRef, from))
+    .run();
+  for (const b of tx.select({ id: books.id, cv: books.characterVoice }).from(books).all()) {
+    if (!b.cv) continue;
+    const cv: CharacterVoice = { ...b.cv };
+    const slots = ["one", "male", "female", "other"] as const;
+    if (!slots.some((k) => cv[k] === from)) continue;
+    for (const k of slots) if (cv[k] === from) cv[k] = to;
+    tx.update(books).set({ characterVoice: cv }).where(eq(books.id, b.id)).run();
+  }
 }

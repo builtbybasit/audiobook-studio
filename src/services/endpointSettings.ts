@@ -90,6 +90,8 @@ export interface EndpointSettingsService {
   keptSampleFile(id: string, voice: string, file: string): Promise<Blob>;
   /** Clone on the *saved* endpoint's provider; the server keeps the samples and says if it did. */
   cloneVoice(id: string, request: VoiceCloneRequest): Promise<ClonedVoice>;
+  /** Clone `voice` again from its kept samples; the server moves its speakers to the new one. */
+  remakeVoice(id: string, voice: string): Promise<ClonedVoice>;
   /** Delete a voice on the *saved* endpoint's server, for good. */
   deleteVoice(id: string, voice: string): Promise<void>;
   /** Every voice of the *saved* endpoint whose samples are kept. */
@@ -182,6 +184,10 @@ export class HttpEndpointSettingsService implements EndpointSettingsService {
     form.set("id", id);
     form.set("title", request.title.trim());
     return this.http.postFormData<ClonedVoice>("/endpoints/voices/clone", form);
+  }
+
+  remakeVoice(id: string, voice: string): Promise<ClonedVoice> {
+    return this.http.post<ClonedVoice>(`/endpoints/${seg(id)}/voices/${seg(voice)}/remake`, {});
   }
 
   async deleteVoice(id: string, voice: string): Promise<void> {

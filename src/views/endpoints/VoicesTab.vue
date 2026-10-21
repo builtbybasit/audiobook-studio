@@ -18,6 +18,7 @@ import {
   Play as PlayIcon,
   Plus as AddIcon,
   RefreshCw as FetchIcon,
+  RotateCcw as RemakeIcon,
   TriangleAlert as WarnIcon,
   X as RemoveIcon,
   Search as SearchIcon,
@@ -152,6 +153,21 @@ async function keepSamples() {
     }
   } finally {
     keep.busy = false;
+  }
+}
+
+// a server that lost a voice gets it again from the kept samples; its speakers follow
+const remaking = ref<string | null>(null);
+const remakeTip = computed(
+  () =>
+    `Clone it again from its kept samples, for a server that lost it; its speakers in every book move to the new voice.${cloning.value?.cost ? ` ${cloning.value.cost}` : ""}`,
+);
+async function remake(v: Voice) {
+  remaking.value = v.id;
+  try {
+    if (await endpointsStore.remakeVoice(props.endpoint, v.id)) await loadKept();
+  } finally {
+    remaking.value = null;
   }
 }
 
@@ -425,6 +441,18 @@ const sampleTitle = computed(() =>
             >
               <PauseIcon v-if="playingId(sourceId(v))" class="icon-sm icon-fill" />
               <SourceIcon v-else class="icon-sm" />
+            </button>
+            <button
+              v-if="kept[v.id]"
+              class="btn-ghost btn-xs shrink-0"
+              :aria-label="`Make ${v.label} again`"
+              :data-tip="needsKeyFirst ? 'Save a key for this endpoint first' : remakeTip"
+              :disabled="needsKeyFirst || !!remaking"
+              :aria-busy="remaking === v.id"
+              @click="remake(v)"
+            >
+              <BusyIcon v-if="remaking === v.id" class="icon-sm animate-spin" />
+              <RemakeIcon v-else class="icon-sm" />
             </button>
           </template>
           <button

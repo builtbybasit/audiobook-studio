@@ -164,6 +164,7 @@ class FakeService implements EndpointSettingsService {
   servers = this.voiceSpeedLines;
   startServer = this.voiceSpeedLines;
   stopServer = this.voiceSpeedLines;
+  remakeVoice = this.voiceSpeedLines;
   deleted: string[] = [];
   deleteAnswer: ApiError | null = null;
   async deleteVoice(_id: string, voice: string): Promise<void> {
@@ -543,6 +544,16 @@ describe("API keys with a server answering", () => {
     expect(keysSent(svc.puts.at(-1)!)).toEqual([]);
     expect(svc.keys.get("tts:srv-tts")).toBe("sk-old");
     expect(endpointsStore.endpoints[0].hasKey).toBe(true);
+  });
+
+  test("an import keeps the voices made since the file was written", async () => {
+    svc.held = server();
+    await endpointsStore.load();
+    const file = clone(endpointsStore.exportSettings());
+    const ep = endpointsStore.endpoints[0];
+    endpointsStore.addVoice(ep, { id: "later", label: "Later" });
+    endpointsStore.importSettings(file);
+    expect(ep.voices.map((v) => v.id)).toEqual(["alloy", "later"]);
   });
 });
 

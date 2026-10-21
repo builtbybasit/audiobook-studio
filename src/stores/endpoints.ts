@@ -34,6 +34,7 @@ import { ApiError } from "@/services/http";
 import { invalidate } from "@/queries/invalidate";
 import { keys } from "@/queries/keys";
 import { encodingOf } from "@/lib/endpointShapes";
+import { packBackup, unpackBackup, type PackVoice } from "@/lib/settingsBackup";
 import type {
   BatchLimits,
   ConnectionTest,
@@ -657,8 +658,12 @@ export const useEndpointsStore = defineStore("endpoints", {
           backoffUntil: 0,
           ...portable(e),
         } as Endpoint;
-        if (cur) filled(Object.assign(cur, fresh), "tts");
-        else this.endpoints.push(filled(fresh, "tts"));
+        if (cur) {
+          // voices made since the file was written stay; dropping one would let its samples go
+          const had = cur.voices;
+          filled(Object.assign(cur, fresh), "tts");
+          this.mergeVoices(cur, had);
+        } else this.endpoints.push(filled(fresh, "tts"));
         n++;
       }
       for (const p of profiles) {
@@ -1012,6 +1017,85 @@ export const useEndpointsStore = defineStore("endpoints", {
         toastFailure("keep the samples", cause);
         return null;
       }
+    },
+    /**
+     * Clone a voice again from its kept samples, in its place and under its name; the server moves
+     * its speakers to the new one. False when refused, which has been said.
+     */
+    async remakeVoice(ep: Endpoint, voiceId: string): Promise<boolean> {
+      const old = ep.voices.find((v) => v.id === voiceId);
+      if (!old) return false;
+      try {
+        await this.flushWrites();
+        const { id, warning } = await this._service().remakeVoice(ep.id, voiceId);
+        ep.voices = ep.voices.map((v) => (v.id === voiceId ? { ...old, id } : v));
+        // speakers, character voices and clips moved on the server
+        void invalidate({ key: ["books"] });
+        useUiStore().toast(`Made ${old.label} again on ${ep.name}`, {
+          kind: warning ? "warn" : "success",
+          description: warning ?? "Its speakers in every book use the new voice now.",
+        });
+        return true;
+      } catch (cause) {
+        toastFailure(`make ${old.label} again`, cause);
+        return false;
+      }
+    },
+    /** The settings file plus every cloned voice's kept samples, zipped (`settingsBackup.ts`). */
+    async exportBackup(): Promise<Blob> {
+      await this.flushWrites();
+      const voices: PackVoice[] = [];
+      for (const ep of this.endpoints)
+        for (const k of await this.keptSamples(ep))
+          voices.push({
+            endpointId: ep.id,
+            voiceId: k.voiceId,
+            title: k.title,
+            samples: await Promise.all(
+              k.samples.map(async (s) => ({
+                ...s,
+                blob: await this._service().keptSampleFile(ep.id, k.voiceId, s.file),
+              })),
+            ),
+          });
+      return packBackup(this.exportSettings(), voices);
+    },
+    /**
+     * `importSettings`, then each listed voice without kept samples here keeps the file's again.
+     * Throws when the file is not a backup; a voice whose samples are refused is said.
+     */
+    async importBackup(file: Blob): Promise<void> {
+      const { settings, samples } = await unpackBackup(file);
+      this.importSettings(settings);
+      if (!samples.length) return;
+      await this.flushWrites();
+      const keptHere = new Map<string, Set<string>>();
+      const refused: string[] = [];
+      let kept = 0;
+      for (const s of samples) {
+        const ep = this.endpoints.find((e) => e.id === s.endpointId);
+        const voice = ep?.voices.find((v) => v.id === s.voiceId);
+        if (!ep || !voice) continue;
+        if (!keptHere.has(ep.id))
+          keptHere.set(ep.id, new Set((await this.keptSamples(ep)).map((k) => k.voiceId)));
+        if (keptHere.get(ep.id)!.has(voice.id)) continue;
+        try {
+          await this._service().keepSamples(ep.id, voice.id, s);
+          kept++;
+        } catch (cause) {
+          refused.push(`${voice.label}: ${cause instanceof Error ? cause.message : String(cause)}`);
+        }
+      }
+      if (kept)
+        useUiStore().toast(`Kept the samples of ${kept} cloned voice${kept === 1 ? "" : "s"}`, {
+          kind: "success",
+          description: "Make again on a voice's row clones it anew if its server lost it.",
+        });
+      if (refused.length)
+        useUiStore().toast("Some voices' samples were not kept", {
+          kind: "warn",
+          description: refused.join("; "),
+        });
     },
     /**
      * One page of Fish Audio's public voice search. Results are only shown; `addVoice` adds one.

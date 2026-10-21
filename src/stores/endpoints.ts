@@ -1049,8 +1049,9 @@ export const useEndpointsStore = defineStore("endpoints", {
         for (const k of await this.keptSamples(ep))
           voices.push({
             endpointId: ep.id,
+            endpointName: ep.name,
             voiceId: k.voiceId,
-            title: k.title,
+            title: ep.voices.find((v) => v.id === k.voiceId)?.label ?? k.title,
             samples: await Promise.all(
               k.samples.map(async (s) => ({
                 ...s,

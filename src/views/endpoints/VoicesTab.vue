@@ -157,15 +157,25 @@ async function keepSamples() {
 }
 
 // a server that lost a voice gets it again from the kept samples; its speakers follow
-const remaking = ref<string | null>(null);
+/** the voice being made again, or true for every lost one */
+const remaking = ref<string | true | null>(null);
+const costNote = computed(() => (cloning.value?.cost ? ` ${cloning.value.cost}` : ""));
 const remakeTip = computed(
   () =>
-    `Clone it again from its kept samples, for a server that lost it; its speakers in every book move to the new voice.${cloning.value?.cost ? ` ${cloning.value.cost}` : ""}`,
+    `Clone it again from its kept samples, for a server that lost it; its speakers in every book move to the new voice.${costNote.value}`,
 );
 async function remake(v: Voice) {
   remaking.value = v.id;
   try {
     if (await endpointsStore.remakeVoice(props.endpoint, v.id)) await loadKept();
+  } finally {
+    remaking.value = null;
+  }
+}
+async function remakeLost() {
+  remaking.value = true;
+  try {
+    if (await endpointsStore.remakeLostVoices(props.endpoint)) await loadKept();
   } finally {
     remaking.value = null;
   }
@@ -256,6 +266,22 @@ const sampleTitle = computed(() =>
               {{ endpoint.fetching ? "Fetching…" : "Fetch from server" }}
             </button>
           </UiTooltip>
+          <button
+            v-if="clonable && Object.keys(kept).length"
+            class="btn-ghost btn-xs"
+            :data-tip="
+              needsKeyFirst
+                ? 'Save a key for this endpoint first'
+                : `Asks ${endpoint.name} which voices it has, then clones each one it lost again from its kept samples; their speakers in every book follow.${costNote}`
+            "
+            :disabled="needsKeyFirst || !!remaking"
+            :aria-busy="remaking === true"
+            @click="remakeLost"
+          >
+            <BusyIcon v-if="remaking === true" class="icon-sm animate-spin" />
+            <RemakeIcon v-else class="icon-sm" />
+            {{ remaking === true ? "Making again…" : "Make lost voices again" }}
+          </button>
           <button class="btn-ghost btn-xs" @click="draft.open = !draft.open">
             <AddIcon class="icon-sm" /> {{ draft.open ? "Close" : "Add voice" }}
           </button>

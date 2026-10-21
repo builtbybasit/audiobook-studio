@@ -2,7 +2,10 @@
 // into a fresh one, through the endpoints store and the real routes.
 import { afterEach, expect, test } from "bun:test";
 
-import type { KeptVoiceSamples } from "@/types";
+import JSZip from "jszip";
+
+import type { KeptSample, KeptVoiceSamples, SettingsFile } from "@/types";
+import { packBackup, type PackVoice } from "@/lib/settingsBackup";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useUiStore } from "@/stores/ui";
 import { backendServer, pointServicesAt } from "./support/backendServer";
@@ -46,4 +49,40 @@ test("carries each cloned voice's samples and transcripts to a fresh server, onc
   // a voice whose samples are already here keeps them as they are
   await restored.importBackup(zip);
   expect((await kept()).body.madeAt).toBe(body.madeAt);
+});
+
+test("names each sample after its voice, in its endpoint's folder, never two alike", async () => {
+  const sample = (format: KeptSample["format"]) => ({
+    file: "x",
+    name: "take.wav",
+    format,
+    bytes: 1,
+    blob: new Blob(["x"]),
+  });
+  const voice = (title: string, endpointName: string, ...formats: KeptSample["format"][]) =>
+    ({
+      endpointId: "e",
+      endpointName,
+      voiceId: title,
+      title,
+      samples: formats.map(sample),
+    }) satisfies PackVoice;
+  const zip = await packBackup({ endpoints: [] } as unknown as SettingsFile, [
+    voice("Mara", "OmniVoice local", "wav", "wav", "mp3"),
+    voice("mara", "OmniVoice local", "wav"),
+    voice("Mara 2", "OmniVoice local", "flac"),
+    voice("Who? / Them", "Fish: Audio", "wav"),
+  ]);
+  const names = Object.keys((await JSZip.loadAsync(zip)).files).filter((n) => !n.endsWith("/"));
+  expect(names.sort()).toEqual(
+    [
+      "voices/OmniVoice local/Mara.wav",
+      "voices/OmniVoice local/Mara 2.wav",
+      "voices/OmniVoice local/Mara 3.mp3",
+      "voices/OmniVoice local/mara (2).wav",
+      "voices/OmniVoice local/Mara 2 (2).flac",
+      "voices/Fish Audio/Who Them.wav",
+      "settings.json",
+    ].sort(),
+  );
 });

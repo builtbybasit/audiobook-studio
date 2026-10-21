@@ -22,18 +22,48 @@ export interface BackupSamples {
 
 export interface PackVoice {
   endpointId: string;
+  /** the folder its samples go in */
+  endpointName: string;
   voiceId: string;
+  /** what its samples are named after */
   title: string;
   samples: (KeptSample & { blob: Blob })[];
+}
+
+/** What a file name may not hold on any common system. */
+const fileSafe = (name: string): string =>
+  name
+    .replace(/[/\\:*?"<>|]/g, "")
+    .replace(/\s+/g, " ")
+    .replace(/^[\s.]+|[\s.]+$/g, "");
+
+/**
+ * `voices/<endpoint>/<voice>.<ext>`, then `<voice> 2`, `<voice> 3`… for its other samples; a name
+ * another voice in the folder holds becomes `<voice> (2)`. Case-blind, as macOS and Windows are.
+ */
+function samplePaths(voices: PackVoice[]): string[][] {
+  const taken = new Set<string>();
+  return voices.map((v) => {
+    const folder = `voices/${fileSafe(v.endpointName) || fileSafe(v.endpointId) || "endpoint"}/`;
+    const base = fileSafe(v.title) || "voice";
+    for (let n = 1; ; n++) {
+      const stem = n === 1 ? base : `${base} (${n})`;
+      const stems = v.samples.map((_, j) => folder + (j ? `${stem} ${j + 1}` : stem));
+      if (stems.some((s) => taken.has(s.toLowerCase()))) continue;
+      for (const s of stems) taken.add(s.toLowerCase());
+      return stems.map((s, j) => `${s}.${v.samples[j].format}`);
+    }
+  });
 }
 
 export async function packBackup(settings: SettingsFile, voices: PackVoice[]): Promise<Blob> {
   const { default: JSZip } = await import("jszip");
   const zip = new JSZip();
   const listed: BackupVoice[] = [];
+  const paths = samplePaths(voices);
   for (const [i, v] of voices.entries()) {
     const samples = v.samples.map((s, j) => {
-      const path = `voices/${i + 1}/sample-${j + 1}.${s.format}`;
+      const path = paths[i][j];
       // stored, not deflated: audio barely compresses
       zip.file(path, s.blob, { compression: "STORE" });
       return {

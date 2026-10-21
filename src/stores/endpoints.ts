@@ -72,6 +72,8 @@ interface EndpointsState {
   prompt: PromptTemplate | null;
   /** Credential names the endpoints and profiles use; never a key. */
   credentials: Credential[];
+  /** The voice ids each endpoint's server listed when last asked; null when it couldn't be asked. */
+  onServer: Record<string, string[] | null>;
   loaded: boolean;
 }
 
@@ -242,6 +244,7 @@ export const useEndpointsStore = defineStore("endpoints", {
     transcribers: [],
     prompt: null,
     credentials: [],
+    onServer: {},
     loaded: false,
   }),
   getters: {
@@ -875,7 +878,13 @@ export const useEndpointsStore = defineStore("endpoints", {
         try {
           // the server uses its saved key and base URL, so flush first
           await this.flushWrites();
-          const found = await this._service().listVoices(ep.id, { source: "library" });
+          const found = await this._service()
+            .listVoices(ep.id, { source: "library" })
+            .catch((e: unknown) => {
+              this.onServer[ep.id] = null;
+              throw e;
+            });
+          this.onServer[ep.id] = found.voices.map((v) => v.id);
           empty = !found.voices.length;
           return this.mergeVoices(ep, found.voices);
         } finally {
@@ -1043,7 +1052,34 @@ export const useEndpointsStore = defineStore("endpoints", {
     async _remake(ep: Endpoint, voiceId: string): Promise<string | undefined> {
       const { id, warning } = await this._service().remakeVoice(ep.id, voiceId);
       ep.voices = ep.voices.map((v) => (v.id === voiceId ? { ...v, id } : v));
+      const listed = this.onServer[ep.id];
+      if (listed) this.onServer[ep.id] = [...listed, id];
       return warning;
+    },
+    /** Ask `ep`'s server what it lists, and remember it; null when it couldn't be asked. */
+    async serverVoices(ep: Endpoint): Promise<string[] | null> {
+      let ids: string[] | null = null;
+      try {
+        await this.flushWrites();
+        ids = (await this._service().listVoices(ep.id, { source: "library" })).voices.map(
+          (v) => v.id,
+        );
+      } catch {
+        // said by the Voices tab, which shows the server couldn't be reached
+      }
+      this.onServer[ep.id] = ids;
+      return ids;
+    },
+    /**
+     * `ep`'s voices with kept samples that its server didn't list when last asked. Only those: a
+     * stock or searched voice may be missing from a server's list and still work.
+     */
+    lostVoices(ep: Endpoint, kept: Iterable<string>): Voice[] {
+      const listed = this.onServer[ep.id];
+      if (!listed) return [];
+      const there = new Set(listed);
+      const keptIds = new Set(kept);
+      return ep.voices.filter((v) => keptIds.has(v.id) && !there.has(v.id));
     },
     /**
      * Make again, one at a time, every voice with kept samples that `ep`'s server no longer lists,
@@ -1053,14 +1089,11 @@ export const useEndpointsStore = defineStore("endpoints", {
       const uiStore = useUiStore();
       const failed: string[] = [];
       const work = (async () => {
-        await this.flushWrites();
-        const [found, kept] = await Promise.all([
-          this._service().listVoices(ep.id, { source: "library" }),
-          this.keptSamples(ep),
-        ]);
-        const there = new Set(found.voices.map((v) => v.id));
-        const lost = ep.voices.filter(
-          (v) => !there.has(v.id) && kept.some((k) => k.voiceId === v.id),
+        const [listed, kept] = await Promise.all([this.serverVoices(ep), this.keptSamples(ep)]);
+        if (!listed) throw new Error(`${ep.name} could not be reached`);
+        const lost = this.lostVoices(
+          ep,
+          kept.map((k) => k.voiceId),
         );
         let made = 0;
         for (const v of lost) {

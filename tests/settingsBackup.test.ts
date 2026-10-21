@@ -89,19 +89,23 @@ test("names each sample after its voice, in its endpoint's folder, never two ali
   );
 });
 
-test("makes again only the voices with kept samples that the server no longer lists", async () => {
+test("finds and makes again only the voices with kept samples the server no longer lists", async () => {
   let made = 0;
   const cloner: VoiceCloner = {
     clone: async (_target, r) => ({ id: `v${++made}`, label: r.title, gender: "?" }),
   };
   const listed: string[] = [];
+  let down = false;
   const voices: VoiceLister = {
-    list: async () => ({
-      voices: listed.map((id) => ({ id, label: id, gender: "?" as const })),
-      total: listed.length,
-      page: 1,
-      hasMore: false,
-    }),
+    list: async () => {
+      if (down) throw new Error("connection refused");
+      return {
+        voices: listed.map((id) => ({ id, label: id, gender: "?" as const })),
+        total: listed.length,
+        page: 1,
+        hasMore: false,
+      };
+    },
   };
   const api = backendServer({ cloner, voices });
   await saved(api, cloneEndpoint({ voices: [{ id: "stock", label: "Stock", gender: "f" }] }));
@@ -114,11 +118,20 @@ test("makes again only the voices with kept samples that the server no longer li
       transcripts: [""],
     });
   listed.push("v2");
+  // the stock voice isn't listed either, but has no kept samples to say it was ever cloned
+  const lost = () => store.lostVoices(ep, ["v1", "v2", "v3"]).map((v) => v.label);
+  await store.serverVoices(ep);
+  expect(lost()).toEqual(["Mara"]);
 
   expect(await store.remakeLostVoices(ep)).toBe(1);
+  expect(lost()).toEqual([]);
   expect(Object.fromEntries(ep.voices.map((v) => [v.label, v.id]))).toEqual({
     Stock: "stock",
     Mara: "v3",
     Tomas: "v2",
   });
+
+  down = true;
+  expect(await store.serverVoices(ep)).toBeNull();
+  expect(lost()).toEqual([]);
 });

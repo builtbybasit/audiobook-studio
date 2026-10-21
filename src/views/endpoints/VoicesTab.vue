@@ -181,6 +181,29 @@ async function remakeLost() {
   }
 }
 
+// ---------- what the server has ----------
+// Asked whenever the tab opens or the voices change (listing is free), so only voices it lost offer
+// Make again. Not mid-remake: each one's new id is noted as it lands.
+async function checkServer() {
+  if (!needsKeyFirst.value && !remaking.value) await endpointsStore.serverVoices(props.endpoint);
+}
+watch(
+  () => [props.endpoint.id, needsKeyFirst.value, props.endpoint.voices.map((v) => v.id).join("\0")],
+  checkServer,
+  { immediate: true },
+);
+const listed = computed(() =>
+  needsKeyFirst.value ? undefined : endpointsStore.onServer[props.endpoint.id],
+);
+const lost = computed(() =>
+  listed.value ? endpointsStore.lostVoices(props.endpoint, Object.keys(kept.value)) : [],
+);
+const lostIds = computed(() => new Set(lost.value.map((v) => v.id)));
+const newOnServer = computed(() => {
+  const here = new Set(props.endpoint.voices.map((v) => v.id));
+  return listed.value?.filter((id) => !here.has(id)).length ?? 0;
+});
+
 // ---------- samples ----------
 // The provider's own recording, or else a real, priced request made once and kept by the server.
 // Each press says the next of `SAMPLE_LINES`, or the line typed above the list; a press while
@@ -248,6 +271,9 @@ const sampleTitle = computed(() =>
             {{ plural(endpoint.voices.length, "voice") }} on <b>{{ endpoint.name }}</b
             ><span v-if="routed">, {{ routed }} assigned to a speaker somewhere</span>.
           </p>
+          <p v-if="listed === null" class="text-[11px] text-amber-600 dark:text-amber-400">
+            Couldn't reach {{ endpoint.name }} to check which voices it has.
+          </p>
         </div>
         <div class="flex shrink-0 flex-wrap gap-2">
           <UiTooltip
@@ -263,24 +289,30 @@ const sampleTitle = computed(() =>
               @click="endpointsStore.fetchVoices(endpoint)"
             >
               <FetchIcon class="icon-sm" :class="endpoint.fetching && 'animate-spin'" />
-              {{ endpoint.fetching ? "Fetching…" : "Fetch from server" }}
+              {{
+                endpoint.fetching
+                  ? "Fetching…"
+                  : newOnServer
+                    ? `Fetch from server · ${newOnServer} new`
+                    : "Fetch from server"
+              }}
             </button>
           </UiTooltip>
           <button
-            v-if="clonable && Object.keys(kept).length"
+            v-if="lost.length"
             class="btn-ghost btn-xs"
-            :data-tip="
-              needsKeyFirst
-                ? 'Save a key for this endpoint first'
-                : `Asks ${endpoint.name} which voices it has, then clones each one it lost again from its kept samples; their speakers in every book follow.${costNote}`
-            "
-            :disabled="needsKeyFirst || !!remaking"
+            :data-tip="`Clones each voice ${endpoint.name} lost again from its kept samples; their speakers in every book follow.${costNote}`"
+            :disabled="!!remaking"
             :aria-busy="remaking === true"
             @click="remakeLost"
           >
             <BusyIcon v-if="remaking === true" class="icon-sm animate-spin" />
             <RemakeIcon v-else class="icon-sm" />
-            {{ remaking === true ? "Making again…" : "Make lost voices again" }}
+            {{
+              remaking === true
+                ? "Making again…"
+                : `Make ${plural(lost.length, "lost voice")} again`
+            }}
           </button>
           <button class="btn-ghost btn-xs" @click="draft.open = !draft.open">
             <AddIcon class="icon-sm" /> {{ draft.open ? "Close" : "Add voice" }}
@@ -432,6 +464,13 @@ const sampleTitle = computed(() =>
             :data-tip="v.id"
             >{{ v.id }}</span
           >
+          <span
+            v-if="lostIds.has(v.id)"
+            class="flex shrink-0 items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400"
+            :data-tip="`${endpoint.name} doesn't list this voice, so lines given it will fail`"
+          >
+            <WarnIcon class="icon-sm" /> Not on server
+          </span>
           <UiSelect
             :model-value="v.gender"
             :options="GENDERS"
@@ -469,11 +508,11 @@ const sampleTitle = computed(() =>
               <SourceIcon v-else class="icon-sm" />
             </button>
             <button
-              v-if="kept[v.id]"
+              v-if="lostIds.has(v.id)"
               class="btn-ghost btn-xs shrink-0"
               :aria-label="`Make ${v.label} again`"
-              :data-tip="needsKeyFirst ? 'Save a key for this endpoint first' : remakeTip"
-              :disabled="needsKeyFirst || !!remaking"
+              :data-tip="remakeTip"
+              :disabled="!!remaking"
               :aria-busy="remaking === v.id"
               @click="remake(v)"
             >

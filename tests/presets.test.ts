@@ -14,7 +14,7 @@ import {
   unifyEndpoint,
   unifyTranscriber,
 } from "@/lib/endpoints";
-import { isSimulated } from "@/lib/providers";
+import { isSimulated, speedSplit } from "@/lib/providers";
 import { cliOf } from "@/lib/providers/cli";
 import { configErrors, expressionSupport } from "@/lib/expressions";
 import { newProfile, profileErrors } from "@/lib/scripting";
@@ -172,6 +172,12 @@ describe("what a preset says and sets", () => {
   test("BreezeBlue bills the text alone, not the instructions sent beside it", () => {
     for (const id of ["breeze-tts-2", "breeze-tts-2-multilingual"])
       expect(tts(id).apply.billing!.billsInstructions).toBe(false);
+  });
+
+  test("OmniVoice is sent a speed in 0.5–2 before its server has declared one", () => {
+    const omni = tts("omnivoice").apply as Endpoint;
+    expect(speedSplit(omni, 1.5)).toEqual({ sent: 1.5, stretched: null });
+    expect(speedSplit(omni, 2.5)).toEqual({ sent: null, stretched: 2.5 });
   });
 
   test("a request stays inside what the model reads and what its answer can carry", () => {

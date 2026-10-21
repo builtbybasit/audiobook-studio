@@ -67,7 +67,8 @@ export const compatible: SpeechProviderShape = {
     optIn: true,
     deletes: true,
   },
-  // unknown servers: many ignore `speed`, so it is stretched here
-  speed: () => null,
+  // omnivoice-fastapi takes 0.5–2 on /audio/speech; other servers often ignore `speed`, so it is
+  // stretched here
+  speed: (model) => (model.trim() === "omnivoice" ? { min: 0.5, max: 2 } : null),
   models: [],
 };

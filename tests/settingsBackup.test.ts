@@ -8,6 +8,8 @@ import type { KeptSample, KeptVoiceSamples, SettingsFile } from "@/types";
 import { packBackup, type PackVoice } from "@/lib/settingsBackup";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useUiStore } from "@/stores/ui";
+import type { VoiceCloner } from "~/providers/clone";
+import type { VoiceLister } from "~/providers/voices";
 import { backendServer, pointServicesAt } from "./support/backendServer";
 import { cloneEndpoint, HEADS, remembering, sampleFile, saved } from "./support/cloning";
 import { testPinia } from "./support/pinia";
@@ -18,7 +20,7 @@ async function storeOn(api: ReturnType<typeof backendServer>) {
   testPinia();
   // the ui store reaches for `matchMedia` as it is built, and Bun has no window
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
-  useUiStore().toast = () => "";
+  Object.assign(useUiStore(), { toast: () => "", toastLoading: <T>(work: Promise<T>) => work });
   const store = useEndpointsStore();
   await store.load();
   return { api, store };
@@ -85,4 +87,38 @@ test("names each sample after its voice, in its endpoint's folder, never two ali
       "settings.json",
     ].sort(),
   );
+});
+
+test("makes again only the voices with kept samples that the server no longer lists", async () => {
+  let made = 0;
+  const cloner: VoiceCloner = {
+    clone: async (_target, r) => ({ id: `v${++made}`, label: r.title, gender: "?" }),
+  };
+  const listed: string[] = [];
+  const voices: VoiceLister = {
+    list: async () => ({
+      voices: listed.map((id) => ({ id, label: id, gender: "?" as const })),
+      total: listed.length,
+      page: 1,
+      hasMore: false,
+    }),
+  };
+  const api = backendServer({ cloner, voices });
+  await saved(api, cloneEndpoint({ voices: [{ id: "stock", label: "Stock", gender: "f" }] }));
+  const { store } = await storeOn(api);
+  const ep = store.endpoints[0];
+  for (const [i, title] of ["Mara", "Tomas"].entries())
+    await store.cloneVoice(ep, {
+      title,
+      samples: [sampleFile(`${title}.wav`, HEADS.wav, "audio/wav", 1024 * (i + 1))],
+      transcripts: [""],
+    });
+  listed.push("v2");
+
+  expect(await store.remakeLostVoices(ep)).toBe(1);
+  expect(Object.fromEntries(ep.voices.map((v) => [v.label, v.id]))).toEqual({
+    Stock: "stock",
+    Mara: "v3",
+    Tomas: "v2",
+  });
 });

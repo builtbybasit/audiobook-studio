@@ -1027,8 +1027,7 @@ export const useEndpointsStore = defineStore("endpoints", {
       if (!old) return false;
       try {
         await this.flushWrites();
-        const { id, warning } = await this._service().remakeVoice(ep.id, voiceId);
-        ep.voices = ep.voices.map((v) => (v.id === voiceId ? { ...old, id } : v));
+        const warning = await this._remake(ep, voiceId);
         // speakers, character voices and clips moved on the server
         void invalidate({ key: ["books"] });
         useUiStore().toast(`Made ${old.label} again on ${ep.name}`, {
@@ -1040,6 +1039,64 @@ export const useEndpointsStore = defineStore("endpoints", {
         toastFailure(`make ${old.label} again`, cause);
         return false;
       }
+    },
+    async _remake(ep: Endpoint, voiceId: string): Promise<string | undefined> {
+      const { id, warning } = await this._service().remakeVoice(ep.id, voiceId);
+      ep.voices = ep.voices.map((v) => (v.id === voiceId ? { ...v, id } : v));
+      return warning;
+    },
+    /**
+     * Make again, one at a time, every voice with kept samples that `ep`'s server no longer lists,
+     * as after an import onto a fresh server. Returns how many were made.
+     */
+    remakeLostVoices(ep: Endpoint): Promise<number> {
+      const uiStore = useUiStore();
+      const failed: string[] = [];
+      const work = (async () => {
+        await this.flushWrites();
+        const [found, kept] = await Promise.all([
+          this._service().listVoices(ep.id, { source: "library" }),
+          this.keptSamples(ep),
+        ]);
+        const there = new Set(found.voices.map((v) => v.id));
+        const lost = ep.voices.filter(
+          (v) => !there.has(v.id) && kept.some((k) => k.voiceId === v.id),
+        );
+        let made = 0;
+        for (const v of lost) {
+          try {
+            const warning = await this._remake(ep, v.id);
+            made++;
+            if (warning) failed.push(`${v.label}: ${warning}`);
+          } catch (cause) {
+            failed.push(`${v.label}: ${cause instanceof Error ? cause.message : String(cause)}`);
+          }
+        }
+        if (made) void invalidate({ key: ["books"] });
+        return made;
+      })();
+      void uiStore
+        .toastLoading(work, {
+          loading: `Making ${ep.name}'s lost voices again…`,
+          success: (n) =>
+            n
+              ? `Made ${n} voice${n === 1 ? "" : "s"} again on ${ep.name}; their speakers use them now`
+              : failed.length
+                ? `${ep.name}: no voice could be made again`
+                : `${ep.name} has every voice with kept samples`,
+          error: `${ep.name}: could not tell which voices it lost`,
+        })
+        .then(
+          () => {
+            if (failed.length)
+              uiStore.toast(`${ep.name}: some voices need a look`, {
+                kind: "warn",
+                description: failed.join("; "),
+              });
+          },
+          () => {},
+        );
+      return work.catch(() => 0);
     },
     /** The settings file plus every cloned voice's kept samples, zipped (`settingsBackup.ts`). */
     async exportBackup(): Promise<Blob> {

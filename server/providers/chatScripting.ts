@@ -77,6 +77,8 @@ export interface Fidelity {
   /** counted with repeats; a moved passage counts as missing where it was and added where it went */
   missing: number;
   added: number;
+  /** words counted in both, because the passage they are in came back somewhere else */
+  moved: number;
   /** the longest runs of missing words, for the message */
   examples: string[];
   /** at most TOLERANCE of the words either way, and no missing or added run longer than RUN */
@@ -107,23 +109,34 @@ export const allowedEdits = (words: number): number => Math.max(1, Math.floor(wo
 export function wordFidelity(want: string[], got: string[]): Fidelity {
   const allowed = allowedEdits(want.length);
   const parts = diffArrays(want, got, { maxEditLength: 2 * allowed });
-  if (!parts) return { words: want.length, ...wordCounts(want, got), ok: false };
+  if (!parts) return { words: want.length, ...wordCounts(want, got), moved: 0, ok: false };
   let missing = 0;
   let added = 0;
   let longest = 0;
   const gaps: string[][] = [];
+  const addedRuns: string[] = [];
   for (const p of parts) {
     if (p.removed) {
       missing += p.count;
       gaps.push(p.value);
-    } else if (p.added) added += p.count;
-    else continue;
+    } else if (p.added) {
+      added += p.count;
+      addedRuns.push(p.value.join(" "));
+    } else continue;
     longest = Math.max(longest, p.count);
+  }
+  let moved = 0;
+  for (const gap of gaps) {
+    const at = addedRuns.indexOf(gap.join(" "));
+    if (at < 0) continue;
+    addedRuns.splice(at, 1);
+    moved += gap.length;
   }
   return {
     words: want.length,
     missing,
     added,
+    moved,
     examples: gaps
       .sort((a, b) => b.length - a.length)
       .slice(0, 5)
@@ -356,7 +369,7 @@ export function answerOf(content: string, who: string, excerpt?: string): Script
   } catch (e) {
     const said = content.replace(/\s+/g, " ").trim();
     const why = e instanceof Error ? e.message : String(e);
-    throw new ProviderError(
+    throw new BadAnswer(
       `${who} did not answer with a script (${why}): “${said.length > 80 ? said.slice(0, 80) + "…" : said}”`,
       200,
       false,
@@ -369,7 +382,7 @@ export function answerOf(content: string, who: string, excerpt?: string): Script
     const said = (l.text ?? "").replace(/\s+/g, " ").trim();
     let { text, tags } = readScriptedTags(said, marker, excerpt);
     if (marker?.some((half) => text.includes(half)))
-      throw new ProviderError(
+      throw new BadAnswer(
         `${who} wrote an expression tag that could not be read (“${said.length > 80 ? said.slice(0, 80) + "…" : said}”). The script was not written; run it again or try another model`,
         200,
         false,
@@ -403,8 +416,11 @@ export function answerOf(content: string, who: string, excerpt?: string): Script
   };
 }
 
+/** The model answered, but with no usable script: worth asking again, as answers vary run to run. */
+export class BadAnswer extends ProviderError {}
+
 /** An answer cut off, or not the chunk's words: the failures a smaller chunk can get past. */
-export class ChunkMisfit extends ProviderError {}
+export class ChunkMisfit extends BadAnswer {}
 
 /**
  * The script in a model's final message, checked against the prose sent (`lenient` skips only the
@@ -417,20 +433,24 @@ export function checkedScript(
   status: number,
   lenient: boolean,
 ): ScriptAnswer {
-  if (!content.trim())
-    throw new ProviderError(`${who} answered with no script at all`, status, false);
+  if (!content.trim()) throw new BadAnswer(`${who} answered with no script at all`, status, false);
   // the excerpt picks the marker, as it did for the prompt
   const answer = answerOf(content, who, text);
   const { lines } = answer;
   if (!lines.length)
-    throw new ProviderError(`${who} answered with a script of no lines`, status, false);
+    throw new BadAnswer(`${who} answered with a script of no lines`, status, false);
   const check = fidelity(text, lines);
   if (!check.ok && !lenient) {
+    const lost = check.missing - check.moved;
+    const made = check.added - check.moved;
     const parts = [
-      check.missing ? `left out ${check.missing} of ${check.words} words` : "",
-      check.added ? `added ${check.added} that are not in the text` : "",
+      check.moved ? `moved ${check.moved} words out of the book's order` : "",
+      lost ? `left out ${lost} of ${check.words} words` : "",
+      made ? `added ${made} that are not in the text` : "",
     ].filter(Boolean);
-    const example = check.examples.length ? ` (missing e.g. “${check.examples.join("”, “")}”)` : "";
+    const example = check.examples.length
+      ? ` (${lost ? "missing" : "moved"} e.g. “${check.examples.join("”, “")}”)`
+      : "";
     throw new ChunkMisfit(
       `${who} did not copy the text faithfully: it ${parts.join(" and ")}${example}. The script was not written; run it again or try another model`,
       status,

@@ -3,7 +3,12 @@
 import { describe, expect, test } from "bun:test";
 
 import type { SegmentType } from "@/types";
-import { chatScriptingProvider, fidelity, NO_PROFILE } from "~/providers/chatScripting";
+import {
+  chatScriptingProvider,
+  checkedScript,
+  fidelity,
+  NO_PROFILE,
+} from "~/providers/chatScripting";
 import { ProviderError } from "~/providers/http";
 import type { ScriptInput, ScriptTarget } from "~/providers/scripting";
 import type { SentScript } from "~/providers/sent";
@@ -118,6 +123,22 @@ describe("the fidelity check", () => {
     const check = fidelity(prose.join(" "), [{ text: words.join(" ") }]);
     expect(check.ok).toBe(false);
     expect(check.examples[0]).toStartWith("w1000 w1001");
+  });
+
+  test("tells a moved sentence from a lost one, and says so", () => {
+    const moved = [...without(1000, 12), ...prose.slice(1000, 1012)].join(" ");
+    expect(fidelity(prose.join(" "), [{ text: moved }])).toMatchObject({
+      missing: 12,
+      added: 12,
+      moved: 12,
+    });
+    expect(fidelity(prose.join(" "), [{ text: without(1000, 12).join(" ") }]).moved).toBe(0);
+    const answer = JSON.stringify({
+      lines: [{ type: "narration", speaker: "Narrator", text: moved }],
+    });
+    expect(() => checkedScript("Model", answer, prose.join(" "), 200, false)).toThrow(
+      "it moved 12 words out of the book's order (moved e.g.",
+    );
   });
 });
 

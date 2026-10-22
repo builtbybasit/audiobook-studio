@@ -46,7 +46,7 @@ import type { JobContext, JobHandler, Runner } from "~/jobs/runner";
 import { conflict, notFound } from "~/lib/errors";
 import { narrationInProgress, settleChapter } from "~/narration/chapter";
 import { bookDelivery, lineReading } from "~/narration/cost";
-import { ChunkMisfit } from "~/providers/chatScripting";
+import { BadAnswer, ChunkMisfit } from "~/providers/chatScripting";
 import type { ScriptAnswer, ScriptingProvider } from "~/providers/scripting";
 import type { SentScript } from "~/providers/sent";
 import { scriptTarget } from "~/providers/target";
@@ -288,16 +288,16 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
         setScriptRun(db, job.id, run);
       };
       /**
-       * Why the next request may not go out, or null. The book check includes this job's holds, so
-       * it only trips when things changed under a run that fit; the daily limit checks this request.
+       * Why chunk `i`'s request may not go out, or null. The book check includes this job's holds,
+       * so it only trips when things changed under a run that fit; the daily limit checks this one.
        */
-      const refusal = (): string | null =>
+      const refusal = (i: number): string | null =>
         budgetProblem(db, job.bookId, {
           kind: "scripting",
           cost: run?.reserved ?? 0,
           jobId: job.id,
           what: "the next request",
-          requests: run ? [{ endpoint: run.profile.id, cost: holds[next] }] : [],
+          requests: run ? [{ endpoint: run.profile.id, cost: holds[i] }] : [],
         });
       let refused: string | null = null;
 
@@ -307,30 +307,52 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
       const stop = new AbortController();
       const onAbort = (): void => stop.abort(signal.reason);
       signal.addEventListener("abort", onAbort, { once: true });
+      /** One request for chunk `i`, holding its own money. */
+      const ask = async (i: number): Promise<ScriptAnswer> => {
+        const money = dispatched(i);
+        try {
+          return await provider.script({
+            title: chapter.title,
+            text: chunks[i],
+            signal: stop.signal,
+            target,
+            cast,
+            prompt: renderPrompt(template, varsFor(i)),
+            ...(money ? { sent: (request: SentScript) => settle(money, request) } : {}),
+            progress: (done, total) => {
+              share[i] = total ? done / total : 1;
+              report();
+            },
+          });
+        } finally {
+          money?.release();
+        }
+      };
       let next = 0;
       const worker = async (): Promise<void> => {
         while (next < chunks.length && !stop.signal.aborted && refused == null) {
           // budget stop: in-flight requests land and are paid for, then the job fails
-          refused = refusal();
+          refused = refusal(next);
           if (refused != null) return;
           const i = next++;
           if (run) run.active++;
           counted();
-          const money = dispatched(i);
           try {
-            answers[i] = await provider.script({
-              title: chapter.title,
-              text: chunks[i],
-              signal: stop.signal,
-              target,
-              cast,
-              prompt: renderPrompt(template, varsFor(i)),
-              ...(money ? { sent: (request: SentScript) => settle(money, request) } : {}),
-              progress: (done, total) => {
-                share[i] = total ? done / total : 1;
-                report();
-              },
-            });
+            try {
+              answers[i] = await ask(i);
+            } catch (e) {
+              // answers vary run to run, so a bad one is asked once more if the budget allows
+              if (!(e instanceof BadAnswer) || stop.signal.aborted || refusal(i) != null) throw e;
+              ctx.note(
+                `${chunks.length > 1 ? `Answer ${i + 1} of ${chunks.length}` : "The answer"} was refused; asking once more`,
+                "warning",
+                { error: e.message },
+              );
+              share[i] = 0;
+              if (run) run.reserved += holds[i];
+              counted();
+              answers[i] = await ask(i);
+            }
           } catch (e) {
             if (signal.aborted) throw e;
             // the failed-chapter page offers "Smaller chunks" on this detail
@@ -345,7 +367,6 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
             );
           } finally {
             if (run) run.active--;
-            money?.release();
           }
           share[i] = 1;
           if (run) run.completed++;

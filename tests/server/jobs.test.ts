@@ -392,21 +392,32 @@ describe("a result never lands on newer work", () => {
 
 describe("failure", () => {
   test.each([
-    ["a refusal", new Error("The model answered with nothing"), false],
+    ["a refusal", new Error("The model answered with nothing"), false, 1],
     [
-      "an answer that misses words",
+      "an answer that misses words, asked twice,",
       new ChunkMisfit("The model answered with nothing", 200, false),
       true,
+      2,
     ],
   ])(
     "%s leaves a chapter with no script reading as failed, saying why and whether smaller chunks may help",
-    async (_, error, smaller) => {
+    async (_, error, smaller, asks) => {
+      let asked = 0;
       const { api, id } = await shelved(
-        testApi({ scripting: { name: "Broken", script: () => Promise.reject(error) } }),
+        testApi({
+          scripting: {
+            name: "Broken",
+            script: () => {
+              asked++;
+              return Promise.reject(error);
+            },
+          },
+        }),
       );
       const { body } = await script(api, id, [1]);
       await api.runner.idle();
       const job = await jobById(api, body.jobs[0].id);
+      expect(asked).toBe(asks);
       expect(job.status).toBe("failed");
       expect(job.activity?.at(-1)?.detail?.error).toBe("The model answered with nothing");
       expect(job.activity?.some((e) => e.detail?.smallerChunks)).toBe(smaller);
@@ -415,6 +426,26 @@ describe("failure", () => {
       expect((await script(api, id, [1])).body.jobs).toHaveLength(1);
     },
   );
+
+  test("a bad answer is asked once more, and a good second answer is written", async () => {
+    const good = fakeScriptingProvider();
+    let asked = 0;
+    const { api, id } = await shelved(
+      testApi({
+        scripting: {
+          name: "Flaky",
+          script: (input) =>
+            ++asked === 1
+              ? Promise.reject(new ChunkMisfit("The model moved a line", 200, false))
+              : good.script(input),
+        },
+      }),
+    );
+    const { body } = await script(api, id, [1]);
+    await api.runner.idle();
+    expect((await jobById(api, body.jobs[0].id)).status).toBe("done");
+    expect(readScript(api.db, id, 1).length).toBeGreaterThan(0);
+  });
 
   test("a kind this server cannot run fails at once and says so", async () => {
     const api = testApi();

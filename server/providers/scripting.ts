@@ -3,6 +3,7 @@
 // simulated profile to the fake and every other to `chatScripting.ts`.
 import type {
   EndpointProbe,
+  Mend,
   PromptTemplate,
   ReasoningEffort,
   RenderedPrompt,
@@ -60,6 +61,8 @@ export interface ScriptedLine {
   tags?: ScriptedTag[];
   /** by name as the model wrote them; the job matches them to ids */
   effects?: string[];
+  /** set where the run changed the model's line to make the answer pass (`mendScript`) */
+  mended?: Mend;
 }
 
 /** The lines, plus extras that are not checked against the prose and cannot change a word. */

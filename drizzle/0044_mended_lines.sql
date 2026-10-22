@@ -1,0 +1,1 @@
+ALTER TABLE `segments` ADD `mended` text;

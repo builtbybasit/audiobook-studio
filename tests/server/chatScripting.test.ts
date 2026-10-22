@@ -152,7 +152,7 @@ describe("mending an answer that fails the word check", () => {
     const book = "One went first. Two came next. Three ended it.";
     const answer = ["Two came next.", "One went first.", "Three ended it."].map(narration);
     expect(mendScript(book, answer)).toEqual({
-      lines: [answer[1], answer[0], answer[2]],
+      lines: [{ ...answer[1], mended: { kinds: ["moved"] } }, answer[0], answer[2]],
       modelOrder: [1, 0, 2],
       moved: 1,
       patched: 0,
@@ -168,8 +168,11 @@ describe("mending an answer that fails the word check", () => {
       4,
     ],
     ["changed", "The old man walked slowly along a short and winding road to town.", 3],
-  ])("puts back words the model %s, from the book", (_, said, words) => {
-    expect(mended(road, [said])).toMatchObject({ lines: [{ text: road }], patched: words });
+  ])("puts back words the model %s, from the book, and marks the line", (_, said, words) => {
+    expect(mended(road, [said])).toMatchObject({
+      lines: [{ text: road, mended: { kinds: ["words"], detail: expect.any(String) } }],
+      patched: words,
+    });
   });
 
   test.each([
@@ -232,11 +235,11 @@ describe("a repair", () => {
       false,
       misfit().repair,
     );
-    expect(answer.lines.map((l) => l.text)).toEqual([
-      "Mara looked up from the ledger at last.",
-      "We are short again this month.",
-      "she said quite softly.",
-      "Nobody answered her.",
+    expect(answer.lines.map((l) => [l.text, l.mended?.kinds])).toEqual([
+      ["Mara looked up from the ledger at last.", undefined],
+      ["We are short again this month.", ["model"]],
+      ["she said quite softly.", ["model"]],
+      ["Nobody answered her.", ["model"]],
     ]);
   });
 });

@@ -188,6 +188,12 @@ export const SegmentSchema = v.looseObject({
   siteCheck: v.optional(
     v.object({ suggest: v.picklist(["watermark", "narration"]), why: v.string() }),
   ),
+  mended: v.optional(
+    v.object({
+      kinds: v.array(v.picklist(["moved", "words", "model"])),
+      detail: v.optional(v.string()),
+    }),
+  ),
   flag: v.optional(
     v.looseObject({
       kind: v.picklist(["pronunciation", "delivery", "pause", "other", "heard"]),

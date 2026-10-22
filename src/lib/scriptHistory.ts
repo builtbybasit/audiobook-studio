@@ -364,6 +364,7 @@ const emptyCounts = (): ComparisonCounts => ({
   effects: 0,
   added: 0,
   removed: 0,
+  moved: 0,
   split: 0,
   joined: 0,
 });
@@ -449,6 +450,27 @@ export function compareScripts(from: Segment[], to: Segment[]): ScriptComparison
     i = pi + 1;
     j = pj + 1;
   }
+  // a line that only changed place is one move, not one gone and one new
+  const fromAt = new Map(from.map((s, k) => [s.id, k]));
+  const toAt = new Map(to.map((s, k) => [s.id, k]));
+  for (const add of changes.filter((c) => c.kind === "added")) {
+    const line = lineSignature(to[toAt.get(add.toIds[0])!]);
+    const gone = changes.find(
+      (c) => c.kind === "removed" && lineSignature(from[fromAt.get(c.fromIds[0])!]) === line,
+    );
+    if (!gone) continue;
+    changes.splice(changes.indexOf(gone), 1);
+    Object.assign(add, {
+      kind: "moved",
+      fromIds: gone.fromIds,
+      fromText: gone.fromText,
+      fromParts: gone.fromParts,
+      fromAt: fromAt.get(gone.fromIds[0]),
+    });
+    counts.added--;
+    counts.removed--;
+    counts.moved++;
+  }
   changes.sort((a, b) => a.at - b.at);
   return {
     changes,
@@ -475,6 +497,7 @@ export function comparisonSummary(c: ScriptComparison): string[] {
   if (c.counts.joined) parts.push(n(c.counts.joined, "line joined"));
   if (c.counts.added) parts.push(n(c.counts.added, "new line"));
   if (c.counts.removed) parts.push(n(c.counts.removed, "line gone"));
+  if (c.counts.moved) parts.push(n(c.counts.moved, "line moved", "lines moved"));
   return parts;
 }
 

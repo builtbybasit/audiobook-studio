@@ -15,7 +15,12 @@ import { cliOf, type CliShape } from "@/lib/providers/cli";
 import { builtInPrompt, checkedScript, NO_PROFILE, probeWith } from "~/providers/chatScripting";
 import { sleep } from "~/providers/fake";
 import { ProviderError, type CallOptions } from "~/providers/http";
-import type { ScriptAnswer, ScriptTarget, ScriptingProvider } from "~/providers/scripting";
+import type {
+  ScriptAnswer,
+  ScriptRepair,
+  ScriptTarget,
+  ScriptingProvider,
+} from "~/providers/scripting";
 import type { SentScript } from "~/providers/sent";
 
 export interface CliScriptingOptions {
@@ -460,6 +465,7 @@ export function cliScriptingProvider(options: CliScriptingOptions = {}): Scripti
     signal: AbortSignal,
     sent?: (request: SentScript) => void,
     lenient = false,
+    repair?: ScriptRepair,
   ): Promise<{ answer: ScriptAnswer; reasoningTokens: number | null }> {
     const cli = cliOf(target.baseUrl);
     if (!cli) throw new ProviderError(`${target.name} does not name a command-line tool`, 0, false);
@@ -538,7 +544,14 @@ export function cliScriptingProvider(options: CliScriptingOptions = {}): Scripti
           usage = outcome.usage;
           if (outcome.content != null) {
             try {
-              const script = checkedScript(target.name, outcome.content, text, 200, lenient);
+              const script = checkedScript(
+                target.name,
+                outcome.content,
+                text,
+                200,
+                lenient,
+                repair,
+              );
               report(usage, "done");
               return { answer: script, reasoningTokens: outcome.reasoningTokens };
             } catch (e) {
@@ -570,7 +583,7 @@ export function cliScriptingProvider(options: CliScriptingOptions = {}): Scripti
   return {
     name: "Command-line tools",
     callsProfile: true,
-    async script({ title, text, signal, progress, target, cast, prompt, lenient, sent }) {
+    async script({ title, text, signal, progress, target, cast, prompt, lenient, sent, repair }) {
       if (!target) throw new ProviderError(NO_PROFILE, 0, false);
       progress?.(0, 1);
       const { answer } = await request(
@@ -580,6 +593,7 @@ export function cliScriptingProvider(options: CliScriptingOptions = {}): Scripti
         signal,
         sent,
         lenient,
+        repair,
       );
       progress?.(1, 1);
       return answer;

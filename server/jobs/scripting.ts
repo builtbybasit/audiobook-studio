@@ -7,6 +7,7 @@ import type {
   Job,
   Profile,
   PromptTemplate,
+  ReasoningEffort,
   ScriptingQueued,
   Segment,
   VersionOrigin,
@@ -46,8 +47,8 @@ import type { JobContext, JobHandler, Runner } from "~/jobs/runner";
 import { conflict, notFound } from "~/lib/errors";
 import { narrationInProgress, settleChapter } from "~/narration/chapter";
 import { bookDelivery, lineReading } from "~/narration/cost";
-import { BadAnswer, ChunkMisfit } from "~/providers/chatScripting";
-import type { ScriptAnswer, ScriptingProvider } from "~/providers/scripting";
+import { BadAnswer, ChunkMisfit, repairPrompt } from "~/providers/chatScripting";
+import type { ScriptAnswer, ScriptRepair, ScriptingProvider } from "~/providers/scripting";
 import type { SentScript } from "~/providers/sent";
 import { scriptTarget } from "~/providers/target";
 import { beforeOf, chunksOf } from "~/script/chunks";
@@ -165,6 +166,15 @@ function holdsOf(
   );
 }
 
+/** A repair copies words back, so it needs little thinking. */
+const lighter = (r: ReasoningEffort | null | undefined): ReasoningEffort | null | undefined =>
+  r === "medium" || r === "high" ? "low" : r;
+
+const lineCountOf = (repair: ScriptRepair): string => {
+  const n = repair.ranges.reduce((a, r) => a + r.to - r.from + 1, 0);
+  return `${n} line${n === 1 ? "" : "s"}`;
+};
+
 export function scriptingHandler(provider: ScriptingProvider): JobHandler {
   return {
     async run(ctx: JobContext): Promise<void> {
@@ -261,7 +271,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
        * Chunk `i`'s money (`~/usage/dispatch`), priced against the stored profile or the run's copy
        * if it was removed. No profile (the fake) holds nothing.
        */
-      const dispatched = (i: number) =>
+      const dispatched = (i: number, repairing: boolean) =>
         run &&
         dispatch(db, {
           kind: "scripting",
@@ -269,9 +279,9 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
           work: {
             bookId: job.bookId,
             chapterUid: chapter.uid,
-            label: `Script chunk ${i + 1}`,
+            label: `Script chunk ${i + 1}${repairing ? " (repair)" : ""}`,
             queuedAt: job.queuedAt,
-            reasoning: run.profile.reasoning ?? null,
+            reasoning: (repairing ? lighter(run.profile.reasoning) : run.profile.reasoning) ?? null,
           },
           hold: holds[i],
           gaveBack: (back) => void (run.reserved = Math.max(0, run.reserved - back)),
@@ -307,17 +317,19 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
       const stop = new AbortController();
       const onAbort = (): void => stop.abort(signal.reason);
       signal.addEventListener("abort", onAbort, { once: true });
-      /** One request for chunk `i`, holding its own money. */
-      const ask = async (i: number): Promise<ScriptAnswer> => {
-        const money = dispatched(i);
+      /** One request for chunk `i`, holding its own money; with `repair`, for a few lines back. */
+      const ask = async (i: number, repair?: ScriptRepair): Promise<ScriptAnswer> => {
+        const money = dispatched(i, !!repair);
+        const prompt = renderPrompt(template, varsFor(i));
         try {
           return await provider.script({
             title: chapter.title,
             text: chunks[i],
             signal: stop.signal,
-            target,
+            target: repair && target ? { ...target, reasoning: lighter(target.reasoning) } : target,
             cast,
-            prompt: renderPrompt(template, varsFor(i)),
+            prompt: repair ? repairPrompt(prompt, repair) : prompt,
+            ...(repair ? { repair } : {}),
             ...(money ? { sent: (request: SentScript) => settle(money, request) } : {}),
             progress: (done, total) => {
               share[i] = total ? done / total : 1;
@@ -338,20 +350,34 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
           if (run) run.active++;
           counted();
           try {
-            try {
-              answers[i] = await ask(i);
-            } catch (e) {
-              // answers vary run to run, so a bad one is asked once more if the budget allows
-              if (!(e instanceof BadAnswer) || stop.signal.aborted || refusal(i) != null) throw e;
-              ctx.note(
-                `${chunks.length > 1 ? `Answer ${i + 1} of ${chunks.length}` : "The answer"} was refused; asking once more`,
-                "warning",
-                { error: e.message },
-              );
-              share[i] = 0;
-              if (run) run.reserved += holds[i];
-              counted();
-              answers[i] = await ask(i);
+            // A bad answer is asked once more whole, as answers vary run to run; one with only a
+            // few lines wrong first gets just those lines asked back. Each within the budget.
+            let repair: ScriptRepair | undefined;
+            let repaired = false;
+            let again = true;
+            for (;;) {
+              try {
+                answers[i] = await ask(i, repair);
+                break;
+              } catch (e) {
+                if (!(e instanceof BadAnswer) || stop.signal.aborted || refusal(i) != null) throw e;
+                repair = !repaired && e instanceof ChunkMisfit ? e.repair : undefined;
+                if (repair) repaired = true;
+                else if (again) again = false;
+                else throw e;
+                const which =
+                  chunks.length > 1 ? `Answer ${i + 1} of ${chunks.length}` : "The answer";
+                ctx.note(
+                  repair
+                    ? `${which} was refused; asking for ${lineCountOf(repair)} back, fixed`
+                    : `${which} was refused; asking once more`,
+                  "warning",
+                  { error: e.message },
+                );
+                share[i] = 0;
+                if (run) run.reserved += holds[i];
+                counted();
+              }
             }
           } catch (e) {
             if (signal.aborted) throw e;
@@ -372,6 +398,11 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
           if (run) run.completed++;
           counted();
           report();
+          if (answers[i].patched)
+            ctx.note(
+              `${answers[i].patched} words put back from the book where the model left out or changed them`,
+              "info",
+            );
           if (chunks.length > 1)
             ctx.note(`Request ${i + 1} of ${chunks.length} answered`, "info", {
               characters: chunks[i].length,

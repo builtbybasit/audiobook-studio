@@ -36,6 +36,18 @@ export interface ScriptInput {
   lenient?: boolean;
   /** called once for every request that reached the wire, answered or not; see `sent.ts` */
   sent?: (request: SentScript) => void;
+  /** set when `prompt` asks for a few lines of an earlier answer back (`repairPrompt`) */
+  repair?: ScriptRepair;
+}
+
+/** A refused answer, sent back for the model to fix only the lines that part from the book. */
+export interface ScriptRepair {
+  answer: ScriptAnswer;
+  content: string;
+  /** 1-based and inclusive, in the answer's own numbering */
+  ranges: { from: number; to: number }[];
+  /** told after the prompt it answered */
+  note: string;
 }
 
 /** One line the model attributed. The job gives it an id and a place. */
@@ -60,6 +72,8 @@ export interface ScriptAnswer {
   pronounce?: { term: string; say: string }[];
   /** lines the model had out of the book's order, put back; its k-th line is `lines[modelOrder[k]]` */
   reordered?: { modelOrder: number[]; moved: number };
+  /** words put back from the book where the model left out, added or changed a few */
+  patched?: number;
 }
 
 export interface ScriptingProvider {

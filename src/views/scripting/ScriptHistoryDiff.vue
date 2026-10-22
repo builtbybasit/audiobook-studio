@@ -28,7 +28,7 @@ const GROUPS: { id: ChangeGroup; label: string }[] = [
   { id: "expressions", label: "Expressions" },
   { id: "pause", label: "Pauses" },
   { id: "effects", label: "Line effects" },
-  { id: "structure", label: "Split, joined, new, gone" },
+  { id: "structure", label: "Moved, split, joined, new, gone" },
 ];
 const FIELD_LABEL: Record<string, string> = {
   text: "words",
@@ -43,6 +43,7 @@ const KIND_LABEL: Record<LineChange["kind"], string> = {
   changed: "changed",
   added: "new line",
   removed: "line gone",
+  moved: "moved",
   split: "split in two",
   joined: "joined into one",
 };
@@ -82,7 +83,7 @@ watch([() => props.comparison, filter], () => (shown.value = PAGE));
     <div class="rounded-lg border border-zinc-200 p-3 dark:border-zinc-800">
       <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <span class="text-sm font-semibold"
-          >{{ comparison.lines }} line{{ comparison.lines === 1 ? "" : "s" }} differ</span
+          >{{ comparison.lines }} line{{ comparison.lines === 1 ? " differs" : "s differ" }}</span
         >
         <span class="text-xs text-zinc-500"
           >between <b class="font-medium">{{ fromLabel }}</b> ({{ comparison.fromCount }} lines) and
@@ -145,8 +146,15 @@ watch([() => props.comparison, filter], () => (shown.value = PAGE));
           </button>
         </div>
 
+        <p v-if="c.kind === 'moved'" class="font-serif">
+          {{ c.toText }}
+          <span class="font-sans text-[11px] text-zinc-500"
+            >— from line {{ c.fromAt! + 1 }} to line {{ c.at + 1 }}</span
+          >
+        </p>
+
         <!-- split or joined -->
-        <div v-if="c.kind === 'split' || c.kind === 'joined'" class="space-y-1 font-serif">
+        <div v-else-if="c.kind === 'split' || c.kind === 'joined'" class="space-y-1 font-serif">
           <p v-for="(t, k) in c.fromParts" :key="`f${k}`" class="flex gap-2">
             <span class="font-sans text-[11px] font-semibold text-zinc-400" aria-hidden="true"
               >&minus;</span

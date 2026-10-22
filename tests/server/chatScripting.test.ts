@@ -4,10 +4,11 @@ import { describe, expect, test } from "bun:test";
 
 import type { SegmentType } from "@/types";
 import {
-  bookOrder,
+  ChunkMisfit,
   chatScriptingProvider,
   checkedScript,
   fidelity,
+  mendScript,
   NO_PROFILE,
 } from "~/providers/chatScripting";
 import { ProviderError } from "~/providers/http";
@@ -143,24 +144,100 @@ describe("the fidelity check", () => {
   });
 });
 
-describe("putting lines back in the book's order", () => {
-  const book = "One went first. Two came next. Three ended it.";
-  const line = (text: string) => ({ text });
+describe("mending an answer that fails the word check", () => {
+  const narration = (text: string) => ({ type: "narration" as const, speaker: "Narrator", text });
+  const mended = (book: string, texts: string[]) => mendScript(book, texts.map(narration));
+
   test("moves whole lines back and says where the model had them", () => {
-    const answer = [line("Two came next."), line("One went first."), line("Three ended it.")];
-    expect(bookOrder(book, answer)).toEqual({
+    const book = "One went first. Two came next. Three ended it.";
+    const answer = ["Two came next.", "One went first.", "Three ended it."].map(narration);
+    expect(mendScript(book, answer)).toEqual({
       lines: [answer[1], answer[0], answer[2]],
       modelOrder: [1, 0, 2],
       moved: 1,
+      patched: 0,
     });
   });
 
+  const road = "The old man walked slowly down the long and winding road to town.";
   test.each([
-    ["in order already", ["One went first.", "Two came next.", "Three ended it."]],
-    ["moved inside a line", ["One went first. Three ended it.", "Two came next."]],
-    ["missing a sentence", ["Two came next.", "One went first."]],
-  ])("leaves an answer %s to the word check", (_, texts) => {
-    expect(bookOrder(book, texts.map(line))).toBeNull();
+    ["left out", "The old man walked slowly winding road to town.", 4],
+    [
+      "added",
+      "The old man walked slowly down the long and very very very very winding road to town.",
+      4,
+    ],
+    ["changed", "The old man walked slowly along a short and winding road to town.", 3],
+  ])("puts back words the model %s, from the book", (_, said, words) => {
+    expect(mended(road, [said])).toMatchObject({ lines: [{ text: road }], patched: words });
+  });
+
+  test.each([
+    [
+      "moved inside a line",
+      "One went first. Two came next. Three ended it.",
+      ["One went first. Three ended it.", "Two came next."],
+    ],
+    [
+      "missing at the end",
+      "One went first. Two came next. Three ended it now.",
+      ["One went first.", "Two came next."],
+    ],
+    [
+      "missing across a quote",
+      "He waited for a while there. “Come in now, please, do,” she said softly. He went in.",
+      ["He waited for a while there.", "she said softly. He went in."],
+    ],
+  ])("leaves an answer %s to be asked again", (_, book, texts) => {
+    expect(mended(book, texts)).toBeNull();
+  });
+});
+
+describe("a repair", () => {
+  const book =
+    "Mara looked up from the ledger at last. “We are short again this month,” she said quite softly. Nobody answered her.";
+  const lines = [
+    { type: "narration", speaker: "Narrator", text: "Mara looked up from the ledger at last." },
+    { type: "dialogue", speaker: "Mara", text: "We are short again this month." },
+    { type: "narration", speaker: "Narrator", text: "Nobody answered her." },
+  ];
+  const misfit = () => {
+    try {
+      checkedScript("Model", JSON.stringify({ lines }), book, 200, false);
+    } catch (e) {
+      return e as ChunkMisfit;
+    }
+    throw new Error("the answer passed");
+  };
+
+  test("asks back only the lines around what is missing, saying what it is", () => {
+    const { repair } = misfit();
+    expect(repair?.ranges).toEqual([{ from: 2, to: 3 }]);
+    expect(repair?.note).toContain(
+      "- lines 2–3 (from “We are short again this month.”): “she said quite softly” is left out",
+    );
+  });
+
+  test("splices the lines sent back into the answer, then checks it whole", () => {
+    const fixed = [
+      lines[1],
+      { type: "narration", speaker: "Narrator", text: "she said quite softly." },
+      lines[2],
+    ];
+    const answer = checkedScript(
+      "Model",
+      JSON.stringify({ ranges: [{ from: 2, to: 3, lines: fixed }] }),
+      book,
+      200,
+      false,
+      misfit().repair,
+    );
+    expect(answer.lines.map((l) => l.text)).toEqual([
+      "Mara looked up from the ledger at last.",
+      "We are short again this month.",
+      "she said quite softly.",
+      "Nobody answered her.",
+    ]);
   });
 });
 

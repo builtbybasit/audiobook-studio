@@ -12,7 +12,7 @@ import { readHistory } from "~/db/history";
 import { readScript, writeScript } from "~/db/script";
 import { jobs } from "~/db/schema";
 import { fakeScriptingProvider, sleep } from "~/providers/fake";
-import type { ScriptedLine, ScriptingProvider } from "~/providers/scripting";
+import type { ScriptInput, ScriptedLine, ScriptingProvider } from "~/providers/scripting";
 import { ChunkMisfit, chatScriptingProvider } from "~/providers/chatScripting";
 import { heldToday } from "~/usage/budget";
 import { bookSpend, endpointRequests } from "~/usage/ledger";
@@ -46,6 +46,13 @@ interface ScriptResult {
 interface Failure {
   error: { code: string; message: string; detail?: string };
 }
+
+/** A misfit with a few lines wrong, which the job asks back before asking again whole. */
+const fixable = (message: string) => {
+  const e = new ChunkMisfit(message, 200, false);
+  e.repair = { answer: { lines: [] }, content: "{}", ranges: [{ from: 1, to: 1 }], note: "Fix it" };
+  return e;
+};
 
 // Long enough that a chapter cut at 700 characters (`small`) goes as several requests.
 const dialogue = () => [
@@ -400,6 +407,12 @@ describe("failure", () => {
       true,
       2,
     ],
+    [
+      "an answer with a line wrong, asked back then whole,",
+      fixable("The model answered with nothing"),
+      true,
+      3,
+    ],
   ])(
     "%s leaves a chapter with no script reading as failed, saying why and whether smaller chunks may help",
     async (_, error, smaller, asks) => {
@@ -428,17 +441,20 @@ describe("failure", () => {
     },
   );
 
-  test("a bad answer is asked once more, and a good second answer is written", async () => {
+  test.each([
+    ["asked once more", new ChunkMisfit("The model lost a line", 200, false), false],
+    ["asked for its wrong lines back", fixable("The model lost a line"), true],
+  ])("a bad answer is %s, and a good second answer is written", async (_, error, repairing) => {
     const good = fakeScriptingProvider();
-    let asked = 0;
+    const asks: ScriptInput[] = [];
     const { api, id } = await shelved(
       testApi({
         scripting: {
           name: "Flaky",
-          script: (input) =>
-            ++asked === 1
-              ? Promise.reject(new ChunkMisfit("The model moved a line", 200, false))
-              : good.script(input),
+          script: (input) => {
+            asks.push(input);
+            return asks.length === 1 ? Promise.reject(error) : good.script(input);
+          },
         },
       }),
     );
@@ -446,6 +462,8 @@ describe("failure", () => {
     await api.runner.idle();
     expect((await jobById(api, body.jobs[0].id)).status).toBe("done");
     expect(readScript(api.db, id, 1).length).toBeGreaterThan(0);
+    expect(asks[1].repair).toBe(repairing ? error.repair : undefined);
+    expect(asks[1].prompt!.user.endsWith("Fix it")).toBe(repairing);
   });
 
   test("lines put back in the book's order keep the model's order in History", async () => {

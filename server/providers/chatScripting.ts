@@ -39,6 +39,7 @@ import {
 import type {
   ScriptAnswer,
   ScriptInput,
+  ScriptRepair,
   ScriptTarget,
   ScriptedLine,
   ScriptingProvider,
@@ -145,76 +146,6 @@ export function wordFidelity(want: string[], got: string[]): Fidelity {
   };
 }
 
-/** Room for a moved passage of a few paragraphs on top of what `fidelity` allows. */
-const MOVE_EDITS = 1000;
-
-/**
- * `lines` in the book's order, when the model moved whole lines and changed nothing else past
- * what `fidelity` allows; else null. The model's k-th line ends up at `modelOrder[k]`.
- */
-export function bookOrder<L extends { text: string }>(
-  input: string,
-  lines: readonly L[],
-): { lines: L[]; modelOrder: number[]; moved: number } | null {
-  const want = wordsOf(input);
-  const per = lines.map((l) => wordsOf(l.text));
-  const parts = diffArrays(want, per.flat(), {
-    maxEditLength: 2 * allowedEdits(want.length) + MOVE_EDITS,
-  });
-  if (!parts) return null;
-  // the book's index of each answer word that has one; a moved run takes the place it left
-  const at: (number | undefined)[] = [];
-  const left: { from: number; words: string }[] = [];
-  const came: { from: number; count: number; words: string }[] = [];
-  let w = 0;
-  let g = 0;
-  for (const p of parts) {
-    if (p.removed) left.push({ from: w, words: p.value.join(" ") });
-    else if (p.added) came.push({ from: g, count: p.count, words: p.value.join(" ") });
-    else for (let k = 0; k < p.count; k++) at[g + k] = w + k;
-    if (!p.added) w += p.count;
-    if (!p.removed) g += p.count;
-  }
-  for (const c of came) {
-    const r = left.findIndex((l) => l.words === c.words);
-    if (r < 0) continue;
-    for (let k = 0; k < c.count; k++) at[c.from + k] = left[r].from + k;
-    left.splice(r, 1);
-  }
-  // a line goes where its first placed word is; one with none stays after the line before it
-  let start = 0;
-  let last = -1;
-  const place = per.map((words) => {
-    const k = words.findIndex((_, j) => at[start + j] !== undefined);
-    if (k >= 0) last = at[start + k]!;
-    start += words.length;
-    return last;
-  });
-  const order = lines.map((_, i) => i).sort((a, b) => place[a] - place[b]);
-  if (order.every((i, k) => i === k)) return null;
-  const sorted = order.map((i) => lines[i]);
-  if (!fidelity(input, sorted).ok) return null;
-  const modelOrder: number[] = [];
-  order.forEach((i, k) => (modelOrder[i] = k));
-  return { lines: sorted, modelOrder, moved: lines.length - longestRising(order) };
-}
-
-/** The length of the longest rising run in `xs`, not necessarily contiguous. */
-function longestRising(xs: readonly number[]): number {
-  const tails: number[] = [];
-  for (const x of xs) {
-    let lo = 0;
-    let hi = tails.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (tails[mid] < x) lo = mid + 1;
-      else hi = mid;
-    }
-    tails[lo] = x;
-  }
-  return tails.length;
-}
-
 const excerpt = (words: readonly string[]): string =>
   words.length > EXAMPLE_WORDS ? `${words.slice(0, EXAMPLE_WORDS).join(" ")}…` : words.join(" ");
 
@@ -236,6 +167,307 @@ function wordCounts(want: readonly string[], got: readonly string[]) {
       if (examples.length < 5) examples.push(w);
     }
   return { missing, added, examples };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Mending an answer that fails the word check
+
+/** Room for a moved passage of a few paragraphs on top of what `fidelity` allows. */
+const MOVE_EDITS = 1000;
+/** The most words put back without asking: more could be a line in a voice the answer lacks. */
+const LOCAL_WORDS = 12;
+
+/** Book words `[from, to)` came back as answer words `[at, end)`; either side may be empty. */
+interface Hunk {
+  from: number;
+  to: number;
+  at: number;
+  end: number;
+}
+
+/**
+ * The answer's words against the book's: where each answer word sits in the book (a moved run
+ * takes the place it left) and the places they part, moves aside. Null past MOVE_EDITS.
+ */
+function alignWords(want: string[], got: string[]) {
+  const parts = diffArrays(want, got, {
+    maxEditLength: 2 * allowedEdits(want.length) + MOVE_EDITS,
+  });
+  if (!parts) return null;
+  const runs: { from: number; at: number; count: number; side: "same" | "left" | "came" }[] = [];
+  let w = 0;
+  let g = 0;
+  for (const p of parts) {
+    runs.push({
+      from: w,
+      at: g,
+      count: p.count,
+      side: p.removed ? "left" : p.added ? "came" : "same",
+    });
+    if (!p.added) w += p.count;
+    if (!p.removed) g += p.count;
+  }
+  const place: (number | undefined)[] = [];
+  const moved = new Set<(typeof runs)[number]>();
+  for (const r of runs) {
+    if (r.side === "same") for (let k = 0; k < r.count; k++) place[r.at + k] = r.from + k;
+    if (r.side !== "came") continue;
+    const words = got.slice(r.at, r.at + r.count).join(" ");
+    const left = runs.find(
+      (l) =>
+        l.side === "left" &&
+        !moved.has(l) &&
+        want.slice(l.from, l.from + l.count).join(" ") === words,
+    );
+    if (!left) continue;
+    moved.add(left).add(r);
+    for (let k = 0; k < r.count; k++) place[r.at + k] = left.from + k;
+  }
+  const hunks: Hunk[] = [];
+  let open: Hunk | null = null;
+  for (const r of runs) {
+    if (r.side === "same" || moved.has(r)) {
+      open = null;
+      continue;
+    }
+    if (!open) hunks.push((open = { from: r.from, to: r.from, at: r.at, end: r.at }));
+    if (r.side === "left") open.to = r.from + r.count;
+    else open.end = r.at + r.count;
+  }
+  return { place, hunks };
+}
+
+/** Each word's place in `text` as `[from, to)`, or null where `wordsOf` would count otherwise. */
+function spansOf(text: string): [number, number][] | null {
+  const spans = [...text.matchAll(/[\p{L}\p{N}]+(?:['‘’ʼ`´][\p{L}\p{N}]+)*/gu)].map(
+    (m): [number, number] => [m.index, m.index + m[0].length],
+  );
+  return spans.length === wordsOf(text).length ? spans : null;
+}
+
+const hunkSize = (h: Hunk): number => Math.max(h.to - h.from, h.end - h.at);
+
+/**
+ * `lines` with the book's own words put back where `least` or more were left out, added or
+ * changed together, when it is clear which line they belong to; else null.
+ */
+function patchWords<L extends ScriptedLine>(
+  input: string,
+  want: string[],
+  lines: readonly L[],
+  least: number,
+): { lines: L[]; words: number } | null {
+  const book = spansOf(input);
+  const spans = lines.map((l) => spansOf(l.text));
+  if (!book || spans.some((s) => !s)) return null;
+  const owner = spans.flatMap((s, li) => s!.map((_, k) => [li, k] as const));
+  const aligned = alignWords(
+    want,
+    lines.flatMap((l) => wordsOf(l.text)),
+  );
+  if (!aligned) return null;
+  const edits: { line: number; from: number; to: number; text: string }[] = [];
+  let words = 0;
+  for (const h of aligned.hunks) {
+    const size = hunkSize(h);
+    if (size < least) continue;
+    if (size > LOCAL_WORDS || h.from === 0 || h.to >= want.length) return null;
+    // the book between the words either side: a quote or a paragraph break means another voice
+    if (/[“”"\n]/.test(input.slice(book[h.from - 1][1], book[h.to][0]))) return null;
+    let said = "";
+    if (h.to > h.from) {
+      const [from, to] = [book[h.from][0], book[h.to - 1][1]];
+      said = input.slice(from, to + (input.slice(to).match(/^[.,;:!?…]+/)?.[0].length ?? 0));
+    }
+    if (h.end > h.at) {
+      const [li, k0] = owner[h.at];
+      const [lj, k1] = owner[h.end - 1];
+      if (li !== lj) return null;
+      const s = spans[li]!;
+      if (said) edits.push({ line: li, from: s[k0][0], to: s[k1][1], text: said });
+      // a space goes with the words taken out
+      else if (k0 > 0) edits.push({ line: li, from: s[k0 - 1][1], to: s[k1][1], text: "" });
+      else if (k1 + 1 < s.length)
+        edits.push({ line: li, from: s[k0][0], to: s[k1 + 1][0], text: "" });
+      else return null;
+    } else {
+      const next = owner[h.at];
+      const prev = owner[h.at - 1];
+      if (!next || !prev) return null;
+      const [a, b] = [lines[prev[0]], lines[next[0]]];
+      if (prev[0] !== next[0] && (a.speaker !== b.speaker || a.type !== b.type)) return null;
+      const at = spans[next[0]]![next[1]][0];
+      edits.push({ line: next[0], from: at, to: at, text: `${said} ` });
+    }
+    words += size;
+  }
+  const out = lines.map((l) => ({ ...l }));
+  for (const e of edits.sort((x, y) => y.from - x.from)) {
+    const l = out[e.line];
+    const delta = e.text.length - (e.to - e.from);
+    l.text = l.text.slice(0, e.from) + e.text + l.text.slice(e.to);
+    if (l.tags?.length)
+      l.tags = l.tags.map((t) => ({
+        ...t,
+        at: t.at <= e.from ? t.at : t.at >= e.to ? t.at + delta : e.from,
+      }));
+  }
+  return out.some((l) => !wordsOf(l.text).length) ? null : { lines: out, words };
+}
+
+/**
+ * An answer that fails the word check made to pass without asking again: whole lines the model
+ * moved go back to the book's order, and a few lost or changed words are put back from the book.
+ * The model's k-th line ends up at `modelOrder[k]`. Null when neither makes it pass.
+ */
+export function mendScript<L extends ScriptedLine>(
+  input: string,
+  lines: readonly L[],
+): { lines: L[]; modelOrder: number[]; moved: number; patched: number } | null {
+  const want = wordsOf(input);
+  const per = lines.map((l) => wordsOf(l.text));
+  const aligned = alignWords(want, per.flat());
+  if (!aligned) return null;
+  // a line goes where its first placed word is; one with none stays after the line before it
+  let start = 0;
+  let last = -1;
+  const place = per.map((words) => {
+    const k = words.findIndex((_, j) => aligned.place[start + j] !== undefined);
+    if (k >= 0) last = aligned.place[start + k]!;
+    start += words.length;
+    return last;
+  });
+  const order = lines.map((_, i) => i).sort((a, b) => place[a] - place[b]);
+  const sorted = order.map((i) => lines[i]);
+  // the slips `fidelity` allows are left as the model wrote them unless the rest is not enough
+  const patched = [RUN + 1, 1]
+    .map((least) => patchWords(input, want, sorted, least))
+    .find((p) => p && fidelity(input, p.lines).ok);
+  if (!patched) return null;
+  const modelOrder: number[] = [];
+  order.forEach((i, k) => (modelOrder[i] = k));
+  return {
+    lines: patched.lines,
+    modelOrder,
+    moved: lines.length - longestRising(order),
+    patched: patched.words,
+  };
+}
+
+/** The length of the longest rising run in `xs`, not necessarily contiguous. */
+function longestRising(xs: readonly number[]): number {
+  const tails: number[] = [];
+  for (const x of xs) {
+    let lo = 0;
+    let hi = tails.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (tails[mid] < x) lo = mid + 1;
+      else hi = mid;
+    }
+    tails[lo] = x;
+  }
+  return tails.length;
+}
+
+/** The most of an answer a repair asks back before a whole new answer is the better buy. */
+const REPAIR_SHARE = 0.25;
+const QUOTED = 120;
+const quoted = (t: string): string => `“${t.length > QUOTED ? t.slice(0, QUOTED) + "…" : t}”`;
+
+/**
+ * What to send back so the model fixes only the lines that part from the book, or null when that
+ * is most of the answer. Ranges are 1-based and inclusive, in the answer's own numbering.
+ */
+function repairFor(input: string, content: string, answer: ScriptAnswer): ScriptRepair | null {
+  const { lines } = answer;
+  const want = wordsOf(input);
+  const book = spansOf(input);
+  const aligned = alignWords(
+    want,
+    lines.flatMap((l) => wordsOf(l.text)),
+  );
+  if (!aligned || !book) return null;
+  const owner = lines.flatMap((l, li) => wordsOf(l.text).map(() => li));
+  const big = aligned.hunks.filter((h) => hunkSize(h) > RUN);
+  const found: { from: number; to: number; what: string }[] = [];
+  for (const h of big.length ? big : aligned.hunks) {
+    const from = owner[h.end > h.at ? h.at : Math.max(0, h.at - 1)] ?? lines.length - 1;
+    const to = owner[h.end > h.at ? h.end - 1 : Math.min(h.at, owner.length - 1)] ?? from;
+    const left = h.to > h.from ? input.slice(book[h.from][0], book[h.to - 1][1]) : "";
+    const came =
+      h.end > h.at
+        ? lines
+            .flatMap((l) => wordsOf(l.text))
+            .slice(h.at, h.end)
+            .join(" ")
+        : "";
+    const what =
+      left && came
+        ? `${quoted(came)} stands where the excerpt has ${quoted(left)}`
+        : left
+          ? `${quoted(left)} is left out`
+          : `${quoted(came)} is added, but is not in the excerpt`;
+    found.push({ from: Math.min(from, to) + 1, to: Math.max(from, to) + 1, what });
+  }
+  const ranges: { from: number; to: number }[] = [];
+  for (const f of [...found].sort((a, b) => a.from - b.from)) {
+    const r = ranges.at(-1);
+    if (r && f.from <= r.to + 1) r.to = Math.max(r.to, f.to);
+    else ranges.push({ from: f.from, to: f.to });
+  }
+  const asked = ranges.reduce((n, r) => n + r.to - r.from + 1, 0);
+  if (!ranges.length || asked > Math.max(3, lines.length * REPAIR_SHARE)) return null;
+  const name = (r: { from: number; to: number }) =>
+    r.from === r.to ? `line ${r.from}` : `lines ${r.from}–${r.to}`;
+  const note = [
+    "Your script, as you sent it:",
+    content.trim(),
+    "",
+    "It does not hold the excerpt's words exactly:",
+    // models miscount lines, so each is named by how it starts too
+    ...found.map(
+      (f) => `- ${name(f)} (from “${excerpt(lines[f.from - 1].text.split(/\s+/))}”): ${f.what}`,
+    ),
+    "",
+    `Send back only ${ranges.map(name).join(", ")}, fixed so every word of the excerpt is there once and nothing is added. Answer with JSON only, each line written as before: {"ranges":[${ranges.map((r) => `{"from":${r.from},"to":${r.to},"lines":[…]}`).join(",")}]}`,
+  ].join("\n");
+  return { answer, content, ranges, note };
+}
+
+/** The prompt a repair is sent with: the one answered, then what to fix, so the start is cached. */
+export const repairPrompt = (prompt: RenderedPrompt, repair: ScriptRepair): RenderedPrompt => ({
+  system: prompt.system,
+  user: `${prompt.user}\n\n${repair.note}`,
+});
+
+const Ranges = v.object({
+  ranges: v.array(v.object({ from: v.number(), to: v.number(), lines: v.array(v.unknown()) })),
+});
+
+/** The repaired answer: the asked ranges replaced by the lines sent back for them. */
+function repaired(who: string, content: string, text: string, repair: ScriptRepair): ScriptAnswer {
+  let sent: v.InferOutput<typeof Ranges>["ranges"];
+  try {
+    const read = v.safeParse(Ranges, jsonIn(content));
+    if (!read.success) throw new Error(read.issues[0].message);
+    sent = read.output.ranges;
+  } catch (e) {
+    throw new BadAnswer(
+      `${who} did not send back the lines it was asked to fix (${e instanceof Error ? e.message : String(e)})`,
+      200,
+      false,
+    );
+  }
+  const lines = [...repair.answer.lines];
+  for (const r of [...repair.ranges].sort((a, b) => b.from - a.from)) {
+    const got = sent.find((s) => s.from === r.from && s.to === r.to);
+    if (!got)
+      throw new BadAnswer(`${who} did not send back lines ${r.from}–${r.to} to fix`, 200, false);
+    const fixed = answerOf(JSON.stringify({ lines: got.lines }), who, text).lines;
+    lines.splice(r.from - 1, r.to - r.from + 1, ...fixed);
+  }
+  return { ...repair.answer, lines };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -490,11 +722,15 @@ export function answerOf(content: string, who: string, excerpt?: string): Script
 export class BadAnswer extends ProviderError {}
 
 /** An answer cut off, or not the chunk's words: the failures a smaller chunk can get past. */
-export class ChunkMisfit extends BadAnswer {}
+export class ChunkMisfit extends BadAnswer {
+  /** set when only a few lines part from the book, so asking for those back is enough */
+  repair?: ScriptRepair;
+}
 
 /**
  * The script in a model's final message, checked against the prose sent (`lenient` skips only the
- * word check). Throws a `ProviderError` with `status`.
+ * word check), and mended where it can be (`mendScript`). With `repair`, the message holds only
+ * the lines asked back. Throws a `ProviderError` with `status`.
  */
 export function checkedScript(
   who: string,
@@ -502,21 +738,25 @@ export function checkedScript(
   text: string,
   status: number,
   lenient: boolean,
+  repair?: ScriptRepair,
 ): ScriptAnswer {
   if (!content.trim()) throw new BadAnswer(`${who} answered with no script at all`, status, false);
   // the excerpt picks the marker, as it did for the prompt
-  const answer = answerOf(content, who, text);
+  const answer = repair ? repaired(who, content, text, repair) : answerOf(content, who, text);
   const { lines } = answer;
   if (!lines.length)
     throw new BadAnswer(`${who} answered with a script of no lines`, status, false);
   const check = fidelity(text, lines);
   if (!check.ok && !lenient) {
-    const fixed = bookOrder(text, lines);
-    if (fixed)
+    const mended = mendScript(text, lines);
+    if (mended)
       return {
         ...answer,
-        lines: fixed.lines,
-        reordered: { modelOrder: fixed.modelOrder, moved: fixed.moved },
+        lines: mended.lines,
+        ...(mended.moved
+          ? { reordered: { modelOrder: mended.modelOrder, moved: mended.moved } }
+          : {}),
+        ...(mended.patched ? { patched: mended.patched } : {}),
       };
     const lost = check.missing - check.moved;
     const made = check.added - check.moved;
@@ -528,11 +768,14 @@ export function checkedScript(
     const example = check.examples.length
       ? ` (${lost ? "missing" : "moved"} e.g. “${check.examples.join("”, “")}”)`
       : "";
-    throw new ChunkMisfit(
+    const misfit = new ChunkMisfit(
       `${who} did not copy the text faithfully: it ${parts.join(" and ")}${example}. The script was not written; run it again or try another model`,
       status,
       false,
     );
+    // one repair per answer: a repaired one that still fails is asked again whole
+    if (!repair) misfit.repair = repairFor(text, content, answer) ?? undefined;
+    throw misfit;
   }
   return answer;
 }
@@ -606,6 +849,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
     signal: AbortSignal,
     sent?: (request: SentScript) => void,
     lenient = false,
+    repair?: ScriptRepair,
   ): Promise<{ answer: ScriptAnswer; reasoningTokens: number | null }> {
     requireKey(target);
     const reasoning = reasoningRequest(target.baseUrl, target.reasoning);
@@ -670,7 +914,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
     const usage = usageOf(raw);
     const reasoningTokens = reasoningTokensOf(raw);
     try {
-      const answer = readAnswer(target, text, res.status, raw, lenient);
+      const answer = readAnswer(target, text, res.status, raw, lenient, repair);
       report(usage);
       return { answer, reasoningTokens };
     } catch (e) {
@@ -686,6 +930,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
     status: number,
     raw: unknown,
     lenient: boolean,
+    repair?: ScriptRepair,
   ): ScriptAnswer {
     const parsed = v.safeParse(Completion, raw);
     if (!parsed.success)
@@ -709,7 +954,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
         false,
       );
     }
-    return checkedScript(target.name, choice.message?.content ?? "", text, status, lenient);
+    return checkedScript(target.name, choice.message?.content ?? "", text, status, lenient, repair);
   }
 
   return {
@@ -725,6 +970,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
       prompt,
       lenient,
       sent,
+      repair,
     }: ScriptInput) {
       if (!target) throw new ProviderError(NO_PROFILE, 0, false);
       progress?.(0, 1);
@@ -735,6 +981,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
         signal,
         sent,
         lenient,
+        repair,
       );
       progress?.(1, 1);
       return answer;

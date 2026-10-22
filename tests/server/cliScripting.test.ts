@@ -189,6 +189,20 @@ describe("Claude Code", () => {
     expect(sent[0].usage?.reportedCost).toBeUndefined();
   });
 
+  test("a follow-up goes as a second content block over stream-json, so the prompt is cached", async () => {
+    const cli = fakeCli("claude", { stdout: `{"type":"system"}\n${claudeResult(SCRIPT)}` });
+    const { input: given } = input(target(`claude-code:${cli.path}`));
+    const answer = await provider.script({ ...given, prompt: { ...PROMPT, followUp: "Fix it" } });
+    expect(answer.lines).toHaveLength(3);
+    const [call] = cli.calls();
+    expect(flagOf(call.argv, "--input-format")).toBe("stream-json");
+    expect(flagOf(call.argv, "--output-format")).toBe("stream-json");
+    expect(JSON.parse(call.stdin).message.content).toEqual([
+      { type: "text", text: PROMPT.user },
+      { type: "text", text: "Fix it" },
+    ]);
+  });
+
   test("off is sent as low, since it cannot turn thinking off", async () => {
     const cli = fakeCli("claude", { stdout: claudeResult(SCRIPT) });
     await provider.script(input(target(`claude-code:${cli.path}`, { reasoning: "off" })).input);

@@ -7,6 +7,7 @@ import type {
   Job,
   Profile,
   PromptTemplate,
+  ReasoningEffort,
   ScriptingQueued,
   Segment,
   VersionOrigin,
@@ -46,8 +47,8 @@ import type { JobContext, JobHandler, Runner } from "~/jobs/runner";
 import { conflict, notFound } from "~/lib/errors";
 import { narrationInProgress, settleChapter } from "~/narration/chapter";
 import { bookDelivery, lineReading } from "~/narration/cost";
-import { ChunkMisfit } from "~/providers/chatScripting";
-import type { ScriptAnswer, ScriptingProvider } from "~/providers/scripting";
+import { BadAnswer, ChunkMisfit, repairPrompt } from "~/providers/chatScripting";
+import type { ScriptAnswer, ScriptRepair, ScriptingProvider } from "~/providers/scripting";
 import type { SentScript } from "~/providers/sent";
 import { scriptTarget } from "~/providers/target";
 import { beforeOf, chunksOf } from "~/script/chunks";
@@ -165,6 +166,15 @@ function holdsOf(
   );
 }
 
+/** A repair copies words back, so it needs little thinking. */
+const lighter = (r: ReasoningEffort | null | undefined): ReasoningEffort | null | undefined =>
+  r === "medium" || r === "high" ? "low" : r;
+
+const lineCountOf = (repair: ScriptRepair): string => {
+  const n = repair.ranges.reduce((a, r) => a + r.to - r.from + 1, 0);
+  return `${n} line${n === 1 ? "" : "s"}`;
+};
+
 export function scriptingHandler(provider: ScriptingProvider): JobHandler {
   return {
     async run(ctx: JobContext): Promise<void> {
@@ -261,7 +271,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
        * Chunk `i`'s money (`~/usage/dispatch`), priced against the stored profile or the run's copy
        * if it was removed. No profile (the fake) holds nothing.
        */
-      const dispatched = (i: number) =>
+      const dispatched = (i: number, repairing: boolean) =>
         run &&
         dispatch(db, {
           kind: "scripting",
@@ -269,9 +279,9 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
           work: {
             bookId: job.bookId,
             chapterUid: chapter.uid,
-            label: `Script chunk ${i + 1}`,
+            label: `Script chunk ${i + 1}${repairing ? " (repair)" : ""}`,
             queuedAt: job.queuedAt,
-            reasoning: run.profile.reasoning ?? null,
+            reasoning: (repairing ? lighter(run.profile.reasoning) : run.profile.reasoning) ?? null,
           },
           hold: holds[i],
           gaveBack: (back) => void (run.reserved = Math.max(0, run.reserved - back)),
@@ -288,16 +298,16 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
         setScriptRun(db, job.id, run);
       };
       /**
-       * Why the next request may not go out, or null. The book check includes this job's holds, so
-       * it only trips when things changed under a run that fit; the daily limit checks this request.
+       * Why chunk `i`'s request may not go out, or null. The book check includes this job's holds,
+       * so it only trips when things changed under a run that fit; the daily limit checks this one.
        */
-      const refusal = (): string | null =>
+      const refusal = (i: number): string | null =>
         budgetProblem(db, job.bookId, {
           kind: "scripting",
           cost: run?.reserved ?? 0,
           jobId: job.id,
           what: "the next request",
-          requests: run ? [{ endpoint: run.profile.id, cost: holds[next] }] : [],
+          requests: run ? [{ endpoint: run.profile.id, cost: holds[i] }] : [],
         });
       let refused: string | null = null;
 
@@ -307,30 +317,68 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
       const stop = new AbortController();
       const onAbort = (): void => stop.abort(signal.reason);
       signal.addEventListener("abort", onAbort, { once: true });
+      /** One request for chunk `i`, holding its own money; with `repair`, for a few lines back. */
+      const ask = async (i: number, repair?: ScriptRepair): Promise<ScriptAnswer> => {
+        const money = dispatched(i, !!repair);
+        const prompt = renderPrompt(template, varsFor(i));
+        try {
+          return await provider.script({
+            title: chapter.title,
+            text: chunks[i],
+            signal: stop.signal,
+            target: repair && target ? { ...target, reasoning: lighter(target.reasoning) } : target,
+            cast,
+            prompt: repair ? repairPrompt(prompt, repair) : prompt,
+            ...(repair ? { repair } : {}),
+            ...(money ? { sent: (request: SentScript) => settle(money, request) } : {}),
+            progress: (done, total) => {
+              share[i] = total ? done / total : 1;
+              report();
+            },
+          });
+        } finally {
+          money?.release();
+        }
+      };
       let next = 0;
       const worker = async (): Promise<void> => {
         while (next < chunks.length && !stop.signal.aborted && refused == null) {
           // budget stop: in-flight requests land and are paid for, then the job fails
-          refused = refusal();
+          refused = refusal(next);
           if (refused != null) return;
           const i = next++;
           if (run) run.active++;
           counted();
-          const money = dispatched(i);
           try {
-            answers[i] = await provider.script({
-              title: chapter.title,
-              text: chunks[i],
-              signal: stop.signal,
-              target,
-              cast,
-              prompt: renderPrompt(template, varsFor(i)),
-              ...(money ? { sent: (request: SentScript) => settle(money, request) } : {}),
-              progress: (done, total) => {
-                share[i] = total ? done / total : 1;
-                report();
-              },
-            });
+            // A bad answer is asked once more whole, as answers vary run to run; one with only a
+            // few lines wrong first gets just those lines asked back. Each within the budget.
+            let repair: ScriptRepair | undefined;
+            let repaired = false;
+            let again = true;
+            for (;;) {
+              try {
+                answers[i] = await ask(i, repair);
+                break;
+              } catch (e) {
+                if (!(e instanceof BadAnswer) || stop.signal.aborted || refusal(i) != null) throw e;
+                repair = !repaired && e instanceof ChunkMisfit ? e.repair : undefined;
+                if (repair) repaired = true;
+                else if (again) again = false;
+                else throw e;
+                const which =
+                  chunks.length > 1 ? `Answer ${i + 1} of ${chunks.length}` : "The answer";
+                ctx.note(
+                  repair
+                    ? `${which} was refused; asking for ${lineCountOf(repair)} back, fixed`
+                    : `${which} was refused; asking once more`,
+                  "warning",
+                  { error: e.message },
+                );
+                share[i] = 0;
+                if (run) run.reserved += holds[i];
+                counted();
+              }
+            }
           } catch (e) {
             if (signal.aborted) throw e;
             // the failed-chapter page offers "Smaller chunks" on this detail
@@ -345,12 +393,16 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
             );
           } finally {
             if (run) run.active--;
-            money?.release();
           }
           share[i] = 1;
           if (run) run.completed++;
           counted();
           report();
+          if (answers[i].patched)
+            ctx.note(
+              `${answers[i].patched} words put back from the book where the model left out or changed them`,
+              "info",
+            );
           if (chunks.length > 1)
             ctx.note(`Request ${i + 1} of ${chunks.length} answered`, "info", {
               characters: chunks[i].length,
@@ -390,16 +442,25 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
             audio: { status: "none", endpoint: null, ms: 0, duration: 0 },
           };
         });
+      // the model's own order where lines were put back in the book's, kept for History
+      let base = 0;
+      const modelOrder = answers.flatMap((a) => {
+        const at = base;
+        base += a.lines.length;
+        return (a.reordered?.modelOrder ?? a.lines.map((_, k) => k)).map((k) => k + at);
+      });
+      const moved = answers.reduce((n, a) => n + (a.reordered?.moved ?? 0), 0);
       const leftOff =
         answers
           .map((a) => a.recap)
           .filter(Boolean)
           .at(-1) ?? null;
-      const origin = (again: boolean): VersionOrigin => ({
+      const origin = (again: boolean, moved = 0): VersionOrigin => ({
         kind: "scripted",
         profile: queued?.profile.name ?? provider.name,
         ...(queued ? { model: provider.callsProfile ? queued.profile.model : provider.name } : {}),
         again,
+        ...(moved ? { moved } : {}),
         ...(queued?.prompt ? { prompt: queued.prompt.origin } : {}),
       });
       /** Speakers matched against the cast as it stands now, so a merge during the run holds. */
@@ -434,6 +495,16 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
             previous,
             segs,
           );
+          const asModel =
+            moved && segs.length === modelOrder.length
+              ? keepVersion(
+                  tx,
+                  at.bookId,
+                  at.id,
+                  origin(previous.length > 0, moved),
+                  modelOrder.map((k) => segs[k]),
+                )
+              : null;
           const added = ensureSpeakers(
             tx,
             at.bookId,
@@ -472,6 +543,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
             ...(suggested.length ? { termsSuggested: suggested.join(", ") } : {}),
             ...(leftOff ? { recap: leftOff } : {}),
             ...(version != null ? { preserved: `v${version}` } : {}),
+            ...(asModel != null ? { putBack: moved, modelOrder: `v${asModel}` } : {}),
             ...(at.id !== job.chapterId ? { chapterNow: at.id } : {}),
           });
         });

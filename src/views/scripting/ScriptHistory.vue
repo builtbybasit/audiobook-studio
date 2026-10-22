@@ -39,7 +39,12 @@ import {
 } from "@lucide/vue";
 import type { ScriptVersion } from "@/types";
 
-const props = defineProps<{ bookId: string; chapterId: number }>();
+const props = defineProps<{
+  bookId: string;
+  chapterId: number;
+  /** a version to open compared with the current script */
+  comparing?: number | null;
+}>();
 const emit = defineEmits<{ close: []; jump: [segId: number] }>();
 const historyStore = useHistoryStore();
 const jobsStore = useJobsStore();
@@ -49,8 +54,8 @@ const reader = useReader();
 const { colorOf } = useScript(props);
 
 const body = ref<HTMLElement | null>(null);
-const mode = ref<"list" | "preview" | "compare">("list");
-const selectedId = ref<number | null>(null);
+const mode = ref<"list" | "preview" | "compare">(props.comparing != null ? "compare" : "list");
+const selectedId = ref<number | null>(props.comparing ?? null);
 /** the version whose restore plan is open under it */
 const planFor = ref<number | null>(null);
 const checkpoint = ref("");

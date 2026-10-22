@@ -13,6 +13,8 @@ export type VersionOrigin =
       profile?: string;
       model?: string;
       again?: boolean;
+      /** the model's own order, kept when this many lines were put back in the book's */
+      moved?: number;
       /** absent on older versions */
       prompt?: PromptOrigin;
     }
@@ -58,7 +60,7 @@ export type ChangeField =
   | "expressions"
   | "pause"
   | "effects";
-export type ChangeKind = "changed" | "added" | "removed" | "split" | "joined";
+export type ChangeKind = "changed" | "added" | "removed" | "moved" | "split" | "joined";
 /** How the panel groups changes for its filters: the fields, plus everything structural. */
 export type ChangeGroup = ChangeField | "structure";
 
@@ -93,6 +95,8 @@ export interface LineChange {
   runs: DiffRun[];
   /** reading position on the newer side, so changes list in chapter order */
   at: number;
+  /** a moved line's position on the older side */
+  fromAt?: number;
 }
 
 export interface ComparisonCounts {
@@ -105,6 +109,7 @@ export interface ComparisonCounts {
   effects: number;
   added: number;
   removed: number;
+  moved: number;
   split: number;
   joined: number;
 }

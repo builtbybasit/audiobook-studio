@@ -5,6 +5,7 @@ import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
+import { useHistoryStore } from "@/stores/history";
 import { useUiStore } from "@/stores/ui";
 
 // Script reader: narration as prose, dialogue and thought as cards. Any line opens an editor in
@@ -32,6 +33,7 @@ import { usePlayer } from "@/composables/usePlayer";
 import { enumParam, idParam, useQueryParam } from "@/composables/useQueryParam";
 import { chapterQueue, chapterQueueId, clipOf, segmentStart } from "@/composables/useChapterQueue";
 import {
+  ArrowDownUp as ReorderIcon,
   AudioLines as NarrationIcon,
   ChevronUp as ChevronUpIcon,
   ChevronDown as ChevronDownIcon,
@@ -66,6 +68,7 @@ const filterOpts = computed(() => [
     hint: counts.value[c.name] + "",
   })),
 ]);
+const historyStore = useHistoryStore();
 const libraryStore = useLibraryStore();
 const narrationStore = useNarrationStore();
 const scriptingStore = useScriptingStore();
@@ -217,11 +220,28 @@ const history = useQueryParam<boolean>("history", {
 });
 const historyPanel = ref<{ back: () => boolean } | null>(null);
 // via the query so the count is right before the panel opens
-const { versions: knownVersions } = useChapterHistory(
+const { versions: knownVersions, head: historyHead } = useChapterHistory(
   () => props.bookId,
   () => props.chapterId,
 );
 const versionCount = computed(() => knownVersions.value.length);
+/** The model's order, kept when the run put lines back in the book's; gone once the script changes. */
+const modelOrder = computed(() => {
+  const v = knownVersions.value[0];
+  return v?.origin.kind === "scripted" &&
+    v.origin.moved &&
+    historyHead.value.origin.kind === "scripted"
+    ? { id: v.id, moved: v.origin.moved }
+    : null;
+});
+const comparing = ref<number | null>(null);
+function compareModelOrder() {
+  comparing.value = modelOrder.value?.id ?? null;
+  history.value = true;
+}
+watch(history, (on) => {
+  if (!on) comparing.value = null;
+});
 function jumpFromHistory(id: number) {
   history.value = false;
   jumpTo(id);
@@ -427,9 +447,26 @@ watch(open, (v) => {
         ref="historyPanel"
         :book-id="bookId"
         :chapter-id="chapterId"
+        :comparing="comparing"
         @close="history = false"
         @jump="jumpFromHistory"
       />
+      <div
+        v-if="!history && modelOrder"
+        class="flex items-center gap-3 border-b border-violet-300 bg-violet-50 px-6 py-1.5 text-xs dark:border-violet-500/40 dark:bg-violet-500/10"
+      >
+        <ReorderIcon class="icon-sm shrink-0 text-violet-500" />
+        <span class="min-w-0 flex-1"
+          ><b>{{ plural(modelOrder.moved, "line") }} put back in the book's order.</b></span
+        >
+        <button class="btn-ghost btn-xs" @click="compareModelOrder">Compare</button>
+        <button
+          class="btn-ghost btn-xs"
+          @click="historyStore.restore(bookId, chapterId, modelOrder.id)"
+        >
+          Use the model's order
+        </button>
+      </div>
 
       <div
         v-if="!history && fallbacks.length"

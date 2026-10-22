@@ -229,6 +229,22 @@ describe("comparing two scripts", () => {
     expect(joined.counts).toMatchObject({ joined: 1, added: 0, removed: 0 });
     expect(joined.changes[0].fromIds).toEqual([1, 2]);
   });
+
+  test("a line that only changed place is one move; one also edited stays gone and new", () => {
+    const bell = seg(1, { text: "The bell rang three times." });
+    const hall = seg(2, { text: "Nobody in the hall moved at all." });
+    const moved = compareScripts([bell, hall, seg(3)], [hall, bell, seg(3)]);
+    expect(moved.counts).toMatchObject({ moved: 1, added: 0, removed: 0 });
+    expect(moved.lines).toBe(1);
+    const [change] = moved.changes;
+    expect(change.kind).toBe("moved");
+    expect(change.fromAt).not.toBe(change.at);
+    const edited = compareScripts(
+      [bell, hall, seg(3)],
+      [{ ...hall, text: "Nobody in the great hall moved at all." }, bell, seg(3)],
+    );
+    expect(edited.counts).toMatchObject({ moved: 0, added: 1, removed: 1 });
+  });
 });
 
 describe("restoring", () => {

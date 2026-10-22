@@ -15,7 +15,12 @@ import { cliOf, type CliShape } from "@/lib/providers/cli";
 import { builtInPrompt, checkedScript, NO_PROFILE, probeWith } from "~/providers/chatScripting";
 import { sleep } from "~/providers/fake";
 import { ProviderError, type CallOptions } from "~/providers/http";
-import type { ScriptAnswer, ScriptTarget, ScriptingProvider } from "~/providers/scripting";
+import type {
+  ScriptAnswer,
+  ScriptRepair,
+  ScriptTarget,
+  ScriptingProvider,
+} from "~/providers/scripting";
 import type { SentScript } from "~/providers/sent";
 
 export interface CliScriptingOptions {
@@ -149,15 +154,18 @@ export function invocation(
         join(dir, ANSWER_FILE),
         "-",
       ],
-      stdin: prompt.user,
+      stdin: prompt.followUp ? `${prompt.user}\n\n${prompt.followUp}` : prompt.user,
       files: { [SYSTEM_FILE]: prompt.system, [SCHEMA_FILE]: JSON.stringify(ANSWER_SCHEMA) },
     };
+  // a follow-up goes as a second content block, which only stream-json input can carry
+  const blocks = prompt.followUp
+    ? ["--input-format", "stream-json", "--output-format", "stream-json", "--verbose"]
+    : ["--output-format", "json"];
   return {
     argv: [
       program,
       "--print",
-      "--output-format",
-      "json",
+      ...blocks,
       "--model",
       target.model,
       ...(effort ? ["--effort", effort] : []),
@@ -174,7 +182,18 @@ export function invocation(
       "--safe-mode",
       "--disable-slash-commands",
     ],
-    stdin: prompt.user,
+    stdin: prompt.followUp
+      ? JSON.stringify({
+          type: "user",
+          message: {
+            role: "user",
+            content: [
+              { type: "text", text: prompt.user },
+              { type: "text", text: prompt.followUp },
+            ],
+          },
+        }) + "\n"
+      : prompt.user,
     files: { [SYSTEM_FILE]: prompt.system },
   };
 }
@@ -366,7 +385,8 @@ const ClaudeResult = v.looseObject({
 function claudeOutcome(ran: Ran): Outcome {
   let read: v.SafeParseResult<typeof ClaudeResult> | null = null;
   try {
-    read = v.safeParse(ClaudeResult, JSON.parse(ran.stdout));
+    // stream-json ends with the result object that json prints alone
+    read = v.safeParse(ClaudeResult, JSON.parse(ran.stdout.trim().split("\n").at(-1) ?? ""));
   } catch {
     read = null;
   }
@@ -460,6 +480,7 @@ export function cliScriptingProvider(options: CliScriptingOptions = {}): Scripti
     signal: AbortSignal,
     sent?: (request: SentScript) => void,
     lenient = false,
+    repair?: ScriptRepair,
   ): Promise<{ answer: ScriptAnswer; reasoningTokens: number | null }> {
     const cli = cliOf(target.baseUrl);
     if (!cli) throw new ProviderError(`${target.name} does not name a command-line tool`, 0, false);
@@ -538,7 +559,14 @@ export function cliScriptingProvider(options: CliScriptingOptions = {}): Scripti
           usage = outcome.usage;
           if (outcome.content != null) {
             try {
-              const script = checkedScript(target.name, outcome.content, text, 200, lenient);
+              const script = checkedScript(
+                target.name,
+                outcome.content,
+                text,
+                200,
+                lenient,
+                repair,
+              );
               report(usage, "done");
               return { answer: script, reasoningTokens: outcome.reasoningTokens };
             } catch (e) {
@@ -570,7 +598,7 @@ export function cliScriptingProvider(options: CliScriptingOptions = {}): Scripti
   return {
     name: "Command-line tools",
     callsProfile: true,
-    async script({ title, text, signal, progress, target, cast, prompt, lenient, sent }) {
+    async script({ title, text, signal, progress, target, cast, prompt, lenient, sent, repair }) {
       if (!target) throw new ProviderError(NO_PROFILE, 0, false);
       progress?.(0, 1);
       const { answer } = await request(
@@ -580,6 +608,7 @@ export function cliScriptingProvider(options: CliScriptingOptions = {}): Scripti
         signal,
         sent,
         lenient,
+        repair,
       );
       progress?.(1, 1);
       return answer;

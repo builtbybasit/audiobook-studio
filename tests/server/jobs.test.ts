@@ -8,10 +8,11 @@ import type { Book, Chapter, Job, Profile, Segment } from "@/types";
 import { makeCredentials } from "~/demo/seed/fixtures/credentials";
 import { scriptParts } from "@/lib/scripting";
 import * as queue from "~/db/jobs";
+import { readHistory } from "~/db/history";
 import { readScript, writeScript } from "~/db/script";
 import { jobs } from "~/db/schema";
 import { fakeScriptingProvider, sleep } from "~/providers/fake";
-import type { ScriptedLine, ScriptingProvider } from "~/providers/scripting";
+import type { ScriptInput, ScriptedLine, ScriptingProvider } from "~/providers/scripting";
 import { ChunkMisfit, chatScriptingProvider } from "~/providers/chatScripting";
 import { heldToday } from "~/usage/budget";
 import { bookSpend, endpointRequests } from "~/usage/ledger";
@@ -45,6 +46,13 @@ interface ScriptResult {
 interface Failure {
   error: { code: string; message: string; detail?: string };
 }
+
+/** A misfit with a few lines wrong, which the job asks back before asking again whole. */
+const fixable = (message: string) => {
+  const e = new ChunkMisfit(message, 200, false);
+  e.repair = { answer: { lines: [] }, content: "{}", ranges: [{ from: 1, to: 1 }], note: "Fix it" };
+  return e;
+};
 
 // Long enough that a chapter cut at 700 characters (`small`) goes as several requests.
 const dialogue = () => [
@@ -392,21 +400,38 @@ describe("a result never lands on newer work", () => {
 
 describe("failure", () => {
   test.each([
-    ["a refusal", new Error("The model answered with nothing"), false],
+    ["a refusal", new Error("The model answered with nothing"), false, 1],
     [
-      "an answer that misses words",
+      "an answer that misses words, asked twice,",
       new ChunkMisfit("The model answered with nothing", 200, false),
       true,
+      2,
+    ],
+    [
+      "an answer with a line wrong, asked back then whole,",
+      fixable("The model answered with nothing"),
+      true,
+      3,
     ],
   ])(
     "%s leaves a chapter with no script reading as failed, saying why and whether smaller chunks may help",
-    async (_, error, smaller) => {
+    async (_, error, smaller, asks) => {
+      let asked = 0;
       const { api, id } = await shelved(
-        testApi({ scripting: { name: "Broken", script: () => Promise.reject(error) } }),
+        testApi({
+          scripting: {
+            name: "Broken",
+            script: () => {
+              asked++;
+              return Promise.reject(error);
+            },
+          },
+        }),
       );
       const { body } = await script(api, id, [1]);
       await api.runner.idle();
       const job = await jobById(api, body.jobs[0].id);
+      expect(asked).toBe(asks);
       expect(job.status).toBe("failed");
       expect(job.activity?.at(-1)?.detail?.error).toBe("The model answered with nothing");
       expect(job.activity?.some((e) => e.detail?.smallerChunks)).toBe(smaller);
@@ -415,6 +440,54 @@ describe("failure", () => {
       expect((await script(api, id, [1])).body.jobs).toHaveLength(1);
     },
   );
+
+  test.each([
+    ["asked once more", new ChunkMisfit("The model lost a line", 200, false), false],
+    ["asked for its wrong lines back", fixable("The model lost a line"), true],
+  ])("a bad answer is %s, and a good second answer is written", async (_, error, repairing) => {
+    const good = fakeScriptingProvider();
+    const asks: ScriptInput[] = [];
+    const { api, id } = await shelved(
+      testApi({
+        scripting: {
+          name: "Flaky",
+          script: (input) => {
+            asks.push(input);
+            return asks.length === 1 ? Promise.reject(error) : good.script(input);
+          },
+        },
+      }),
+    );
+    const { body } = await script(api, id, [1]);
+    await api.runner.idle();
+    expect((await jobById(api, body.jobs[0].id)).status).toBe("done");
+    expect(readScript(api.db, id, 1).length).toBeGreaterThan(0);
+    expect(asks[1].repair).toBe(repairing ? error.repair : undefined);
+    expect(asks[1].prompt!.followUp).toBe(repairing ? "Fix it" : undefined);
+  });
+
+  test("lines put back in the book's order keep the model's order in History", async () => {
+    const good = fakeScriptingProvider();
+    const { api, id } = await shelved(
+      testApi({
+        scripting: {
+          name: "Shuffler",
+          script: async (input) => {
+            const answer = await good.script(input);
+            const modelOrder = answer.lines.map((_, k) => (k < 2 ? 1 - k : k));
+            return { ...answer, reordered: { modelOrder, moved: 1 } };
+          },
+        },
+      }),
+    );
+    const { body } = await script(api, id, [1]);
+    await api.runner.idle();
+    expect((await jobById(api, body.jobs[0].id)).status).toBe("done");
+    const lines = readScript(api.db, id, 1).map((s) => s.text);
+    const kept = readHistory(api.db, id, 1).versions.at(-1)!;
+    expect(kept.origin).toMatchObject({ kind: "scripted", moved: 1 });
+    expect(kept.segments.map((s) => s.text)).toEqual([lines[1], lines[0], ...lines.slice(2)]);
+  });
 
   test("a kind this server cannot run fails at once and says so", async () => {
     const api = testApi();

@@ -1,13 +1,14 @@
 // Site text in the stores: a suggestion accepted or dismissed, saved and undone like any edit;
 // lines the book does not read left out of who-speaks counts; and the "read the notes aloud"
-// setting. Each test writes the chapter's script straight into this file's own server.
+// setting; and the marks a run leaves on lines it mended. Each test writes the chapter's script
+// straight into this file's own server.
 import { beforeAll, beforeEach, expect, test } from "bun:test";
 
 import { useCastStore } from "@/stores/cast";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
-import type { Book, Segment } from "@/types";
+import type { Book, Mend, Segment } from "@/types";
 import { readScript, writeScript } from "~/db/script";
 import { backendServer } from "./support/backendServer";
 import { openDemoBook } from "./support/demoBook";
@@ -47,6 +48,7 @@ async function open(...patches: Partial<Segment>[]): Promise<Segment[]> {
   return segs;
 }
 const saved = (id: number) => readScript(api.db, BOOK, 1).find((s) => s.id === id)!;
+const WORDS: Mend = { kinds: ["words"], detail: "put back “and”" };
 
 beforeEach(() => {
   undos = [];
@@ -92,7 +94,11 @@ test("dismissing a suggestion drops only the suggestion — the line is not an e
 
 test("a line of site text and a note the book does not read are no one's lines, and the server counts them the same way", async () => {
   // a thought is spoken, and counted apart too
-  const segs = await open({ type: "watermark" }, { type: "note" }, { type: "thought" });
+  const segs = await open(
+    { type: "watermark", mended: { kinds: ["moved"] } },
+    { type: "note" },
+    { type: "thought", mended: WORDS },
+  );
   const spoken = segs.slice(2);
   const bySpeaker: Record<string, number> = {};
   for (const s of spoken) bySpeaker[s.speaker] = (bySpeaker[s.speaker] ?? 0) + 1;
@@ -111,7 +117,8 @@ test("a line of site text and a note the book does not read are no one's lines, 
     );
 
   const counts = scriptsStore.lineCountsOf(BOOK, 1);
-  expect(counts).toMatchObject({ total: spoken.length, skipped: 2 });
+  // a mended line counts whether it is read aloud or not
+  expect(counts).toMatchObject({ total: spoken.length, skipped: 2, mended: 2 });
   // the script's own count, and the count the server lists the chapter with, agree
   expect(counts).toEqual(libraryStore.chapter(BOOK, 1)!.lines!);
 });
@@ -149,4 +156,32 @@ test("reading the notes aloud is saved, read back, and makes a note a line again
   await libraryStore.loadBook(BOOK);
   expect(libraryStore.bookById(BOOK)!.readNotes ?? false).toBe(false);
   expect(libraryStore.chapter(BOOK, 1)!.lines).toMatchObject({ skipped: 2 });
+});
+
+test.each([
+  ["a text edit", (id: number) => scriptsStore.updateSegment(BOOK, 1, id, { text: "By hand." })],
+  ["a new speaker", (id: number) => scriptsStore.setSpeaker(BOOK, 1, id, "Someone Else")],
+  ["a split", (id: number) => scriptsStore.splitSegment(BOOK, 1, id, 1)],
+  ["a join", (id: number) => scriptsStore.joinSegments(BOOK, 1, id)],
+])("%s drops the mend mark of the line it changes", async (_, edit) => {
+  const [first] = await open({ mended: WORDS });
+  edit(first.id);
+  await scriptsStore._settled(BOOK, 1);
+  expect(readScript(api.db, BOOK, 1).filter((s) => s.mended)).toEqual([]);
+});
+
+test("“Looks right” drops every mark in the chapter without making an edit, and Undo brings them back", async () => {
+  const segs = await open({ mended: WORDS }, {}, { mended: { kinds: ["moved", "model"] } });
+  scriptsStore.dismissMended(BOOK, 1);
+  await scriptsStore._settled(BOOK, 1);
+  const after = readScript(api.db, BOOK, 1);
+  expect(after.filter((s) => s.mended)).toEqual([]);
+  expect(after.map((s) => [s.edited, s.audio.status])).toEqual(
+    segs.map((s) => [s.edited, s.audio.status]),
+  );
+
+  undos.at(-1)!();
+  await scriptsStore._settled(BOOK, 1);
+  expect(saved(segs[0].id).mended).toEqual(WORDS);
+  expect(saved(segs[2].id).mended).toEqual({ kinds: ["moved", "model"] });
 });

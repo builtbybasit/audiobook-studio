@@ -439,6 +439,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
               ? { expressions: l.tags.map((t) => scriptedAnnotation(t, ++annotation)) }
               : {}),
             ...(effects.length ? { effects } : {}),
+            ...(l.mended ? { mended: l.mended } : {}),
             audio: { status: "none", endpoint: null, ms: 0, duration: 0 },
           };
         });

@@ -19,6 +19,7 @@ import type {
   Segment,
   SegmentFlag,
   SegmentType,
+  Mend,
   SiteCheck,
   SpeechCharge,
   SplitMode,
@@ -53,6 +54,8 @@ export const segments = sqliteTable(
     edited: integer("edited", { mode: "boolean" }),
     /** the site-text detector's suggested type, until a person decides */
     siteCheck: text("site_check", { mode: "json" }).$type<SiteCheck>(),
+    /** how the run mended the model's line, until a person edits it or says it looks right */
+    mended: text("mended", { mode: "json" }).$type<Mend>(),
     /** seconds of silence after, overriding the book's pacing; 0 = run straight on */
     pause: real("pause"),
     /** the source whitespace after this line, when not a single space */

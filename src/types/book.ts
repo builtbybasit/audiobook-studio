@@ -120,6 +120,8 @@ export interface LineCounts {
   failed: number;
   /** lines that are not read aloud — site text, and notes unless the book reads them */
   skipped: number;
+  /** lines the run mended (`Segment.mended`), read aloud or not; absent means none */
+  mended?: number;
 }
 
 export interface Volume {

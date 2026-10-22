@@ -21,6 +21,16 @@ export interface SiteCheck {
   why: string;
 }
 
+/** moved: put back in the book's order; words: words copied in from the book; model: a repair's */
+export type MendKind = "moved" | "words" | "model";
+
+/** How a scripting run changed this line after the word check refused the model's answer. */
+export interface Mend {
+  kinds: MendKind[];
+  /** for "words", in a few words: put back “…”, took out “…” */
+  detail?: string;
+}
+
 export type AudioStatus = "none" | "queued" | "generating" | "done" | "failed" | "stale";
 
 /** One piece of a segment that had to be split to fit an endpoint's limit. */
@@ -169,6 +179,8 @@ export interface Segment {
   edited?: boolean;
   /** the site-text detector disagrees with this line's type; see `SiteCheck` */
   siteCheck?: SiteCheck;
+  /** changed by the run, not the model, until a person edits the line or says it looks right */
+  mended?: Mend;
   /** the user flagged the *audio* */
   flag?: SegmentFlag;
   /** seconds of silence after this line, overriding the book's pacing; 0 = run straight on */

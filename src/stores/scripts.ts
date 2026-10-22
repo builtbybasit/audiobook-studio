@@ -23,6 +23,7 @@ import type {
   BulkSkip,
   BulkTarget,
   LineCounts,
+  Mend,
   NarrationStatus,
   RevisedLines,
   ScriptDiff,
@@ -77,6 +78,13 @@ interface ScriptsState {
   /** set while a batch drives the per-line actions, so it writes each chapter once */
   _silent: boolean;
 }
+
+/** A person changed the line: it is theirs now, so the run's mend mark goes. */
+export function markEdited(s: Segment): void {
+  s.edited = true;
+  delete s.mended;
+}
+
 export const useScriptsStore = defineStore("scripts", {
   state: (): ScriptsState => ({
     segments: {},
@@ -104,7 +112,9 @@ export const useScriptsStore = defineStore("scripts", {
         if (!segs) return libraryStore.chapter(bookId, chId)?.lines;
         const book = libraryStore.bookById(bookId);
         const counts: LineCounts = { total: 0, done: 0, generating: 0, failed: 0, skipped: 0 };
+        let mended = 0;
         for (const seg of segs) {
+          if (seg.mended) mended++;
           if (!isSpoken(seg, book)) {
             counts.skipped++;
             continue;
@@ -114,6 +124,7 @@ export const useScriptsStore = defineStore("scripts", {
           else if (seg.audio.status === "generating") counts.generating++;
           else if (seg.audio.status === "failed") counts.failed++;
         }
+        if (mended) counts.mended = mended;
         return counts;
       };
     },
@@ -254,7 +265,7 @@ export const useScriptsStore = defineStore("scripts", {
       let n = 0;
       for (const s of targets) {
         s.direction = direction;
-        s.edited = true;
+        markEdited(s);
         this._markStale(bookId, chId, s);
         n++;
       }
@@ -280,7 +291,7 @@ export const useScriptsStore = defineStore("scripts", {
       if (patch.type && patch.type !== s.type) delete s.siteCheck;
       Object.assign(s, patch);
       if (changed) {
-        s.edited = true;
+        markEdited(s);
         this._markStale(bookId, chId, s);
         this._commit(bookId, chId);
       }
@@ -313,7 +324,7 @@ export const useScriptsStore = defineStore("scripts", {
         if (moves) s.speaker = speaker;
         if (retouches && effects.length) s.effects = [...effects];
         else if (retouches) delete s.effects;
-        s.edited = true;
+        markEdited(s);
         changed++;
       }
       if (changed && !this._silent) {
@@ -343,7 +354,7 @@ export const useScriptsStore = defineStore("scripts", {
       const crosses = isSiteText(was) !== isSiteText(type);
       const revert = crosses ? this._editSnapshot(bookId, chId) : null;
       s.type = type;
-      s.edited = true;
+      markEdited(s);
       delete s.siteCheck;
       if (isSiteText(type)) s.speaker = NARRATOR;
       // a clip without a recorded source is taken to read the line as it was
@@ -384,6 +395,25 @@ export const useScriptsStore = defineStore("scripts", {
         undo: revert,
       });
     },
+    /**
+     * "Looks right": drop the run's mend marks, of `ids` or the whole chapter. Nothing heard
+     * changes, so no edit mark or stale clip, and no new version.
+     */
+    dismissMended(bookId: string, chId: number, ids?: readonly number[]): void {
+      const uiStore = useUiStore();
+
+      const marked = this.segmentsOf(bookId, chId).filter(
+        (s) => s.mended && (!ids || ids.includes(s.id)),
+      );
+      if (!marked.length) return;
+      const revert = this._editSnapshot(bookId, chId);
+      for (const s of marked) delete s.mended;
+      this._commit(bookId, chId);
+      uiStore.toast(
+        marked.length === 1 ? `#${marked[0].id} looks right` : `${marked.length} lines look right`,
+        { description: "The auto-mended marks were dropped.", undo: revert },
+      );
+    },
     // ---------- bulk script corrections (Search) ----------
     // Goes through the per-segment actions above, so a batch leaves each line as a hand edit would.
     /** Apply `action` to the previewed lines, skipping ones already at the value. Returns the
@@ -415,6 +445,7 @@ export const useScriptsStore = defineStore("scripts", {
         direction: string;
         flag?: SegmentFlag;
         edited?: boolean;
+        mended?: Mend;
         status: AudioStatus;
         after: string;
       }[] = [];
@@ -445,6 +476,7 @@ export const useScriptsStore = defineStore("scripts", {
             direction: s.direction,
             flag: s.flag ? clone(s.flag) : undefined,
             edited: s.edited,
+            mended: s.mended ? clone(s.mended) : undefined,
             status: s.audio.status,
             after: "",
           };
@@ -495,6 +527,7 @@ export const useScriptsStore = defineStore("scripts", {
           else delete s.flag;
           if (w.edited) s.edited = true;
           else delete s.edited;
+          if (w.mended) s.mended = w.mended;
           s.audio.status = w.status;
         }
         if (touchesAudio) {
@@ -590,6 +623,7 @@ export const useScriptsStore = defineStore("scripts", {
         audio: { status: "none", endpoint: null, ms: 0, duration: 0 },
       };
       delete second.candidate;
+      delete second.mended;
       const tailStart = s.text.length - tail.length;
       second.expressions = (s.expressions ?? [])
         .filter((a) => a.at >= at)
@@ -604,7 +638,7 @@ export const useScriptsStore = defineStore("scripts", {
       delete second.fallbackRetrying;
       delete second.flag;
       s.text = head;
-      s.edited = true;
+      markEdited(s);
       delete s.candidate; // a retake of the line as it was says nothing about either half
       if (sep === " ") delete s.sep;
       else s.sep = sep;
@@ -648,7 +682,7 @@ export const useScriptsStore = defineStore("scripts", {
         })),
       ].map((x, i) => ({ ...x, annotationId: i + 1 }));
       a.text = `${head}${a.sep ?? " "}${tail}`;
-      a.edited = true;
+      markEdited(a);
       a.flag ??= b.flag;
       delete a.candidate; // neither half's retake is a take of the joined line
       // the pair now ends where b ended, so b's separator becomes a's

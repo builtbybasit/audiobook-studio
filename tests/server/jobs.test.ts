@@ -466,7 +466,7 @@ describe("failure", () => {
     expect(asks[1].prompt!.followUp).toBe(repairing ? "Fix it" : undefined);
   });
 
-  test("lines put back in the book's order keep the model's order in History", async () => {
+  test("lines put back in the book's order keep the model's order in History, and stay marked", async () => {
     const good = fakeScriptingProvider();
     const { api, id } = await shelved(
       testApi({
@@ -475,7 +475,10 @@ describe("failure", () => {
           script: async (input) => {
             const answer = await good.script(input);
             const modelOrder = answer.lines.map((_, k) => (k < 2 ? 1 - k : k));
-            return { ...answer, reordered: { modelOrder, moved: 1 } };
+            const lines = answer.lines.map((l, k) =>
+              k === 1 ? { ...l, mended: { kinds: ["moved" as const] } } : l,
+            );
+            return { ...answer, lines, reordered: { modelOrder, moved: 1 } };
           },
         },
       }),
@@ -487,6 +490,8 @@ describe("failure", () => {
     const kept = readHistory(api.db, id, 1).versions.at(-1)!;
     expect(kept.origin).toMatchObject({ kind: "scripted", moved: 1 });
     expect(kept.segments.map((s) => s.text)).toEqual([lines[1], lines[0], ...lines.slice(2)]);
+    expect(readScript(api.db, id, 1)[1].mended).toEqual({ kinds: ["moved"] });
+    expect((await chaptersOf(api, id))[0].lines?.mended).toBe(1);
   });
 
   test("a kind this server cannot run fails at once and says so", async () => {

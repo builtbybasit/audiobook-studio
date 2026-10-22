@@ -9,6 +9,7 @@ import type {
   Age,
   EndpointProbe,
   Gender,
+  MendKind,
   PromptTemplate,
   RenderedPrompt,
   SegmentType,
@@ -266,7 +267,7 @@ function patchWords<L extends ScriptedLine>(
     lines.flatMap((l) => wordsOf(l.text)),
   );
   if (!aligned) return null;
-  const edits: { line: number; from: number; to: number; text: string }[] = [];
+  const edits: { line: number; from: number; to: number; text: string; note: string }[] = [];
   let words = 0;
   for (const h of aligned.hunks) {
     const size = hunkSize(h);
@@ -284,11 +285,32 @@ function patchWords<L extends ScriptedLine>(
       const [lj, k1] = owner[h.end - 1];
       if (li !== lj) return null;
       const s = spans[li]!;
-      if (said) edits.push({ line: li, from: s[k0][0], to: s[k1][1], text: said });
+      const came = quoted(lines[li].text.slice(s[k0][0], s[k1][1]));
+      if (said)
+        edits.push({
+          line: li,
+          from: s[k0][0],
+          to: s[k1][1],
+          text: said,
+          note: `${quoted(said)} for ${came}`,
+        });
       // a space goes with the words taken out
-      else if (k0 > 0) edits.push({ line: li, from: s[k0 - 1][1], to: s[k1][1], text: "" });
+      else if (k0 > 0)
+        edits.push({
+          line: li,
+          from: s[k0 - 1][1],
+          to: s[k1][1],
+          text: "",
+          note: `took out ${came}`,
+        });
       else if (k1 + 1 < s.length)
-        edits.push({ line: li, from: s[k0][0], to: s[k1 + 1][0], text: "" });
+        edits.push({
+          line: li,
+          from: s[k0][0],
+          to: s[k1 + 1][0],
+          text: "",
+          note: `took out ${came}`,
+        });
       else return null;
     } else {
       const next = owner[h.at];
@@ -297,20 +319,34 @@ function patchWords<L extends ScriptedLine>(
       const [a, b] = [lines[prev[0]], lines[next[0]]];
       if (prev[0] !== next[0] && (a.speaker !== b.speaker || a.type !== b.type)) return null;
       const at = spans[next[0]]![next[1]][0];
-      edits.push({ line: next[0], from: at, to: at, text: `${said} ` });
+      edits.push({
+        line: next[0],
+        from: at,
+        to: at,
+        text: `${said} `,
+        note: `put back ${quoted(said)}`,
+      });
     }
     words += size;
   }
-  const out = lines.map((l) => ({ ...l }));
+  const out = [...lines];
   for (const e of edits.sort((x, y) => y.from - x.from)) {
     const l = out[e.line];
     const delta = e.text.length - (e.to - e.from);
-    l.text = l.text.slice(0, e.from) + e.text + l.text.slice(e.to);
-    if (l.tags?.length)
-      l.tags = l.tags.map((t) => ({
-        ...t,
-        at: t.at <= e.from ? t.at : t.at >= e.to ? t.at + delta : e.from,
-      }));
+    out[e.line] = withMend(
+      {
+        ...l,
+        text: l.text.slice(0, e.from) + e.text + l.text.slice(e.to),
+        ...(l.tags?.length && {
+          tags: l.tags.map((t) => ({
+            ...t,
+            at: t.at <= e.from ? t.at : t.at >= e.to ? t.at + delta : e.from,
+          })),
+        }),
+      },
+      "words",
+      e.note,
+    );
   }
   return out.some((l) => !wordsOf(l.text).length) ? null : { lines: out, words };
 }
@@ -338,7 +374,8 @@ export function mendScript<L extends ScriptedLine>(
     return last;
   });
   const order = lines.map((_, i) => i).sort((a, b) => place[a] - place[b]);
-  const sorted = order.map((i) => lines[i]);
+  const kept = risingRun(order);
+  const sorted = order.map((i) => (kept.has(i) ? lines[i] : withMend(lines[i], "moved")));
   // the slips `fidelity` allows are left as the model wrote them unless the rest is not enough
   const patched = [RUN + 1, 1]
     .map((least) => patchWords(input, want, sorted, least))
@@ -349,25 +386,37 @@ export function mendScript<L extends ScriptedLine>(
   return {
     lines: patched.lines,
     modelOrder,
-    moved: lines.length - longestRising(order),
+    moved: lines.length - kept.size,
     patched: patched.words,
   };
 }
 
-/** The length of the longest rising run in `xs`, not necessarily contiguous. */
-function longestRising(xs: readonly number[]): number {
+/** The values of a longest rising run in `xs`, not necessarily contiguous: what kept its order. */
+function risingRun(xs: readonly number[]): Set<number> {
+  // `tails[n]`: where in `xs` the smallest end of a run n + 1 long is
   const tails: number[] = [];
-  for (const x of xs) {
+  const before: number[] = [];
+  xs.forEach((x, i) => {
     let lo = 0;
     let hi = tails.length;
     while (lo < hi) {
       const mid = (lo + hi) >> 1;
-      if (tails[mid] < x) lo = mid + 1;
+      if (xs[tails[mid]] < x) lo = mid + 1;
       else hi = mid;
     }
-    tails[lo] = x;
-  }
-  return tails.length;
+    before[i] = lo > 0 ? tails[lo - 1] : -1;
+    tails[lo] = i;
+  });
+  const kept = new Set<number>();
+  for (let i = tails.at(-1) ?? -1; i >= 0; i = before[i]) kept.add(xs[i]);
+  return kept;
+}
+
+/** `line` marked as mended by `kind`, keeping any earlier mark. */
+function withMend<L extends ScriptedLine>(line: L, kind: MendKind, detail?: string): L {
+  const kinds = [...new Set([...(line.mended?.kinds ?? []), kind])];
+  const said = [line.mended?.detail, detail].filter(Boolean).join("; ");
+  return { ...line, mended: { kinds, ...(said ? { detail: said } : {}) } };
 }
 
 /** The most of an answer a repair asks back before a whole new answer is the better buy. */
@@ -465,7 +514,7 @@ function repaired(who: string, content: string, text: string, repair: ScriptRepa
     if (!got)
       throw new BadAnswer(`${who} did not send back lines ${r.from}–${r.to} to fix`, 200, false);
     const fixed = answerOf(JSON.stringify({ lines: got.lines }), who, text).lines;
-    lines.splice(r.from - 1, r.to - r.from + 1, ...fixed);
+    lines.splice(r.from - 1, r.to - r.from + 1, ...fixed.map((l) => withMend(l, "model")));
   }
   return { ...repair.answer, lines };
 }

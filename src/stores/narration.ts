@@ -21,7 +21,7 @@ import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
-import { useScriptsStore } from "@/stores/scripts";
+import { markEdited, useScriptsStore } from "@/stores/scripts";
 import { billingOf, speechPricing } from "@/lib/endpoints";
 import { plannedSpeechUnits } from "@/lib/narrationCost";
 import {
@@ -479,7 +479,7 @@ export const useNarrationStore = defineStore("narration", {
       const undo = scriptsStore._editSnapshot(bookId, chId);
       const id = Math.max(0, ...(s.expressions ?? []).map((a) => a.annotationId)) + 1;
       (s.expressions ??= []).push(make(id));
-      s.edited = true;
+      markEdited(s);
       scriptsStore._markStale(bookId, chId, s);
       scriptsStore._commit(bookId, chId);
       return { id, undo };
@@ -506,7 +506,7 @@ export const useNarrationStore = defineStore("narration", {
       const undo = scriptsStore._editSnapshot(bookId, chId);
       if (patch) Object.assign(a, patch, { annotationId });
       else s.expressions = s.expressions!.filter((a) => a.annotationId !== annotationId);
-      s.edited = true;
+      markEdited(s);
       scriptsStore._markStale(bookId, chId, s);
       scriptsStore._commit(bookId, chId);
       uiStore.toast(patch ? "Expression updated" : "Expression removed", { undo });

@@ -11,6 +11,7 @@ import { chapterState, selectionSummary } from "@/lib/runPlan";
 import { idSetParam, textParam, useQueryParam } from "@/composables/useQueryParam";
 import { applySpan, useRangeSelect } from "@/composables/useRangeSelect";
 import { clockDuration } from "@/lib/time";
+import { plural } from "@/lib/contents";
 import ChapterPeek from "@/components/ChapterPeek.vue";
 import { dotClass } from "@/components/statusDot";
 import { UiCheckbox, UiSelect } from "@/ui";
@@ -97,6 +98,12 @@ function tagOf(c: Chapter, status: string): Tag | null {
   if (props.stage === "scripting" && c.scripting === "done") {
     // every script line, read aloud or not; blank until the count is read
     const lines = scriptsStore.lineCountsOf(props.bookId, c.id);
+    if (lines?.mended)
+      return {
+        text: "mended",
+        class: "text-violet-500",
+        title: `${plural(lines.mended, "line")} auto-mended; check them in the reader`,
+      };
     const skipped = lines?.skipped ?? 0;
     return {
       text: lines ? String(lines.total + skipped) : "",

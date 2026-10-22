@@ -33,8 +33,8 @@ import { usePlayer } from "@/composables/usePlayer";
 import { enumParam, idParam, useQueryParam } from "@/composables/useQueryParam";
 import { chapterQueue, chapterQueueId, clipOf, segmentStart } from "@/composables/useChapterQueue";
 import {
-  ArrowDownUp as ReorderIcon,
   AudioLines as NarrationIcon,
+  Check as LooksRightIcon,
   ChevronUp as ChevronUpIcon,
   ChevronDown as ChevronDownIcon,
   Maximize2 as FocusIcon,
@@ -46,12 +46,13 @@ import {
   RotateCcw as RetryIcon,
   Scissors as SplitIcon,
   ScanSearch as SiteCheckIcon,
+  Sparkles as MendedIcon,
   TriangleAlert as WarnIcon,
   Users as CastIcon,
 } from "@lucide/vue";
-import { UiSelect, UiToggleGroup } from "@/ui";
+import { UiHint, UiSelect, UiToggleGroup } from "@/ui";
 import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
-import type { Segment } from "@/types";
+import type { MendKind, Segment } from "@/types";
 
 const props = withDefaults(
   defineProps<{ bookId: string; chapterId: number; focusMode?: boolean }>(),
@@ -85,7 +86,7 @@ const volume = computed(() => libraryStore.volumeOf(props.bookId, props.chapterI
 const multiVolume = computed(() => libraryStore.volumesOf(props.bookId).length > 1);
 
 /** In the URL so another page can link to "Site text". Hidden marked lines are still counted. */
-const mode = useQueryParam("lines", enumParam(["all", "dialogue", "site"], "all"));
+const mode = useQueryParam("lines", enumParam(["all", "dialogue", "site", "mended"], "all"));
 const warnOpen = ref(false); // the unverified-chunk banner reads as one line until asked
 const speaker = ref(""); // '' = everyone
 /** the line whose editor is open */
@@ -101,7 +102,11 @@ const rows = computed(() =>
   segments.value.filter(
     (s) =>
       (mode.value === "all" ||
-        (mode.value === "dialogue" ? s.type === "dialogue" || s.type === "thought" : inSite(s))) &&
+        (mode.value === "dialogue"
+          ? s.type === "dialogue" || s.type === "thought"
+          : mode.value === "mended"
+            ? !!s.mended
+            : inSite(s))) &&
       (!speaker.value || s.speaker === speaker.value),
   ),
 );
@@ -139,6 +144,35 @@ function nextNew() {
 }
 const unresolved = computed(() => inChapter.value.filter((c) => c.isNew).length);
 const fallbacks = computed(() => segments.value.filter((s) => s.fallback));
+const mended = computed(() => segments.value.filter((s) => s.mended));
+const MEND_LABEL: Record<MendKind, string> = {
+  moved: "moved",
+  words: "patched from the book",
+  model: "fixed by the model",
+};
+const CHIP_LABEL: Record<MendKind, string> = {
+  moved: "moved",
+  words: "words from book",
+  model: "fixed by model",
+};
+/** "1 moved · 2 words from the book"; a line mended two ways counts in both */
+const mendSummary = computed(() =>
+  (Object.keys(MEND_LABEL) as MendKind[])
+    .map((k) => [k, mended.value.filter((s) => s.mended!.kinds.includes(k)).length] as const)
+    .filter(([, n]) => n)
+    .map(([k, n]) => `${n} ${MEND_LABEL[k]}`)
+    .join(" · "),
+);
+function looksRight() {
+  scriptsStore.dismissMended(props.bookId, props.chapterId);
+  if (mode.value === "mended") mode.value = "all";
+}
+const mendTip = (s: Segment, k: MendKind): string =>
+  k === "moved"
+    ? "Put back in the book's order; the model had it elsewhere"
+    : k === "words"
+      ? s.mended?.detail || "Words copied in from the book"
+      : "Sent back by the model when asked to fix just these lines";
 
 const { continuing, announce } = useBurstToast();
 
@@ -423,6 +457,9 @@ watch(open, (v) => {
               ...(siteRows || mode === 'site'
                 ? [{ value: 'site', label: `Site text ${siteRows}` }]
                 : []),
+              ...(mended.length || mode === 'mended'
+                ? [{ value: 'mended', label: `Mended ${mended.length}` }]
+                : []),
             ]"
           />
           <UiSelect v-model="speaker" :options="filterOpts" size="xs" class="w-40" />
@@ -452,19 +489,36 @@ watch(open, (v) => {
         @jump="jumpFromHistory"
       />
       <div
-        v-if="!history && modelOrder"
-        class="flex items-center gap-3 border-b border-violet-300 bg-violet-50 px-6 py-1.5 text-xs dark:border-violet-500/40 dark:bg-violet-500/10"
+        v-if="!history && mended.length"
+        class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-violet-300 bg-violet-50 px-6 py-1.5 text-xs dark:border-violet-500/40 dark:bg-violet-500/10"
       >
-        <ReorderIcon class="icon-sm shrink-0 text-violet-500" />
-        <span class="min-w-0 flex-1"
-          ><b>{{ plural(modelOrder.moved, "line") }} put back in the book's order.</b></span
-        >
-        <button class="btn-ghost btn-xs" @click="compareModelOrder">Compare</button>
+        <MendedIcon class="icon-sm shrink-0 text-violet-500" />
+        <!-- wide enough to read; the buttons wrap below it in a narrow reader -->
+        <span class="min-w-60 flex-1"
+          ><b>{{ plural(mended.length, "line") }} auto-mended</b> — {{ mendSummary }}
+          <UiHint
+            class="ml-1"
+            label="auto-mended lines"
+            text="The run changed these lines so the script matches the book. Moved: back in the book's order. Words from book: a few patched in from the book. Fixed by the model: sent back when asked. Editing a line drops its mark."
+        /></span>
+        <button class="btn-ghost btn-xs" @click="((mode = 'mended'), (speaker = ''))">
+          Show them
+        </button>
+        <template v-if="modelOrder">
+          <button class="btn-ghost btn-xs" @click="compareModelOrder">Compare</button>
+          <button
+            class="btn-ghost btn-xs"
+            @click="historyStore.restore(bookId, chapterId, modelOrder.id)"
+          >
+            Use the model's order
+          </button>
+        </template>
         <button
           class="btn-ghost btn-xs"
-          @click="historyStore.restore(bookId, chapterId, modelOrder.id)"
+          data-tip="Drop the marks; the lines stay as they are"
+          @click="looksRight"
         >
-          Use the model's order
+          <LooksRightIcon class="icon-sm" /> Looks right
         </button>
       </div>
 
@@ -795,6 +849,29 @@ watch(open, (v) => {
                 @click.stop="scriptsStore.dismissSiteCheck(bookId, chapterId, s.id)"
               >
                 Dismiss
+              </button>
+            </div>
+            <!-- the run changed this line to pass the word check -->
+            <div
+              v-if="s.mended && !s.fallback"
+              class="-mt-2 mb-3 flex flex-wrap items-center gap-1.5 font-sans text-[11px] leading-normal"
+              role="note"
+            >
+              <MendedIcon class="icon-sm shrink-0 text-violet-500" />
+              <span
+                v-for="k in s.mended.kinds"
+                :key="k"
+                class="rounded bg-violet-500/10 px-1.5 py-0.5 font-semibold leading-none text-violet-700 dark:text-violet-300"
+                :data-tip="mendTip(s, k)"
+                >{{ CHIP_LABEL[k] }}</span
+              >
+              <button
+                class="icon-btn"
+                :aria-label="`Line ${s.id} looks right`"
+                data-tip="Looks right — drop the mark"
+                @click.stop="scriptsStore.dismissMended(bookId, chapterId, [s.id])"
+              >
+                <LooksRightIcon class="icon-sm" />
               </button>
             </div>
             <SegmentEditor

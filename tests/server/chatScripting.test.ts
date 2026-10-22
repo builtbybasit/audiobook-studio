@@ -12,7 +12,7 @@ import {
   NO_PROFILE,
 } from "~/providers/chatScripting";
 import { ProviderError } from "~/providers/http";
-import type { ScriptInput, ScriptTarget } from "~/providers/scripting";
+import type { ScriptedLine, ScriptInput, ScriptTarget } from "~/providers/scripting";
 import type { SentScript } from "~/providers/sent";
 
 const TEXT = "The door opened. “Come in,” said Mara softly.";
@@ -145,7 +145,11 @@ describe("the fidelity check", () => {
 });
 
 describe("mending an answer that fails the word check", () => {
-  const narration = (text: string) => ({ type: "narration" as const, speaker: "Narrator", text });
+  const narration = (text: string): ScriptedLine => ({
+    type: "narration",
+    speaker: "Narrator",
+    text,
+  });
   const mended = (book: string, texts: string[]) => mendScript(book, texts.map(narration));
 
   test("moves whole lines back and says where the model had them", () => {

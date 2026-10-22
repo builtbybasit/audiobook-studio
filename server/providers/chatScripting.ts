@@ -145,6 +145,76 @@ export function wordFidelity(want: string[], got: string[]): Fidelity {
   };
 }
 
+/** Room for a moved passage of a few paragraphs on top of what `fidelity` allows. */
+const MOVE_EDITS = 1000;
+
+/**
+ * `lines` in the book's order, when the model moved whole lines and changed nothing else past
+ * what `fidelity` allows; else null. The model's k-th line ends up at `modelOrder[k]`.
+ */
+export function bookOrder<L extends { text: string }>(
+  input: string,
+  lines: readonly L[],
+): { lines: L[]; modelOrder: number[]; moved: number } | null {
+  const want = wordsOf(input);
+  const per = lines.map((l) => wordsOf(l.text));
+  const parts = diffArrays(want, per.flat(), {
+    maxEditLength: 2 * allowedEdits(want.length) + MOVE_EDITS,
+  });
+  if (!parts) return null;
+  // the book's index of each answer word that has one; a moved run takes the place it left
+  const at: (number | undefined)[] = [];
+  const left: { from: number; words: string }[] = [];
+  const came: { from: number; count: number; words: string }[] = [];
+  let w = 0;
+  let g = 0;
+  for (const p of parts) {
+    if (p.removed) left.push({ from: w, words: p.value.join(" ") });
+    else if (p.added) came.push({ from: g, count: p.count, words: p.value.join(" ") });
+    else for (let k = 0; k < p.count; k++) at[g + k] = w + k;
+    if (!p.added) w += p.count;
+    if (!p.removed) g += p.count;
+  }
+  for (const c of came) {
+    const r = left.findIndex((l) => l.words === c.words);
+    if (r < 0) continue;
+    for (let k = 0; k < c.count; k++) at[c.from + k] = left[r].from + k;
+    left.splice(r, 1);
+  }
+  // a line goes where its first placed word is; one with none stays after the line before it
+  let start = 0;
+  let last = -1;
+  const place = per.map((words) => {
+    const k = words.findIndex((_, j) => at[start + j] !== undefined);
+    if (k >= 0) last = at[start + k]!;
+    start += words.length;
+    return last;
+  });
+  const order = lines.map((_, i) => i).sort((a, b) => place[a] - place[b]);
+  if (order.every((i, k) => i === k)) return null;
+  const sorted = order.map((i) => lines[i]);
+  if (!fidelity(input, sorted).ok) return null;
+  const modelOrder: number[] = [];
+  order.forEach((i, k) => (modelOrder[i] = k));
+  return { lines: sorted, modelOrder, moved: lines.length - longestRising(order) };
+}
+
+/** The length of the longest rising run in `xs`, not necessarily contiguous. */
+function longestRising(xs: readonly number[]): number {
+  const tails: number[] = [];
+  for (const x of xs) {
+    let lo = 0;
+    let hi = tails.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (tails[mid] < x) lo = mid + 1;
+      else hi = mid;
+    }
+    tails[lo] = x;
+  }
+  return tails.length;
+}
+
 const excerpt = (words: readonly string[]): string =>
   words.length > EXAMPLE_WORDS ? `${words.slice(0, EXAMPLE_WORDS).join(" ")}…` : words.join(" ");
 
@@ -441,6 +511,13 @@ export function checkedScript(
     throw new BadAnswer(`${who} answered with a script of no lines`, status, false);
   const check = fidelity(text, lines);
   if (!check.ok && !lenient) {
+    const fixed = bookOrder(text, lines);
+    if (fixed)
+      return {
+        ...answer,
+        lines: fixed.lines,
+        reordered: { modelOrder: fixed.modelOrder, moved: fixed.moved },
+      };
     const lost = check.missing - check.moved;
     const made = check.added - check.moved;
     const parts = [

@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { SegmentType } from "@/types";
 import {
+  bookOrder,
   chatScriptingProvider,
   checkedScript,
   fidelity,
@@ -139,6 +140,27 @@ describe("the fidelity check", () => {
     expect(() => checkedScript("Model", answer, prose.join(" "), 200, false)).toThrow(
       "it moved 12 words out of the book's order (moved e.g.",
     );
+  });
+});
+
+describe("putting lines back in the book's order", () => {
+  const book = "One went first. Two came next. Three ended it.";
+  const line = (text: string) => ({ text });
+  test("moves whole lines back and says where the model had them", () => {
+    const answer = [line("Two came next."), line("One went first."), line("Three ended it.")];
+    expect(bookOrder(book, answer)).toEqual({
+      lines: [answer[1], answer[0], answer[2]],
+      modelOrder: [1, 0, 2],
+      moved: 1,
+    });
+  });
+
+  test.each([
+    ["in order already", ["One went first.", "Two came next.", "Three ended it."]],
+    ["moved inside a line", ["One went first. Three ended it.", "Two came next."]],
+    ["missing a sentence", ["Two came next.", "One went first."]],
+  ])("leaves an answer %s to the word check", (_, texts) => {
+    expect(bookOrder(book, texts.map(line))).toBeNull();
   });
 });
 

@@ -13,6 +13,8 @@ export type VersionOrigin =
       profile?: string;
       model?: string;
       again?: boolean;
+      /** the model's own order, kept when this many lines were put back in the book's */
+      moved?: number;
       /** absent on older versions */
       prompt?: PromptOrigin;
     }

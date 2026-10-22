@@ -58,6 +58,8 @@ export interface ScriptAnswer {
   recap?: string;
   /** dictionary terms the model suggests */
   pronounce?: { term: string; say: string }[];
+  /** lines the model had out of the book's order, put back; its k-th line is `lines[modelOrder[k]]` */
+  reordered?: { modelOrder: number[]; moved: number };
 }
 
 export interface ScriptingProvider {

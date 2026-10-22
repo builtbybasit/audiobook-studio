@@ -138,10 +138,12 @@ export const sessionOpen = (head: HistoryHead, now: number): boolean =>
 
 export function originLabel(origin: VersionOrigin): string {
   switch (origin.kind) {
-    case "scripted":
-      return origin.profile
+    case "scripted": {
+      const label = origin.profile
         ? `${origin.again ? "Re-scripted" : "Scripted"} with ${origin.profile}`
         : "Scripted";
+      return origin.moved ? `${label}, in the model's order` : label;
+    }
     case "edited":
       return `${origin.edits} manual edit${origin.edits === 1 ? "" : "s"}`;
     case "bulk":

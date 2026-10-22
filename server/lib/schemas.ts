@@ -228,6 +228,7 @@ export const VersionOriginSchema = v.variant("kind", [
     profile: v.optional(v.string()),
     model: v.optional(v.string()),
     again: v.optional(v.boolean()),
+    moved: v.optional(v.number()),
     prompt: v.optional(
       v.object({
         from: v.picklist(["built-in", "library", "endpoint", "book"]),

@@ -8,6 +8,7 @@ import type { Book, Chapter, Job, Profile, Segment } from "@/types";
 import { makeCredentials } from "~/demo/seed/fixtures/credentials";
 import { scriptParts } from "@/lib/scripting";
 import * as queue from "~/db/jobs";
+import { readHistory } from "~/db/history";
 import { readScript, writeScript } from "~/db/script";
 import { jobs } from "~/db/schema";
 import { fakeScriptingProvider, sleep } from "~/providers/fake";
@@ -445,6 +446,29 @@ describe("failure", () => {
     await api.runner.idle();
     expect((await jobById(api, body.jobs[0].id)).status).toBe("done");
     expect(readScript(api.db, id, 1).length).toBeGreaterThan(0);
+  });
+
+  test("lines put back in the book's order keep the model's order in History", async () => {
+    const good = fakeScriptingProvider();
+    const { api, id } = await shelved(
+      testApi({
+        scripting: {
+          name: "Shuffler",
+          script: async (input) => {
+            const answer = await good.script(input);
+            const modelOrder = answer.lines.map((_, k) => (k < 2 ? 1 - k : k));
+            return { ...answer, reordered: { modelOrder, moved: 1 } };
+          },
+        },
+      }),
+    );
+    const { body } = await script(api, id, [1]);
+    await api.runner.idle();
+    expect((await jobById(api, body.jobs[0].id)).status).toBe("done");
+    const lines = readScript(api.db, id, 1).map((s) => s.text);
+    const kept = readHistory(api.db, id, 1).versions.at(-1)!;
+    expect(kept.origin).toMatchObject({ kind: "scripted", moved: 1 });
+    expect(kept.segments.map((s) => s.text)).toEqual([lines[1], lines[0], ...lines.slice(2)]);
   });
 
   test("a kind this server cannot run fails at once and says so", async () => {

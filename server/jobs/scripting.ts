@@ -411,16 +411,25 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
             audio: { status: "none", endpoint: null, ms: 0, duration: 0 },
           };
         });
+      // the model's own order where lines were put back in the book's, kept for History
+      let base = 0;
+      const modelOrder = answers.flatMap((a) => {
+        const at = base;
+        base += a.lines.length;
+        return (a.reordered?.modelOrder ?? a.lines.map((_, k) => k)).map((k) => k + at);
+      });
+      const moved = answers.reduce((n, a) => n + (a.reordered?.moved ?? 0), 0);
       const leftOff =
         answers
           .map((a) => a.recap)
           .filter(Boolean)
           .at(-1) ?? null;
-      const origin = (again: boolean): VersionOrigin => ({
+      const origin = (again: boolean, moved = 0): VersionOrigin => ({
         kind: "scripted",
         profile: queued?.profile.name ?? provider.name,
         ...(queued ? { model: provider.callsProfile ? queued.profile.model : provider.name } : {}),
         again,
+        ...(moved ? { moved } : {}),
         ...(queued?.prompt ? { prompt: queued.prompt.origin } : {}),
       });
       /** Speakers matched against the cast as it stands now, so a merge during the run holds. */
@@ -455,6 +464,16 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
             previous,
             segs,
           );
+          const asModel =
+            moved && segs.length === modelOrder.length
+              ? keepVersion(
+                  tx,
+                  at.bookId,
+                  at.id,
+                  origin(previous.length > 0, moved),
+                  modelOrder.map((k) => segs[k]),
+                )
+              : null;
           const added = ensureSpeakers(
             tx,
             at.bookId,
@@ -493,6 +512,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
             ...(suggested.length ? { termsSuggested: suggested.join(", ") } : {}),
             ...(leftOff ? { recap: leftOff } : {}),
             ...(version != null ? { preserved: `v${version}` } : {}),
+            ...(asModel != null ? { putBack: moved, modelOrder: `v${asModel}` } : {}),
             ...(at.id !== job.chapterId ? { chapterNow: at.id } : {}),
           });
         });

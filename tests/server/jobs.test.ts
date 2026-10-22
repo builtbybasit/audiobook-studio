@@ -463,7 +463,7 @@ describe("failure", () => {
     expect((await jobById(api, body.jobs[0].id)).status).toBe("done");
     expect(readScript(api.db, id, 1).length).toBeGreaterThan(0);
     expect(asks[1].repair).toBe(repairing ? error.repair : undefined);
-    expect(asks[1].prompt!.user.endsWith("Fix it")).toBe(repairing);
+    expect(asks[1].prompt!.followUp).toBe(repairing ? "Fix it" : undefined);
   });
 
   test("lines put back in the book's order keep the model's order in History", async () => {

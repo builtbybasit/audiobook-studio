@@ -242,6 +242,15 @@ describe("a repair", () => {
 });
 
 describe("a request", () => {
+  test("a follow-up is a second text part of the user message, so the first is cached", async () => {
+    const { sent, provider } = gateway(() => completion(fenced(LINES)));
+    await provider.script(input({ prompt: { system: "S", user: "U", followUp: "F" } }));
+    expect((sent[0].body.messages as { content: unknown }[])[1].content).toEqual([
+      { type: "text", text: "U" },
+      { type: "text", text: "F" },
+    ]);
+  });
+
   test("goes to /chat/completions with the model, the key and the output cap, and the fenced answer is read", async () => {
     const { sent, provider } = gateway(() => completion(fenced(LINES)));
     const seen: [number, number][] = [];

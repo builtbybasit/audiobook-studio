@@ -154,15 +154,18 @@ export function invocation(
         join(dir, ANSWER_FILE),
         "-",
       ],
-      stdin: prompt.user,
+      stdin: prompt.followUp ? `${prompt.user}\n\n${prompt.followUp}` : prompt.user,
       files: { [SYSTEM_FILE]: prompt.system, [SCHEMA_FILE]: JSON.stringify(ANSWER_SCHEMA) },
     };
+  // a follow-up goes as a second content block, which only stream-json input can carry
+  const blocks = prompt.followUp
+    ? ["--input-format", "stream-json", "--output-format", "stream-json", "--verbose"]
+    : ["--output-format", "json"];
   return {
     argv: [
       program,
       "--print",
-      "--output-format",
-      "json",
+      ...blocks,
       "--model",
       target.model,
       ...(effort ? ["--effort", effort] : []),
@@ -179,7 +182,18 @@ export function invocation(
       "--safe-mode",
       "--disable-slash-commands",
     ],
-    stdin: prompt.user,
+    stdin: prompt.followUp
+      ? JSON.stringify({
+          type: "user",
+          message: {
+            role: "user",
+            content: [
+              { type: "text", text: prompt.user },
+              { type: "text", text: prompt.followUp },
+            ],
+          },
+        }) + "\n"
+      : prompt.user,
     files: { [SYSTEM_FILE]: prompt.system },
   };
 }
@@ -371,7 +385,8 @@ const ClaudeResult = v.looseObject({
 function claudeOutcome(ran: Ran): Outcome {
   let read: v.SafeParseResult<typeof ClaudeResult> | null = null;
   try {
-    read = v.safeParse(ClaudeResult, JSON.parse(ran.stdout));
+    // stream-json ends with the result object that json prints alone
+    read = v.safeParse(ClaudeResult, JSON.parse(ran.stdout.trim().split("\n").at(-1) ?? ""));
   } catch {
     read = null;
   }

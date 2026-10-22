@@ -435,10 +435,10 @@ function repairFor(input: string, content: string, answer: ScriptAnswer): Script
   return { answer, content, ranges, note };
 }
 
-/** The prompt a repair is sent with: the one answered, then what to fix, so the start is cached. */
+/** The prompt answered, then what to fix in a block of its own, so the prompt is read from cache. */
 export const repairPrompt = (prompt: RenderedPrompt, repair: ScriptRepair): RenderedPrompt => ({
-  system: prompt.system,
-  user: `${prompt.user}\n\n${repair.note}`,
+  ...prompt,
+  followUp: repair.note,
 });
 
 const Ranges = v.object({
@@ -857,7 +857,15 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
       model: target.model,
       messages: [
         { role: "system", content: prompt.system },
-        { role: "user", content: prompt.user },
+        {
+          role: "user",
+          content: prompt.followUp
+            ? [
+                { type: "text", text: prompt.user },
+                { type: "text", text: prompt.followUp },
+              ]
+            : prompt.user,
+        },
       ],
       response_format: { type: "json_object" },
       ...(reasoning.omitTemperature ? {} : { temperature: 0.1 }),

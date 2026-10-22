@@ -76,6 +76,8 @@ export interface ResolvedPrompt extends PromptTemplate {
 export interface RenderedPrompt {
   system: string;
   user: string;
+  /** its own block after `user`: a cache is only read up to a block's end */
+  followUp?: string;
 }
 
 /** An LLM endpoint used for scripting (splitting prose into attributed segments). */

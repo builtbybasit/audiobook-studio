@@ -1,6 +1,6 @@
 // Cast rules shared by the seeded world, the cast store and the server's scripting job: new
 // speakers, the voice rule (`speakerVoice`), personas, and matching the model's names to the cast.
-import type { Age, Character, CharacterVoice, Gender, Voice, VoiceRef } from "@/types";
+import type { Age, Character, CharacterVoice, Gender, GenderSlot, Voice, VoiceRef } from "@/types";
 import { writtenWordsOf } from "@/lib/gaps";
 import type { PromptCastMember } from "@/lib/prompt";
 
@@ -65,14 +65,31 @@ export const narrator = (voice: Character["voice"] = null): Character => ({
   major: true,
 });
 
-export const characterSlot = (
-  cv: CharacterVoice,
-  gender: Gender,
-): "one" | "male" | "female" | "other" =>
-  cv.by === "one" ? "one" : gender === "m" ? "male" : gender === "f" ? "female" : "other";
+export const genderSlot = (gender: Gender): GenderSlot =>
+  gender === "m" ? "male" : gender === "f" ? "female" : "other";
 
-export function characterVoiceFor(cv: CharacterVoice | undefined, gender: Gender): VoiceRef | null {
-  return cv ? cv[characterSlot(cv, gender)] : null;
+/** Where a speaker's Character voice comes from: "one", their gender's, or that gender's for their age. */
+export type CharacterSlot = { slot: "one" | GenderSlot; age?: Age };
+
+export function characterSlot(cv: CharacterVoice, gender: Gender, age?: Age): CharacterSlot {
+  if (cv.by === "one") return { slot: "one" };
+  const slot = genderSlot(gender);
+  return age && cv.ages?.some((a) => a.slot === slot && a.age === age) ? { slot, age } : { slot };
+}
+
+export const slotVoice = (cv: CharacterVoice, { slot, age }: CharacterSlot): VoiceRef | null =>
+  age ? (cv.ages?.find((a) => a.slot === slot && a.age === age)?.voice ?? null) : cv[slot];
+
+/** "Character voice", "Character voice (female)", "Character voice (female, child)". */
+export const slotLabel = ({ slot, age }: CharacterSlot): string =>
+  slot === "one" ? "Character voice" : `Character voice (${age ? `${slot}, ${age}` : slot})`;
+
+export function characterVoiceFor(
+  cv: CharacterVoice | undefined,
+  gender: Gender,
+  age?: Age,
+): VoiceRef | null {
+  return cv ? slotVoice(cv, characterSlot(cv, gender, age)) : null;
 }
 
 export type VoiceSource = "own" | "character" | "narrator" | "persona";
@@ -113,8 +130,8 @@ export function personaRefusal(
 
 /**
  * The one voice rule: own voice (a linked persona too, so linking changes nothing heard); else a
- * linked persona's character's; else the book's Character voice for their gender (not for the
- * Narrator); else the Narrator's. A name not in the cast has unknown gender.
+ * linked persona's character's; else the book's Character voice for their gender and age (not for
+ * the Narrator); else the Narrator's. A name not in the cast has unknown gender and age.
  */
 export function speakerVoice(
   name: string,
@@ -129,13 +146,13 @@ export function speakerVoice(
 
 /** `speakerVoice` without the persona step. */
 function voiceOf(
-  c: Pick<Character, "name" | "gender" | "voice">,
+  c: Pick<Character, "name" | "gender" | "age" | "voice">,
   cast: CastLookup,
   cv: CharacterVoice | undefined,
 ): { ref: VoiceRef | null; from: VoiceSource } {
   if (c.voice) return { ref: c.voice, from: "own" };
   if (c.name !== NARRATOR) {
-    const ref = characterVoiceFor(cv, c.gender);
+    const ref = characterVoiceFor(cv, c.gender, c.age);
     if (ref) return { ref, from: "character" };
   }
   return { ref: cast.get(NARRATOR)?.voice ?? null, from: "narrator" };

@@ -10,6 +10,7 @@ import type {
   Book,
   ChapterScript,
   Character,
+  CharacterVoice,
   Effect,
   Endpoint,
   ScriptFileChapter,
@@ -28,7 +29,7 @@ import { sourceHash } from "~/script/transfer";
 import { keepSampleFiles } from "~/voices/ops";
 import { voiceFiles } from "~/voices/files";
 import { epubFile, story } from "../support/epub";
-import { jsonBody, speechEndpoint, testApi, voicedBook } from "../support/server";
+import { jsonBody, saveEndpoints, speechEndpoint, testApi, voicedBook } from "../support/server";
 
 describe("sourceHash", () => {
   const body = "The *ledger* lay open. “We are short again,” said Mara.";
@@ -369,8 +370,21 @@ describe("voice samples", () => {
 test("a round trip carries line effects, speakers' effects, recaps and the book's own settings", async () => {
   const api = testApi();
   const paragraphs = ["“We are short again,” said Mara.", ...story(2)];
+  const withBea = speechEndpoint({
+    voices: [...speechEndpoint().voices, { id: "bea", gender: "f", label: "Bea" }],
+  });
+  const characterVoice: CharacterVoice = {
+    by: "one",
+    one: "studio/ash",
+    male: null,
+    female: null,
+    other: null,
+  };
+  // one-voice mode keeps its age voices, so they travel too
+  const girl = { slot: "female", age: "child", voice: "studio/ash" } as const;
+  const oldMan = { slot: "male", age: "elderly", voice: "studio/bea" } as const;
   const id = await voicedBook(api, {
-    endpoints: [speechEndpoint()],
+    endpoints: [withBea],
     paragraphs,
     voiceOf: "studio/ash",
     chapters: ["One", "Two"],
@@ -405,7 +419,7 @@ test("a round trip carries line effects, speakers' effects, recaps and the book'
       pacing,
       readNotes: true,
       thoughts: "inner-voice",
-      characterVoice: { by: "one", one: "studio/ash", male: null, female: null, other: null },
+      characterVoice: { ...characterVoice, ages: [girl, oldMan] },
     }),
     method: "PATCH",
   });
@@ -413,8 +427,14 @@ test("a round trip carries line effects, speakers' effects, recaps and the book'
     await (await api.fetch(`/api/books/${id}/script-export`)).arrayBuffer(),
   );
 
-  // the install it lands on has no Phone, and a fresh copy of the book
+  // read back into the book it came from, its settings are no choice to offer
+  expect(
+    (await planScriptImport(api.db, id, { name: "Ledger.script.zip", bytes })).book,
+  ).toBeUndefined();
+
+  // the install it lands on has no Phone or Bea, and a fresh copy of the book
   await api.request(`/api/effects/${phone.id}`, { method: "DELETE" });
+  await saveEndpoints(api, [speechEndpoint()]);
   const copy = (
     await api.import<{ book: Book }>(
       await epubFile({ chapters: ["One", "Two"].map((title) => ({ title, paragraphs })) }),
@@ -436,15 +456,12 @@ test("a round trip carries line effects, speakers' effects, recaps and the book'
     pacing,
     readNotes: true,
     thoughts: "Inner voice",
-    characterVoice: { by: "one", one: "studio/ash", male: null, female: null, other: null },
+    characterVoice: { ...characterVoice, ages: [girl] },
+    unmatchedVoices: [{ slot: "male", age: "elderly" }],
   });
   expect(new Set(plan.book?.differ)).toEqual(
     new Set(["pacing", "readNotes", "thoughts", "characterVoice"]),
   );
-  // read back into the book it came from, its settings are no choice to offer
-  expect(
-    (await planScriptImport(api.db, id, { name: "Ledger.script.zip", bytes })).book,
-  ).toBeUndefined();
 
   // the recap lands with the script, where the next chapter's run reads it
   const recap = plan.chapters[0].recap;

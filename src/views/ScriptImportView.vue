@@ -172,7 +172,9 @@ const BOOK_KEYS: Record<keyof ScriptFileBook, string> = {
 const SLOTS = { one: "everyone", male: "men", female: "women", other: "everyone else" } as const;
 const bookDiffer = computed(() => (plan.value?.book?.differ ?? []).map((k) => BOOK_KEYS[k]));
 const unmatchedSlots = computed(() =>
-  (plan.value?.book?.file.unmatchedVoices ?? []).map((s) => SLOTS[s]),
+  (plan.value?.book?.file.unmatchedVoices ?? []).map(({ slot, age }) =>
+    age ? `${SLOTS[slot]} (${age})` : SLOTS[slot],
+  ),
 );
 
 const REFUSED: Record<RefusalReason, string> = {

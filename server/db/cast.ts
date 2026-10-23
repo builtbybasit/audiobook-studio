@@ -320,10 +320,17 @@ export function moveVoiceRefs(tx: Tx, from: VoiceRef, to: VoiceRef): void {
     .run();
   for (const b of tx.select({ id: books.id, cv: books.characterVoice }).from(books).all()) {
     if (!b.cv) continue;
-    const cv: CharacterVoice = { ...b.cv };
-    const slots = ["one", "male", "female", "other"] as const;
-    if (!slots.some((k) => cv[k] === from)) continue;
-    for (const k of slots) if (cv[k] === from) cv[k] = to;
+    const { one, male, female, other, ages = [] } = b.cv;
+    if (![one, male, female, other, ...ages.map((a) => a.voice)].includes(from)) continue;
+    const swap = (ref: VoiceRef | null) => (ref === from ? to : ref);
+    const cv: CharacterVoice = {
+      ...b.cv,
+      one: swap(one),
+      male: swap(male),
+      female: swap(female),
+      other: swap(other),
+    };
+    if (b.cv.ages) cv.ages = ages.map((a) => (a.voice === from ? { ...a, voice: to } : a));
     tx.update(books).set({ characterVoice: cv }).where(eq(books.id, b.id)).run();
   }
 }

@@ -222,6 +222,11 @@ function bookOf(book: Book, endpoints: readonly Endpoint[], effectName: EffectNa
       const hint = voiceHint(cv[slot], endpoints);
       if (hint) out.characterVoice[slot] = hint;
     }
+    const ages = (cv.ages ?? []).flatMap(({ slot, age, voice }) => {
+      const hint = voiceHint(voice, endpoints);
+      return hint ? [{ slot, age, voice: hint }] : [];
+    });
+    if (ages.length) out.characterVoice.ages = ages;
   }
   return out;
 }

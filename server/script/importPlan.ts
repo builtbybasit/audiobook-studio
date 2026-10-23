@@ -3,6 +3,7 @@
 // a chapter closely (`pairing.ts`); never on titles or numbers.
 // Reading the file is `scriptFile.ts`.
 import type {
+  AgeVoice,
   Book,
   Character,
   CharacterVoice,
@@ -174,8 +175,6 @@ function sameJson(a: unknown, b: unknown): boolean {
 
 // ---------- the book's settings ----------
 
-const VOICE_SLOTS = ["one", "male", "female", "other"] as const;
-
 /** `book.json` as this install can apply it, and which settings differ from the book's own. */
 function bookPlan(
   book: Book,
@@ -190,21 +189,32 @@ function bookPlan(
   if (file.thoughts) out.thoughts = file.thoughts;
   if (file.characterVoice) {
     const enabled = endpoints.filter((e) => e.enabled);
+    const here = (hint: VoiceHint) => hereOptions(hint, enabled)[0]?.ref;
+    const fileCv = file.characterVoice;
     const voice: CharacterVoice = {
-      by: file.characterVoice.by,
+      by: fileCv.by,
       one: null,
       male: null,
       female: null,
       other: null,
     };
-    const unmatched: (typeof VOICE_SLOTS)[number][] = [];
-    for (const slot of VOICE_SLOTS) {
-      const hint = file.characterVoice[slot];
+    const unmatched: NonNullable<ImportBookSettings["unmatchedVoices"]> = [];
+    for (const slot of ["one", "male", "female", "other"] as const) {
+      const hint = fileCv[slot];
       if (!hint) continue;
-      const ref = hereOptions(hint, enabled)[0]?.ref;
+      const ref = here(hint);
       if (ref) voice[slot] = ref;
-      else unmatched.push(slot);
+      else unmatched.push({ slot });
     }
+    const ages: AgeVoice[] = [];
+    for (const { slot, age, voice: hint } of fileCv.ages ?? []) {
+      // a hand-edited file's second voice for a pair would be refused on apply
+      if (ages.some((a) => a.slot === slot && a.age === age)) continue;
+      const ref = here(hint);
+      if (ref) ages.push({ slot, age, voice: ref });
+      else unmatched.push({ slot, age });
+    }
+    if (ages.length) voice.ages = ages;
     out.characterVoice = voice;
     if (unmatched.length) out.unmatchedVoices = unmatched;
   }

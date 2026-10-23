@@ -3,8 +3,11 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { createPinia, setActivePinia } from "pinia";
 import { narrator, newSpeaker, voiced } from "@/lib/cast";
+import { clone } from "@/lib/utils";
+import type { LibraryService } from "@/services/library";
 import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
+import { useExistingLinesStore } from "@/stores/existingLines";
 import { useLibraryStore } from "@/stores/library";
 import type { Book, Character, CharacterVoice, Endpoint, Gender } from "@/types";
 
@@ -85,6 +88,15 @@ describe("routing issues", () => {
     });
   });
 
+  test("an age voice in use is named with its age", () => {
+    book.characterVoice = byGender({
+      female: "ok/v1",
+      ages: [{ slot: "female", age: "child", voice: "off/v1" }],
+    });
+    cast.characters.b.push({ ...speaker("Kit", "f"), age: "child" });
+    expect(cast.routingIssues("b").map((i) => i.name)).toEqual(["Character voice (female, child)"]);
+  });
+
   test("one voice for all is one issue, beside a speaker's own", () => {
     book.characterVoice = { ...byGender({}), by: "one", one: "off/v1" };
     cast.characters.b[3].voice = "gone/v1";
@@ -92,6 +104,46 @@ describe("routing issues", () => {
     // everyone voiced: the Character voice reads nobody
     for (const c of cast.characters.b) c.voice = "ok/v1";
     expect(cast.routingIssues("b")).toEqual([]);
+  });
+});
+
+describe("an age voice moving a speaker's lines", () => {
+  let asked: string[][];
+  beforeEach(() => {
+    asked = [];
+    useExistingLinesStore().askVoice = async (_, names) => void asked.push(names);
+    cast._service = () =>
+      ({ putCharacter: async () => clone(cast.characters.b) }) as unknown as LibraryService;
+  });
+
+  test("a changed age voice asks about that gender and age's speakers only", async () => {
+    cast.characters.b.push(
+      { ...speaker("Kit", "f"), age: "child" },
+      { ...speaker("Gran", "f"), age: "elderly" },
+    );
+    const was = byGender({ female: "ok/v1" });
+    book.characterVoice = byGender({
+      female: "ok/v1",
+      ages: [{ slot: "female", age: "child", voice: "ok/v2" }],
+    });
+    await cast._characterVoiceChanged("b", was);
+    expect(asked).toEqual([["Kit"]]);
+  });
+
+  // Mask, Ana's voiceless persona, is read in whatever Ana is
+  test.each([
+    ["onto an age voice", { age: "child" }, [["Ana", "Mask"]]],
+    ["onto an age with none", { age: "elderly" }, []],
+    ["to another gender's voice", { gender: "m" }, [["Ana", "Mask"]]],
+  ] as const)("a voiceless speaker's change %s asks accordingly", async (_, patch, expected) => {
+    cast.characters.b.push({ ...speaker("Mask", "m"), personaOf: "Ana" });
+    book.characterVoice = byGender({
+      female: "ok/v1",
+      male: "ok/v3",
+      ages: [{ slot: "female", age: "child", voice: "ok/v2" }],
+    });
+    await cast.updateCharacter("b", "Ana", patch);
+    expect(asked).toEqual(expected.map((n) => [...n]));
   });
 });
 

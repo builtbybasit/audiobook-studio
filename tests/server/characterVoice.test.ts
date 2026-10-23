@@ -79,6 +79,31 @@ describe("the voice a speaker is read in", () => {
     });
   });
 
+  describe("with age voices", () => {
+    // Mara is a girl, Tobin an old man, Ivo a man of unknown age
+    const cast = castOf(
+      "ep/narr",
+      { ...speaker("Mara", "f"), age: "child" },
+      { ...speaker("Tobin", "m"), age: "elderly" },
+      speaker("Ivo", "m"),
+    );
+    const ages: CharacterVoice["ages"] = [
+      { slot: "female", age: "child", voice: "ep/girl" },
+      { slot: "male", age: "child", voice: "ep/boy" },
+      { slot: "male", age: "elderly", voice: "ep/old" },
+    ];
+    const g = cv({ by: "gender", one: "ep/one", male: "ep/m", female: "ep/f", ages });
+    test.each([
+      ["their gender's for their age", "Mara", g, "ep/girl"],
+      ["their gender's for their age", "Tobin", g, "ep/old"],
+      ["their gender's when their age is unknown", "Ivo", g, "ep/m"],
+      ["their gender's when their age has none", "Mara", { ...g, ages: ages.slice(1) }, "ep/f"],
+      ["the one voice in one-voice mode", "Mara", { ...g, by: "one" as const }, "ep/one"],
+    ])("is %s (%s)", (_, name, voices, ref) => {
+      expect(speakerVoice(name, cast, voices)).toEqual({ ref, from: "character" });
+    });
+  });
+
   test("never applies to the Narrator", () => {
     expect(speakerVoice("Narrator", castOf(null), cv({ one: "ep/char" }))).toEqual({
       ref: null,
@@ -178,37 +203,72 @@ describe("a book's Character voice", () => {
     expect((await patch(api, id, { characterVoice: { ...set, by: "age" } })).status).toBe(400);
   });
 
-  test("is what a run renders a speaker with no voice of their own in; the Narrator keeps theirs", async () => {
+  test("keeps age voices, stores none for an empty list, and refuses two voices for one pair", async () => {
     const api = testApi();
-    const endpoint = speechEndpoint({
-      voices: [
-        { id: "ash", gender: "m", label: "Ash" },
-        { id: "bea", gender: "f", label: "Bea" },
-      ],
-    });
-    const id = await voicedBook(api, {
-      endpoints: [endpoint],
-      paragraphs: story(5),
-      voiceOf: "studio/ash",
-    });
-    // everyone but the Narrator back to no voice of their own
-    const cast = (await api.request<{ characters: Character[] }>(`/api/books/${id}/cast`)).body
-      .characters;
-    for (const c of cast.filter((c) => c.name !== "Narrator"))
-      await api.request(`/api/books/${id}/characters/${encodeURIComponent(c.name)}`, {
-        ...jsonBody({ ...c, voice: null }),
-        method: "PUT",
-      });
-    await patch(api, id, { characterVoice: cv({ one: "studio/bea" }) });
+    const id = await voicedBook(api, { paragraphs: story(1), voiceOf: "studio/ash" });
+    const girl = { slot: "female", age: "child", voice: "studio/bea" } as const;
+    const set = cv({ by: "gender", ages: [girl] });
 
-    await narrateChapters(api, id, [1]);
-    const lines = (await api.request<{ segments: Segment[] }>(`/api/books/${id}/chapters/1/script`))
-      .body.segments;
-    const spoken = lines.filter((s) => s.audio.status === "done");
-    expect(spoken.some((s) => s.speaker !== "Narrator")).toBe(true);
-    for (const s of spoken)
-      expect(s.audio.voiceRef).toBe(s.speaker === "Narrator" ? "studio/ash" : "studio/bea");
+    expect((await patch(api, id, { characterVoice: set })).body.book.characterVoice).toEqual(set);
+    expect(
+      (await patch(api, id, { characterVoice: { ...set, ages: [] } })).body.book.characterVoice,
+    ).toEqual(cv({ by: "gender" }));
+    const twice = { ...set, ages: [girl, { ...girl, voice: "studio/ash" }] };
+    const refused = await patch(api, id, { characterVoice: twice });
+    expect(refused.status).toBe(400);
+    expect(JSON.stringify(refused.body)).toContain("ages");
   });
+
+  // every speaker but the Narrator is a child; one-voice mode reads past the age voices
+  const childOf = (voice: string) =>
+    (["male", "female", "other"] as const).map((slot) => ({ slot, age: "child" as const, voice }));
+  test.each([
+    ["the one voice", cv({ one: "studio/bea", ages: childOf("studio/ash") })],
+    [
+      "their age voice",
+      cv({
+        by: "gender",
+        male: "studio/ash",
+        female: "studio/ash",
+        other: "studio/ash",
+        ages: childOf("studio/bea"),
+      }),
+    ],
+  ])(
+    "is what a run renders a speaker with no voice of their own in (%s); the Narrator keeps theirs",
+    async (_, characterVoice) => {
+      const api = testApi();
+      const endpoint = speechEndpoint({
+        voices: [
+          { id: "ash", gender: "m", label: "Ash" },
+          { id: "bea", gender: "f", label: "Bea" },
+        ],
+      });
+      const id = await voicedBook(api, {
+        endpoints: [endpoint],
+        paragraphs: story(5),
+        voiceOf: "studio/ash",
+      });
+      // everyone but the Narrator back to no voice of their own
+      const cast = (await api.request<{ characters: Character[] }>(`/api/books/${id}/cast`)).body
+        .characters;
+      for (const c of cast.filter((c) => c.name !== "Narrator"))
+        await api.request(`/api/books/${id}/characters/${encodeURIComponent(c.name)}`, {
+          ...jsonBody({ ...c, voice: null, age: "child" }),
+          method: "PUT",
+        });
+      await patch(api, id, { characterVoice });
+
+      await narrateChapters(api, id, [1]);
+      const lines = (
+        await api.request<{ segments: Segment[] }>(`/api/books/${id}/chapters/1/script`)
+      ).body.segments;
+      const spoken = lines.filter((s) => s.audio.status === "done");
+      expect(spoken.some((s) => s.speaker !== "Narrator")).toBe(true);
+      for (const s of spoken)
+        expect(s.audio.voiceRef).toBe(s.speaker === "Narrator" ? "studio/ash" : "studio/bea");
+    },
+  );
 });
 
 // $15 per million characters, so every line has a price

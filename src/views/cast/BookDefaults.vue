@@ -2,9 +2,17 @@
 // The book's defaults above the Cast table: the Character voice (for a speaker with no voice,
 // before the Narrator's) and the thought effect; beside them the library's line effects. Kept out
 // of the table so a sort or j/k never has to step around them.
-import { computed, ref } from "vue";
-import { AudioLines as LineIcon, Cloud as ThoughtIcon, Mic as VoiceIcon } from "@lucide/vue";
+import { computed, nextTick, ref } from "vue";
+import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
+import {
+  AudioLines as LineIcon,
+  Cloud as ThoughtIcon,
+  Mic as VoiceIcon,
+  Plus as AddIcon,
+  X as RemoveIcon,
+} from "@lucide/vue";
 
+import { AGES } from "@/lib/cast";
 import { lineEffectsOf } from "@/lib/prompt";
 import { useCastStore } from "@/stores/cast";
 import { useEffectsStore } from "@/stores/effects";
@@ -13,7 +21,7 @@ import { UiHint, UiToggleGroup } from "@/ui";
 import VoicePicker from "@/components/VoicePicker.vue";
 import { thoughtReach } from "@/views/cast/effects/lines";
 import LineEffectsSheet from "@/views/cast/effects/LineEffectsSheet.vue";
-import type { CastStat, CharacterVoice, VoiceRef } from "@/types";
+import type { Age, CastStat, CharacterVoice, GenderSlot, VoiceRef } from "@/types";
 
 const props = defineProps<{
   bookId: string;
@@ -35,8 +43,7 @@ const cv = computed(() => libraryStore.bookById(props.bookId)?.characterVoice);
 const picked = ref<CharacterVoice["by"]>("one");
 const by = computed(() => cv.value?.by ?? picked.value);
 
-type Slot = Exclude<keyof CharacterVoice, "by">;
-const GENDER_SLOTS: { slot: Slot; label: string }[] = [
+const GENDER_SLOTS: { slot: GenderSlot; label: string }[] = [
   { slot: "male", label: "Male" },
   { slot: "female", label: "Female" },
   { slot: "other", label: "Other" },
@@ -51,8 +58,8 @@ function setBy(next: CharacterVoice["by"]) {
   picked.value = next;
   if (cv.value) void libraryStore.setCharacterVoice(props.bookId, { ...cv.value, by: next });
 }
-/** Fill or empty one slot; the setting is cleared once no slot names a voice. */
-function setSlot(slot: Slot, voice: VoiceRef | null) {
+/** Fill or empty slots; the setting is cleared once no slot, age voices too, names a voice. */
+function save(patch: Partial<CharacterVoice>) {
   const next: CharacterVoice = {
     one: null,
     male: null,
@@ -60,10 +67,39 @@ function setSlot(slot: Slot, voice: VoiceRef | null) {
     other: null,
     ...cv.value,
     by: by.value,
-    [slot]: voice,
+    ...patch,
   };
-  const empty = !next.one && !next.male && !next.female && !next.other;
+  if (!next.ages?.length) delete next.ages;
+  const empty = !next.one && !next.male && !next.female && !next.other && !next.ages;
   void libraryStore.setCharacterVoice(props.bookId, empty ? null : next);
+}
+
+// An age row stays shown once added, but only one with a voice is saved in `ages`.
+const shownAges = ref<string[]>([]);
+const key = (slot: GenderSlot, age: Age) => `${slot}:${age}`;
+const ageVoice = (slot: GenderSlot, age: Age) =>
+  cv.value?.ages?.find((a) => a.slot === slot && a.age === age)?.voice ?? null;
+const ageRows = (slot: GenderSlot) =>
+  AGES.filter((age) => ageVoice(slot, age) || shownAges.value.includes(key(slot, age)));
+const freeAges = (slot: GenderSlot) => AGES.filter((age) => !ageRows(slot).includes(age));
+/** the "+ Age" menu open, by gender; the age row whose picker is open */
+const menuFor = ref<GenderSlot | null>(null);
+const picking = ref<string | null>(null);
+
+async function addAge(slot: GenderSlot, age: Age) {
+  shownAges.value.push(key(slot, age));
+  menuFor.value = null;
+  await nextTick();
+  picking.value = key(slot, age);
+}
+function setAge(slot: GenderSlot, age: Age, voice: VoiceRef | null) {
+  if (!shownAges.value.includes(key(slot, age))) shownAges.value.push(key(slot, age));
+  const others = (cv.value?.ages ?? []).filter((a) => a.slot !== slot || a.age !== age);
+  save({ ages: voice ? [...others, { slot, age, voice }] : others });
+}
+function removeAge(slot: GenderSlot, age: Age) {
+  shownAges.value = shownAges.value.filter((k) => k !== key(slot, age));
+  if (ageVoice(slot, age)) setAge(slot, age, null);
 }
 
 // ---------- the thought effect ----------
@@ -99,7 +135,7 @@ const editingLines = ref(false);
             <VoiceIcon class="icon-sm text-zinc-400" /> Character voice
             <UiHint
               label="the Character voice"
-              text="Speakers with no voice of their own are read in it, and an empty one falls back to the Narrator’s voice."
+              text="Speakers with no voice of their own are read in it, and an empty one falls back to the Narrator’s voice. By gender, an age voice goes first to that gender’s speakers of that age."
             />
           </span>
           <UiToggleGroup
@@ -116,9 +152,9 @@ const editingLines = ref(false);
           null-label="Narrator’s voice"
           size="xs"
           block
-          @update:model-value="(v) => setSlot('one', v)"
+          @update:model-value="(v) => save({ one: v })"
         />
-        <div v-else class="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-1">
+        <div v-else class="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1">
           <template v-for="g in GENDER_SLOTS" :key="g.slot">
             <span class="text-[11px] text-zinc-500">{{ g.label }}</span>
             <VoicePicker
@@ -127,8 +163,54 @@ const editingLines = ref(false);
               null-label="Narrator’s voice"
               size="xs"
               block
-              @update:model-value="(v) => setSlot(g.slot, v)"
+              @update:model-value="(v) => save({ [g.slot]: v })"
             />
+            <PopoverRoot
+              :open="menuFor === g.slot"
+              @update:open="(o) => (menuFor = o ? g.slot : null)"
+            >
+              <PopoverTrigger
+                class="btn-ghost btn-xs gap-0.5 border-transparent px-1 text-zinc-500 disabled:invisible"
+                :disabled="!freeAges(g.slot).length"
+                :aria-label="`Add an age voice under ${g.label}`"
+              >
+                <AddIcon class="icon-sm" /> Age
+              </PopoverTrigger>
+              <!-- mounted only while open, as the book menu's -->
+              <PopoverPortal v-if="menuFor === g.slot">
+                <PopoverContent align="end" :side-offset="4" class="ui-popup w-36 p-1 text-xs">
+                  <button
+                    v-for="age in freeAges(g.slot)"
+                    :key="age"
+                    class="ui-item w-full text-xs hover:bg-violet-50 dark:hover:bg-violet-500/15"
+                    @click="addAge(g.slot, age)"
+                  >
+                    {{ age }}
+                  </button>
+                </PopoverContent>
+              </PopoverPortal>
+            </PopoverRoot>
+            <template v-for="age in ageRows(g.slot)" :key="age">
+              <span class="pl-2 text-[11px] text-zinc-500">└ {{ age }}</span>
+              <VoicePicker
+                :model-value="ageVoice(g.slot, age)"
+                :open="picking === key(g.slot, age)"
+                :book-id="bookId"
+                :null-label="`${g.label} voice`"
+                size="xs"
+                block
+                @update:open="(o) => (picking = o ? key(g.slot, age) : null)"
+                @update:model-value="(v) => setAge(g.slot, age, v)"
+              />
+              <button
+                class="justify-self-center rounded px-0.5 text-zinc-400 hover:text-red-500"
+                :aria-label="`Remove the ${g.label.toLowerCase()} ${age} voice`"
+                data-tip="Remove this age voice"
+                @click="removeAge(g.slot, age)"
+              >
+                <RemoveIcon class="icon-sm" />
+              </button>
+            </template>
           </template>
         </div>
       </div>

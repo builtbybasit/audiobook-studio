@@ -12,12 +12,15 @@ import { speedSplit } from "@/lib/providers";
 import { pronunciationMoved } from "@/lib/reading";
 import { chapterSeconds, lexMatcher, pacingOrDefault, termOf } from "@/lib/speech";
 import {
+  type CharacterSlot,
   characterSlot,
   characterVoiceFor,
   NARRATOR,
   newSpeaker,
   personaOwner,
   sameReading,
+  slotLabel,
+  slotVoice,
   speakerSpeed,
   speakerVoice,
   voiceRef,
@@ -254,8 +257,8 @@ export const useCastStore = defineStore("cast", {
     },
     /**
      * Voices the cast routes to that cannot render: gone, or endpoint paused or keyless
-     * (`speechReadiness`); a cooldown is not an issue. Fallback slots are named "Character voice"
-     * (by gender if split) or covered by the Narrator's or the persona's character's row.
+     * (`speechReadiness`); a cooldown is not an issue. Fallback slots are named by `slotLabel`, or
+     * covered by the Narrator's or the persona's character's row.
      */
     routingIssues(): (bookId: string) => RoutingIssue[] {
       const endpointsStore = useEndpointsStore();
@@ -284,13 +287,16 @@ export const useCastStore = defineStore("cast", {
         for (const c of cast) if (c.voice) check(c.name, c.voice);
         const cv = libraryStore.bookById(bookId)?.characterVoice;
         if (cv) {
-          const slots = new Set<ReturnType<typeof characterSlot>>();
+          // by label, which is one per slot and age
+          const slots = new Map<string, CharacterSlot>();
           for (const c of cast)
-            if (!c.voice && c.name !== NARRATOR && !personaOwner(c, byName))
-              slots.add(characterSlot(cv, c.gender));
-          for (const slot of slots) {
-            const ref = cv[slot];
-            if (ref) check(slot === "one" ? "Character voice" : `Character voice (${slot})`, ref);
+            if (!c.voice && c.name !== NARRATOR && !personaOwner(c, byName)) {
+              const s = characterSlot(cv, c.gender, c.age);
+              slots.set(slotLabel(s), s);
+            }
+          for (const [label, s] of slots) {
+            const ref = slotVoice(cv, s);
+            if (ref) check(label, ref);
           }
         }
         return out;
@@ -940,18 +946,29 @@ export const useCastStore = defineStore("cast", {
       );
       return true;
     },
-    /** Patch the speaker's own description (gender, notes, style, main/minor). Moves no line. */
+    /**
+     * Patch the speaker's own description (gender, age, notes, style, main/minor). Moves no line,
+     * but a voiceless speaker's gender, age or persona link can move the voice their lines (and
+     * their voiceless personas') are read in: those are asked about. A voice is `setVoice`'s.
+     */
     async updateCharacter(bookId: string, name: string, patch: Partial<Character>): Promise<void> {
       const c = this.characters[bookId]?.find((x) => x.name === name);
       if (!c) return;
       const { name: _name, aliases: _aliases, ...rest } = patch;
       // a link set or removed by hand drops the model's finding, as on the server
       const relinked = "personaOf" in rest && rest.personaOf !== c.personaOf;
+      const reach = (this.characters[bookId] ?? []).filter((x) => x === c || x.personaOf === name);
+      const heard = () => reach.map((x) => this.effectiveVoice(bookId, x.name).ref);
+      const was = heard();
       Object.assign(c, rest);
       if (relinked) delete c.masked;
+      const now = heard();
+      const moved =
+        "voice" in rest
+          ? []
+          : reach.filter((x, i) => !x.voice && now[i] !== was[i]).map((x) => x.name);
       const saved = await this._push(bookId, name);
-      // a voiceless persona reads in their character's voice, so a link moves their lines' voice
-      if (saved && relinked && !c.voice) await useExistingLinesStore().askVoice(bookId, [name]);
+      if (saved && moved.length) await useExistingLinesStore().askVoice(bookId, moved);
     },
     /** Take the model's "masked" finding off a speaker; their link stays. */
     async unmask(bookId: string, name: string): Promise<void> {
@@ -1005,7 +1022,7 @@ export const useCastStore = defineStore("cast", {
             c.name !== NARRATOR &&
             !c.voice &&
             !personaOwner(c, byName) &&
-            characterVoiceFor(was, c.gender) !== characterVoiceFor(cv, c.gender),
+            characterVoiceFor(was, c.gender, c.age) !== characterVoiceFor(cv, c.gender, c.age),
         )
         .map((c) => c.name);
       if (names.length)

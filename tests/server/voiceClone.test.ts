@@ -6,7 +6,14 @@ import { join } from "node:path";
 
 import { eq } from "drizzle-orm";
 
-import type { Character, ClonedVoice, Endpoint, KeptVoiceSamples, Voice } from "@/types";
+import type {
+  Character,
+  CharacterVoice,
+  ClonedVoice,
+  Endpoint,
+  KeptVoiceSamples,
+  Voice,
+} from "@/types";
 import { MAX_SAMPLE_BYTES, MAX_TRANSCRIPT_CHARS, MAX_VOICE_SAMPLES } from "@/lib/voiceSamples";
 import { SPEECH_PROVIDERS } from "@/lib/providers";
 import { fish } from "@/lib/providers/fish";
@@ -626,7 +633,14 @@ describe("making a voice again", () => {
       voiceOf: "fish/old-voice",
     });
     await narrateChapters(api, id, [1]);
-    const cv = { by: "one" as const, one: "fish/old-voice", male: null, female: null, other: null };
+    const cv: CharacterVoice = {
+      by: "one",
+      one: "fish/old-voice",
+      male: null,
+      female: null,
+      other: null,
+      ages: [{ slot: "male", age: "child", voice: "fish/old-voice" }],
+    };
     api.db.update(books).set({ characterVoice: cv }).where(eq(books.id, id)).run();
     const remake = (voice: string) =>
       api.request<ClonedVoice>(`/api/endpoints/fish/voices/${voice}/remake`, {
@@ -660,6 +674,7 @@ describe("making a voice again", () => {
     expect(refs.every((r) => r.ref === "fish/new-voice-id")).toBe(true);
     const book = api.db.select().from(books).where(eq(books.id, id)).get();
     expect(book?.characterVoice?.one).toBe("fish/new-voice-id");
+    expect(book?.characterVoice?.ages?.[0].voice).toBe("fish/new-voice-id");
     expect((await samplesOf(api)).body.samples.map((s) => s.transcript)).toEqual([
       "Come in.",
       undefined,

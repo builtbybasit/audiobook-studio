@@ -270,6 +270,7 @@ describe("the scripting model's masked finding", () => {
       { ...newSpeaker("Mask", 2), personaOf: "Ana", masked: true },
       { ...newSpeaker("Veil", 3), masked: true },
     );
+    server.characters[1].voice = "ep/ana";
     cast._install("b", clone(server));
     await cast.unmask("b", "Mask");
     await cast.updateCharacter("b", "Veil", { personaOf: "Ana" });

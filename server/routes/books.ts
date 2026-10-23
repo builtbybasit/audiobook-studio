@@ -30,6 +30,7 @@ import type { Runner } from "~/jobs/runner";
 import { enqueueScripting } from "~/jobs/scripting";
 import { fail } from "~/lib/errors";
 import { BookParam, ChapterIds, IdParam, uploadLimit } from "~/lib/http";
+import { AGES } from "@/lib/cast";
 import { bookPromptProblems } from "@/lib/prompt";
 import { DEFAULT_PACING } from "@/lib/speech";
 import {
@@ -86,7 +87,22 @@ const Decisions = v.object({
 const Seconds = v.pipe(v.number(), v.minValue(0), v.maxValue(60));
 const Dollars = v.pipe(v.number(), v.minValue(0));
 /** A voice as `<endpointId>/<voiceId>`, or none. */
-const Voice = v.nullable(v.pipe(v.string(), v.nonEmpty(), v.maxLength(200)));
+const VoiceRef = v.pipe(v.string(), v.nonEmpty(), v.maxLength(200));
+const Voice = v.nullable(VoiceRef);
+/** At most one voice per gender and age; an empty list is stored as none. */
+const AgeVoices = v.pipe(
+  v.array(
+    v.strictObject({
+      slot: v.picklist(["male", "female", "other"]),
+      age: v.picklist(AGES),
+      voice: VoiceRef,
+    }),
+  ),
+  v.check(
+    (ages) => new Set(ages.map((a) => `${a.slot}/${a.age}`)).size === ages.length,
+    "gives one gender and age two voices",
+  ),
+);
 
 /** A book's settings: a key left out is left alone, and `null` clears it. */
 const Settings = v.pipe(
@@ -113,13 +129,17 @@ const Settings = v.pipe(
     thoughts: v.optional(v.nullable(EffectIdSchema)),
     characterVoice: v.optional(
       v.nullable(
-        v.strictObject({
-          by: v.picklist(["one", "gender"]),
-          one: Voice,
-          male: Voice,
-          female: Voice,
-          other: Voice,
-        }),
+        v.pipe(
+          v.strictObject({
+            by: v.picklist(["one", "gender"]),
+            one: Voice,
+            male: Voice,
+            female: Voice,
+            other: Voice,
+            ages: v.optional(AgeVoices),
+          }),
+          v.transform(({ ages, ...cv }) => (ages?.length ? { ...cv, ages } : cv)),
+        ),
       ),
     ),
   }),

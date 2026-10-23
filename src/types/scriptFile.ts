@@ -2,8 +2,8 @@
 // Nothing here is local to one install: no segment or annotation ids, no `VoiceRef`. A voice
 // travels as a hint the importer judges; expression tags travel in `text` as `{tag}` markers.
 import type { BookPrompt } from "@/types/scripting";
-import type { CharacterVoice, Pacing } from "@/types/book";
-import type { Gender, VoiceRef } from "@/types/common";
+import type { CharacterVoice, GenderSlot, Pacing } from "@/types/book";
+import type { Age, Gender, VoiceRef } from "@/types/common";
 import type { Step } from "@/types/effect";
 import type { Segment, SegmentType } from "@/types/segment";
 import type { KeptSample, Voice } from "@/types/voice";
@@ -113,6 +113,7 @@ export interface ScriptFileBook {
     male?: VoiceHint;
     female?: VoiceHint;
     other?: VoiceHint;
+    ages?: { slot: GenderSlot; age: Age; voice: VoiceHint }[];
   };
 }
 
@@ -300,8 +301,8 @@ export interface ImportBookSettings {
   thoughts?: string;
   /** only slots whose hint matched a voice here (`VoiceMatch` "here"); the rest are null */
   characterVoice?: CharacterVoice;
-  /** slots whose voice is not on this install, by slot name */
-  unmatchedVoices?: ("one" | "male" | "female" | "other")[];
+  /** slots whose voice is not on this install; `age` for a gender's voice for one age */
+  unmatchedVoices?: { slot: "one" | GenderSlot; age?: Age }[];
 }
 
 // ---------- voice samples waiting with a speaker ----------

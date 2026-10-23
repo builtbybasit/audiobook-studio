@@ -580,6 +580,15 @@ export const BookFileSchema = v.looseObject({
       male: v.optional(VoiceHintSchema),
       female: v.optional(VoiceHintSchema),
       other: v.optional(VoiceHintSchema),
+      ages: v.optional(
+        v.array(
+          v.object({
+            slot: v.picklist(["male", "female", "other"]),
+            age: v.picklist(AGES),
+            voice: VoiceHintSchema,
+          }),
+        ),
+      ),
     }),
   ),
 }) satisfies v.GenericSchema<unknown, ScriptFileBook>;

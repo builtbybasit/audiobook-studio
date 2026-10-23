@@ -206,6 +206,17 @@ export interface CharacterVoice {
   male: VoiceRef | null;
   female: VoiceRef | null;
   other: VoiceRef | null;
+  /** by gender only: a gender's voice for one age, before that gender's own; absent = none */
+  ages?: AgeVoice[];
+}
+
+export type GenderSlot = "male" | "female" | "other";
+
+/** One gender + age pair of the Character voice; at most one per pair. */
+export interface AgeVoice {
+  slot: GenderSlot;
+  age: Age;
+  voice: VoiceRef;
 }
 
 export interface Character {

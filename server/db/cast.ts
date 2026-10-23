@@ -1,9 +1,22 @@
 // A book's cast and pronunciation dictionary. Speakers are keyed by name (the script refers to
 // them by name only), so a rename must also move the lines: `reattribute` in server/db/script.ts,
 // done together in server/cast/ops.ts.
-import { and, asc, desc, eq, inArray, lt, max, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  countDistinct,
+  desc,
+  eq,
+  inArray,
+  lt,
+  max,
+  min,
+  notInArray,
+  sql,
+} from "drizzle-orm";
 
-import type { Character, CharacterVoice, LexEntry, VoiceRef } from "@/types";
+import type { CastStat, Character, CharacterVoice, LexEntry, SegmentType, VoiceRef } from "@/types";
 import {
   NARRATOR,
   chapterCast,
@@ -105,6 +118,37 @@ export function chapterSpeakers(db: Db | Tx, bookId: string): Map<number, string
   for (const { chapterId, speaker } of rows)
     out.set(chapterId, [...(out.get(chapterId) ?? []), speaker]);
   return out;
+}
+
+/**
+ * Each speaker's spoken lines across every chapter, skipped ones included (they keep their
+ * script). A speaker with none is absent.
+ */
+export function speakerCounts(
+  db: Db | Tx,
+  bookId: string,
+  unspoken: readonly SegmentType[],
+): Record<string, CastStat> {
+  const rows = db
+    .select({
+      speaker: segments.speaker,
+      lines: count(),
+      thoughts: sql<number>`sum(${segments.type} = 'thought')`,
+      chapters: countDistinct(segments.chapterId),
+      first: min(segments.chapterId),
+    })
+    .from(segments)
+    .where(
+      and(
+        eq(segments.bookId, bookId),
+        unspoken.length ? notInArray(segments.type, [...unspoken]) : undefined,
+      ),
+    )
+    .groupBy(segments.speaker)
+    .all();
+  return Object.fromEntries(
+    rows.map(({ speaker, first, ...n }) => [speaker, { ...n, first: first! }]),
+  );
 }
 
 export function getCharacter(db: Db | Tx, bookId: string, name: string): Character | undefined {

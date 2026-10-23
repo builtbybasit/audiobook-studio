@@ -22,8 +22,8 @@ import type { Character } from "@/types";
 const props = defineProps<{
   bookId: string;
   c: Character;
-  /** a speaker's line count, or null while the book's scripts are not all read */
-  lines: (name: string) => number | null;
+  /** a speaker's lines in words ("12 lines", "some lines"), or null until counted */
+  lines: (name: string) => string | null;
 }>();
 
 const castStore = useCastStore();
@@ -238,9 +238,7 @@ function add() {
         <span v-if="p.aliases.length && !p.masked" class="text-zinc-500"
           >a.k.a. {{ p.aliases.join(", ") }}</span
         >
-        <span v-if="lines(p.name) != null" class="text-zinc-400"
-          >· {{ plural(lines(p.name)!, "line") }}</span
-        >
+        <span v-if="lines(p.name) != null" class="text-zinc-400">· {{ lines(p.name) }}</span>
         <button
           class="btn-ghost btn-xs ml-auto"
           :data-tip="`Remove ${p.masked ? 'this persona' : p.name} from this book’s cast — their lines go to the Narrator`"

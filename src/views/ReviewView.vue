@@ -12,7 +12,7 @@ import { useReviewInbox, type DecisionKind, type DecisionTone } from "@/views/re
 import EmptyState from "@/components/EmptyState.vue";
 import ReadFailure, { scriptsUnread } from "@/components/ReadFailure.vue";
 import { useBookId } from "@/composables/useBookId";
-import { useBookScripts, useCast } from "@/queries";
+import { useBookScripts, useCast, useSpeakerCounts } from "@/queries";
 import {
   ArrowRight as NextIcon,
   CircleCheck as DoneIcon,
@@ -33,6 +33,8 @@ const libraryStore = useLibraryStore();
 const scriptsStore = useScriptsStore();
 const bookId = useBookId();
 useCast(bookId);
+// new speakers' and merges' line counts
+useSpeakerCounts(bookId);
 // until every scripted chapter's lines are in, "nothing waiting" is not an answer
 const { failed: unread, loading: reading, retry: readAgain } = useBookScripts(bookId);
 const book = computed(() => libraryStore.bookById(bookId)!);

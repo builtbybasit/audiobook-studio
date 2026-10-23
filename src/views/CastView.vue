@@ -11,14 +11,14 @@ import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 
 import { useBookId } from "@/composables/useBookId";
-import { useBookScripts, useCast, useEffects } from "@/queries";
+import { useCast, useEffects, useSpeakerCounts } from "@/queries";
 import { GENDER } from "@/lib/scriptReview";
 import { applySpan, useRangeSelect } from "@/composables/useRangeSelect";
-import { UiSelect, UiCheckbox, UiHint, UiTooltip } from "@/ui";
+import { UiSelect, UiCheckbox, UiHint, UiSwitch, UiTooltip } from "@/ui";
 import SpeedPicker from "@/components/SpeedPicker.vue";
 import VoicePicker from "@/components/VoicePicker.vue";
 import SpoilerText from "@/components/SpoilerText.vue";
-import ReadFailure, { scriptsUnread } from "@/components/ReadFailure.vue";
+import ReadFailure from "@/components/ReadFailure.vue";
 import { Cloud as ThoughtIcon, Plus as AddIcon, VenetianMask as MaskIcon } from "@lucide/vue";
 import CastRecord from "@/views/cast/CastRecord.vue";
 import CastSelectionBar from "@/views/cast/CastSelectionBar.vue";
@@ -27,7 +27,7 @@ import EffectsSheet from "@/views/cast/effects/EffectsSheet.vue";
 import ReapplyBar from "@/views/cast/effects/ReapplyBar.vue";
 import type { EffectSubject } from "@/views/cast/effects/subject";
 import { nestPersonas } from "@/views/cast/persona/rows";
-import { personaOwner, voiced as isVoiced } from "@/lib/cast";
+import { lineBand, linesText, personaOwner, voiced as isVoiced } from "@/lib/cast";
 import { speedSplit } from "@/lib/providers";
 import type { Character, Gender } from "@/types";
 
@@ -38,10 +38,10 @@ const samplesStore = useSpeakerSamplesStore();
 const effectsStore = useEffectsStore();
 const bookId = useBookId();
 const { characters: cast } = useCast(bookId);
-// line counts are not counts at all until every scripted chapter is in
-const { failed: unread, loading: reading, retry: readAgain } = useBookScripts(bookId);
-const counted = computed(() => !reading.value && !unread.value.length);
+const { counted, error: unread, refetch: readAgain } = useSpeakerCounts(bookId);
 const stats = computed(() => castStore.castStats(bookId));
+// exact counts are a spoiler: a speaker with hundreds of lines survives
+const exact = computed(() => !!libraryStore.bookById(bookId)?.exactCounts);
 const suggestions = computed(() => castStore.mergeSuggestions(bookId));
 const q = ref("");
 const sort = ref("lines");
@@ -99,8 +99,9 @@ const speedTitle = (name: string, speed: number): string =>
   speedSplit(castStore.effectiveVoice(bookId, name).endpoint, speed).sent
     ? "Sent to the voice’s service"
     : "Made here after the voice speaks";
-/** A speaker's line count for their record, or null while the book's scripts are not all read. */
-const linesOf = (name: string) => (counted.value ? (stats.value[name]?.lines ?? 0) : null);
+/** A speaker's lines for their record, in words, or null until counted. */
+const linesOf = (name: string) =>
+  counted.value ? linesText(stats.value[name]?.lines ?? 0, exact.value) : null;
 
 // the Narrator has no box, so no run includes them
 const range = useRangeSelect(() =>
@@ -303,6 +304,17 @@ const duplicate = computed(
         <label class="flex items-center gap-1.5 text-xs"
           ><UiCheckbox v-model="onlyNew" /> unreviewed only</label
         >
+        <span class="flex items-center gap-1">
+          <UiSwitch
+            :model-value="exact"
+            label="Exact counts"
+            @update:model-value="(on: boolean) => libraryStore.setExactCounts(bookId, on)"
+          />
+          <UiHint
+            label="exact counts"
+            text="Line counts are rough so they don’t spoil the book. Turn this on once you’ve finished it."
+          />
+        </span>
         <UiSelect
           v-model="sort"
           :options="[
@@ -346,7 +358,7 @@ const duplicate = computed(
         <span class="min-w-0 flex-1 truncate text-xs text-zinc-500"
           >{{ s.reason
           }}<template v-if="counted">
-            · {{ plural(stats[s.from]?.lines ?? 0, "line") }} would move</template
+            · {{ linesText(stats[s.from]?.lines ?? 0, exact) }} would move</template
           ></span
         >
         <button
@@ -360,8 +372,8 @@ const duplicate = computed(
     </div>
 
     <ReadFailure
-      v-if="unread.length"
-      :message="`${scriptsUnread(unread.length)}, so the speakers’ line counts are not shown.`"
+      v-if="unread"
+      message="The speakers’ line counts could not be read."
       @retry="readAgain"
     />
 
@@ -519,10 +531,10 @@ const duplicate = computed(
                 </select>
               </td>
               <!-- how many chapters, never which: where a speaker turns up is a spoiler -->
-              <td class="pr-4 text-right font-mono text-xs">
-                {{ counted ? st.lines : "…" }}
-                <div v-if="counted" class="text-[10px] text-zinc-400">
-                  {{ st.chapters.size }} ch
+              <td class="pr-4 text-right text-xs" :class="exact && 'font-mono'">
+                {{ !counted ? "…" : exact ? st.lines : lineBand(st.lines) }}
+                <div v-if="counted && exact" class="text-[10px] text-zinc-400">
+                  {{ st.chapters }} ch
                 </div>
               </td>
               <td class="py-1 pr-2">

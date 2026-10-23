@@ -23,6 +23,8 @@ export const keys = {
   chapterHeard: (bookId: string, chapterId: number) =>
     ["books", bookId, "heard", chapterId] as const,
   cast: (bookId: string) => ["books", bookId, "cast"] as const,
+  /** each speaker's spoken lines, chapters and first chapter */
+  speakerCounts: (bookId: string) => ["books", bookId, "speakerCounts"] as const,
   /** for each of these names, the chapters whose text names it */
   mentions: (bookId: string, names: readonly string[]) =>
     ["books", bookId, "mentions", ...names] as const,

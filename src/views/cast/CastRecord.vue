@@ -17,8 +17,8 @@ import type { Age, Character, Gender } from "@/types";
 const props = defineProps<{
   bookId: string;
   c: Character;
-  /** a speaker's line count, or null while the book's scripts are not all read */
-  lines: (name: string) => number | null;
+  /** a speaker's lines in words ("12 lines", "some lines"), or null until counted */
+  lines: (name: string) => string | null;
 }>();
 
 const castStore = useCastStore();

@@ -694,6 +694,8 @@ export interface BookSettings {
   checkByEar?: boolean | null;
   /** stop the scripting model suggesting dictionary terms; `null` lets it again */
   pronounceOff?: boolean | null;
+  /** show exact line counts on the Cast page; `null` goes back to rough ones */
+  exactCounts?: boolean | null;
   /** an effect's id or "none"; `null` follows the library's */
   thoughts?: ThoughtChoice | null;
   /** the voice for speakers with none of their own; `null` goes back to the Narrator's */
@@ -721,6 +723,7 @@ export function setBookSettings(db: Db | Tx, bookId: string, s: BookSettings): v
   if (s.readNotes !== undefined) set.readNotes = s.readNotes;
   if (s.checkByEar !== undefined) set.checkByEar = s.checkByEar;
   if (s.pronounceOff !== undefined) set.pronounceOff = s.pronounceOff;
+  if (s.exactCounts !== undefined) set.exactCounts = s.exactCounts;
   if (s.thoughts !== undefined) set.thoughts = s.thoughts;
   if (s.characterVoice !== undefined) set.characterVoice = s.characterVoice;
   if (!Object.keys(set).length) return;

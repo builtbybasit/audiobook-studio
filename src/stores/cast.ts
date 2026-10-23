@@ -4,7 +4,10 @@ import { toRaw } from "vue";
 // exact: a merge or removal records the lines that moved and puts back those (`attribute`).
 // Writes go one at a time per book (`_write`), and an answer is installed only where no later
 // change waits (`_answered`), so an older answer never puts back an older speaker.
+import { useQueryCache } from "@pinia/colada";
 import { fetchCast } from "@/queries/cast";
+import { keys } from "@/queries/keys";
+import { countsMoved } from "@/queries/speakerCounts";
 import { staleMoved } from "@/queries/effects";
 import { speechReadiness } from "@/lib/endpoints";
 import { norm } from "@/lib/scriptReview";
@@ -55,7 +58,7 @@ import { defineStore } from "pinia";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useExistingLinesStore } from "@/stores/existingLines";
 import { useLibraryStore } from "@/stores/library";
-import { chapterTally, useScriptsStore } from "@/stores/scripts";
+import { useScriptsStore } from "@/stores/scripts";
 import { useSpeakerSamplesStore } from "@/stores/speakerSamples";
 import { toastFailure } from "@/stores/toastFailure";
 import { useUiStore } from "@/stores/ui";
@@ -95,16 +98,14 @@ interface BookWrites {
  * each action a fresh proxy as `this`.
  */
 const pending = new WeakMap<object, Map<string, BookWrites>>();
-/**
- * A speaker's counts before any line is counted; `castStats` starts from it. With no lines, their
- * first chapter sorts after every real one.
- */
-export const newStat = (first = Number.MAX_SAFE_INTEGER): CastStat => ({
+/** A speaker with no lines; their first chapter sorts after every real one. */
+export const newStat = (): CastStat => ({
   lines: 0,
   thoughts: 0,
-  chapters: new Set(),
-  first,
+  chapters: 0,
+  first: Number.MAX_SAFE_INTEGER,
 });
+const NO_STATS: Record<string, CastStat> = {};
 export interface AutoVoiceAssignment {
   name: string;
   gender: Gender;
@@ -302,21 +303,11 @@ export const useCastStore = defineStore("cast", {
         return out;
       };
     },
+    /** The server's counts, once a page has read them (`useSpeakerCounts`); none before. */
     castStats(): (bookId: string) => Record<string, CastStat> {
-      const libraryStore = useLibraryStore();
-      return (bookId: string): Record<string, CastStat> => {
-        const stats: Record<string, CastStat> = {};
-        for (const c of libraryStore.chapters[bookId] ?? [])
-          // spoken lines, as `lineCounts` counts them, one chapter at a time
-          for (const [name, t] of chapterTally(bookId, c.id).spoken) {
-            const st = (stats[name] ??= newStat(c.id));
-            st.lines += t.lines;
-            st.thoughts += t.thoughts;
-            st.chapters.add(c.id);
-            if (c.id < st.first) st.first = c.id;
-          }
-        return stats;
-      };
+      const queryCache = useQueryCache();
+      return (bookId: string): Record<string, CastStat> =>
+        queryCache.getQueryData<Record<string, CastStat>>(keys.speakerCounts(bookId)) ?? NO_STATS;
     },
     mergeSuggestions(s): (bookId: string) => MergeSuggestion[] {
       return (bookId: string): MergeSuggestion[] => {
@@ -601,8 +592,10 @@ export const useCastStore = defineStore("cast", {
             revision,
             (s) => !before || !sameReading(s.speaker, to, before, cv, after),
           );
-      // a moved line may wear another effect now, and waiting samples moved with their speaker
+      // a moved line may wear another effect and counts elsewhere now, and waiting samples moved
+      // with their speaker
       void staleMoved(bookId);
+      void countsMoved(bookId);
       if (bookId in samplesStore.waiting) void samplesStore.load(bookId);
     },
     /** Add speakers this chapter uses that the cast lacks. Returns their names for an undo. */

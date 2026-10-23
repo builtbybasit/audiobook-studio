@@ -1,0 +1,1 @@
+ALTER TABLE `books` ADD `exact_counts` integer;

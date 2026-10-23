@@ -52,6 +52,18 @@ export const DIRECTIONS: string[] = [
 
 export const NARRATOR = "Narrator";
 
+/** A line count as a rough band, so a speaker's size gives little of the plot away. */
+export const lineBand = (lines: number): string =>
+  lines === 0 ? "none" : lines < 10 ? "a few" : lines < 100 ? "some" : "many";
+
+/** "12 lines" when the book shows exact counts, else "some lines"; "no lines" either way. */
+export const linesText = (lines: number, exact: boolean): string =>
+  !lines
+    ? "no lines"
+    : exact
+      ? `${lines} line${lines === 1 ? "" : "s"}`
+      : `${lineBand(lines)} lines`;
+
 export const AGES: readonly Age[] = ["child", "teen", "young adult", "middle-aged", "elderly"];
 
 export const narrator = (voice: Character["voice"] = null): Character => ({

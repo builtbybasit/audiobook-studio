@@ -9,6 +9,7 @@ import { coverRefusal } from "@/lib/exports";
 import { bookPromptProblems } from "@/lib/prompt";
 import { isNarrated, isScripted } from "@/lib/scriptReview";
 import { staleMoved } from "@/queries/effects";
+import { countsMoved } from "@/queries/speakerCounts";
 import { invalidate } from "@/queries/invalidate";
 import { fetchBook, fetchShelf } from "@/queries/library";
 import { keys } from "@/queries/keys";
@@ -524,6 +525,19 @@ export const useLibraryStore = defineStore("library", {
       if (!answer) return;
       for (const { id, narration, duration, lines } of answer.chapters)
         this._patchChapter(bookId, id, { narration, duration, ...(lines ? { lines } : {}) });
+      void countsMoved(bookId);
+    },
+    /** Whether the Cast page shows exact line counts rather than rough bands. */
+    async setExactCounts(bookId: string, on: boolean): Promise<void> {
+      const b = this.bookById(bookId);
+      if (!b || !!b.exactCounts === on) return;
+      if (on) b.exactCounts = true;
+      else delete b.exactCounts;
+      await this._writeSettings(
+        bookId,
+        { exactCounts: on ? true : null },
+        on ? "show exact counts" : "show rough counts",
+      );
     },
     /** Whether chapters are checked by ear after narration; only changes what the server queues. */
     async setCheckByEar(bookId: string, on: boolean): Promise<void> {

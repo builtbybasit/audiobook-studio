@@ -3,6 +3,7 @@
 // (and waiting voice samples) moved so an Undo can put exactly those back through `attribute`.
 import type {
   Cast,
+  CastStat,
   ChapterLines,
   Character,
   LexEntry,
@@ -14,6 +15,7 @@ import type {
 } from "@/types";
 import { NARRATOR, personaRefusal, sameReading } from "@/lib/cast";
 import { pronunciationMoved } from "@/lib/reading";
+import { unspokenTypes } from "@/lib/siteText";
 import { lexMatcher } from "@/lib/speech";
 import type { Db, Tx } from "~/db/client";
 import * as cast from "~/db/cast";
@@ -35,6 +37,10 @@ import { narrationInProgress, settleChapter } from "~/narration/chapter";
 export function bookCast(db: Db, bookId: string): Cast {
   requireBook(db, bookId);
   return { characters: cast.readCast(db, bookId), lexicon: cast.readLexicon(db, bookId) };
+}
+
+export function speakerCounts(db: Db, bookId: string): Record<string, CastStat> {
+  return cast.speakerCounts(db, bookId, unspokenTypes(requireBook(db, bookId)));
 }
 
 export function requireCharacter(db: Db | Tx, bookId: string, name: string): Character {

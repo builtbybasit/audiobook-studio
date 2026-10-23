@@ -4,6 +4,9 @@
 // straight into this file's own server.
 import { beforeAll, beforeEach, expect, test } from "bun:test";
 
+import { NARRATOR } from "@/lib/cast";
+import { countsSettled, useSpeakerCounts } from "@/queries";
+import { libraryService } from "@/services/library";
 import { useCastStore } from "@/stores/cast";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
@@ -108,7 +111,7 @@ test("a line of site text and a note the book does not read are no one's lines, 
   expect(Object.values(scriptsStore.lineCounts(BOOK, 1, true)).reduce((a, n) => a + n, 0)).toBe(
     segs.length,
   );
-  const stats = useCastStore().castStats(BOOK);
+  const stats = await libraryService().speakerCounts(BOOK);
   for (const [name, n] of Object.entries(bySpeaker)) expect(stats[name]?.lines).toBe(n);
   // and of those, the thought lines the book's thought effect reaches
   for (const name of Object.keys(bySpeaker))
@@ -123,22 +126,29 @@ test("a line of site text and a note the book does not read are no one's lines, 
   expect(counts).toEqual(libraryStore.chapter(BOOK, 1)!.lines!);
 });
 
-test("a line given to another speaker moves in every count, though the counts were read before", async () => {
-  const segs = await open();
-  const line = segs[0];
-  const from = line.speaker;
-  const to = "Someone Else";
-  // read first, so what follows is a count worked out again, not one worked out fresh
-  const before = scriptsStore.lineCounts(BOOK)[from];
-  const statsBefore = useCastStore().castStats(BOOK)[from].lines;
+test.each([
+  ["given to", (_from: string, to: string, id: number) => scriptsStore.setSpeaker(BOOK, 1, id, to)],
+  ["renamed to", (from: string, to: string) => useCastStore().renameCharacter(BOOK, from, to)],
+] as const)(
+  "a line %s another speaker moves in the server's counts, though they were read before",
+  async (_, move) => {
+    // the Narrator is never renamed
+    const line = (await open()).find((s) => s.speaker !== NARRATOR)!;
+    const to = "Someone Else";
+    const counts = pinia.run(() => useSpeakerCounts(BOOK));
+    await counts.refresh();
+    expect(useCastStore().castStats(BOOK)[to]).toBeUndefined();
 
-  scriptsStore.setSpeaker(BOOK, 1, line.id, to);
-  expect(scriptsStore.lineCounts(BOOK)[from] ?? 0).toBe(before - 1);
-  expect(scriptsStore.lineCounts(BOOK)[to]).toBe(1);
-  const stats = useCastStore().castStats(BOOK);
-  expect(stats[from]?.lines ?? 0).toBe(statsBefore - 1);
-  expect(stats[to]).toMatchObject({ lines: 1, first: 1 });
-});
+    await move(line.speaker, to, line.id);
+    await scriptsStore._settled(BOOK, 1);
+    // the write's answer asked for them again; this waits for that read
+    await countsSettled(BOOK);
+    const stats = useCastStore().castStats(BOOK);
+    for (const name of [line.speaker, to])
+      expect(stats[name]?.lines ?? 0).toBe(scriptsStore.lineCounts(BOOK)[name] ?? 0);
+    expect(stats[to]).toMatchObject({ first: 1 });
+  },
+);
 
 test("reading the notes aloud is saved, read back, and makes a note a line again", async () => {
   const segs = await open({ type: "watermark" }, { type: "note" });

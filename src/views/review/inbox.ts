@@ -11,6 +11,7 @@ import { useScriptsStore } from "@/stores/scripts";
 import { defineStore } from "pinia";
 import { computed, type ComputedRef, type MaybeRefOrGetter, toValue } from "vue";
 import type { RouteLocationRaw } from "vue-router";
+import { linesText } from "@/lib/cast";
 import { flagText } from "@/lib/scriptReview";
 import type { Job, Segment } from "@/types";
 import { plural } from "@/lib/contents";
@@ -409,7 +410,8 @@ function gather(
     });
 
   const stats = castStore.castStats(bookId);
-  const lines = (name: string): string => plural(stats[name]?.lines ?? 0, "line");
+  const exact = !!libraryStore.bookById(bookId)?.exactCounts;
+  const lines = (name: string): string => linesText(stats[name]?.lines ?? 0, exact);
   const firstIn = (name: string): string => {
     const n = numbers?.get(stats[name].first);
     return n ? `first in Ch ${n}` : "first in a skipped chapter";

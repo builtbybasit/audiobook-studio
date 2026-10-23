@@ -56,6 +56,10 @@ export function castRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
     c.json(ops.bookCast(db, c.req.valid("param").id) satisfies Cast),
   );
 
+  app.get("/:id/speaker-counts", validate("param", BookParam), (c) =>
+    c.json({ counts: ops.speakerCounts(db, c.req.valid("param").id) }),
+  );
+
   /** Several speakers new or replaced, all or nothing. */
   app.put("/:id/characters", validate("param", BookParam), validate("json", Characters), (c) =>
     c.json({

@@ -4,14 +4,16 @@ import { describe, expect, test } from "bun:test";
 
 import type {
   Cast,
+  CastStat,
   Character,
   ImportedBook,
   LexEntry,
   MovedLines,
   MovedSpeakers,
   Segment,
+  SegmentType,
 } from "@/types";
-import { readScript, scriptRevision } from "~/db/script";
+import { readScript, scriptRevision, writeScript } from "~/db/script";
 import { epubFile, line, story } from "../support/epub";
 import {
   jsonBody,
@@ -49,9 +51,9 @@ async function scripted(api = testApi()) {
 }
 
 /** A shelved book nothing has scripted, for what does not need a cast. */
-async function shelved(api = testApi()) {
+async function shelved(api = testApi(), titles = ["One"]) {
   const { body } = await api.import<ImportedBook>(
-    await epubFile({ chapters: [{ title: "One", paragraphs: story(2) }] }),
+    await epubFile({ chapters: titles.map((title) => ({ title, paragraphs: story(2) })) }),
   );
   await api.request(`/api/books/${body.book.id}/confirm`, { method: "POST" });
   return { api, id: body.book.id };
@@ -88,7 +90,49 @@ describe("the cast a scripting job leaves behind", () => {
     const { api, id } = await shelved();
     expect(await castOf(api, id)).toEqual({ characters: [], lexicon: [] });
     expect((await api.request<Failure>("/api/books/nope/cast")).status).toBe(404);
+    expect((await api.request<Failure>("/api/books/nope/speaker-counts")).status).toBe(404);
   });
+});
+
+describe("speaker counts", () => {
+  const said = (id: number, speaker: string, type: SegmentType = "dialogue"): Segment => ({
+    id,
+    type,
+    speaker,
+    text: `Line ${id}.`,
+    direction: "",
+    audio: { status: "none", endpoint: null, ms: 0, duration: 0 },
+  });
+
+  test.each([
+    [false, { lines: 1, thoughts: 0, chapters: 1, first: 3 }],
+    [true, { lines: 2, thoughts: 0, chapters: 2, first: 2 }],
+  ])(
+    "count spoken lines only, a note only when the book reads notes (%p)",
+    async (readNotes, narrator) => {
+      const { api, id } = await shelved(testApi(), ["One", "Two", "Three"]);
+      await api.request(`/api/books/${id}`, { ...jsonBody({ readNotes }), method: "PATCH" });
+      writeScript(api.db, id, 2, [
+        said(1, "Mara"),
+        said(2, "Mara", "thought"),
+        said(3, "Narrator", "note"),
+        said(4, "Narrator", "watermark"),
+      ]);
+      writeScript(api.db, id, 3, [
+        said(1, "Mara"),
+        said(2, "Narrator", "narration"),
+        said(3, "Tobin", "watermark"),
+      ]);
+      const { body } = await api.request<{ counts: Record<string, CastStat> }>(
+        `/api/books/${id}/speaker-counts`,
+      );
+      // Tobin says nothing aloud, so is not there
+      expect(body.counts).toEqual({
+        Mara: { lines: 3, thoughts: 1, chapters: 2, first: 2 },
+        Narrator: narrator,
+      });
+    },
+  );
 });
 
 describe("writing a speaker", () => {

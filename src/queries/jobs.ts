@@ -7,6 +7,7 @@ import { defineQuery, useQuery } from "@pinia/colada";
 
 import type { Job } from "@/types";
 import { staleMoved } from "@/queries/effects";
+import { countsMoved } from "@/queries/speakerCounts";
 import { invalidate } from "@/queries/invalidate";
 import { keys } from "@/queries/keys";
 import { fetchBook } from "@/queries/library";
@@ -69,6 +70,7 @@ const useJobsQuery = defineQuery(() => {
               void invalidate({ key: keys.chapterHistory(j.bookId, j.chapterId) }, "all");
             }
             void invalidate({ key: keys.cast(j.bookId) }, "all");
+            void countsMoved(j.bookId);
           }
           break;
         // reread the chapter on each move, so clips show landing during the run

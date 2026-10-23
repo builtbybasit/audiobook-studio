@@ -125,6 +125,7 @@ const Settings = v.pipe(
     readNotes: v.optional(v.nullable(v.boolean())),
     checkByEar: v.optional(v.nullable(v.boolean())),
     pronounceOff: v.optional(v.nullable(v.boolean())),
+    exactCounts: v.optional(v.nullable(v.boolean())),
     /** an effect's id or "none"; `null` follows the library's */
     thoughts: v.optional(v.nullable(EffectIdSchema)),
     characterVoice: v.optional(

@@ -189,6 +189,8 @@ export interface Book {
   checkByEar?: boolean;
   /** the scripting model does not suggest dictionary terms; absent = it does */
   pronounceOff?: boolean;
+  /** the Cast page shows exact line counts, not rough bands (spoilers); absent = bands */
+  exactCounts?: boolean;
   /** Effect for `thought` lines: an id or "none". Absent = the library's (`src/lib/effects.ts`). */
   thoughts?: ThoughtChoice;
   /** the voice a speaker with none of their own is read in; absent = the Narrator's */
@@ -297,11 +299,14 @@ export interface NoticeGroup {
   kept: number;
 }
 
+/** A speaker's spoken lines across the book, as the server counts them (`GET …/speaker-counts`). */
 export interface CastStat {
   lines: number;
   /** of `lines`, the thought lines: what the book's thought effect reaches */
   thoughts: number;
-  chapters: Set<number>;
+  /** how many chapters they speak in */
+  chapters: number;
+  /** the lowest chapter id they speak in */
   first: number;
 }
 

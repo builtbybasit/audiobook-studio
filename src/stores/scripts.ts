@@ -14,6 +14,7 @@ import { fetchScript } from "@/queries/chapterScript";
 import { chapterPartsNow, chapterTextNow } from "@/queries/chapterText";
 import { fetchHistory } from "@/queries/history";
 import { staleMoved } from "@/queries/effects";
+import { countsMoved } from "@/queries/speakerCounts";
 import type {
   AudioStatus,
   BulkAction,
@@ -967,6 +968,7 @@ export const useScriptsStore = defineStore("scripts", {
             // never backwards: a rename's answer may have landed in between
             this._revision[k] = Math.max(this._revision[k] ?? 0, revision);
             historyStore._install(bookId, chId, history);
+            void countsMoved(bookId);
             for (const answer of answers) answer(true);
           } catch (cause) {
             // The server's script wins and the toast says so. Anything still dirty edited a

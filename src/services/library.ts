@@ -7,6 +7,7 @@ import type {
   BookPrompt,
   CharacterVoice,
   Cast,
+  CastStat,
   Chapter,
   ChapterHeard,
   ChapterHistory,
@@ -46,6 +47,7 @@ import { API_BASE } from "@/services/mode";
 export { ApiError, type FetchLike } from "@/services/http";
 export type {
   Cast,
+  CastStat,
   ChapterLines,
   ChapterScript,
   ImportedBook,
@@ -77,6 +79,8 @@ export interface BookSettings {
   checkByEar?: boolean;
   /** `Book.pronounceOff`; `null` = suggestions on */
   pronounceOff?: true | null;
+  /** `Book.exactCounts`; `null` = rough counts */
+  exactCounts?: true | null;
   /** `Book.thoughts`: an id or "none"; `null` = the library's */
   thoughts?: ThoughtChoice | null;
   /** `Book.characterVoice`; `null` = the Narrator's */
@@ -196,6 +200,8 @@ export interface LibraryService {
 
   // ---------- the cast ----------
   cast(bookId: string): Promise<Cast>;
+  /** Each speaker's spoken lines across the book; a speaker with none is absent. */
+  speakerCounts(bookId: string): Promise<Record<string, CastStat>>;
   /** New or replaced. Returns the cast as it now stands. */
   putCharacter(bookId: string, character: Character): Promise<Character[]>;
   /** Every line that names them moves with it. */
@@ -456,6 +462,14 @@ export class HttpLibraryService implements LibraryService {
 
   cast(bookId: string): Promise<Cast> {
     return this.http.get<Cast>(`/books/${seg(bookId)}/cast`);
+  }
+
+  async speakerCounts(bookId: string): Promise<Record<string, CastStat>> {
+    return (
+      await this.http.get<{ counts: Record<string, CastStat> }>(
+        `/books/${seg(bookId)}/speaker-counts`,
+      )
+    ).counts;
   }
 
   async putCharacter(bookId: string, character: Character): Promise<Character[]> {

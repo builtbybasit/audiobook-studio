@@ -94,6 +94,14 @@ describe("a book's settings", () => {
     expect(book.budget).toBeUndefined();
   });
 
+  test("exact counts are on once asked, and null turns them off", async () => {
+    const { api, id } = await twoVolumes();
+    expect((await patch(api, id, { exactCounts: true })).body.book.exactCounts).toBe(true);
+    expect((await read(api, id)).book.exactCounts).toBe(true);
+    await patch(api, id, { exactCounts: null });
+    expect((await read(api, id)).book.exactCounts).toBeUndefined();
+  });
+
   test("a budget with no cap is still a pause", async () => {
     const { api, id } = await twoVolumes();
     await patch(api, id, { budget: { cap: null, paused: true } });

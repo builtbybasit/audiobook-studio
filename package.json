@@ -18,6 +18,7 @@
     "test:live": "LIVE=1 bun test tests/live",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bun run server/db/cli.ts",
+    "trim-silence": "bun run server/audio/trimStored.ts",
     "db:studio": "drizzle-kit studio",
     "prepare": "vp config"
   },

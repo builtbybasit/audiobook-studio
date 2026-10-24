@@ -8,13 +8,15 @@ import type {
   Job,
   NarrationQueued,
   NarrationScope,
+  Pacing,
   Segment,
   SegmentAudio,
 } from "@/types";
 import { chainsFor, runnable, soundOf, thoughtEffectOf, type EffectContext } from "@/lib/effects";
-import { encodingOf } from "@/lib/endpointShapes";
+import { AUDIO_MIME, encodingOf } from "@/lib/endpointShapes";
 import { chapterNarration, narrationTargets, SCOPE_LABEL } from "@/lib/runPlan";
 import { isSpoken } from "@/lib/siteText";
+import { pacingOrDefault } from "@/lib/speech";
 import { joinedParts } from "@/lib/split";
 import { compareReading, cutReading, readingRecord, type Reading } from "@/lib/reading";
 import { requeue } from "@/lib/takes";
@@ -22,6 +24,7 @@ import type { EffectRunner } from "~/audio/effects";
 import type { AudioFiles } from "~/audio/files";
 import { probeClip } from "~/audio/probe";
 import type { ThoughtEffect } from "~/audio/thoughtEffect";
+import { edgePauses, trimClip, type TrimSilence } from "~/audio/trim";
 import type { Db, Tx } from "~/db/client";
 import { effectContext } from "~/db/effects";
 import { readEndpoint, writeSpeedRange } from "~/db/endpoints";
@@ -102,6 +105,8 @@ export interface SoundPorts {
   effects?: EffectRunner;
   /** ffmpeg stand-in for thought lines where Pedalboard is missing */
   thoughtEffect?: ThoughtEffect;
+  /** cuts the voice's own silence off a clip's ends */
+  trim?: TrimSilence;
 }
 
 interface LineSound {
@@ -273,6 +278,7 @@ function lineRun(o: {
   chapter: { uid: string };
   deliveryOf: (speaker: string) => Delivery;
   soundFor: (s: Segment) => Promise<LineSound | null>;
+  trim?: { run: TrimSilence; pacing: Pacing };
   targets: readonly Target[];
   lines: number;
   stop: AbortSignal;
@@ -285,8 +291,9 @@ function lineRun(o: {
   close(): void;
   tally: Tally;
 } {
-  const { ctx, provider, files, gate, chapter, deliveryOf, soundFor, targets, lines, stop, fail } =
+  const { ctx, provider, files, gate, chapter, deliveryOf, soundFor, trim, targets, lines, stop } =
     o;
+  const { fail } = o;
   const { job, db } = ctx;
 
   /** Write against the chapter by uid, moving the revision. */
@@ -524,6 +531,23 @@ function lineRun(o: {
       rateLimited: (ms) => gate.rateLimited(id, ms),
     });
 
+  /** The clip with the voice's silence cut off its ends. As it came (logged) on failure. */
+  const trimmed = async (s: Segment, rendered: RenderedClip): Promise<RenderedClip> => {
+    if (!trim) return rendered;
+    try {
+      const cut = await trimClip(trim.run, rendered, edgePauses(s, trim.pacing), stop);
+      return cut ? { ...rendered, ...cut, mime: AUDIO_MIME.wav } : rendered;
+    } catch (e) {
+      if (stop.aborted) throw e;
+      const why = e instanceof Error ? e.message : String(e);
+      ctx.note(`Line ${s.id}: its silence was not trimmed: ${why}`, "warning", {
+        line: s.id,
+        error: why,
+      });
+      return rendered;
+    }
+  };
+
   /** The line's audio through its effects, as WAV. Null (logged) on failure: keep the raw clip. */
   const withEffect = async (
     s: Segment,
@@ -552,15 +576,15 @@ function lineRun(o: {
     let clip: SegmentAudio;
     try {
       if ("error" in outcome) throw outcome.error;
-      const { rendered } = outcome;
       // read the rate off the file: unreadable audio fails the line now, not the export later
       let sampleRate: number;
       try {
-        ({ sampleRate } = await probeClip(rendered.bytes, rendered.format));
+        ({ sampleRate } = await probeClip(outcome.rendered.bytes, outcome.rendered.format));
       } catch (e) {
         const why = (e as Error).message;
         throw new Error(`The audio that came back could not be read: ${why}`, { cause: e });
       }
+      const rendered = await trimmed(s, outcome.rendered);
       // Files live under the book (chapter numbers change). With effects, the voice's file is kept
       // as `raw` so Re-apply needs no new request.
       const fx = await soundFor(s);
@@ -784,6 +808,13 @@ export function narrationHandler(
         chapter,
         deliveryOf,
         soundFor,
+        // an edge pause is kept at the length the run started with, like the line's other pauses
+        ...(sound.trim && {
+          trim: {
+            run: sound.trim,
+            pacing: pacingOrDefault(library.getBook(db, job.bookId)?.pacing),
+          },
+        }),
         targets,
         lines,
         stop: stop.signal,

@@ -10,14 +10,22 @@ import { useNarrationStore } from "@/stores/narration";
 // Keyboard: j/k move, ↵/p play, r retry, t retake, a keep new, x keep previous, i details, e edit the line.
 import { computed, nextTick, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { useJob, STATUS_BG, candId, fmt, lineLink, onClip } from "@/views/narration/shared";
+import {
+  useJob,
+  STATUS_BG,
+  fmt,
+  lineClip,
+  lineLink,
+  onClip,
+  playLine,
+} from "@/views/narration/shared";
 import { useRetakeReview } from "@/views/narration/useRetakeReview";
 import { FLAG_LABEL } from "@/lib/scriptReview";
 import { isSpoken, TYPE_LABEL } from "@/lib/siteText";
 import { defaultPause, secs, silenceOf } from "@/lib/speech";
 import { usePlayer } from "@/composables/usePlayer";
 import { enumParam, idSetParam, useQueryParam } from "@/composables/useQueryParam";
-import { segmentStart } from "@/composables/useChapterQueue";
+import { lineUnder, segmentStart } from "@/composables/useChapterQueue";
 import ChapterTransport from "@/views/narration/ChapterTransport.vue";
 import ExpressionText from "@/components/ExpressionText.vue";
 import FlagPopover from "@/views/narration/FlagPopover.vue";
@@ -47,7 +55,7 @@ const libraryStore = useLibraryStore();
 const narrationStore = useNarrationStore();
 const router = useRouter();
 const chapter = computed(() => libraryStore.chapter(props.bookId, props.chapterId)!);
-const { p, play } = usePlayer();
+const { p } = usePlayer();
 const FILTERS = ["all", "done", "generating", "queued", "failed", "stale", "flagged", "review"];
 const filter = useQueryParam("filter", enumParam(FILTERS, "all"));
 /** the rows whose render details are open, kept in the URL (`?seg=`) so a link can open one */
@@ -123,7 +131,7 @@ const nextOf = computed(() => {
 const bookGap = (s: Segment) => defaultPause(s, nextOf.value.get(s.id), pacing.value);
 
 const transport = ref<InstanceType<typeof ChapterTransport> | null>(null);
-const currentId = computed(() => (p.clipId?.startsWith("seg") ? Number(p.clipId.slice(3)) : null));
+const currentId = computed(() => lineUnder(p.clipId, props.bookId, props.chapterId));
 watch(currentId, (id) => {
   if (id && p.playing)
     document.getElementById("row-" + id)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -154,17 +162,17 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
     if (e.key === "e") void router.push(lineLink(props, s));
   } else if ((e.key === "Enter" || e.key === "p") && s.audio.duration) {
     e.preventDefault();
-    play("seg" + s.id, s.audio.duration, s.audio.url);
+    playLine(props, s);
   } else if (e.key === "r" && s.audio.status === "failed")
     narrationStore.retrySegment(props.bookId, props.chapterId, s.id);
   else if (e.key === "t" && s.audio.duration)
     narrationStore.retakeSegment(props.bookId, props.chapterId, s.id);
   else if (e.key === "1" && s.candidate && s.audio.duration) {
     e.preventDefault();
-    play("seg" + s.id, s.audio.duration, s.audio.url);
+    playLine(props, s);
   } else if (e.key === "2" && s.candidate?.duration) {
     e.preventDefault();
-    play(candId(s), s.candidate.duration, s.candidate.url);
+    playLine(props, s, "cand", s.candidate);
   } else if (e.key === "a" && s.candidate?.duration) void decideTake(s, "new");
   else if (e.key === "x" && s.candidate) void decideTake(s, "current");
   else if (e.key === "f" && s.audio.duration) flagOpen.value = s.id;
@@ -433,10 +441,10 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                       class="icon-btn icon-btn-play"
                       data-tip="play this segment (↵)"
                       aria-label="play this segment"
-                      @click="play('seg' + s.id, s.audio.duration, s.audio.url)"
+                      @click="playLine(props, s)"
                     >
                       <component
-                        :is="onClip('seg' + s.id) ? PauseIcon : PlayIcon"
+                        :is="onClip(lineClip(props, s)) ? PauseIcon : PlayIcon"
                         class="icon-sm icon-fill"
                       />
                     </button>
@@ -493,6 +501,8 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
             </tr>
             <TakeCompare
               v-if="s.candidate"
+              :book-id="bookId"
+              :chapter-id="chapterId"
               :segment="s"
               :position="reviewPosition(s)"
               :total="bookReviewable.length"

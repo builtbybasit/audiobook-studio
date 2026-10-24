@@ -17,7 +17,12 @@ import { UiCombobox, UiHint } from "@/ui";
 import { useBookId } from "@/composables/useBookId";
 import { useOpenedChapter } from "@/composables/useOpenedChapter";
 import { usePlayer } from "@/composables/usePlayer";
-import { chapterQueue, chapterQueueId, segmentStart } from "@/composables/useChapterQueue";
+import {
+  chapterQueue,
+  chapterQueueId,
+  lineUnder,
+  segmentStart,
+} from "@/composables/useChapterQueue";
 import { useCast, useChapterScript } from "@/queries";
 import { useChapterHeard } from "@/queries/chapterHeard";
 import { useReader } from "@/stores/reader";
@@ -92,9 +97,7 @@ const total = computed(() => {
 const { p, playQueue, cue, skip, next, prev, repeatClip, layout, now } = usePlayer();
 const queueId = computed(() => chapterQueueId(bookId, opened.value));
 const isThis = computed(() => p.id === queueId.value);
-const current = computed(() =>
-  isThis.value && p.clipId?.startsWith("seg") ? Number(p.clipId.slice(3)) : null,
-);
+const current = computed(() => (isThis.value ? lineUnder(p.clipId, bookId, opened.value) : null));
 /** the one playing, else the first with a clip */
 const focus = computed(
   () => rows.value.find((s) => s.id === current.value) ?? rows.value.find((s) => s.audio.duration),

@@ -8,7 +8,7 @@ import { useRoute, useRouter } from "vue-router";
 import { useJob, fmt } from "@/views/narration/shared";
 import { chapterTimeline, secs } from "@/lib/speech";
 import { usePlayer, type Queue } from "@/composables/usePlayer";
-import { chapterQueue, chapterQueueId } from "@/composables/useChapterQueue";
+import { chapterQueue, chapterQueueId, lineUnder } from "@/composables/useChapterQueue";
 import {
   Pause as PauseIcon,
   Play as PlayIcon,
@@ -33,7 +33,7 @@ const total = computed(() => {
   return last ? last.end + last.gap : 0;
 });
 const isChapter = computed(() => p.id === chapterQueueId(props.bookId, props.chapterId));
-const currentId = computed(() => (p.clipId?.startsWith("seg") ? Number(p.clipId.slice(3)) : null));
+const currentId = computed(() => lineUnder(p.clipId, props.bookId, props.chapterId));
 
 /** This chapter's timeline, built the same way the reader builds it. */
 const buildQueue = (chId: number): Queue | null =>

@@ -6,6 +6,7 @@ import { useScriptsStore } from "@/stores/scripts";
 import { computed } from "vue";
 
 import { usePlayer } from "@/composables/usePlayer";
+import { clipOf } from "@/composables/useChapterQueue";
 import type { AudioStatus, ReqError, Segment, SegmentAudio } from "@/types";
 
 export const STATUS_BG: Record<AudioStatus, string> = {
@@ -19,14 +20,26 @@ export const STATUS_BG: Record<AudioStatus, string> = {
 export const fmt = (s: number): string =>
   `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
-/** the player's name for the retake waiting beside the clip in the book — `2` plays it */
-export const candId = (s: Segment): string => `cand${s.id}`;
-
 /** the clip under the playhead is this one — true whether it is playing alone or inside the chapter */
 export const onClip = (id: string): boolean => {
   const { p } = usePlayer();
   return p.clipId === id && p.playing;
 };
+
+/** A line's clip, or one of its takes (`cand` is the retake waiting for a verdict), as the player
+ *  names it. */
+export const lineClip = (props: ChapterProps, s: Segment, take?: string): string =>
+  clipOf(props.bookId, props.chapterId, s.id, take);
+
+/** Plays it alone. */
+export function playLine(
+  props: ChapterProps,
+  s: Segment,
+  take?: string,
+  clip: { duration: number; url?: string } = s.audio,
+): void {
+  usePlayer().play(lineClip(props, s, take), clip.duration, clip.url, `Line ${s.id}`);
+}
 
 /** No code means no answer: refused before it went out, or no response came back. */
 export const errorStatus = (e: ReqError): string => (e.code ? `HTTP ${e.code}` : "no HTTP status");

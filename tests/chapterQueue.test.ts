@@ -3,7 +3,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
 
-import { chapterQueue, chapterQueueId } from "@/composables/useChapterQueue";
+import { chapterQueue, chapterQueueId, clipOf, lineUnder } from "@/composables/useChapterQueue";
 import { fetchBook, fetchScript } from "@/queries";
 import { useScriptsStore } from "@/stores/scripts";
 import { chapters } from "~/db/schema";
@@ -37,4 +37,14 @@ test("the next queue is the next kept chapter, read though no page opened it", a
   expect(next?.id).toBe(chapterQueueId(id, 3));
   expect(next?.clips.length).toBeGreaterThan(0);
   expect(useScriptsStore().segmentsOf(id, 2)).toEqual([]);
+});
+
+test.each([
+  ["its own chapter's line", clipOf("b", 1, 42), 42],
+  ["the same line id in another chapter", clipOf("b", 2, 42), null],
+  ["another book's", clipOf("c", 1, 42), null],
+  ["a take of the line", clipOf("b", 1, 42, "cand"), null],
+  ["nothing playing", null, null],
+])("lineUnder: %s", (_, clipId, want) => {
+  expect(lineUnder(clipId, "b", 1)).toBe(want);
 });

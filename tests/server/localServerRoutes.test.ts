@@ -34,7 +34,7 @@ const transcriber = (over: Partial<Transcriber> = {}): Transcriber => ({
   id: "phonon",
   name: "Phonon",
   baseUrl: "http://127.0.0.1:8010/v1",
-  model: "phonon-2",
+  model: "phonon-2.5-en",
   enabled: true,
   concurrency: 1,
   needsKey: false,

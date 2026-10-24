@@ -866,7 +866,7 @@ describe("transcription endpoints with a server answering", () => {
     const t = endpointsStore.addTranscriber("fermion-phonon");
     expect(t).toMatchObject({
       baseUrl: "http://127.0.0.1:8010/v1",
-      model: "phonon-2",
+      model: "phonon-2.5-en",
       needsKey: false,
       perMinute: 0,
     });

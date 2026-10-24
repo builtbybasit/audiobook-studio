@@ -23,7 +23,7 @@ const target = (over: Partial<TranscriptionTarget> = {}): TranscriptionTarget =>
   id: "phonon",
   name: "Phonon",
   baseUrl: "http://127.0.0.1:8010/v1",
-  model: "phonon-2",
+  model: "phonon-2.5-en",
   apiKey: null,
   needsKey: false,
   timeoutSec: 5,
@@ -36,7 +36,7 @@ const transcriber = (over: Partial<Transcriber> = {}): Transcriber => ({
   id: "phonon",
   name: "Phonon",
   baseUrl: "http://127.0.0.1:8010/v1",
-  model: "phonon-2",
+  model: "phonon-2.5-en",
   enabled: true,
   concurrency: 2,
   needsKey: false,
@@ -85,7 +85,7 @@ describe("the transcription wire", () => {
     const form = f.sent[0].init.body as FormData;
     expect([...form.keys()].sort()).toEqual(["file", "language", "model", "response_format"]);
     expect(form.get("response_format")).toBe("json");
-    expect(form.get("model")).toBe("phonon-2");
+    expect(form.get("model")).toBe("phonon-2.5-en");
     expect((form.get("file") as File).name).toBe("line.wav");
     expect(new Headers(f.sent[0].init.headers).has("authorization")).toBe(false);
   });

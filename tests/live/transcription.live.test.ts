@@ -1,6 +1,6 @@
 // The transcription wire against a real server, opt-in: `LIVE=1 bun test tests/live` with
 // `TRANSCRIPTION_URL` in `.env` (Fermion's Phonon: `http://127.0.0.1:8010/v1` after
-// `fermion serve phonon-2 --port 8010`), `TRANSCRIPTION_MODEL` (default `phonon-2`) and
+// `fermion serve phonon-2.5-en --port 8010`), `TRANSCRIPTION_MODEL` (default `phonon-2.5-en`) and
 // `TRANSCRIPTION_TOKEN` if needed. Off macOS, set `LIVE_SPEECH_WAV` to a WAV of the sentence.
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -28,7 +28,7 @@ describe.skipIf(!env.LIVE || !env.TRANSCRIPTION_URL)("a transcription server, fo
     id: "live",
     name: "Transcription (live)",
     baseUrl: (env.TRANSCRIPTION_URL ?? "").replace(/\/+$/, ""),
-    model: env.TRANSCRIPTION_MODEL ?? "phonon-2",
+    model: env.TRANSCRIPTION_MODEL ?? "phonon-2.5-en",
     apiKey: env.TRANSCRIPTION_TOKEN ?? null,
     needsKey: false,
     timeoutSec: 60,

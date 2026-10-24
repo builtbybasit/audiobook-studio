@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { pedalboardRunner } from "~/audio/effects";
 import { ffmpegSpeechRate } from "~/audio/ffmpeg";
 import { ffmpegThoughtEffect } from "~/audio/thoughtEffect";
+import { ffmpegTrim } from "~/audio/trim";
 import { CLONE_BODY_BYTES, env, importBodyBytes, scriptBodyBytes } from "~/env";
 import { DEMO_BASE, openLibrary, REAL_BASE, serveLibraries } from "~/libraries";
 import { log } from "~/log";
@@ -13,7 +14,7 @@ import { localServers } from "~/servers/localServers";
 
 const boot = log.child({ name: "boot" });
 
-// ffmpeg is required (encoding, thought effect, transcription input), so fail at boot without it.
+// ffmpeg is required (encoding, thought effect, trimming, transcription input), so fail at boot without it.
 const ffmpeg = await ffmpegAvailable(env.FFMPEG_BIN);
 if (!ffmpeg)
   throw new Error(
@@ -32,6 +33,7 @@ void effects
   );
 const thoughtEffect = ffmpegThoughtEffect(env.FFMPEG_BIN);
 const speechRate = ffmpegSpeechRate(env.FFMPEG_BIN);
+const trim = ffmpegTrim(env.FFMPEG_BIN);
 
 const real = openLibrary({
   name: "real",
@@ -44,6 +46,7 @@ const real = openLibrary({
   effects,
   thoughtEffect,
   speechRate,
+  trim,
 });
 const demo = openLibrary({
   name: "demo",
@@ -56,6 +59,7 @@ const demo = openLibrary({
   effects,
   thoughtEffect,
   speechRate,
+  trim,
   demo: true,
 });
 const libraries = [real, demo];

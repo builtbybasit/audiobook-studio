@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import type { EffectRunner } from "~/audio/effects";
 import type { ThoughtEffect } from "~/audio/thoughtEffect";
+import type { TrimSilence } from "~/audio/trim";
 import { createApp } from "~/app";
 import { audioFiles, type AudioFiles } from "~/audio/files";
 import { connect, openDb, type Db } from "~/db/client";
@@ -97,6 +98,8 @@ export interface TestApiOptions {
   effects?: EffectRunner;
   /** what a thought line is given where `effects` cannot run; none by default, nor ffmpeg */
   thoughtEffect?: ThoughtEffect;
+  /** what cuts a clip's silent ends; none by default, nor ffmpeg */
+  trim?: TrimSilence;
   /** the local servers the endpoint routes start and stop; none by default, as in the demo */
   servers?: LocalServers;
 }
@@ -173,6 +176,7 @@ export function testRunner(db: Db, log: Logger, options: TestApiOptions = {}): R
       narration: narrationHandler(options.speech ?? fakeSpeechProvider(), files, options.gate, {
         effects: options.effects,
         thoughtEffect: options.thoughtEffect,
+        trim: options.trim,
       }),
       export: exportHandler(testExports(options), files),
       check: checkHandler(options.transcription ?? noTranscription, files),

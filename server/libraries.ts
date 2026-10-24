@@ -7,6 +7,7 @@ import type { Env as PinoEnv } from "hono-pino";
 import type { SpeechRate } from "~/audio/ffmpeg";
 import type { EffectRunner } from "~/audio/effects";
 import type { ThoughtEffect } from "~/audio/thoughtEffect";
+import type { TrimSilence } from "~/audio/trim";
 import { createApp } from "~/app";
 import { demoClips } from "~/audio/demoClips";
 import { audioFiles, type AudioFiles } from "~/audio/files";
@@ -50,6 +51,8 @@ export interface LibraryOptions {
   effects?: EffectRunner;
   /** a `thought` line's effect where `effects` can't run; absent = left as the voice made it */
   thoughtEffect?: ThoughtEffect;
+  /** cuts the voice's own silence off each clip; absent = kept as sent */
+  trim?: TrimSilence;
   /** resamples to 16 kHz mono before transcription; absent = sent as it came */
   speechRate?: SpeechRate;
   log?: Logger;
@@ -126,6 +129,7 @@ export function openLibrary(options: LibraryOptions): Library {
       narration: narrationHandler(providers.speech, files, gate, {
         effects: options.effects,
         thoughtEffect: options.thoughtEffect,
+        trim: options.trim,
       }),
       export: exportHandler(exports, files),
       check: checkHandler(given.transcription, files),

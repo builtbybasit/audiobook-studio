@@ -12,8 +12,16 @@ import type { Queue } from "@/composables/usePlayer";
 /** The player is app-wide, so a queue names its exact chapter: play on ch 7 while ch 6 runs must
  *  load ch 7, not toggle. */
 export const chapterQueueId = (bookId: string, chId: number): string => `chapter:${bookId}:${chId}`;
-/** the player's name for one line's clip */
-export const clipOf = (segId: number): string => `seg${segId}`;
+/** The player's name for a line's clip, or one of its takes (`cand`, `take2`). The chapter is in
+ *  it: line ids repeat across chapters, so `seg42` alone lit line 42 of every chapter. */
+export const clipOf = (bookId: string, chId: number, segId: number, take?: string): string =>
+  `${chapterQueueId(bookId, chId)}:seg${segId}${take ? `:${take}` : ""}`;
+
+/** The line of this chapter under the playhead, or null. */
+export function lineUnder(clipId: string | null, bookId: string, chId: number): number | null {
+  const m = clipId?.match(/:seg(\d+)$/);
+  return m && clipId === clipOf(bookId, chId, Number(m[1])) ? Number(m[1]) : null;
+}
 
 export interface ChapterQueueOptions {
   /** where the mini player takes you back to: the stage you started listening on */
@@ -44,7 +52,7 @@ export function chapterQueue(
     subtitle: libraryStore.bookById(bookId)?.title ?? "",
     href: opts.href?.(chId),
     clips: timeline.map(({ s, gap }) => ({
-      id: clipOf(s.id),
+      id: clipOf(bookId, chId, s.id),
       duration: s.audio.duration,
       gap,
       url: s.audio.url,

@@ -10,7 +10,7 @@ import { fetchScript } from "@/queries/chapterScript";
 import { invalidate } from "@/queries/invalidate";
 import { keys } from "@/queries/keys";
 import { jobsService } from "@/services/jobs";
-import type { BookSpend, CheckQueued, EndpointLoad, Eta, Job, JobKind } from "@/types";
+import type { BookSpend, TranscribeQueued, EndpointLoad, Eta, Job, JobKind } from "@/types";
 import { defineStore } from "pinia";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useExportsStore } from "@/stores/exports";
@@ -24,7 +24,7 @@ const AVG_JOB: Record<JobKind, number> = {
   scripting: 25,
   narration: 60,
   export: 120,
-  check: 15,
+  transcribe: 15,
   effects: 120,
 };
 
@@ -183,8 +183,8 @@ export const useJobsStore = defineStore("jobs", {
       }
       for (const { kind, bookId, ids } of runs.values())
         if (kind === "scripting") void scriptingStore.startRun(bookId, ids, { quiet: true });
-        // a check hears what the chapter holds now; the server skips what was heard already
-        else if (kind === "check") void this.checkChapters(bookId, ids, { quiet: true });
+        // a transcription hears what the chapter holds now; the server skips what was heard already
+        else if (kind === "transcribe") void this.transcribeChapters(bookId, ids, { quiet: true });
         else if (kind === "narration") void this._retryNarration(bookId, ids);
     },
     /**
@@ -208,11 +208,11 @@ export const useJobsStore = defineStore("jobs", {
       if (rest.length) await narrationStore.startRun(bookId, rest, { scope: "fill", quiet: true });
     },
     /**
-     * Check these chapters' clips by ear as one run: the server transcribes each with the first
+     * Transcribe these chapters' clips as one run: the server transcribes each with the first
      * transcriber on and flags lines that differ. Skipped chapters are named in the toast, and
      * already-heard ones can be heard `again` from it. True when anything was queued.
      */
-    async checkChapters(
+    async transcribeChapters(
       bookId: string,
       ids: number[],
       { quiet = false, again = false }: { quiet?: boolean; again?: boolean } = {},
@@ -220,12 +220,12 @@ export const useJobsStore = defineStore("jobs", {
       const libraryStore = useLibraryStore();
       const uiStore = useUiStore();
 
-      if (libraryStore._blocked(bookId, "check it by ear")) return false;
-      let queued: CheckQueued;
+      if (libraryStore._blocked(bookId, "transcribe it")) return false;
+      let queued: TranscribeQueued;
       try {
-        queued = await jobsService().checkChapters(bookId, ids, again);
+        queued = await jobsService().transcribeChapters(bookId, ids, again);
       } catch (cause) {
-        toastFailure("queue the check", cause);
+        toastFailure("queue the transcription", cause);
         return false;
       }
       const { jobs, skipped, chapters } = queued;
@@ -235,7 +235,7 @@ export const useJobsStore = defineStore("jobs", {
       const WHY: Record<(typeof skipped)[number]["why"], string> = {
         unnarrated: "not narrated yet",
         nothing: "already heard",
-        busy: "already being narrated or checked",
+        busy: "already being narrated or transcribed",
         excluded: "skipped for the audiobook",
         missing: "no longer in the book",
       };
@@ -246,19 +246,19 @@ export const useJobsStore = defineStore("jobs", {
       const heard = skipped.filter((s) => s.why === "nothing").map((s) => s.id);
       const action = heard.length
         ? {
-            label: "Check again",
-            run: () => void this.checkChapters(bookId, heard, { again: true }),
+            label: "Transcribe again",
+            run: () => void this.transcribeChapters(bookId, heard, { again: true }),
           }
         : null;
       if (!jobs.length) {
-        uiStore.toast("Nothing to check in this selection", {
+        uiStore.toast("Nothing to transcribe in this selection", {
           kind: "warn",
           description: notes.join("; ") || "The selection had no clips the server could hear.",
           action,
         });
         return false;
       }
-      uiStore.toast(`Check by ear · ${plural(jobs.length, "chapter")}`, {
+      uiStore.toast(`Transcribe · ${plural(jobs.length, "chapter")}`, {
         kind: "info",
         description:
           "Queued on the server. Progress is in the Queue, and a line heard saying something else is flagged." +
@@ -387,11 +387,12 @@ export const useJobsStore = defineStore("jobs", {
           scripting: () => !busy("scripting"),
           // whether lines failed or were never sent, the retry reads the script to see which
           narration: () => !busy("narration"),
-          // a chapter carries no check status, so the queue says whether one is on it
-          check: () =>
+          // a chapter carries no transcription status, so the queue says whether one is on it
+          transcribe: () =>
             !busy("narration") &&
             !this.activeJobs.some(
-              (x) => x.kind === "check" && x.bookId === j.bookId && x.chapterId === j.chapterId,
+              (x) =>
+                x.kind === "transcribe" && x.bookId === j.bookId && x.chapterId === j.chapterId,
             ),
           // a build is retried from its own row, by the settings it carried
           export: () => false,

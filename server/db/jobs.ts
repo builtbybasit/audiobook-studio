@@ -31,7 +31,7 @@ export interface EnqueueInput {
   chapterId: number | null;
   label: string;
   bulk?: Job["bulk"];
-  run?: Pick<Job, "scriptRun" | "narrationRun" | "exportRun" | "checkRun" | "effectsRun">;
+  run?: Pick<Job, "scriptRun" | "narrationRun" | "exportRun" | "transcribeRun" | "effectsRun">;
   /**
    * Runs in the same transaction, only when the job is created, so a change like a chapter marked
    * `queued` cannot land after the worker has picked the job up.
@@ -319,9 +319,13 @@ export function setScriptRun(db: Db | Tx, id: number, run: NonNullable<Job["scri
     .run();
 }
 
-export function setCheckRun(db: Db | Tx, id: number, run: NonNullable<Job["checkRun"]>): void {
+export function setTranscribeRun(
+  db: Db | Tx,
+  id: number,
+  run: NonNullable<Job["transcribeRun"]>,
+): void {
   db.update(jobs)
-    .set({ run: { checkRun: run } })
+    .set({ run: { transcribeRun: run } })
     .where(eq(jobs.id, id))
     .run();
 }

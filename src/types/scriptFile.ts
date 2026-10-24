@@ -98,7 +98,7 @@ export interface ScriptFileEffect {
 }
 
 /**
- * `book.json`: the book's own settings that shape its script and reading. Budgets and check-by-ear
+ * `book.json`: the book's own settings that shape its script and reading. Budgets and auto-transcribe
  * stay with the install. A voice travels as a hint, an effect by name.
  */
 export interface ScriptFileBook {

@@ -43,7 +43,7 @@ export const books = sqliteTable("books", {
   /** read `note` lines aloud; null = skip them */
   readNotes: integer("read_notes", { mode: "boolean" }),
   /** null = only when asked */
-  checkByEar: integer("check_by_ear", { mode: "boolean" }),
+  autoTranscribe: integer("auto_transcribe", { mode: "boolean" }),
   /** null = the scripting model suggests dictionary terms */
   pronounceOff: integer("pronounce_off", { mode: "boolean" }),
   /** null = the Cast page shows rough line counts, not exact ones */

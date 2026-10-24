@@ -5,7 +5,7 @@ import type { ExportSettings } from "@/types/export";
 import type { NarrationScope } from "@/types/run";
 import type { Profile, ResolvedPrompt } from "@/types/scripting";
 
-export type JobKind = "scripting" | "narration" | "export" | "check" | "effects";
+export type JobKind = "scripting" | "narration" | "export" | "transcribe" | "effects";
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 
 export interface JobEvent {
@@ -103,17 +103,17 @@ export interface Job {
   /** A Re-apply's reach; absent = the whole book. */
   effectsRun?: ExistingScope;
   /** One chapter's current clips heard by a transcription endpoint. */
-  checkRun?: {
+  transcribeRun?: {
     endpoint: string;
     /** lines with a clip to hear */
     lines: number;
     /** this run */
-    checked: number;
+    transcribed: number;
     /** heard saying something other than their line */
     mismatched: number;
-    /** requests that failed; the lines stay unchecked */
+    /** requests that failed; the lines stay untranscribed */
     failed: number;
-    /** "Check again": hears every clip, including those already heard right */
+    /** "Transcribe again": hears every clip, including those already heard right */
     again?: true;
   };
 }

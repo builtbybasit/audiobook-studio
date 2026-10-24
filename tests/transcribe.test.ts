@@ -1,6 +1,6 @@
-// Checking narration by ear, the page's half: the run is asked for and reported like a narration
-// run, a moved check re-reads what it heard and the script it flagged, and a heard flag is listed
-// with the rest. The check itself is tested in `tests/server/`; the services here are fakes.
+// Transcribing narration, the page's half: the run is asked for and reported like a narration
+// run, a moved one re-reads what it heard and the script it flagged, and a mismatch flag is listed
+// with the rest. The job itself is tested in `tests/server/`; the services here are fakes.
 import { beforeEach, describe, expect, test } from "bun:test";
 import { useQuery } from "@pinia/colada";
 
@@ -16,7 +16,7 @@ import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
 import { reviewInbox } from "@/views/review/inbox";
-import type { Book, Chapter, CheckQueued, Job, Segment } from "@/types";
+import type { Book, Chapter, TranscribeQueued, Job, Segment } from "@/types";
 import { flush, testPinia, type TestPinia } from "./support/pinia";
 
 const BOOK = "heard";
@@ -61,22 +61,22 @@ beforeEach(() => {
   ]);
 });
 
-/** A jobs service that answers `checkChapters` with `answer` and the queue with nothing. */
-function checking(answer: () => Promise<CheckQueued>): number[][] {
+/** A jobs service that answers `transcribeChapters` with `answer` and the queue with nothing. */
+function checking(answer: () => Promise<TranscribeQueued>): number[][] {
   const asked: number[][] = [];
   setJobsService({
     list: async () => [],
-    checkChapters: async (_book: string, ids: number[]) => (asked.push(ids), answer()),
+    transcribeChapters: async (_book: string, ids: number[]) => (asked.push(ids), answer()),
   } as unknown as JobsService);
   return asked;
 }
 
-const checkJob = (id: number, chapterId: number, over: Partial<Job> = {}): Job => ({
+const transcribeJob = (id: number, chapterId: number, over: Partial<Job> = {}): Job => ({
   id,
-  kind: "check",
+  kind: "transcribe",
   bookId: BOOK,
   chapterId,
-  label: `Check · ch ${chapterId}`,
+  label: `Transcribe · ch ${chapterId}`,
   status: "queued",
   progress: 0,
   queuedAt: id,
@@ -86,10 +86,10 @@ const checkJob = (id: number, chapterId: number, over: Partial<Job> = {}): Job =
   ...over,
 });
 
-describe("asking for a check", () => {
+describe("asking for a transcription", () => {
   test("queues the chapters and says which were left out, and why", async () => {
     const asked = checking(async () => ({
-      jobs: [checkJob(1, 1)],
+      jobs: [transcribeJob(1, 1)],
       skipped: [
         { id: 2, why: "unnarrated" },
         { id: 3, why: "nothing" },
@@ -97,10 +97,10 @@ describe("asking for a check", () => {
       runId: 9,
       chapters: [chapter(1), chapter(2)],
     }));
-    expect(await useJobsStore().checkChapters(BOOK, [1, 2, 3])).toBe(true);
+    expect(await useJobsStore().transcribeChapters(BOOK, [1, 2, 3])).toBe(true);
     expect(asked).toEqual([[1, 2, 3]]);
     expect(toasts).toHaveLength(1);
-    expect(toasts[0].msg).toBe("Check by ear · 1 chapter");
+    expect(toasts[0].msg).toBe("Transcribe · 1 chapter");
     expect(toasts[0].description).toContain(
       "Left out: 1 chapter not narrated yet; 1 chapter already heard.",
     );
@@ -108,7 +108,7 @@ describe("asking for a check", () => {
 
   test("chapters already heard can be heard again from the toast, and only they", async () => {
     const asked: [number[], boolean][] = [];
-    let answer: CheckQueued = {
+    let answer: TranscribeQueued = {
       jobs: [],
       skipped: [
         { id: 1, why: "nothing" },
@@ -119,23 +119,23 @@ describe("asking for a check", () => {
     };
     setJobsService({
       list: async () => [],
-      checkChapters: async (_book: string, ids: number[], again = false) => (
+      transcribeChapters: async (_book: string, ids: number[], again = false) => (
         asked.push([ids, again]),
         answer
       ),
     } as unknown as JobsService);
-    expect(await useJobsStore().checkChapters(BOOK, [1, 2])).toBe(false);
-    expect(toasts[0]).toMatchObject({ msg: "Nothing to check in this selection" });
-    expect(toasts[0].action?.label).toBe("Check again");
+    expect(await useJobsStore().transcribeChapters(BOOK, [1, 2])).toBe(false);
+    expect(toasts[0]).toMatchObject({ msg: "Nothing to transcribe in this selection" });
+    expect(toasts[0].action?.label).toBe("Transcribe again");
 
-    answer = { ...answer, jobs: [checkJob(1, 1)], skipped: [] };
+    answer = { ...answer, jobs: [transcribeJob(1, 1)], skipped: [] };
     toasts[0].action!.run();
     await flush();
     expect(asked).toEqual([
       [[1, 2], false],
       [[1], true],
     ]);
-    expect(toasts[1]).toMatchObject({ msg: "Check by ear · 1 chapter" });
+    expect(toasts[1]).toMatchObject({ msg: "Transcribe · 1 chapter" });
     expect(toasts[1].action).toBeUndefined();
   });
 
@@ -146,12 +146,12 @@ describe("asking for a check", () => {
       runId: 9,
       chapters: [chapter(1), chapter(2)],
     }));
-    expect(await useJobsStore().checkChapters(BOOK, [1])).toBe(false);
+    expect(await useJobsStore().transcribeChapters(BOOK, [1])).toBe(false);
     expect(toasts).toEqual([
       {
-        msg: "Nothing to check in this selection",
+        msg: "Nothing to transcribe in this selection",
         kind: "warn",
-        description: "1 chapter already being narrated or checked",
+        description: "1 chapter already being narrated or transcribed",
       },
     ]);
   });
@@ -161,23 +161,23 @@ describe("asking for a check", () => {
     checking(async () => {
       throw new ApiError(refusal, 400);
     });
-    expect(await useJobsStore().checkChapters(BOOK, [1])).toBe(false);
+    expect(await useJobsStore().transcribeChapters(BOOK, [1])).toBe(false);
     expect(toasts.map((t) => [t.msg, t.kind])).toEqual([[refusal, "error"]]);
   });
 
-  test("a paused book is not checked, and nothing is sent", async () => {
+  test("a paused book is not transcribed, and nothing is sent", async () => {
     const asked = checking(async () => {
       throw new Error("sent");
     });
     useLibraryStore().bookById(BOOK)!.budget = { cap: null, paused: true };
-    expect(await useJobsStore().checkChapters(BOOK, [1])).toBe(false);
+    expect(await useJobsStore().transcribeChapters(BOOK, [1])).toBe(false);
     expect(asked).toEqual([]);
   });
 });
 
-describe("a check that moves", () => {
+describe("a transcription that moves", () => {
   test("has what it heard of its chapter and the chapter's script read again", async () => {
-    let queue: Job[] = [checkJob(1, 1)];
+    let queue: Job[] = [transcribeJob(1, 1)];
     setJobsService({ list: async () => queue } as unknown as JobsService);
     const reads = { heard: [] as number[], script: [] as number[] };
     const real = libraryService();
@@ -215,7 +215,7 @@ describe("a check that moves", () => {
     await flush();
     expect(reads).toEqual({ heard: [1], script: [1, 2] });
 
-    queue = [checkJob(1, 1, { status: "running", progress: 40, startedAt: 2 })];
+    queue = [transcribeJob(1, 1, { status: "running", progress: 40, startedAt: 2 })];
     await jobs.refetch();
     await flush();
     await flush();
@@ -228,11 +228,11 @@ describe("a check that moves", () => {
   });
 });
 
-describe("a heard flag", () => {
+describe("a mismatch flag", () => {
   test("is listed with the other flags, saying what was heard", () => {
-    const flag = { kind: "heard" as const, note: "Heard: “The floor opened.”", at: 5 };
+    const flag = { kind: "mismatch" as const, note: "Heard: “The floor opened.”", at: 5 };
     useScriptsStore()._install(BOOK, 1, { segments: [line(1, { flag }), line(2)], revision: 1 });
-    expect(FLAG_LABEL.heard).toBe("heard saying something else");
+    expect(FLAG_LABEL.mismatch).toBe("doesn't match the text");
     const flagged = reviewInbox(BOOK).find((g) => g.kind === "flagged")!;
     expect(flagged.items).toHaveLength(1);
     expect(flagged.items[0]).toMatchObject({
@@ -241,6 +241,6 @@ describe("a heard flag", () => {
       to: { query: { ch: "1", filter: "flagged", seg: "1" } },
     });
     expect(flagged.items[0].detail).toContain("The floor opened.");
-    expect(flagged.blurb).toContain("check by ear");
+    expect(flagged.blurb).toContain("transcript");
   });
 });

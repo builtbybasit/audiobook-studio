@@ -60,7 +60,7 @@ export function bookFacts(id: string): BookFacts {
   const doing: Record<JobKind, (n: number) => string> = {
     scripting: (n) => `Scripting ${plural(n, "chapter")}`,
     narration: (n) => `Narrating ${plural(n, "chapter")}`,
-    check: (n) => `Checking ${plural(n, "chapter")} by ear`,
+    transcribe: (n) => `Transcribing ${plural(n, "chapter")}`,
     export: () => "Building the audiobook",
     effects: () => "Re-applying effects",
   };

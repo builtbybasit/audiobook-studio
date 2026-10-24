@@ -539,16 +539,16 @@ export const useLibraryStore = defineStore("library", {
         on ? "show exact counts" : "show rough counts",
       );
     },
-    /** Whether chapters are checked by ear after narration; only changes what the server queues. */
-    async setCheckByEar(bookId: string, on: boolean): Promise<void> {
+    /** Whether chapters are transcribed after narration; only changes what the server queues. */
+    async setAutoTranscribe(bookId: string, on: boolean): Promise<void> {
       const b = this.bookById(bookId);
-      if (!b || !!b.checkByEar === on) return;
-      if (on) b.checkByEar = true;
-      else delete b.checkByEar;
+      if (!b || !!b.autoTranscribe === on) return;
+      if (on) b.autoTranscribe = true;
+      else delete b.autoTranscribe;
       await this._writeSettings(
         bookId,
-        { checkByEar: on },
-        on ? "check this book by ear" : "stop checking this book by ear",
+        { autoTranscribe: on },
+        on ? "transcribe this book after narration" : "stop transcribing this book after narration",
       );
     },
     /** Whether the scripting model suggests dictionary terms for this book. */

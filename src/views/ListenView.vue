@@ -3,7 +3,7 @@ import { useCastStore } from "@/stores/cast";
 import { useLibraryStore } from "@/stores/library";
 
 // Listen: a chapter read along with its audio. The line under the playhead is lit, and on a line
-// a check by ear heard, the word too, from the transcriber's times, never an estimate. It plays the
+// a transcription heard, the word too, from the transcriber's times, never an estimate. It plays the
 // shared chapter queue (`useChapterQueue`); the player is `ListenBar`, with the ledger's keys.
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
@@ -290,7 +290,7 @@ onBeforeUnmount(() => {
         <span class="ml-auto flex items-center gap-2">
           <UiHint
             label="the highlighting"
-            text="The line being read is lit. On a line a check by ear has heard, so is each word as it is said; a line not checked, or edited since, lights up whole. A click on a line or a word listens from there; ⚑ beside a line, or f, flags what is wrong with its clip."
+            text="The line being read is lit. On a transcribed line, so is each word as it is said; a line not transcribed, or edited since, lights up whole. A click on a line or a word listens from there; ⚑ beside a line, or f, flags what is wrong with its clip."
           />
           <ReaderSettings />
         </span>

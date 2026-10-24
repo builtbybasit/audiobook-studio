@@ -246,7 +246,7 @@ export function scriptHeadValues(
   };
 }
 
-/** A check by ear's finding, without the endpoint (only the ledger needs it). */
+/** A transcription's finding, without the endpoint (only the ledger needs it). */
 export const toHeardLine = (row: typeof heard.$inferSelect): HeardLine => ({
   text: row.text,
   heard: row.heard,

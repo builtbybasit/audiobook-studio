@@ -470,22 +470,22 @@ async function copy() {
                 Silence stitched between clips is not rendered and is never billed.
               </dd></template
             >
-            <template v-if="job.checkRun"
+            <template v-if="job.transcribeRun"
               ><dt class="text-zinc-500">Endpoint</dt>
-              <dd class="break-all font-mono text-xs">{{ job.checkRun.endpoint }}</dd>
+              <dd class="break-all font-mono text-xs">{{ job.transcribeRun.endpoint }}</dd>
               <dt class="text-zinc-500">Lines heard</dt>
-              <dd>{{ job.checkRun.checked }}/{{ job.checkRun.lines }}</dd>
+              <dd>{{ job.transcribeRun.transcribed }}/{{ job.transcribeRun.lines }}</dd>
               <dt class="text-zinc-500">Heard wrong</dt>
               <dd>
-                {{ job.checkRun.mismatched }}
+                {{ job.transcribeRun.mismatched }}
                 <span class="text-xs text-zinc-500"
                   >— flagged, unless a person had flagged the line already</span
                 >
               </dd>
               <dt class="text-zinc-500">Failed</dt>
               <dd>
-                {{ job.checkRun.failed }}
-                <span v-if="job.checkRun.failed" class="text-xs text-zinc-500"
+                {{ job.transcribeRun.failed }}
+                <span v-if="job.transcribeRun.failed" class="text-xs text-zinc-500"
                   >— those lines stay unchecked</span
                 >
               </dd></template

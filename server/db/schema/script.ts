@@ -258,7 +258,7 @@ export const previousScripts = sqliteTable(
 );
 
 /**
- * A check by ear's finding for one clip (`HeardLine`). Keyed by file, not row: `replaceScript`
+ * A transcription's finding for one clip (`HeardLine`). Keyed by file, not row: `replaceScript`
  * rewrites clip rows but a render's file never changes. `text` is the line as checked, so an edit
  * since reads as unchecked.
  */

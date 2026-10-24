@@ -32,7 +32,7 @@ export function toJob(row: JobRow, events: readonly EventRow[] = []): Job {
   if (row.run?.scriptRun) j.scriptRun = row.run.scriptRun;
   if (row.run?.narrationRun) j.narrationRun = row.run.narrationRun;
   if (row.run?.exportRun) j.exportRun = row.run.exportRun;
-  if (row.run?.checkRun) j.checkRun = row.run.checkRun;
+  if (row.run?.transcribeRun) j.transcribeRun = row.run.transcribeRun;
   if (row.run?.effectsRun) j.effectsRun = row.run.effectsRun;
   if (events.length)
     j.activity = [...events]
@@ -80,7 +80,7 @@ export function jobValues(j: Job): typeof jobs.$inferInsert {
       ...(j.scriptRun ? { scriptRun: j.scriptRun } : {}),
       ...(j.narrationRun ? { narrationRun: j.narrationRun } : {}),
       ...(j.exportRun ? { exportRun: j.exportRun } : {}),
-      ...(j.checkRun ? { checkRun: j.checkRun } : {}),
+      ...(j.transcribeRun ? { transcribeRun: j.transcribeRun } : {}),
       ...(j.effectsRun ? { effectsRun: j.effectsRun } : {}),
     },
     droppedEvents: j.droppedEvents ?? 0,

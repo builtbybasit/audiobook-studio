@@ -146,7 +146,7 @@ export interface EndpointLive {
 export type EndpointKind = "scripting" | "tts" | "transcription";
 
 /**
- * A speech-to-text server (clone sample transcripts, checking a rendered line by ear). Any OpenAI
+ * A speech-to-text server (clone sample transcripts, transcribing narrated lines). Any OpenAI
  * `POST /audio/transcriptions` server works; `verbose_json` word timestamps feed the Listen page.
  * Priced by the minute of audio sent.
  */

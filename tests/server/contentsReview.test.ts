@@ -216,7 +216,7 @@ describe("a novel split across several EPUBs", () => {
   test.each([
     ["scripted", "chapters/script", {}],
     ["narrated", "chapters/narrate", {}],
-    ["checked by ear", "chapters/check", {}],
+    ["transcribed", "chapters/transcribe", {}],
     ["built", "exports", { settings: { ...DEFAULT_EXPORT_SETTINGS, title: "T", filename: "T" } }],
   ])("a volume waiting in the review is not %s", async (_, path, body) => {
     const api = testApi();

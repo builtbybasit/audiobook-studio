@@ -79,7 +79,7 @@ const useJobsQuery = defineQuery(() => {
             void invalidate({ key: keys.chapterScript(j.bookId, j.chapterId) }, "all");
           break;
         // a check updates heard text and flags as it goes, so reread both on each move
-        case "check":
+        case "transcribe":
           if (j.chapterId != null) {
             void invalidate({ key: keys.chapterHeard(j.bookId, j.chapterId) }, "all");
             void invalidate({ key: keys.chapterScript(j.bookId, j.chapterId) }, "all");

@@ -196,7 +196,7 @@ export const SegmentSchema = v.looseObject({
   ),
   flag: v.optional(
     v.looseObject({
-      kind: v.picklist(["pronunciation", "delivery", "pause", "other", "heard"]),
+      kind: v.picklist(["pronunciation", "delivery", "pause", "other", "mismatch"]),
       note: v.string(),
       at: v.number(),
     }),

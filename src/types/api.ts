@@ -160,9 +160,9 @@ export interface RetakesQueued {
 
 /**
  * One job a chapter, as one run. `unnarrated` has no clip to hear, `nothing` only clips already
- * heard, `busy` a narration or check already queued.
+ * heard, `busy` a narration or transcription already queued.
  */
-export interface CheckQueued {
+export interface TranscribeQueued {
   jobs: Job[];
   skipped: { id: number; why: "excluded" | "busy" | "missing" | "unnarrated" | "nothing" }[];
   runId: number;

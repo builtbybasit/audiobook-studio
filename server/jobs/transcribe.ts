@@ -1,11 +1,11 @@
-// The check by ear: a transcription endpoint hears each clip back and flags lines whose clip says
+// Transcribe: a transcription endpoint hears each clip back and flags lines whose clip says
 // something else. Findings are keyed by clip file + line text (`heard`), so an edited or re-rendered
 // line is heard again. Never touches a clip, and never replaces or clears a flag a person set.
 // Failed requests are counted and the job fails at the end, so a retry hears only what was missed.
 import type {
   Book,
   ChapterHeard,
-  CheckQueued,
+  TranscribeQueued,
   HeardLine,
   Job,
   LexEntry,
@@ -22,7 +22,7 @@ import { fileName, formatOfFile, type AudioFiles } from "~/audio/files";
 import { readLexicon, readSpeakers } from "~/db/cast";
 import type { Db } from "~/db/client";
 import { readTranscriber } from "~/db/endpoints";
-import { activeJob, enqueueJob, getJob, nextRunId, setCheckRun } from "~/db/jobs";
+import { activeJob, enqueueJob, getJob, nextRunId, setTranscribeRun } from "~/db/jobs";
 import * as library from "~/db/library";
 import {
   bumpRevision,
@@ -79,10 +79,10 @@ const costOf = (t: Transcriber, seconds: number): number => (seconds / 60) * t.p
 
 const heardFlag = (heard: string, at: number): SegmentFlag => {
   const said = heard.length > NOTE_CHARS ? `${heard.slice(0, NOTE_CHARS).trimEnd()}…` : heard;
-  return { kind: "heard", note: `Heard: “${said}”`, at };
+  return { kind: "mismatch", note: `Heard: “${said}”`, at };
 };
 
-export function checkHandler(
+export function transcribeHandler(
   provider: TranscriptionProvider,
   files: AudioFiles,
   gate: SpeechGate,
@@ -90,38 +90,38 @@ export function checkHandler(
   return {
     async run(ctx: JobContext): Promise<void> {
       const { job, db, signal } = ctx;
-      if (job.chapterId == null) throw new Error("A check is for one chapter");
+      if (job.chapterId == null) throw new Error("A transcription is for one chapter");
       const chapter = library.getChapter(db, job.bookId, job.chapterId);
       const uid = library.chapterUid(db, job.bookId, job.chapterId);
       if (!chapter || uid == null) throw notFound("The chapter no longer exists");
-      const id = job.checkRun?.endpoint;
+      const id = job.transcribeRun?.endpoint;
       const t = readTranscriber(db, id);
       if (!t?.enabled)
         throw new Error(`The transcription endpoint “${id ?? ""}” is no longer switched on`);
 
       const book = library.getBook(db, job.bookId);
-      const again = job.checkRun?.again === true;
+      const again = job.transcribeRun?.again === true;
       const clips = clipsOf(readScript(db, job.bookId, job.chapterId), book);
       const todo = again ? clips : unheard(db, job.bookId, clips);
-      const run: NonNullable<Job["checkRun"]> = {
+      const run: NonNullable<Job["transcribeRun"]> = {
         endpoint: t.id,
         lines: todo.length,
-        checked: 0,
+        transcribed: 0,
         mismatched: 0,
         failed: 0,
         ...(again ? { again } : {}),
       };
-      setCheckRun(db, job.id, run);
+      setTranscribeRun(db, job.id, run);
       if (!todo.length) {
-        ctx.note("Nothing to check", "info");
+        ctx.note("Nothing to transcribe", "info");
         return;
       }
-      ctx.note("Check started", "info", { endpoint: t.name, lines: todo.length });
+      ctx.note("Transcription started", "info", { endpoint: t.name, lines: todo.length });
 
       // Phonon favours these words, so a mispronounced name may still be heard right
       const castWords = nameWords(readSpeakers(db, job.bookId));
       const lexicon = readLexicon(db, job.bookId);
-      const label = "Check";
+      const label = "Transcribe";
       let refused: string | null = null;
       let unhinted = false;
 
@@ -134,7 +134,7 @@ export function checkHandler(
           const now = lineNow(tx, at.bookId, at.id, c.s.id);
           if (!now || now.url == null || fileName(now.url) !== c.file || now.text !== line.text)
             return;
-          if (now.flag && now.flag.kind !== "heard") return;
+          if (now.flag && now.flag.kind !== "mismatch") return;
           if (line.mismatch) setFlag(tx, at.bookId, at.id, c.s.id, heardFlag(line.heard, line.at));
           else if (now.flag) setFlag(tx, at.bookId, at.id, c.s.id, null);
           else return;
@@ -223,7 +223,7 @@ export function checkHandler(
             at: Date.now(),
           };
           record(c, line);
-          run.checked++;
+          run.transcribed++;
           if (line.mismatch) {
             run.mismatched++;
             ctx.note(`Line ${c.s.id} was heard saying something else`, "warning", {
@@ -242,16 +242,16 @@ export function checkHandler(
         } finally {
           money.release();
         }
-        setCheckRun(db, job.id, run);
-        ctx.progress(((run.checked + run.failed) / todo.length) * 100);
+        setTranscribeRun(db, job.id, run);
+        ctx.progress(((run.transcribed + run.failed) / todo.length) * 100);
       };
 
       // FIFO slots, so lines are heard in order
       await Promise.all(todo.map(heardInTurn));
       if (signal.aborted) throw signal.reason;
-      const { checked, mismatched, failed } = run;
-      ctx.note("Check finished", failed || mismatched ? "warning" : "info", {
-        checked,
+      const { transcribed, mismatched, failed } = run;
+      ctx.note("Transcription finished", failed || mismatched ? "warning" : "info", {
+        transcribed,
         mismatched,
         failed,
       });
@@ -262,27 +262,27 @@ export function checkHandler(
 }
 
 /**
- * Queue a check per chapter on the first enabled transcription endpoint (400 if none). Chapters with
+ * Queue a transcription per chapter on the first enabled transcription endpoint (400 if none). Chapters with
  * nothing to hear are skipped; `again` re-hears clips already heard. The whole run is priced per
- * minute of audio and checked against the budget before anything is queued.
+ * minute of audio and held against the budget before anything is queued.
  */
-export function enqueueCheck(
+export function enqueueTranscribe(
   db: Db,
   runner: Pick<Runner, "enqueue">,
   bookId: string,
   ids: readonly number[],
   { again = false }: { again?: boolean } = {},
-): CheckQueued {
+): TranscribeQueued {
   const book = library.getBook(db, bookId);
   if (!book) throw notFound("No such book");
   if (library.inReview(book, ids))
-    throw conflict("Finish the contents review before checking this book");
+    throw conflict("Finish the contents review before transcribing this book");
   const t = readTranscriber(db);
   if (!t) throw badRequest(NO_TRANSCRIBER);
   const known = new Map(library.listChapters(db, bookId).map((c) => [c.id, c]));
 
   const targets: { id: number; clips: Clip[] }[] = [];
-  const skipped: CheckQueued["skipped"] = [];
+  const skipped: TranscribeQueued["skipped"] = [];
   for (const id of ids) {
     const c = known.get(id);
     if (!c) {
@@ -293,7 +293,7 @@ export function enqueueCheck(
       skipped.push({ id, why: "excluded" });
       continue;
     }
-    if (activeJob(db, "narration", bookId, id) || activeJob(db, "check", bookId, id)) {
+    if (activeJob(db, "narration", bookId, id) || activeJob(db, "transcribe", bookId, id)) {
       skipped.push({ id, why: "busy" });
       continue;
     }
@@ -324,16 +324,16 @@ export function enqueueCheck(
   const jobs = targets.map(
     ({ id, clips }, i) =>
       runner.enqueue({
-        kind: "check",
+        kind: "transcribe",
         bookId,
         chapterId: id,
-        label: "Check",
-        bulk: { id: runId, op: "Check", index: i + 1, total: targets.length },
+        label: "Transcribe",
+        bulk: { id: runId, op: "Transcribe", index: i + 1, total: targets.length },
         run: {
-          checkRun: {
+          transcribeRun: {
             endpoint: t.id,
             lines: clips.length,
-            checked: 0,
+            transcribed: 0,
             mismatched: 0,
             failed: 0,
             ...(again ? { again: true as const } : {}),
@@ -345,27 +345,27 @@ export function enqueueCheck(
 }
 
 /**
- * After a narration ends, queue a check of its chapter if the book checks by ear. A check that
+ * After a narration ends, queue a transcription of its chapter if the book transcribes after narration. One that
  * can't be queued is logged on the narration and doesn't change its outcome.
  */
-export function checkAfterNarration(ctx: JobContext): void {
+export function transcribeAfterNarration(ctx: JobContext): void {
   const { db } = ctx;
   const job = getJob(db, ctx.job.id);
   if (job?.chapterId == null) return;
-  if (!library.getBook(db, job.bookId)?.checkByEar || !readTranscriber(db)) return;
+  if (!library.getBook(db, job.bookId)?.autoTranscribe || !readTranscriber(db)) return;
   try {
-    const queued = enqueueCheck(
+    const queued = enqueueTranscribe(
       db,
       // straight into the queue: this worker takes it up next
       { enqueue: (input) => enqueueJob(db, input) },
       job.bookId,
       [job.chapterId],
     );
-    if (queued.jobs.length) ctx.note("Check by ear queued", "info", { job: queued.jobs[0].id });
+    if (queued.jobs.length) ctx.note("Transcription queued", "info", { job: queued.jobs[0].id });
   } catch (e) {
     const why = e instanceof Error ? e.message : String(e);
-    ctx.note("Check by ear not queued", "warning", { why });
-    ctx.log.warn({ err: e }, "check by ear not queued after narration");
+    ctx.note("Transcription not queued", "warning", { why });
+    ctx.log.warn({ err: e }, "transcription not queued after narration");
   }
 }
 

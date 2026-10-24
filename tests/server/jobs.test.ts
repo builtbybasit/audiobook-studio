@@ -713,7 +713,7 @@ describe("the job log", () => {
     const waiting = add("export");
     const old = add("effects");
     queue.finishJob(db, old, "done", 1);
-    const failed = add("check");
+    const failed = add("transcribe");
     queue.appendEvent(db, failed, "Gateway answered 500", "error");
     queue.appendEvent(db, failed, "Retried and gave up", "error");
     queue.finishJob(db, failed, "failed", 2);
@@ -818,7 +818,7 @@ describe("what runs side by side", () => {
     const narrate3 = add("narration", "b", 3);
     const otherBook = add("scripting", "c", 1);
     const build = add("export", "b", null);
-    const check3 = add("check", "b", 3);
+    const check3 = add("transcribe", "b", 3);
     const claimAll = () => {
       const ids: number[] = [];
       for (let j = queue.claimNext(db); j; j = queue.claimNext(db)) ids.push(j.id);

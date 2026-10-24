@@ -275,7 +275,7 @@ describe("the budget", () => {
     const { status, body } = await narrate(api, id);
     expect(status).toBe(409);
     expect((body as Failure).error.message).toMatch(why);
-    expect(api.runner.running).toBeNull();
+    expect(api.runner.running).toEqual([]);
     const { jobs } = (await api.request<{ jobs: Job[] }>("/api/jobs")).body;
     expect(jobs.filter((j) => j.kind === "narration")).toEqual([]);
     expect(await linesOf(api, id)).toEqual(before);

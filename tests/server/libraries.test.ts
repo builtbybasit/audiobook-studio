@@ -341,7 +341,7 @@ describe("resetting the demo", () => {
     // at 1× the Simulated endpoint takes most of a second a line, so the first job is still running
     await s.speed(1);
     await s.request(`${DEMO_BASE}/books/${bookId}/chapters/narrate`, jsonBody({ ids: [1, 2] }));
-    expect(s.demo.runner.running?.kind).toBe("narration");
+    expect(s.demo.runner.running.map((j) => j.kind)).toEqual(["narration"]);
 
     expect((await s.request(`${DEMO_BASE}/demo/reset`, { method: "POST" })).status).toBe(200);
     await s.demo.runner.idle();

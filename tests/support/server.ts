@@ -10,13 +10,14 @@ import type { TrimSilence } from "~/audio/trim";
 import { createApp } from "~/app";
 import { audioFiles, type AudioFiles } from "~/audio/files";
 import { connect, openDb, type Db } from "~/db/client";
+import { enqueueJob } from "~/db/jobs";
 import { migrate } from "~/db/migrate";
 import { audiobookFiles } from "~/exports/files";
 import { checkHandler } from "~/jobs/check";
 import { effectsHandler } from "~/jobs/effects";
 import { exportHandler } from "~/jobs/export";
 import { narrationHandler } from "~/jobs/narration";
-import { createRunner, type JobHandlers, type Runner } from "~/jobs/runner";
+import { createRunner, type JobContext, type JobHandlers, type Runner } from "~/jobs/runner";
 import { scriptingHandler } from "~/jobs/scripting";
 import { createLogger, type Logger } from "~/log";
 import { fakeScriptingProvider } from "~/providers/fake";
@@ -52,7 +53,7 @@ export interface TestApi {
   exportDir: string;
   /** where this API keeps the recordings a cloned voice was made from */
   voiceDir: string;
-  /** the speech gate narration sends through and the endpoint routes read and wake */
+  /** the gate every job sends through; the endpoint routes read and wake it */
   gate: SpeechGate;
   /** `fetch` for a client, answered by this app without a network */
   fetch: FetchLike;
@@ -169,17 +170,18 @@ export function testDb(): Db {
 
 export function testRunner(db: Db, log: Logger, options: TestApiOptions = {}): Runner {
   const files = audioFiles(options.audioDir ?? tempAudioDir());
+  const gate = options.gate ?? createSpeechGate();
   return createRunner(
     db,
     {
-      scripting: scriptingHandler(options.scripting ?? fakeScriptingProvider()),
-      narration: narrationHandler(options.speech ?? fakeSpeechProvider(), files, options.gate, {
+      scripting: scriptingHandler(options.scripting ?? fakeScriptingProvider(), gate),
+      narration: narrationHandler(options.speech ?? fakeSpeechProvider(), files, gate, {
         effects: options.effects,
         thoughtEffect: options.thoughtEffect,
         trim: options.trim,
       }),
       export: exportHandler(testExports(options), files),
-      check: checkHandler(options.transcription ?? noTranscription, files),
+      check: checkHandler(options.transcription ?? noTranscription, files, gate),
       effects: effectsHandler(options.effects, files),
       ...options.handlers,
     },
@@ -364,6 +366,61 @@ export async function narratedBook(
   await scriptChapters(api, book.id, all);
   await narrateChapters(api, book.id, ids ?? all);
   return { id: book.id, book };
+}
+
+/** Queues straight into `db` and runs nothing, so a test can run the handlers itself. */
+export const queueOnly = (db: Db): Pick<Runner, "enqueue"> => ({
+  enqueue: (input) => enqueueJob(db, input),
+});
+
+/** What the runner hands a handler, for running one by hand; notes and progress go nowhere. */
+export const jobContext = (db: Db, job: Job): JobContext => ({
+  job,
+  db,
+  signal: new AbortController().signal,
+  log: collectingLogger().log,
+  progress: () => {},
+  note: () => {},
+});
+
+/**
+ * Holds every request sent `through` it until `open`, counting how many are in at once.
+ * `reached(n)` resolves once n are held.
+ */
+export function door() {
+  let inside = 0;
+  let most = 0;
+  let opened = false;
+  const held: (() => void)[] = [];
+  let watch: { n: number; resolve(): void } | null = null;
+  return {
+    get inside() {
+      return inside;
+    },
+    get most() {
+      return most;
+    },
+    reached: (n: number) =>
+      new Promise<void>((resolve) => (held.length >= n ? resolve() : (watch = { n, resolve }))),
+    open() {
+      opened = true;
+      for (const go of held.splice(0)) go();
+    },
+    async through<T>(request: () => Promise<T>): Promise<T> {
+      inside++;
+      most = Math.max(most, inside);
+      try {
+        if (!opened)
+          await new Promise<void>((go) => {
+            held.push(go);
+            if (watch && held.length >= watch.n) watch.resolve();
+          });
+        return await request();
+      } finally {
+        inside--;
+      }
+    },
+  };
 }
 
 /**

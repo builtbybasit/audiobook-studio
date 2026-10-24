@@ -208,20 +208,57 @@ export function runNext(db: Db, ids: readonly number[]): number[] {
   });
 }
 
+type Lane = Pick<Job, "id" | "kind" | "bookId" | "chapterId">;
+
 /**
- * Claim the next queued job (highest priority, then oldest; `byRunOrder` on the page) and mark it
- * running. `cancelled` is not checked: `requestCancel` finishes a queued job on the spot.
+ * The first of `queued` (in claim order) that nothing running or ahead of it holds back. Per book:
+ * one job of each kind, a chapter's jobs in turn, a whole-book job alone. A job held back holds
+ * its own keys, so nothing behind it on the same key overtakes it.
+ */
+export function firstReady(running: readonly Lane[], queued: readonly Lane[]): Lane | undefined {
+  // `some:` = a job of the book is out; `all:` = a whole-book one is
+  const holds = (j: Lane): string[] =>
+    j.chapterId == null
+      ? [`some:${j.bookId}`, `all:${j.bookId}`]
+      : [`some:${j.bookId}`, `${j.kind}:${j.bookId}`, `chapter:${j.bookId}:${j.chapterId}`];
+  const needs = (j: Lane): string[] =>
+    j.chapterId == null
+      ? [`some:${j.bookId}`]
+      : [`all:${j.bookId}`, `${j.kind}:${j.bookId}`, `chapter:${j.bookId}:${j.chapterId}`];
+  const held = new Set(running.flatMap(holds));
+  for (const j of queued) {
+    if (!needs(j).some((k) => held.has(k))) return j;
+    for (const k of holds(j)) held.add(k);
+  }
+  return undefined;
+}
+
+/**
+ * Claim the next ready job (`firstReady`, over highest priority then oldest: `byRunOrder` on the
+ * page) and mark it running. `cancelled` is not checked: `requestCancel` finishes a queued job on
+ * the spot.
  */
 export function claimNext(db: Db, at = Date.now()): Job | undefined {
   return db.transaction((tx) => {
     {
-      const row = tx
-        .select()
+      const live = tx
+        .select({
+          id: jobs.id,
+          kind: jobs.kind,
+          bookId: jobs.bookId,
+          chapterId: jobs.chapterId,
+          status: jobs.status,
+        })
         .from(jobs)
-        .where(eq(jobs.status, "queued"))
+        .where(inArray(jobs.status, ["queued", "running"]))
         .orderBy(desc(jobs.priority), asc(jobs.id))
-        .get();
-      if (!row) return undefined;
+        .all();
+      const ready = firstReady(
+        live.filter((j) => j.status === "running"),
+        live.filter((j) => j.status === "queued"),
+      );
+      if (!ready) return undefined;
+      const row = tx.select().from(jobs).where(eq(jobs.id, ready.id)).get()!;
       tx.update(jobs)
         .set({
           status: "running",

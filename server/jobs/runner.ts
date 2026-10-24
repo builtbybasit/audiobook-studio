@@ -1,6 +1,6 @@
-// The queue's worker: one job at a time, oldest first, so a book's chapters run in order (roster
-// and recap carry forward) and two jobs never write at once. Handles claiming, cancelling, and
-// recovering jobs a dead process was holding; handlers are looked up by `job.kind`.
+// The queue's worker: runs every job `claimNext` finds ready, side by side (per book one of each
+// kind, chapters in order: roster and recap carry forward). Endpoint limits are the speech gate's.
+// Handles claiming, cancelling, and recovering jobs a dead process was holding.
 import type { Job, JobEvent, JobKind, JobStatus } from "@/types";
 import type { Db } from "~/db/client";
 import * as queue from "~/db/jobs";
@@ -47,10 +47,11 @@ export interface Runner {
   start(): void;
   /** Resolves once the job is not running and its row is finished. */
   finished(id: number): Promise<void>;
-  /** Hand the running job back to the queue and stop taking work. */
+  /** Hand the running jobs back to the queue and stop taking work. */
   stop(): Promise<void>;
+  /** Resolves once nothing is running. */
   idle(): Promise<void>;
-  readonly running: Job | null;
+  readonly running: readonly Job[];
 }
 
 const isAbortError = (e: unknown): boolean => e instanceof Error && e.name === "AbortError";
@@ -61,15 +62,10 @@ export function createRunner(
   { log, pollMs = 2000, maxAttempts = 2 }: RunnerOptions,
 ): Runner {
   const rlog = log.child({ name: "jobs" });
-  let current: {
-    job: Job;
-    controller: AbortController;
-    reason: AbortReason | null;
-    ended: Promise<void>;
-  } | null = null;
-  let draining: Promise<void> | null = null;
-  /** a kick that arrived after the worker last looked at the queue; see `kick` */
-  let missed = false;
+  const current = new Map<
+    number,
+    { job: Job; controller: AbortController; reason: AbortReason | null; ended: Promise<void> }
+  >();
   let stopped = false;
   let timer: ReturnType<typeof setInterval> | null = null;
 
@@ -101,7 +97,13 @@ export function createRunner(
   async function runOne(job: Job): Promise<void> {
     const controller = new AbortController();
     let end!: () => void;
-    current = { job, controller, reason: null, ended: new Promise<void>((r) => (end = r)) };
+    const self = {
+      job,
+      controller,
+      reason: null as AbortReason | null,
+      ended: new Promise<void>((r) => (end = r)),
+    };
+    current.set(job.id, self);
     const ctx = contextFor(job, controller.signal);
     const jlog = ctx.log;
     const handler = handlers[job.kind];
@@ -130,7 +132,7 @@ export function createRunner(
     try {
       // A stop leaves the row `running` like a crash, so `recoverInterrupted` is the one recovery
       // path; but the attempt is given back, so only a job that keeps crashing runs out.
-      if (status === "cancelled" && current?.reason === "stop") {
+      if (status === "cancelled" && self.reason === "stop") {
         queue.appendEvent(db, job.id, "The server stopped while this ran", "warning");
         queue.handBack(db, job.id);
         jlog.info("job handed back to the queue");
@@ -142,16 +144,16 @@ export function createRunner(
     } catch (e) {
       jlog.error({ err: e }, "could not record how the job ended");
     } finally {
-      current = null;
+      current.delete(job.id);
+      // before `end`, so `idle` sees the job this frees up already running
+      kick();
       end();
     }
   }
 
-  async function drain(): Promise<void> {
-    for (;;) {
-      if (stopped) return;
-      // this look at the queue sees everything enqueued before it
-      missed = false;
+  /** Start every job that is ready. Claims are synchronous, so a kick from inside a job is safe. */
+  function kick(): void {
+    while (!stopped) {
       let job: Job | undefined;
       try {
         job = queue.claimNext(db);
@@ -161,45 +163,31 @@ export function createRunner(
         return;
       }
       if (!job) return;
-      await runOne(job);
+      void runOne(job);
     }
   }
 
-  /**
-   * `draining` is set before `drain` runs: `drain` claims a job before its first `await`, and a kick
-   * in that window would start a second worker. A kick during a drain sets `missed`, since the
-   * drain may already be leaving an empty queue; one more drain follows.
-   */
-  function kick(): void {
-    if (draining) {
-      missed = true;
-      return;
-    }
-    let done!: () => void;
-    draining = new Promise<void>((r) => (done = r));
-    void drain().finally(() => {
-      draining = null;
-      done();
-      if (missed && !stopped) kick();
-    });
+  async function idle(): Promise<void> {
+    while (current.size) await Promise.all([...current.values()].map((c) => c.ended));
   }
 
   return {
     get running() {
-      return current?.job ?? null;
+      return [...current.values()].map((c) => c.job);
     },
     enqueue(input) {
       const result = queue.enqueueJob(db, input);
       if (result.created)
         rlog.info({ job: result.job.id, kind: input.kind, label: input.label }, "job queued");
-      if (!stopped) kick();
+      kick();
       return result;
     },
     cancel(id) {
       const was = queue.requestCancel(db, id);
-      if (was === "running" && current?.job.id === id) {
-        current.reason = "cancel";
-        current.controller.abort(new DOMException("The job was cancelled", "AbortError"));
+      const c = current.get(id);
+      if (was === "running" && c) {
+        c.reason = "cancel";
+        c.controller.abort(new DOMException("The job was cancelled", "AbortError"));
       }
       // a queued job was finished on the spot; its handler still gets to put things back
       if (was === "queued") {
@@ -209,7 +197,7 @@ export function createRunner(
       return was;
     },
     finished(id) {
-      return current?.job.id === id ? current.ended : Promise.resolve();
+      return current.get(id)?.ended ?? Promise.resolve();
     },
     kick,
     start() {
@@ -234,14 +222,12 @@ export function createRunner(
       stopped = true;
       if (timer) clearInterval(timer);
       timer = null;
-      if (current) {
-        current.reason = "stop";
-        current.controller.abort(new DOMException("The server is stopping", "AbortError"));
+      for (const c of current.values()) {
+        c.reason = "stop";
+        c.controller.abort(new DOMException("The server is stopping", "AbortError"));
       }
-      await draining;
+      await idle();
     },
-    async idle() {
-      while (draining) await draining;
-    },
+    idle,
   };
 }

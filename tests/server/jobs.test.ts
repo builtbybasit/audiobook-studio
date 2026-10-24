@@ -11,7 +11,9 @@ import * as queue from "~/db/jobs";
 import { readHistory } from "~/db/history";
 import { readScript, writeScript } from "~/db/script";
 import { jobs } from "~/db/schema";
+import { enqueueScripting, scriptingHandler } from "~/jobs/scripting";
 import { fakeScriptingProvider, sleep } from "~/providers/fake";
+import { createSpeechGate } from "~/providers/gate";
 import type { ScriptInput, ScriptedLine, ScriptingProvider } from "~/providers/scripting";
 import { ChunkMisfit, chatScriptingProvider } from "~/providers/chatScripting";
 import { heldToday } from "~/usage/budget";
@@ -19,9 +21,12 @@ import { bookSpend, endpointRequests } from "~/usage/ledger";
 import { epubFile, line, story } from "../support/epub";
 import {
   collectingLogger,
+  door,
   gatedProvider,
+  jobContext,
   jsonBody,
   narratedBook,
+  queueOnly,
   scriptChapters,
   testApi,
   testDb,
@@ -94,7 +99,7 @@ describe("scripting a chapter through the queue", () => {
       { id: body.runId, op: "Script", index: 2, total: 2 },
     ]);
     expect(body.skipped).toEqual([]);
-    // the first is already running — the worker starts as soon as it is asked — and the second waits
+    // a book scripts one chapter at a time: the first is already running and the second waits
     expect(body.chapters.map((c) => c.scripting)).toEqual(["running", "queued", "none"]);
   });
 
@@ -269,7 +274,7 @@ describe("cancelling", () => {
     const { api, id } = await shelved(testApi({ scripting: gate.provider }));
     const { body } = await script(api, id, [1]);
     await gate.started;
-    expect(api.runner.running?.id).toBe(body.jobs[0].id);
+    expect(api.runner.running.map((j) => j.id)).toEqual([body.jobs[0].id]);
 
     const cancelled = await api.request<{ was: string }>(`/api/jobs/${body.jobs[0].id}/cancel`, {
       method: "POST",
@@ -282,7 +287,7 @@ describe("cancelling", () => {
     expect((await chaptersOf(api, id))[0].scripting).toBe("none");
     expect(readScript(api.db, id, 1)).toEqual([]);
     // the queue moved on: nothing is running and the runner is idle
-    expect(api.runner.running).toBeNull();
+    expect(api.runner.running).toEqual([]);
   });
 
   test("a cancelled re-script leaves the script it was replacing, reading as done", async () => {
@@ -394,7 +399,7 @@ describe("a result never lands on newer work", () => {
     await api.runner.idle();
     // the job went with the book; nothing is left to be wrong about
     expect((await api.request<Failure>(`/api/jobs/${body.jobs[0].id}`)).status).toBe(404);
-    expect(api.runner.running).toBeNull();
+    expect(api.runner.running).toEqual([]);
   });
 });
 
@@ -516,7 +521,7 @@ describe("a restart", () => {
     // the process stops with the job in flight: the row is left `running`, as a crash would leave it
     await api.runner.stop();
     expect(queue.getJob(api.db, body.jobs[0].id)?.status).toBe("running");
-    expect(api.runner.running).toBeNull();
+    expect(api.runner.running).toEqual([]);
 
     // the next process finds it
     const next = testRunner(api.db, collectingLogger().log);
@@ -577,8 +582,8 @@ describe("a restart", () => {
   });
 });
 
-describe("the worker keeps going", () => {
-  test("a book removed while its job ran, then a stop, leaves the worker able to start again", async () => {
+describe("the runner keeps going", () => {
+  test("a book removed while its job ran, then a stop, leaves the runner able to start again", async () => {
     const gate = gatedProvider();
     const { api, id } = await shelved(testApi({ scripting: gate.provider }));
     const { body } = await script(api, id, [1]);
@@ -586,7 +591,7 @@ describe("the worker keeps going", () => {
     // the job's row went with the book; recording how the job ended has nowhere to write to
     await api.request(`/api/books/${id}`, { method: "DELETE" });
     await api.runner.stop();
-    expect(api.runner.running).toBeNull();
+    expect(api.runner.running).toEqual([]);
     expect((await api.request<Failure>(`/api/jobs/${body.jobs[0].id}`)).status).toBe(404);
     // the same runner starts again and takes new work
     api.runner.start();
@@ -628,7 +633,7 @@ describe("the worker keeps going", () => {
       chapterId: null,
       label: "Build",
     });
-    // `enqueue` wakes the worker; there is nothing to start
+    // `enqueue` starts it; there is nothing to start
     await inside;
     expect(runner.cancel(job.id)).toBe("running");
     finish();
@@ -637,9 +642,9 @@ describe("the worker keeps going", () => {
     expect(settledAs).toEqual(["done"]);
   });
 
-  test("a handler that queues more work does not start a second worker beside itself", async () => {
+  test("work a handler queues for other books starts beside it, not after it", async () => {
     const db = testDb();
-    // three books, because a whole-book job dedupes on its book
+    // three books, because a whole-book job runs alone in its book
     for (const b of ["b0", "b1", "b2"])
       db.run(
         `insert into books (id, title, author, cover_from, cover_to, added_at) values ('${b}','B','A','#000','#111',0)`,
@@ -647,13 +652,14 @@ describe("the worker keeps going", () => {
     let running = 0;
     let most = 0;
     let follow = 0;
+    let open!: () => void;
+    const opened = new Promise<void>((r) => (open = r));
     const runner = testRunner(db, collectingLogger().log, {
       handlers: {
         export: {
           async run() {
             running++;
             most = Math.max(most, running);
-            // the enqueue arrives inside the worker's own synchronous window
             if (follow++ < 2)
               runner.enqueue({
                 kind: "export",
@@ -661,7 +667,8 @@ describe("the worker keeps going", () => {
                 chapterId: null,
                 label: `Build ${follow}`,
               });
-            await new Promise((r) => setTimeout(r, 1));
+            else open();
+            await opened;
             running--;
           },
         },
@@ -670,23 +677,7 @@ describe("the worker keeps going", () => {
     runner.enqueue({ kind: "export", bookId: "b0", chapterId: null, label: "Build 0" });
     await runner.idle();
     expect(queue.listJobs(db).map((j) => j.status)).toEqual(["done", "done", "done"]);
-    expect(most).toBe(1);
-  });
-
-  test("work queued the moment the worker starts is run then, not at the next poll", async () => {
-    const db = testDb();
-    db.run(
-      `insert into books (id, title, author, cover_from, cover_to, added_at) values ('b0','B','A','#000','#111',0)`,
-    );
-    const runner = testRunner(db, collectingLogger().log, {
-      handlers: { export: { run: async () => {} } },
-    });
-    // the start's own look finds nothing, and is still on its way out when this arrives
-    runner.start();
-    runner.enqueue({ kind: "export", bookId: "b0", chapterId: null, label: "Build" });
-    await runner.idle();
-    expect(queue.listJobs(db).map((j) => j.status)).toEqual(["done"]);
-    await runner.stop();
+    expect(most).toBe(3);
   });
 });
 
@@ -803,6 +794,52 @@ describe("the queue over HTTP", () => {
   });
 });
 
+describe("what runs side by side", () => {
+  test("a book runs one job of each kind at once, a chapter's jobs in turn, a whole-book job alone", () => {
+    const db = testDb();
+    for (const b of ["b", "c"])
+      db.run(
+        `insert into books (id, title, author, cover_from, cover_to, added_at) values ('${b}','B','A','#000','#111',0)`,
+      );
+    for (const [b, n] of [
+      ["b", 1],
+      ["b", 2],
+      ["b", 3],
+      ["c", 1],
+    ] as const)
+      db.run(
+        `insert into chapters (book_id, id, uid, volume_id, volume_index, title, words) values ('${b}',${n},'${b}${n}',1,${n},'C${n}',3)`,
+      );
+    const add = (kind: Job["kind"], bookId: string, chapterId: number | null) =>
+      queue.enqueueJob(db, { kind, bookId, chapterId, label: kind }).job.id;
+    const script1 = add("scripting", "b", 1);
+    const script2 = add("scripting", "b", 2);
+    const narrate1 = add("narration", "b", 1);
+    const narrate3 = add("narration", "b", 3);
+    const otherBook = add("scripting", "c", 1);
+    const build = add("export", "b", null);
+    const check3 = add("check", "b", 3);
+    const claimAll = () => {
+      const ids: number[] = [];
+      for (let j = queue.claimNext(db); j; j = queue.claimNext(db)) ids.push(j.id);
+      return ids;
+    };
+    const finish = (...ids: number[]) => ids.forEach((id) => queue.finishJob(db, id, "done"));
+
+    // narration waits for chapter 1's script and keeps chapter order; the build waits for the
+    // book and holds back the check behind it; the other book is never held
+    expect(claimAll()).toEqual([script1, otherBook]);
+    finish(script1);
+    expect(claimAll()).toEqual([script2, narrate1]);
+    finish(narrate1);
+    expect(claimAll()).toEqual([narrate3]);
+    finish(script2, narrate3);
+    expect(claimAll()).toEqual([build]);
+    finish(build);
+    expect(claimAll()).toEqual([check3]);
+  });
+});
+
 describe("run next", () => {
   test("the oldest runs first until jobs are moved; a moved run goes as a block, and a later move goes ahead of it", () => {
     const db = testDb();
@@ -816,15 +853,19 @@ describe("run next", () => {
       return queue.enqueueJob(db, { kind: "scripting", bookId: "b", chapterId: n, label: "Script" })
         .job.id;
     });
-    const claimed = () => queue.claimNext(db)?.id;
+    // one book's scripting runs one chapter at a time, so each claimed job is finished at once
+    const claimed = () => {
+      const id = queue.claimNext(db)?.id;
+      if (id != null) queue.finishJob(db, id, "done");
+      return id;
+    };
 
     expect(claimed()).toBe(a);
-    queue.finishJob(db, a, "done");
     // asked for out of order, and with one that has finished: the two queued ones move, oldest first
     expect(queue.runNext(db, [e, d, a]).sort((x, y) => x - y)).toEqual([d, e]);
     expect(queue.runNext(db, [c])).toEqual([c]);
     expect(claimed()).toBe(c);
-    // a running job is not queued any more, so there is nothing to move
+    // a job that left the queue is not moved
     expect(queue.runNext(db, [c])).toEqual([]);
     expect([claimed(), claimed(), claimed()]).toEqual([d, e, b]);
   });
@@ -955,6 +996,30 @@ describe("a chapter longer than its scripting profile takes", () => {
     const { segments } = (await api.request<ScriptResult>(`/api/books/${id}/chapters/1/script`))
       .body;
     expect(segments[0].text).toBe(late.answered.get(first)![0].text);
+  });
+
+  test("two chapters' runs on one profile share its concurrency: never more out at once", async () => {
+    const held = door();
+    const inner = fakeScriptingProvider();
+    const provider: ScriptingProvider = {
+      name: inner.name,
+      script: (input) => held.through(() => inner.script(input)),
+    };
+    const { api, id } = await shelved(testApi(), ["One", "Two"]);
+    await saveProfile(api, small({ concurrency: 2 }));
+    // run by hand, both at once, whatever the runner would do
+    await api.runner.stop();
+    const queued = enqueueScripting(api.db, queueOnly(api.db), id, [1, 2], "openai").jobs;
+    const gate = createSpeechGate();
+    const handler = scriptingHandler(provider, gate);
+    const runs = queued.map((job) => handler.run(jobContext(api.db, job)));
+
+    await held.reached(2);
+    expect(held.inside).toBe(2);
+    expect(gate.live().openai.waiting).toBeGreaterThan(0);
+    held.open();
+    await Promise.all(runs);
+    expect(held.most).toBe(2);
   });
 
   test("a request that fails fails the chapter, says which it was, and writes nothing", async () => {

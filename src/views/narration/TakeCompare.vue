@@ -8,7 +8,7 @@ import { defineAsyncComponent } from "vue";
 import { FLAG_LABEL } from "@/lib/scriptReview";
 import { sampleRateLabel } from "@/lib/speech";
 import { usePlayer } from "@/composables/usePlayer";
-import { candId, onClip } from "@/views/narration/shared";
+import { lineClip, onClip, playLine } from "@/views/narration/shared";
 import { hhmm } from "@/lib/format";
 import { Pause as PauseIcon, Play as PlayIcon, Flag as FlagIcon } from "@lucide/vue";
 import type { Segment } from "@/types";
@@ -16,7 +16,9 @@ import type { Segment } from "@/types";
 // keeps wavesurfer out of the entry chunk
 const Waveform = defineAsyncComponent(() => import("@/components/Waveform.vue"));
 
-defineProps<{
+const props = defineProps<{
+  bookId: string;
+  chapterId: number;
   segment: Segment;
   /** where this retake sits in the book's review queue, and how many there are */
   position: number;
@@ -25,8 +27,8 @@ defineProps<{
 defineEmits<{ decide: [keep: "current" | "new"] }>();
 const endpointsStore = useEndpointsStore();
 const uiStore = useUiStore();
-const { p, play, seekTo, clipProgress } = usePlayer();
-const candPlaying = (s: Segment) => onClip(candId(s));
+const { p, seekTo, clipProgress } = usePlayer();
+const candPlaying = (s: Segment) => onClip(lineClip(props, s, "cand"));
 /** What differs between the clip in the book and the retake waiting beside it. */
 function takeDiff(s: Segment): string[] {
   const a = s.audio;
@@ -55,9 +57,10 @@ const waveColors = (candidate: boolean) =>
   candidate
     ? { wave: uiStore.dark ? "#075985" : "#bae6fd", played: uiStore.dark ? "#38bdf8" : "#0284c7" }
     : { wave: uiStore.dark ? "#3f3f46" : "#d4d4d8", played: uiStore.dark ? "#a78bfa" : "#7c3aed" };
-function seekTake(id: string, duration: number, url: string | undefined, frac: number) {
-  if (p.clipId !== id) play(id, duration, url);
-  seekTo(frac * duration);
+function seekTake(s: Segment, take: string | undefined, frac: number) {
+  const clip = take ? s.candidate! : s.audio;
+  if (p.clipId !== lineClip(props, s, take)) playLine(props, s, take, clip);
+  seekTo(frac * clip.duration);
 }
 </script>
 
@@ -86,13 +89,13 @@ function seekTake(id: string, duration: number, url: string | undefined, frac: n
           <div class="flex items-center gap-2">
             <button
               class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-zinc-200 text-[10px] disabled:opacity-40 dark:bg-zinc-700"
-              :aria-label="`${onClip('seg' + segment.id) ? 'Pause' : 'Play'} A, take ${segment.audio.n ?? 1}`"
+              :aria-label="`${onClip(lineClip(props, segment)) ? 'Pause' : 'Play'} A, take ${segment.audio.n ?? 1}`"
               aria-keyshortcuts="1"
               :disabled="!segment.audio.duration"
-              @click="play('seg' + segment.id, segment.audio.duration, segment.audio.url)"
+              @click="playLine(props, segment)"
             >
               <component
-                :is="onClip('seg' + segment.id) ? PauseIcon : PlayIcon"
+                :is="onClip(lineClip(props, segment)) ? PauseIcon : PlayIcon"
                 class="icon-sm icon-fill"
               />
             </button>
@@ -106,11 +109,9 @@ function seekTake(id: string, duration: number, url: string | undefined, frac: n
             class="mt-1.5"
             :url="segment.audio.url"
             :duration="segment.audio.duration"
-            :progress="clipProgress('seg' + segment.id) ?? 0"
+            :progress="clipProgress(lineClip(props, segment)) ?? 0"
             v-bind="waveColors(false)"
-            @seek="
-              (f) => seekTake('seg' + segment.id, segment.audio.duration, segment.audio.url, f)
-            "
+            @seek="(f) => seekTake(segment, undefined, f)"
           />
           <div class="mt-1 pl-8 text-[11px] text-zinc-500">
             {{ endpointsStore.voiceLabel(segment.audio.voiceRef) || segment.audio.voice || "—" }} ·
@@ -134,7 +135,7 @@ function seekTake(id: string, duration: number, url: string | undefined, frac: n
               :aria-label="`${candPlaying(segment) ? 'Pause' : 'Play'} B, take ${segment.candidate!.n}`"
               aria-keyshortcuts="2"
               :disabled="!segment.candidate!.duration"
-              @click="play(candId(segment), segment.candidate!.duration, segment.candidate!.url)"
+              @click="playLine(props, segment, 'cand', segment.candidate!)"
             >
               <component
                 :is="candPlaying(segment) ? PauseIcon : PlayIcon"
@@ -155,12 +156,9 @@ function seekTake(id: string, duration: number, url: string | undefined, frac: n
             class="mt-1.5"
             :url="segment.candidate!.url"
             :duration="segment.candidate!.duration"
-            :progress="clipProgress(candId(segment)) ?? 0"
+            :progress="clipProgress(lineClip(props, segment, 'cand')) ?? 0"
             v-bind="waveColors(true)"
-            @seek="
-              (f) =>
-                seekTake(candId(segment), segment.candidate!.duration, segment.candidate!.url, f)
-            "
+            @seek="(f) => seekTake(segment, 'cand', f)"
           />
           <div class="mt-1 pl-8 text-[11px]">
             <span v-if="segment.candidate!.error" class="text-red-500"

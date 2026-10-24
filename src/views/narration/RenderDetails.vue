@@ -10,11 +10,17 @@ import { useEndpointsStore } from "@/stores/endpoints";
 import { useUiStore } from "@/stores/ui";
 
 // One clip's audit trail. Every fact comes off the clip itself, never re-derived from the book.
-import { errorStatus, lineLink, onClip, useJob } from "@/views/narration/shared";
+import {
+  errorStatus,
+  lineClip,
+  lineLink,
+  onClip,
+  playLine,
+  useJob,
+} from "@/views/narration/shared";
 import { hhmm } from "@/lib/format";
 import { sanitize } from "@/lib/endpoints";
 import { sampleRateLabel, secs } from "@/lib/speech";
-import { usePlayer } from "@/composables/usePlayer";
 import {
   Pause as PauseIcon,
   PencilLine as EditIcon,
@@ -30,7 +36,6 @@ defineEmits<{ retry: [] }>();
 const endpointsStore = useEndpointsStore();
 const uiStore = useUiStore();
 const { chapter, epName, drift } = useJob(props);
-const { play } = usePlayer();
 const AT: Record<SplitMode, string> = {
   paragraph: "paragraph",
   sentence: "sentence",
@@ -139,11 +144,11 @@ function allTakes(s: Segment): (Take & { current?: boolean })[] {
 }
 const takeTitle = (t: Take) =>
   `${endpointsStore.voiceLabel(t.voiceRef) || t.voice || "—"} · ${t.direction || "no direction"} · ${t.at ? hhmm(t.at) : ""}`;
-const takeId = (s: Segment, n: number) => `take${s.id}-${n}`;
 function playTake(s: Segment, t: Take | undefined) {
-  if (t) play(takeId(s, t.n), t.duration, t.url);
+  if (t) playLine(props, s, `take${t.n}`, t);
 }
-const takePlaying = (s: Segment, t: Take | undefined) => !!t && onClip(takeId(s, t.n));
+const takePlaying = (s: Segment, t: Take | undefined) =>
+  !!t && onClip(lineClip(props, s, `take${t.n}`));
 </script>
 
 <template>
@@ -246,15 +251,11 @@ const takePlaying = (s: Segment, t: Take | undefined) => !!t && onClip(takeId(s,
             class="chip"
             :class="[t.current && 'chip-on', t.rejected && 'chip-off']"
             :data-tip="takeTitle(t)"
-            @click.stop="
-              t.current
-                ? play('seg' + segment.id, segment.audio.duration, segment.audio.url)
-                : playTake(segment, t)
-            "
+            @click.stop="t.current ? playLine(props, segment) : playTake(segment, t)"
           >
             <component
               :is="
-                (t.current ? onClip('seg' + segment.id) : takePlaying(segment, t))
+                (t.current ? onClip(lineClip(props, segment)) : takePlaying(segment, t))
                   ? PauseIcon
                   : PlayIcon
               "

@@ -31,7 +31,13 @@ import { plural } from "@/lib/contents";
 import { isSiteText, isSpoken, TYPE_LABEL } from "@/lib/siteText";
 import { usePlayer } from "@/composables/usePlayer";
 import { enumParam, idParam, useQueryParam } from "@/composables/useQueryParam";
-import { chapterQueue, chapterQueueId, clipOf, segmentStart } from "@/composables/useChapterQueue";
+import {
+  chapterQueue,
+  chapterQueueId,
+  clipOf,
+  lineUnder,
+  segmentStart,
+} from "@/composables/useChapterQueue";
 import {
   AudioLines as NarrationIcon,
   Check as LooksRightIcon,
@@ -203,10 +209,11 @@ function nudgePause(s: Segment, step: number) {
 // Plays the same chapter queue as the ledger, from this line on.
 const { p, playQueue, toggle } = usePlayer();
 const queueId = computed(() => chapterQueueId(props.bookId, props.chapterId));
-const onClip = (s: Segment) => p.clipId === clipOf(s.id) && p.playing;
+const clip = (s: Segment) => clipOf(props.bookId, props.chapterId, s.id);
+const onClip = (s: Segment) => p.clipId === clip(s) && p.playing;
 function playLine(s: Segment) {
   if (!s.audio.duration) return;
-  if (p.id === queueId.value && p.clipId === clipOf(s.id)) return toggle();
+  if (p.id === queueId.value && p.clipId === clip(s)) return toggle();
   const q = chapterQueue(props.bookId, props.chapterId, {
     href: (id) => `/book/${props.bookId}/scripting?ch=${id}`,
     onChapter: (id) => void router.replace({ query: { ...route.query, ch: String(id) } }),
@@ -218,8 +225,9 @@ function playLine(s: Segment) {
 watch(
   () => p.clipId,
   (id) => {
-    if (!id || !p.playing || p.id !== queueId.value) return;
-    document.getElementById(`seg-${id.slice(3)}`)?.scrollIntoView({ block: "nearest" });
+    const line = lineUnder(id, props.bookId, props.chapterId);
+    if (line == null || !p.playing || p.id !== queueId.value) return;
+    document.getElementById(`seg-${line}`)?.scrollIntoView({ block: "nearest" });
   },
 );
 

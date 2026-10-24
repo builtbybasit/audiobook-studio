@@ -7,7 +7,7 @@ import { useMediaControls } from "@vueuse/core";
 
 /** One thing to play: a segment's clip, a take, a finished export. */
 export interface Clip {
-  /** stable within the queue: the ledger's `seg42`, a take's `seg42#2` */
+  /** stable within the queue: a line's `clipOf` (`@/composables/useChapterQueue`) */
   id: string;
   /** seconds; the timeline is drawn from it even with no file behind it */
   duration: number;
@@ -20,7 +20,7 @@ export interface Clip {
 }
 
 export interface Queue {
-  /** what is playing, as the views name it: `chapter`, `seg42`, `exp7` */
+  /** what is playing, as the views name it: a chapter, one line's clip, `exp7` */
   id: string;
   clips: Clip[];
   title?: string;
@@ -291,8 +291,8 @@ function cue(q: Queue, at = 0): void {
 }
 
 /** One clip, by id. */
-function play(id: string, len: number, url?: string): void {
-  playQueue({ id, clips: [{ id, duration: len, url }], title: id });
+function play(id: string, len: number, url?: string, title = id): void {
+  playQueue({ id, clips: [{ id, duration: len, url }], title });
 }
 
 /** A file of unknown length (a provider's voice sample), timed from its metadata. Toggles. */

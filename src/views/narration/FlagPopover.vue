@@ -18,7 +18,7 @@ const emit = defineEmits<{ pronounce: [word: string] }>();
 const open = defineModel<boolean>("open", { required: true });
 const narrationStore = useNarrationStore();
 
-// what a person can say is wrong; `heard` is only ever raised by a check by ear
+// what a person can say is wrong; `mismatch` is only ever raised by a transcription
 const KINDS: FlagKind[] = ["pronunciation", "delivery", "pause", "other"];
 const kind = ref<FlagKind>("delivery");
 const note = ref("");
@@ -47,9 +47,9 @@ watch(
   { immediate: true },
 );
 
-const heard = computed(() => kind.value === "heard");
+const heard = computed(() => kind.value === "mismatch");
 function save(alsoRetake: boolean) {
-  // a heard flag stays the check's until a person says what is wrong in their own words
+  // a mismatch flag stays the transcription's until a person says what is wrong in their own words
   if (!heard.value)
     void narrationStore.flagSegment(
       props.bookId,
@@ -87,8 +87,8 @@ function clear() {
     <PopoverPortal>
       <PopoverContent :side-offset="6" align="end" class="ui-popup w-80 p-3 text-xs">
         <div class="label mb-2">What is wrong with #{{ segment.id }}?</div>
-        <p v-if="segment.flag?.kind === 'heard'" class="mb-2 text-[11px] text-zinc-500">
-          A check by ear flagged it<template v-if="segment.flag.note"
+        <p v-if="segment.flag?.kind === 'mismatch'" class="mb-2 text-[11px] text-zinc-500">
+          Its transcript doesn't match<template v-if="segment.flag.note"
             >: {{ segment.flag.note }}</template
           >. Pick a kind to flag it yourself.
         </p>

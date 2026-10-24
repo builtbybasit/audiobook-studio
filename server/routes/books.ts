@@ -7,7 +7,7 @@ import * as v from "valibot";
 
 import type {
   BookUpdated,
-  CheckQueued,
+  TranscribeQueued,
   ImportedBook,
   NarrationQueued,
   PromptTrialRequest,
@@ -23,7 +23,7 @@ import type { AudiobookFiles } from "~/exports/files";
 import type { Db } from "~/db/client";
 import { keepOldSound, staleSound } from "~/effects/ops";
 import { env } from "~/env";
-import { enqueueCheck } from "~/jobs/check";
+import { enqueueTranscribe } from "~/jobs/transcribe";
 import { enqueueReapply } from "~/jobs/effects";
 import { enqueueNarration } from "~/jobs/narration";
 import type { Runner } from "~/jobs/runner";
@@ -52,7 +52,7 @@ const Ids = v.object({
   ids: v.pipe(v.array(v.pipe(v.number(), v.integer(), v.minValue(1))), v.minLength(1)),
 });
 
-const CheckIds = v.object({
+const TranscribeIds = v.object({
   ...Ids.entries,
   /** every clip, including those already heard as their line reads */
   again: v.optional(v.boolean()),
@@ -123,7 +123,7 @@ const Settings = v.pipe(
     ),
     prompt: v.optional(v.nullable(BookPromptSchema)),
     readNotes: v.optional(v.nullable(v.boolean())),
-    checkByEar: v.optional(v.nullable(v.boolean())),
+    autoTranscribe: v.optional(v.nullable(v.boolean())),
     pronounceOff: v.optional(v.nullable(v.boolean())),
     exactCounts: v.optional(v.nullable(v.boolean())),
     /** an effect's id or "none"; `null` follows the library's */
@@ -468,17 +468,22 @@ export function bookRoutes(
     },
   );
 
-  // ---------- checking by ear ----------
+  // ---------- transcribing ----------
   /** Uses the first transcription endpoint switched on; 400 when none is. */
-  app.post("/:id/chapters/check", validate("param", BookParam), validate("json", CheckIds), (c) => {
-    const { ids, again } = c.req.valid("json");
-    const result = enqueueCheck(db, runner, c.req.valid("param").id, ids, { again });
-    c.var.logger.info(
-      { run: result.runId, jobs: result.jobs.length, skipped: result.skipped.length },
-      "check queued",
-    );
-    return c.json(result satisfies CheckQueued, 202);
-  });
+  app.post(
+    "/:id/chapters/transcribe",
+    validate("param", BookParam),
+    validate("json", TranscribeIds),
+    (c) => {
+      const { ids, again } = c.req.valid("json");
+      const result = enqueueTranscribe(db, runner, c.req.valid("param").id, ids, { again });
+      c.var.logger.info(
+        { run: result.runId, jobs: result.jobs.length, skipped: result.skipped.length },
+        "transcription queued",
+      );
+      return c.json(result satisfies TranscribeQueued, 202);
+    },
+  );
 
   // ---------- voice effects ----------
   /** How many clips have an old sound, and whether effects can run to redo them. */

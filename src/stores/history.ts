@@ -31,7 +31,7 @@ import { useUiStore } from "@/stores/ui";
 const LANDS_ON_SCRIPT: Record<JobKind, boolean> = {
   scripting: true,
   narration: true,
-  check: true,
+  transcribe: true,
   export: false,
   effects: true,
 };

@@ -24,7 +24,7 @@ import FlagPopover from "@/views/narration/FlagPopover.vue";
 import RenderDetails, { hasDetails } from "@/views/narration/RenderDetails.vue";
 import TakeCompare from "@/views/narration/TakeCompare.vue";
 import {
-  Ear as CheckIcon,
+  Captions as TranscribeIcon,
   Flag as FlagIcon,
   Pause as PauseIcon,
   Play as PlayIcon,
@@ -93,17 +93,17 @@ const changed = computed(() => changedLines.value.length);
 const unrendered = computed(
   () => changedLines.value.filter((s) => s.audio.status === "none").length,
 );
-/** Why "Check by ear" cannot be pressed, or "" when it can. */
+/** Why "Transcribe" cannot be pressed, or "" when it can. */
 const cannotCheck = computed(() => {
   if (!segments.value.some((s) => spoken(s) && s.audio.duration)) return "no clip to hear yet";
   const busy = jobsStore.activeJobs.find(
     (j) =>
       j.bookId === props.bookId &&
       j.chapterId === props.chapterId &&
-      (j.kind === "check" || j.kind === "narration"),
+      (j.kind === "transcribe" || j.kind === "narration"),
   );
   return busy
-    ? `${busy.kind === "check" ? "a check" : "narration"} is already on this chapter`
+    ? `${busy.kind === "transcribe" ? "transcribing" : "narration"} is already on this chapter`
     : "";
 });
 const unread = computed(() => segments.value.filter((s) => !spoken(s)).length);
@@ -265,9 +265,9 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
             cannotCheck ||
             'hear each clip on a transcription endpoint and flag the lines that say something else'
           "
-          @click="jobsStore.checkChapters(bookId, [chapterId])"
+          @click="jobsStore.transcribeChapters(bookId, [chapterId])"
         >
-          <CheckIcon class="icon-sm" /> Check by ear
+          <TranscribeIcon class="icon-sm" /> Transcribe
         </button>
         <button
           v-if="chapter.narration !== 'running'"
@@ -375,7 +375,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
                     class="rounded bg-amber-400/20 px-1 font-semibold text-amber-700 dark:text-amber-300"
                     :data-tip="FLAG_LABEL[s.flag.kind]"
                     ><FlagIcon class="icon-sm" />
-                    <template v-if="s.flag.kind === 'heard' && s.flag.note">{{
+                    <template v-if="s.flag.kind === 'mismatch' && s.flag.note">{{
                       s.flag.note
                     }}</template
                     ><template v-else

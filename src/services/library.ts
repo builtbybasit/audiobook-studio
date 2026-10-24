@@ -75,8 +75,8 @@ export interface BookSettings {
   prompt?: BookPrompt | null;
   /** `Book.readNotes` */
   readNotes?: boolean;
-  /** `Book.checkByEar` */
-  checkByEar?: boolean;
+  /** `Book.autoTranscribe` */
+  autoTranscribe?: boolean;
   /** `Book.pronounceOff`; `null` = suggestions on */
   pronounceOff?: true | null;
   /** `Book.exactCounts`; `null` = rough counts */

@@ -1,4 +1,4 @@
-// Checking by ear: a clip's transcript set against its line. Both sides go to spoken form first
+// Transcribing: a clip's transcript set against its line. Both sides go to spoken form first
 // (`spokenWords`), so what the ear cannot tell apart is no difference. The score is the share of
 // the line's letters heard wrong. Heard word times map onto the line's words for the Listen page;
 // a word with no matched time gets no mark, and a time is never estimated.

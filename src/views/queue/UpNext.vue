@@ -9,7 +9,7 @@ import {
   ChevronRight as ChevronIcon,
   Download as ExportIcon,
   PencilLine as ScriptingIcon,
-  Ear as CheckIcon,
+  Captions as TranscribeIcon,
   AudioWaveform as EffectsIcon,
   X as CancelIcon,
 } from "@lucide/vue";
@@ -30,7 +30,7 @@ const icon: Record<JobKind, Component> = {
   scripting: ScriptingIcon,
   narration: NarrationIcon,
   export: ExportIcon,
-  check: CheckIcon,
+  transcribe: TranscribeIcon,
   effects: EffectsIcon,
 };
 // by book, volume and reading number only: titles of chapters still to come would spoil the plot

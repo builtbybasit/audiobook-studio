@@ -23,7 +23,7 @@ import {
   Plus as AddIcon,
   ArrowRight as NextIcon,
   Inbox as ReviewIcon,
-  Ear as CheckIcon,
+  Captions as TranscribeIcon,
 } from "@lucide/vue";
 import { UiCheckbox, UiHint, UiNumber, UiSwitch } from "@/ui";
 import AddEpubDialog from "@/components/AddEpubDialog.vue";
@@ -572,31 +572,31 @@ const next = computed(() =>
           </p>
         </div>
         <div class="card p-4 text-xs text-zinc-500">
-          <div class="label mb-2">Checking</div>
+          <div class="label mb-2">Transcribing</div>
           <div class="flex items-center gap-1.5">
             <UiSwitch
-              :model-value="!!book.checkByEar"
-              label="Check narration by ear"
-              @update:model-value="(on: boolean) => libraryStore.setCheckByEar(bookId, on)"
+              :model-value="!!book.autoTranscribe"
+              label="Transcribe after narration"
+              @update:model-value="(on: boolean) => libraryStore.setAutoTranscribe(bookId, on)"
             />
             <UiHint
-              label="checking by ear"
-              text="Needs a transcription (speech-to-text) endpoint switched on. Each chapter is heard once it narrates, and a line heard saying something else is flagged for review. Costs one transcription request per line."
+              label="transcribing"
+              text="Needs a transcription (speech-to-text) endpoint switched on. Each chapter is transcribed once it narrates, and a line whose transcript doesn't match its text is flagged for review. Costs one transcription request per line."
             />
           </div>
           <p class="mt-1.5 text-[11px] leading-relaxed">
             {{
-              book.checkByEar
-                ? "Each chapter is checked after it narrates."
+              book.autoTranscribe
+                ? "Each chapter is transcribed after it narrates."
                 : "Only when asked, on the Narration page or below."
             }}
           </p>
           <button
             class="btn-ghost btn-xs mt-2 w-full justify-center"
             :disabled="!narratedIds.length"
-            @click="jobsStore.checkChapters(bookId, narratedIds)"
+            @click="jobsStore.transcribeChapters(bookId, narratedIds)"
           >
-            <CheckIcon class="icon-sm" /> Check narrated chapters
+            <TranscribeIcon class="icon-sm" /> Transcribe narrated chapters
           </button>
         </div>
         <div class="card p-4 text-xs text-zinc-500">

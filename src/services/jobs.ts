@@ -1,7 +1,7 @@
 // The seam the queue is read and driven through, as `@/services/library` is for books.
 import type {
   BuildQueued,
-  CheckQueued,
+  TranscribeQueued,
   ExportSettings,
   Job,
   NarrationQueued,
@@ -30,7 +30,7 @@ export interface JobsService {
   scriptChapters(bookId: string, ids: number[], profile?: string): Promise<ScriptingQueued>;
   narrateChapters(bookId: string, ids: number[], scope: NarrationScope): Promise<NarrationQueued>;
   /** On the first enabled transcriber, as one run; `again` also re-hears clips already heard. */
-  checkChapters(bookId: string, ids: number[], again?: boolean): Promise<CheckQueued>;
+  transcribeChapters(bookId: string, ids: number[], again?: boolean): Promise<TranscribeQueued>;
   /** Each line renders beside the clip it may replace, as one job. */
   retakeLines(bookId: string, chapterId: number, ids: number[]): Promise<RetakesQueued>;
   buildExport(
@@ -90,8 +90,8 @@ export class HttpJobsService implements JobsService {
     });
   }
 
-  checkChapters(bookId: string, ids: number[], again = false): Promise<CheckQueued> {
-    return this.http.post<CheckQueued>(`/books/${seg(bookId)}/chapters/check`, {
+  transcribeChapters(bookId: string, ids: number[], again = false): Promise<TranscribeQueued> {
+    return this.http.post<TranscribeQueued>(`/books/${seg(bookId)}/chapters/transcribe`, {
       ids,
       ...(again ? { again } : {}),
     });

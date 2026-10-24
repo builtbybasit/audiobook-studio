@@ -1,4 +1,4 @@
-// What was heard of a chapter's clips: the check by ear's findings, by segment id. Changes only
+// What was heard of a chapter's clips: the transcription's findings, by segment id. Changes only
 // when a `check` job runs, which invalidates it (`queries/jobs.ts`), never refetched on focus.
 import { computed, toValue, type MaybeRefOrGetter } from "vue";
 import { useQuery } from "@pinia/colada";

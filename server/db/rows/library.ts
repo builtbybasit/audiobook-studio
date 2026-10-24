@@ -53,7 +53,7 @@ export function toBook(row: BookRow, vols: readonly VolumeRow[], counts?: Chapte
   const prompt = toBookPrompt(row);
   if (prompt) book.prompt = prompt;
   if (row.readNotes != null) book.readNotes = row.readNotes;
-  if (row.checkByEar != null) book.checkByEar = row.checkByEar;
+  if (row.autoTranscribe != null) book.autoTranscribe = row.autoTranscribe;
   if (row.pronounceOff) book.pronounceOff = true;
   if (row.exactCounts) book.exactCounts = true;
   if (row.thoughts != null) book.thoughts = row.thoughts;
@@ -138,7 +138,7 @@ export function bookValues(book: Book, addedAt: number): typeof books.$inferInse
     pacingInlineLong: book.pacing?.inlineLong ?? null,
     ...bookPromptValues(book.prompt),
     readNotes: book.readNotes ?? null,
-    checkByEar: book.checkByEar ?? null,
+    autoTranscribe: book.autoTranscribe ?? null,
     pronounceOff: book.pronounceOff ?? null,
     exactCounts: book.exactCounts ?? null,
     thoughts: book.thoughts ?? null,

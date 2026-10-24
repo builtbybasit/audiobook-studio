@@ -20,7 +20,7 @@ import {
   AudioLines as NarrationIcon,
   Download as ExportIcon,
   PencilLine as ScriptingIcon,
-  Ear as CheckIcon,
+  Captions as TranscribeIcon,
   AudioWaveform as EffectsIcon,
   RotateCcw as RetryIcon,
   X as CloseIcon,
@@ -50,7 +50,7 @@ const icon: Record<JobKind, Component> = {
   scripting: ScriptingIcon,
   narration: NarrationIcon,
   export: ExportIcon,
-  check: CheckIcon,
+  transcribe: TranscribeIcon,
   effects: EffectsIcon,
 };
 const running = computed(() => jobsStore.jobs.filter((j) => j.status === "running"));
@@ -280,19 +280,19 @@ async function toggleNotify() {
                 >
                 <span>of {{ segStatsOf[j.id].total }} segments</span>
               </div>
-              <div v-else-if="j.checkRun" class="mt-2 flex gap-3 pl-11 text-xs text-zinc-500">
+              <div v-else-if="j.transcribeRun" class="mt-2 flex gap-3 pl-11 text-xs text-zinc-500">
                 <span
-                  ><b class="text-emerald-500">{{ j.checkRun.checked }}</b
-                  >/{{ j.checkRun.lines }} lines heard</span
+                  ><b class="text-emerald-500">{{ j.transcribeRun.transcribed }}</b
+                  >/{{ j.transcribeRun.lines }} lines heard</span
                 >
                 <span
-                  ><b :class="j.checkRun.mismatched ? 'text-amber-600' : ''">{{
-                    j.checkRun.mismatched
+                  ><b :class="j.transcribeRun.mismatched ? 'text-amber-600' : ''">{{
+                    j.transcribeRun.mismatched
                   }}</b>
                   heard wrong</span
                 >
-                <span v-if="j.checkRun.failed"
-                  ><b class="text-red-500">{{ j.checkRun.failed }}</b> failed</span
+                <span v-if="j.transcribeRun.failed"
+                  ><b class="text-red-500">{{ j.transcribeRun.failed }}</b> failed</span
                 >
               </div>
             </div>

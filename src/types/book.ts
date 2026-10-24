@@ -186,7 +186,7 @@ export interface Book {
    * After narration a `check` job hears each chapter on the first enabled transcriber.
    * Absent = only on request.
    */
-  checkByEar?: boolean;
+  autoTranscribe?: boolean;
   /** the scripting model does not suggest dictionary terms; absent = it does */
   pronounceOff?: boolean;
   /** the Cast page shows exact line counts, not rough bands (spoilers); absent = bands */

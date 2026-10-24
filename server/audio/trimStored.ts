@@ -1,6 +1,6 @@
 // `trim-silence`: trims the clips made before trimming came in, once. Safe while the server runs
 // (each clip lands in its own transaction, only where a row still names the file) and to re-run.
-// A check by ear's word times move with the cut, so the Listen page stays in step.
+// A transcription's word times move with the cut, so the Listen page stays in step.
 import { and, eq, inArray, isNotNull, or } from "drizzle-orm";
 
 import type { ExpressionAnnotation } from "@/types";

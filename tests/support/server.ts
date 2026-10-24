@@ -13,7 +13,7 @@ import { connect, openDb, type Db } from "~/db/client";
 import { enqueueJob } from "~/db/jobs";
 import { migrate } from "~/db/migrate";
 import { audiobookFiles } from "~/exports/files";
-import { checkHandler } from "~/jobs/check";
+import { transcribeHandler } from "~/jobs/transcribe";
 import { effectsHandler } from "~/jobs/effects";
 import { exportHandler } from "~/jobs/export";
 import { narrationHandler } from "~/jobs/narration";
@@ -181,7 +181,7 @@ export function testRunner(db: Db, log: Logger, options: TestApiOptions = {}): R
         trim: options.trim,
       }),
       export: exportHandler(testExports(options), files),
-      check: checkHandler(options.transcription ?? noTranscription, files, gate),
+      transcribe: transcribeHandler(options.transcription ?? noTranscription, files, gate),
       effects: effectsHandler(options.effects, files),
       ...options.handlers,
     },

@@ -1,4 +1,4 @@
-// Checking by ear: a narrated chapter's clips transcribed and set against their lines. The finding
+// Transcribing: a narrated chapter's clips transcribed and set against their lines. The finding
 // is kept by clip file; a mismatch flags the line, a match clears a `heard` flag, a person's flag is
 // left alone; priced by the minute; queued after narration when the book asks. `ears` picks what
 // the transcription endpoint hears per line, finding the line by the clip's file name.
@@ -7,7 +7,7 @@ import { describe, expect, test } from "bun:test";
 import type {
   ChapterHeard,
   ChapterScript,
-  CheckQueued,
+  TranscribeQueued,
   ImportedBook,
   Job,
   RequestRecord,
@@ -15,7 +15,7 @@ import type {
   Transcriber,
 } from "@/types";
 import { listJobs } from "~/db/jobs";
-import { checkHandler, enqueueCheck } from "~/jobs/check";
+import { transcribeHandler, enqueueTranscribe } from "~/jobs/transcribe";
 import { createSpeechGate } from "~/providers/gate";
 import { readScript, setFlag } from "~/db/script";
 import { ProviderError } from "~/providers/http";
@@ -135,11 +135,11 @@ async function narrated(
   return { api, id, e };
 }
 
-const check = (api: TestApi, id: string, ids: number[], again?: boolean) =>
-  api.request<CheckQueued>(`/api/books/${id}/chapters/check`, jsonBody({ ids, again }));
+const transcribe = (api: TestApi, id: string, ids: number[], again?: boolean) =>
+  api.request<TranscribeQueued>(`/api/books/${id}/chapters/transcribe`, jsonBody({ ids, again }));
 
-async function checked(api: TestApi, id: string, ids = [1], again?: boolean) {
-  const queued = await check(api, id, ids, again);
+async function transcribed(api: TestApi, id: string, ids = [1], again?: boolean) {
+  const queued = await transcribe(api, id, ids, again);
   await api.runner.idle();
   return queued;
 }
@@ -153,15 +153,15 @@ const scriptOf = async (api: TestApi, id: string, ch = 1) =>
 const jobById = async (api: TestApi, id: number) =>
   (await api.request<{ job: Job }>(`/api/jobs/${id}`)).body.job;
 
-describe("checking a chapter by ear", () => {
+describe("transcribing a chapter", () => {
   test("hears every clip once, keeps what it heard with its word marks, and prices it", async () => {
     const { api, id, e } = await narrated();
     const segs = (await scriptOf(api, id)).segments;
 
-    const { status, body } = await checked(api, id);
+    const { status, body } = await transcribed(api, id);
     expect(status).toBe(202);
     expect(body.skipped).toEqual([]);
-    expect(body.jobs.map((j) => [j.kind, j.chapterId])).toEqual([["check", 1]]);
+    expect(body.jobs.map((j) => [j.kind, j.chapterId])).toEqual([["transcribe", 1]]);
     expect(e.asked).toHaveLength(segs.length);
     // a clip is sent the cast's names its line is written with, the narrator's never
     const hinted = e.asked.map((a) => ({
@@ -175,10 +175,10 @@ describe("checking a chapter by ear", () => {
 
     const job = await jobById(api, body.jobs[0].id);
     expect(job.status).toBe("done");
-    expect(job.checkRun).toEqual({
+    expect(job.transcribeRun).toEqual({
       endpoint: "phonon",
       lines: segs.length,
-      checked: segs.length,
+      transcribed: segs.length,
       mismatched: 0,
       failed: 0,
     });
@@ -203,24 +203,24 @@ describe("checking a chapter by ear", () => {
     expect(rows.body.requests[0]).toMatchObject({
       kind: "transcription",
       bookId: id,
-      label: "Check",
+      label: "Transcribe",
     });
     const seconds = segs.reduce((n, s) => n + s.audio.duration, 0);
     const cost = rows.body.requests.reduce((n, r) => n + (r.cost ?? 0), 0);
     expect(cost).toBeCloseTo((seconds / 60) * 0.6, 6);
   });
 
-  test("flags a clip heard saying something else, takes a heard flag down, and leaves a person's", async () => {
+  test("flags a clip heard saying something else, takes a mismatch flag down, and leaves a person's", async () => {
     const { api, id, e } = await narrated();
     const segs = (await scriptOf(api, id)).segments;
     const [wrong, mine, right] = segs;
-    // a person flagged one line; an earlier check had flagged another that it now hears right
+    // a person flagged one line; an earlier transcription had flagged another that it now hears right
     await api.request(`/api/books/${id}/chapters/1/lines/${mine.id}/flag`, {
       ...jsonBody({ kind: "delivery", note: "too flat" }),
       method: "PUT",
     });
     api.db.transaction((tx) =>
-      setFlag(tx, id, 1, right.id, { kind: "heard", note: "Heard: “nothing”", at: 1 }),
+      setFlag(tx, id, 1, right.id, { kind: "mismatch", note: "Heard: “nothing”", at: 1 }),
     );
     const said = "The ledger burned in the hearth while the rain kept on.";
     e.say = (s) =>
@@ -229,10 +229,10 @@ describe("checking a chapter by ear", () => {
         : { text: s.text, words: timed(s.text) };
 
     const before = (await scriptOf(api, id)).revision;
-    const { body } = await checked(api, id);
+    const { body } = await transcribed(api, id);
     const after = await scriptOf(api, id);
     const by = new Map(after.segments.map((s) => [s.id, s]));
-    expect(by.get(wrong.id)!.flag).toMatchObject({ kind: "heard", note: `Heard: “${said}”` });
+    expect(by.get(wrong.id)!.flag).toMatchObject({ kind: "mismatch", note: `Heard: “${said}”` });
     expect(by.get(mine.id)!.flag).toMatchObject({ kind: "delivery", note: "too flat" });
     expect(by.get(right.id)!.flag).toBeUndefined();
     // the browser re-reads a chapter whose flags moved
@@ -241,15 +241,15 @@ describe("checking a chapter by ear", () => {
     const lines = await heardOf(api, id);
     expect(lines[wrong.id]).toMatchObject({ heard: said, mismatch: true });
     expect(lines[mine.id].mismatch).toBe(true);
-    expect((await jobById(api, body.jobs[0].id)).checkRun).toMatchObject({ mismatched: 2 });
+    expect((await jobById(api, body.jobs[0].id)).transcribeRun).toMatchObject({ mismatched: 2 });
   });
 
   test("a chapter already heard is left out, and a line edited since is heard again", async () => {
     const { api, id, e } = await narrated();
-    await checked(api, id);
+    await transcribed(api, id);
     const asked = e.asked.length;
 
-    const again = await checked(api, id, [1, 2, 9]);
+    const again = await transcribed(api, id, [1, 2, 9]);
     expect(again.body.jobs).toEqual([]);
     expect(again.body.skipped).toEqual([
       { id: 1, why: "nothing" },
@@ -268,7 +268,7 @@ describe("checking a chapter by ear", () => {
     });
     expect(status).toBe(200);
     e.say = () => ({ text: first.text, words: timed(first.text) });
-    const queued = await checked(api, id);
+    const queued = await transcribed(api, id);
     expect(queued.body.jobs).toHaveLength(1);
     expect(e.asked).toHaveLength(asked + 1);
     expect((await heardOf(api, id))[first.id]).toMatchObject({
@@ -278,20 +278,20 @@ describe("checking a chapter by ear", () => {
     });
   });
 
-  test("checked again, every clip is heard, those already heard too", async () => {
+  test("transcribed again, every clip is heard, those already heard too", async () => {
     const { api, id, e } = await narrated();
-    await checked(api, id);
+    await transcribed(api, id);
     const asked = e.asked.length;
-    expect((await checked(api, id)).body.skipped).toEqual([{ id: 1, why: "nothing" }]);
+    expect((await transcribed(api, id)).body.skipped).toEqual([{ id: 1, why: "nothing" }]);
 
     // heard as something else this time: the finding is replaced, and the line flagged
     const first = (await scriptOf(api, id)).segments[0];
     e.say = (s) => ({ text: s.id === first.id ? "Something else entirely" : s.text });
-    const again = await checked(api, id, [1], true);
-    expect(again.body.jobs[0].checkRun).toMatchObject({ again: true, lines: asked });
+    const again = await transcribed(api, id, [1], true);
+    expect(again.body.jobs[0].transcribeRun).toMatchObject({ again: true, lines: asked });
     expect(e.asked).toHaveLength(2 * asked);
     expect((await heardOf(api, id))[first.id]).toMatchObject({ mismatch: true });
-    expect((await scriptOf(api, id)).segments[0].flag?.kind).toBe("heard");
+    expect((await scriptOf(api, id)).segments[0].flag?.kind).toBe("mismatch");
   });
 
   test("a name the dictionary respells is heard right as it was sent", async () => {
@@ -302,7 +302,7 @@ describe("checking a chapter by ear", () => {
     expect(first.audio.pronounced).toContain("Shiv-awn");
     const sent = first.text.replace("Mara", "Shiv awn");
     e.say = (s) => (s.id === first.id ? { text: sent, words: timed(sent) } : { text: s.text });
-    await checked(api, id);
+    await transcribed(api, id);
     const heard = (await heardOf(api, id))[first.id];
     expect(heard).toMatchObject({ heard: sent, mismatch: false });
     const marks = heard.words!.map(([from, to]) => first.text.slice(from, to));
@@ -313,10 +313,10 @@ describe("checking a chapter by ear", () => {
     const { api, id, e } = await narrated();
     const segs = (await scriptOf(api, id)).segments;
     e.fail = (s) => s.id === segs[1].id;
-    const { body } = await checked(api, id);
+    const { body } = await transcribed(api, id);
     const job = await jobById(api, body.jobs[0].id);
     expect(job.status).toBe("failed");
-    expect(job.checkRun).toMatchObject({ checked: segs.length - 1, failed: 1 });
+    expect(job.transcribeRun).toMatchObject({ transcribed: segs.length - 1, failed: 1 });
     expect(job.activity?.some((a) => a.message === `Line ${segs[1].id} could not be heard`)).toBe(
       true,
     );
@@ -324,7 +324,7 @@ describe("checking a chapter by ear", () => {
     expect(Object.keys(lines).map(Number)).toEqual(
       segs.filter((s) => s.id !== segs[1].id).map((s) => s.id),
     );
-    // nothing a check does touches a clip
+    // nothing a transcription does touches a clip
     expect((await scriptOf(api, id)).segments.map((s) => s.audio)).toEqual(
       segs.map((s) => s.audio),
     );
@@ -332,11 +332,11 @@ describe("checking a chapter by ear", () => {
     // a retry hears only the line it missed
     e.fail = () => false;
     const asked = e.asked.length;
-    await checked(api, id);
+    await transcribed(api, id);
     expect(e.asked).toHaveLength(asked + 1);
   });
 
-  test("two chapters' checks on one endpoint share its concurrency: never more out at once", async () => {
+  test("two chapters' transcriptions on one endpoint share its concurrency: never more out at once", async () => {
     const { api, id, e } = await narrated();
     await narrateChapters(api, id, [2]);
     const held = door();
@@ -346,9 +346,9 @@ describe("checking a chapter by ear", () => {
     };
     // run by hand, both at once, whatever the runner would do
     await api.runner.stop();
-    const { jobs } = enqueueCheck(api.db, queueOnly(api.db), id, [1, 2]);
+    const { jobs } = enqueueTranscribe(api.db, queueOnly(api.db), id, [1, 2]);
     const gate = createSpeechGate();
-    const handler = checkHandler(provider, api.files, gate);
+    const handler = transcribeHandler(provider, api.files, gate);
     const runs = jobs.map((job) => handler.run(jobContext(api.db, job)));
 
     // transcriber() takes two at once
@@ -364,28 +364,28 @@ describe("checking a chapter by ear", () => {
     const { api, id, e } = await narrated(ears(), {
       transcribers: [transcriber({ enabled: false })],
     });
-    const { status, body } = await check(api, id, [1]);
+    const { status, body } = await transcribe(api, id, [1]);
     expect(status).toBe(400);
     expect((body as unknown as { error: { message: string } }).error.message).toBe(
       "No transcription endpoint is switched on. Add one on the Endpoints page.",
     );
-    expect(listJobs(api.db).filter((j) => j.kind === "check")).toEqual([]);
+    expect(listJobs(api.db).filter((j) => j.kind === "transcribe")).toEqual([]);
     expect(e.asked).toEqual([]);
   });
 
-  test("follows a narration by itself only when the book checks by ear", async () => {
+  test("follows a narration by itself only when the book transcribes after narration", async () => {
     const { api, id } = await narrated();
     // chapter 1 was narrated before anyone asked
-    expect(listJobs(api.db).filter((j) => j.kind === "check")).toEqual([]);
+    expect(listJobs(api.db).filter((j) => j.kind === "transcribe")).toEqual([]);
 
     const patched = await api.request<ImportedBook>(`/api/books/${id}`, {
-      ...jsonBody({ checkByEar: true }),
+      ...jsonBody({ autoTranscribe: true }),
       method: "PATCH",
     });
-    expect(patched.body.book.checkByEar).toBe(true);
+    expect(patched.body.book.autoTranscribe).toBe(true);
     await narrateChapters(api, id, [2]);
-    const checks = listJobs(api.db).filter((j) => j.kind === "check");
-    expect(checks.map((j) => [j.chapterId, j.status])).toEqual([[2, "done"]]);
+    const runs = listJobs(api.db).filter((j) => j.kind === "transcribe");
+    expect(runs.map((j) => [j.chapterId, j.status])).toEqual([[2, "done"]]);
     expect(Object.keys(await heardOf(api, id, 2)).length).toBeGreaterThan(0);
   });
 });

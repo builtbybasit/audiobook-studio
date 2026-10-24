@@ -45,10 +45,10 @@ export interface Cut {
 }
 
 /**
- * `heard` is raised by a check by ear (`HeardLine`) that heard something other than the line. It
+ * `mismatch` is raised by a transcription (`HeardLine`) that heard something other than the line. It
  * never replaces a person's flag, and a check that hears the line right takes it down.
  */
-export type FlagKind = "pronunciation" | "delivery" | "pause" | "other" | "heard";
+export type FlagKind = "pronunciation" | "delivery" | "pause" | "other" | "mismatch";
 
 export interface SegmentFlag {
   kind: FlagKind;

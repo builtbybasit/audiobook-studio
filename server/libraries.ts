@@ -19,7 +19,7 @@ import { newPace, pacedEncoders, pacedProviders } from "~/demo/pace";
 import { demoReset } from "~/demo/reset";
 import { isFresh, seedDemo } from "~/demo/seed";
 import { audiobookFiles } from "~/exports/files";
-import { checkHandler } from "~/jobs/check";
+import { transcribeHandler } from "~/jobs/transcribe";
 import { effectsHandler } from "~/jobs/effects";
 import { exportHandler } from "~/jobs/export";
 import { narrationHandler } from "~/jobs/narration";
@@ -132,7 +132,7 @@ export function openLibrary(options: LibraryOptions): Library {
         trim: options.trim,
       }),
       export: exportHandler(exports, files),
-      check: checkHandler(given.transcription, files, gate),
+      transcribe: transcribeHandler(given.transcription, files, gate),
       effects: effectsHandler(options.effects, files),
     },
     { log },

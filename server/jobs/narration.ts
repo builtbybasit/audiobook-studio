@@ -39,7 +39,7 @@ import {
   rejectCandidate,
   writeClip,
 } from "~/db/script";
-import { checkAfterNarration } from "~/jobs/check";
+import { transcribeAfterNarration } from "~/jobs/transcribe";
 import type { JobContext, JobHandler, Runner } from "~/jobs/runner";
 import { conflict, notFound } from "~/lib/errors";
 import { batchLines, type BatchLine, type LineRun } from "~/narration/batch";
@@ -863,7 +863,7 @@ export function narrationHandler(
     onSettled(ctx, status) {
       if (status !== "done") putBackAfter(ctx);
       // no auto-check after a cancel: the person stopped the work
-      if (status !== "cancelled") checkAfterNarration(ctx);
+      if (status !== "cancelled") transcribeAfterNarration(ctx);
     },
   };
 }

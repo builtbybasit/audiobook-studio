@@ -690,8 +690,8 @@ export interface BookSettings {
   prompt?: BookPrompt | null;
   /** read `note` lines aloud; `null` goes back to skipping them */
   readNotes?: boolean | null;
-  /** check each chapter by ear once narrated; `null` goes back to only when asked */
-  checkByEar?: boolean | null;
+  /** transcribe each chapter once narrated; `null` goes back to only when asked */
+  autoTranscribe?: boolean | null;
   /** stop the scripting model suggesting dictionary terms; `null` lets it again */
   pronounceOff?: boolean | null;
   /** show exact line counts on the Cast page; `null` goes back to rough ones */
@@ -721,7 +721,7 @@ export function setBookSettings(db: Db | Tx, bookId: string, s: BookSettings): v
   }
   if (s.prompt !== undefined) Object.assign(set, bookPromptValues(s.prompt));
   if (s.readNotes !== undefined) set.readNotes = s.readNotes;
-  if (s.checkByEar !== undefined) set.checkByEar = s.checkByEar;
+  if (s.autoTranscribe !== undefined) set.autoTranscribe = s.autoTranscribe;
   if (s.pronounceOff !== undefined) set.pronounceOff = s.pronounceOff;
   if (s.exactCounts !== undefined) set.exactCounts = s.exactCounts;
   if (s.thoughts !== undefined) set.thoughts = s.thoughts;

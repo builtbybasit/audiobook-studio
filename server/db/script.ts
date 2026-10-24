@@ -359,7 +359,7 @@ export function setFlag(
     .get();
 }
 
-/** One line's words, flag and current clip url, for a check by ear; undefined when gone. */
+/** One line's words, flag and current clip url, for a transcription; undefined when gone. */
 export function lineNow(
   db: Db | Tx,
   bookId: string,
@@ -551,7 +551,7 @@ export function clipsByEndpoint(db: Db | Tx): Map<string, { done: number; failed
   );
 }
 
-// ---------- what a check by ear heard ----------
+// ---------- what a transcription heard ----------
 // Keyed by clip file, not row: every script save rewrites the rows (`heard` in the schema).
 
 /** By file; a file never heard is absent. */

@@ -13,7 +13,7 @@ import type {
   RetakesQueued,
 } from "@/types";
 import type { Db } from "~/db/client";
-import { chapterHeard } from "~/jobs/check";
+import { chapterHeard } from "~/jobs/transcribe";
 import type { Runner } from "~/jobs/runner";
 import { BookParam, ChapterIds, IdParam } from "~/lib/http";
 import { SegmentSchema, VersionOriginSchema } from "~/lib/schemas";
@@ -80,7 +80,7 @@ export function scriptRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
     },
   );
 
-  /** What a check by ear heard, by line (`HeardLine`). */
+  /** What a transcription heard, by line (`HeardLine`). */
   app.get("/:id/chapters/:chapterId/heard", validate("param", ChapterParam), (c) => {
     const { id, chapterId } = c.req.valid("param");
     return c.json({ lines: chapterHeard(db, id, chapterId) satisfies ChapterHeard });

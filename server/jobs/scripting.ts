@@ -48,6 +48,7 @@ import { conflict, notFound } from "~/lib/errors";
 import { narrationInProgress, settleChapter } from "~/narration/chapter";
 import { bookDelivery, lineReading } from "~/narration/cost";
 import { BadAnswer, ChunkMisfit, repairPrompt } from "~/providers/chatScripting";
+import type { GateLimits, SpeechGate } from "~/providers/gate";
 import type { ScriptAnswer, ScriptRepair, ScriptingProvider } from "~/providers/scripting";
 import type { SentScript } from "~/providers/sent";
 import { scriptTarget } from "~/providers/target";
@@ -175,7 +176,7 @@ const lineCountOf = (repair: ScriptRepair): string => {
   return `${n} line${n === 1 ? "" : "s"}`;
 };
 
-export function scriptingHandler(provider: ScriptingProvider): JobHandler {
+export function scriptingHandler(provider: ScriptingProvider, gate: SpeechGate): JobHandler {
   return {
     async run(ctx: JobContext): Promise<void> {
       const { job, db, signal } = ctx;
@@ -311,8 +312,8 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
         });
       let refused: string | null = null;
 
-      // Up to the profile's concurrency, answers kept in order. The first failure fails the
-      // chapter: half a script is never written.
+      // Every chunk waits its turn at the endpoint's slots, shared with other jobs; answers kept in
+      // order. The first failure fails the chapter: half a script is never written.
       const answers: ScriptAnswer[] = chunks.map(() => ({ lines: [] }));
       const stop = new AbortController();
       const onAbort = (): void => stop.abort(signal.reason);
@@ -340,13 +341,36 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
           money?.release();
         }
       };
-      let next = 0;
-      const worker = async (): Promise<void> => {
-        while (next < chunks.length && !stop.signal.aborted && refused == null) {
-          // budget stop: in-flight requests land and are paid for, then the job fails
-          refused = refusal(next);
+      // a refusal takes the chunks still waiting out of the gate
+      const waits = new AbortController();
+      const waiting = AbortSignal.any([stop.signal, waits.signal]);
+      /** Limits read on every acquire, so a change applies live; an unsaved profile uses its copy. */
+      const slot = (): Promise<() => void> => {
+        if (!queued) return Promise.resolve(() => {});
+        const { id } = queued.profile;
+        const limits = (): GateLimits => ({
+          concurrency: (readProfiles(db).find((p) => p.id === id) ?? queued.profile).concurrency,
+          enabled: true,
+        });
+        return gate.acquire(id, limits, { signal: waiting });
+      };
+      /** Chunk `i`, holding its slot through retries and repairs. */
+      const scriptChunk = async (i: number): Promise<void> => {
+        let leave: () => void;
+        try {
+          leave = await slot();
+        } catch (e) {
           if (refused != null) return;
-          const i = next++;
+          throw e;
+        }
+        try {
+          if (stop.signal.aborted || refused != null) return;
+          // checked as the request goes out: in-flight ones land and are paid for, then the job fails
+          refused = refusal(i);
+          if (refused != null) {
+            waits.abort();
+            return;
+          }
           if (run) run.active++;
           counted();
           try {
@@ -408,11 +432,13 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
               characters: chunks[i].length,
               lines: answers[i].lines.length,
             });
+        } finally {
+          leave();
         }
       };
       try {
-        const width = Math.max(1, Math.min(queued?.profile.concurrency ?? 1, chunks.length));
-        await Promise.all(Array.from({ length: width }, worker));
+        // FIFO slots, so chunks go out in order
+        await Promise.all(chunks.map((_, i) => scriptChunk(i)));
       } catch (e) {
         stop.abort(e);
         throw e;
@@ -590,7 +616,7 @@ export function scriptingHandler(provider: ScriptingProvider): JobHandler {
  */
 export function enqueueScripting(
   db: Db,
-  runner: Runner,
+  runner: Pick<Runner, "enqueue">,
   bookId: string,
   ids: readonly number[],
   profile?: string,

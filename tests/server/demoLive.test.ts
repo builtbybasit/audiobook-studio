@@ -68,7 +68,7 @@ function demoLibrary({ chapterMs = 0, seeded = true } = {}) {
   const runner = createRunner(
     db,
     {
-      scripting: scriptingHandler(providers.scripting),
+      scripting: scriptingHandler(providers.scripting, gate),
       narration: narrationHandler(providers.speech, files, gate),
       export: exportHandler(exports, files),
     },

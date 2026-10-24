@@ -1,7 +1,7 @@
-// Narration as its endpoints take it: up to each endpoint's concurrency at once, two endpoints side
-// by side, nothing to a paused one until resumed, nothing to a rate-limited one until its cooldown
-// ends: the speech gate (`server/providers/gate.ts`) through the real runner. The fake pauses per
-// line so lines can overlap, and counts how many are inside it per endpoint.
+// Narration as its endpoints take it: up to each endpoint's concurrency across every job, two
+// endpoints side by side, nothing to a paused one until resumed, nothing to a rate-limited one until
+// its cooldown ends: the speech gate (`server/providers/gate.ts`) through the real runner. The fake
+// pauses per line so lines can overlap, and counts how many are inside it per endpoint.
 import { describe, expect, test } from "bun:test";
 
 import type { Endpoint, Job, Segment } from "@/types";
@@ -90,27 +90,26 @@ function counting(delayMs = 15, around?: SpeechProvider["speak"]) {
 }
 
 describe("narrating at an endpoint's concurrency", () => {
-  test("sends up to the endpoint's concurrency at once and never more, and every line lands", async () => {
-    const count = counting();
-    const api = testApi({ speech: count.provider });
-    const id = await book(api, [speech("a", { concurrency: 3 })]);
-    const job = await narrate(api, id);
-    await api.runner.idle();
+  test.each([1, 3])(
+    "two books narrated at once share a concurrency of %i: never more out, and every line lands",
+    async (concurrency) => {
+      const count = counting();
+      const api = testApi({ speech: count.provider });
+      const ids = [
+        await book(api, [speech("a", { concurrency })]),
+        await book(api, [speech("a", { concurrency })]),
+      ];
+      const jobs = [await narrate(api, ids[0]), await narrate(api, ids[1])];
+      expect(api.runner.running.map((j) => j.id)).toEqual(jobs.map((j) => j.id));
+      await api.runner.idle();
 
-    expect((await jobById(api, job.id)).status).toBe("done");
-    expect(count.most.get("a")).toBe(3);
-    expect((await linesOf(api, id)).every((s) => s.audio.status === "done")).toBe(true);
-    expect(api.gate.live().a).toMatchObject({ active: 0, waiting: 0 });
-  });
-
-  test("at a concurrency of one, a line goes out only after the one before it was answered", async () => {
-    const count = counting();
-    const api = testApi({ speech: count.provider });
-    const id = await book(api, [speech("a")]);
-    await narrate(api, id);
-    await api.runner.idle();
-    expect(count.most.get("a")).toBe(1);
-  });
+      for (const job of jobs) expect((await jobById(api, job.id)).status).toBe("done");
+      expect(count.most.get("a")).toBe(concurrency);
+      for (const id of ids)
+        expect((await linesOf(api, id)).every((s) => s.audio.status === "done")).toBe(true);
+      expect(api.gate.live().a).toMatchObject({ active: 0, waiting: 0 });
+    },
+  );
 
   test("lines for two endpoints go out alongside each other, each at its own limit", async () => {
     const count = counting();

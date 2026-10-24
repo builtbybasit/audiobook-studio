@@ -284,7 +284,7 @@ describe("narrating through an endpoint that takes batches", () => {
     const id = await book(api, speech({ concurrency: 2 }));
     await api.request(`/api/books/${id}/chapters/narrate`, jsonBody({ ids: [1] }));
     let most = 0;
-    while (api.runner.running) {
+    while (api.runner.running.length) {
       most = Math.max(most, api.gate.live().local?.active ?? 0);
       await Bun.sleep(3);
     }

@@ -128,7 +128,7 @@ export function endpointRoutes(
   app.get("/", (c) => c.json(ops.endpointSettings(db)));
 
   /**
-   * Per speech endpoint sent to by this process: lines out and waiting, rate limits, cooldown end,
+   * Per endpoint sent to by this process: requests out and waiting, rate limits, cooldown end,
    * plus the clips it rendered that the library plays (for every book).
    */
   app.get("/live", (c) => {

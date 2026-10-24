@@ -15,6 +15,8 @@ import type {
   Transcriber,
 } from "@/types";
 import { listJobs } from "~/db/jobs";
+import { checkHandler, enqueueCheck } from "~/jobs/check";
+import { createSpeechGate } from "~/providers/gate";
 import { readScript, setFlag } from "~/db/script";
 import { ProviderError } from "~/providers/http";
 import type {
@@ -23,7 +25,15 @@ import type {
   TranscriptionProvider,
 } from "~/providers/transcription";
 import { epubFile, story } from "../support/epub";
-import { jsonBody, narrateChapters, testApi, type TestApi } from "../support/server";
+import {
+  door,
+  jobContext,
+  jsonBody,
+  narrateChapters,
+  queueOnly,
+  testApi,
+  type TestApi,
+} from "../support/server";
 
 const transcriber = (over: Partial<Transcriber> = {}): Transcriber => ({
   id: "phonon",
@@ -324,6 +334,30 @@ describe("checking a chapter by ear", () => {
     const asked = e.asked.length;
     await checked(api, id);
     expect(e.asked).toHaveLength(asked + 1);
+  });
+
+  test("two chapters' checks on one endpoint share its concurrency: never more out at once", async () => {
+    const { api, id, e } = await narrated();
+    await narrateChapters(api, id, [2]);
+    const held = door();
+    const provider: TranscriptionProvider = {
+      name: e.provider.name,
+      transcribe: (input, target) => held.through(() => e.provider.transcribe(input, target)),
+    };
+    // run by hand, both at once, whatever the runner would do
+    await api.runner.stop();
+    const { jobs } = enqueueCheck(api.db, queueOnly(api.db), id, [1, 2]);
+    const gate = createSpeechGate();
+    const handler = checkHandler(provider, api.files, gate);
+    const runs = jobs.map((job) => handler.run(jobContext(api.db, job)));
+
+    // transcriber() takes two at once
+    await held.reached(2);
+    expect(held.inside).toBe(2);
+    expect(gate.live().phonon.waiting).toBeGreaterThan(0);
+    held.open();
+    await Promise.all(runs);
+    expect(held.most).toBe(2);
   });
 
   test("is refused whole when no transcription endpoint is switched on", async () => {

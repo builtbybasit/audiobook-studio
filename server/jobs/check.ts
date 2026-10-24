@@ -35,6 +35,7 @@ import {
 } from "~/db/script";
 import type { JobContext, JobHandler, Runner } from "~/jobs/runner";
 import { badRequest, conflict, notFound } from "~/lib/errors";
+import type { GateLimits, SpeechGate } from "~/providers/gate";
 import { transcriberTarget } from "~/providers/target";
 import type { TranscriptionProvider } from "~/providers/transcription";
 import { assertWithinBudget, budgetProblem } from "~/usage/budget";
@@ -81,7 +82,11 @@ const heardFlag = (heard: string, at: number): SegmentFlag => {
   return { kind: "heard", note: `Heard: “${said}”`, at };
 };
 
-export function checkHandler(provider: TranscriptionProvider, files: AudioFiles): JobHandler {
+export function checkHandler(
+  provider: TranscriptionProvider,
+  files: AudioFiles,
+  gate: SpeechGate,
+): JobHandler {
   return {
     async run(ctx: JobContext): Promise<void> {
       const { job, db, signal } = ctx;
@@ -136,6 +141,30 @@ export function checkHandler(provider: TranscriptionProvider, files: AudioFiles)
           bumpRevision(tx, at.bookId, at.id);
         });
 
+      // a refusal takes the lines still waiting out of the gate
+      const waits = new AbortController();
+      const waiting = AbortSignal.any([signal, waits.signal]);
+      /** read on every acquire, so a concurrency change applies live */
+      const limits = (): GateLimits => ({
+        concurrency: (readTranscriber(db, t.id) ?? t).concurrency,
+        enabled: true,
+      });
+      /** Line `c` in its turn at the endpoint's slots, shared with other jobs. */
+      const heardInTurn = async (c: Clip): Promise<void> => {
+        let leave: () => void;
+        try {
+          leave = await gate.acquire(t.id, limits, { signal: waiting });
+        } catch (e) {
+          if (refused != null) return;
+          throw e;
+        }
+        try {
+          if (refused == null && !signal.aborted) await hear(c);
+        } finally {
+          leave();
+        }
+      };
+
       const hear = async (c: Clip): Promise<void> => {
         const seconds = c.s.audio.duration;
         const cost = costOf(t, seconds);
@@ -148,6 +177,7 @@ export function checkHandler(provider: TranscriptionProvider, files: AudioFiles)
         });
         if (problem) {
           refused = problem;
+          waits.abort();
           ctx.note(`Stopped before line ${c.s.id}: the budget does not cover it`, "warning", {
             line: c.s.id,
             why: problem,
@@ -216,15 +246,8 @@ export function checkHandler(provider: TranscriptionProvider, files: AudioFiles)
         ctx.progress(((run.checked + run.failed) / todo.length) * 100);
       };
 
-      // ponytail: a local pool at the concurrency the endpoint had when the run started; the speech
-      // gate's live limits, pause and rate-limit cooldown are the upgrade if checks ever need them
-      let next = 0;
-      const lanes = Math.max(1, Math.min(t.concurrency, todo.length));
-      await Promise.all(
-        Array.from({ length: lanes }, async () => {
-          while (next < todo.length && refused == null && !signal.aborted) await hear(todo[next++]);
-        }),
-      );
+      // FIFO slots, so lines are heard in order
+      await Promise.all(todo.map(heardInTurn));
       if (signal.aborted) throw signal.reason;
       const { checked, mismatched, failed } = run;
       ctx.note("Check finished", failed || mismatched ? "warning" : "info", {

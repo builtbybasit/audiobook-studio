@@ -400,7 +400,7 @@ describe("cancelling", () => {
     const [c1] = await chaptersOf(api, id);
     expect(c1.narration).toBe("none");
     expect(c1.narrationProgress).toBe(0);
-    expect(api.runner.running).toBeNull();
+    expect(api.runner.running).toEqual([]);
   });
 
   test("a cancelled replacement run leaves no retake behind, and the old clips still play", async () => {

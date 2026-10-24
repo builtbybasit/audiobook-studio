@@ -120,19 +120,19 @@ export function openLibrary(options: LibraryOptions): Library {
     files: audiobookFiles(options.exportDir),
   };
   const voiceFiles = voiceFilesIn(options.voiceDir);
-  // shared by the narration handler and the endpoint routes
+  // shared by the job handlers and the endpoint routes
   const gate = createSpeechGate();
   const runner = createRunner(
     db,
     {
-      scripting: scriptingHandler(providers.scripting),
+      scripting: scriptingHandler(providers.scripting, gate),
       narration: narrationHandler(providers.speech, files, gate, {
         effects: options.effects,
         thoughtEffect: options.thoughtEffect,
         trim: options.trim,
       }),
       export: exportHandler(exports, files),
-      check: checkHandler(given.transcription, files),
+      check: checkHandler(given.transcription, files, gate),
       effects: effectsHandler(options.effects, files),
     },
     { log },

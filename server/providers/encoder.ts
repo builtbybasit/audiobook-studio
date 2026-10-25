@@ -28,6 +28,8 @@ export interface EncodeInput {
   tags?: EncodeTags | null;
   /** called as each chapter lands, for the Queue's progress */
   onChapter?: (chapter: EncodedChapter, index: number) => void;
+  /** called as each chapter is measured, in the loudness pass that runs before the encode */
+  onMeasured?: (index: number) => void;
 }
 
 /** In the book's terms; the ID3 frame or MP4 atom is the encoder's. A blank field is left out. */

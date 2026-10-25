@@ -9,6 +9,7 @@ import type {
   ExpressionAnnotation,
   ExpressionTag,
   FlagKind,
+  FlaggedRetakes,
   NarrationEstimate,
   NarrationScope,
   RunPlan,
@@ -607,9 +608,18 @@ export const useNarrationStore = defineStore("narration", {
       }
       return this.runNarration(bookId, ids, opts);
     },
-    /** The "missing & changed" scope over one chapter, as the server counts it. */
-    renarrateStale(bookId: string, chId: number): void {
-      void this.startRun(bookId, [chId], { scope: "fill" });
+    /** The "missing & changed" scope, as the server counts it; every stale chapter when none named. */
+    renarrateStale(bookId: string, chIds?: number[]): void {
+      const libraryStore = useLibraryStore();
+
+      const ids =
+        chIds ??
+        libraryStore
+          .chaptersOf(bookId)
+          .filter((c) => c.narration === "stale")
+          .map((c) => c.id);
+      if (ids.length) void this.startRun(bookId, ids, { scope: "fill" });
+      else useUiStore().toast("Nothing to re-narrate", { description: "No chapter is stale." });
     },
     /**
      * The server's smallest unit is a chapter at a scope: a failed line reruns with the chapter's
@@ -692,6 +702,7 @@ export const useNarrationStore = defineStore("narration", {
             else delete s.flag;
           }
           stepRevision(bookId, chId, answer.revision);
+          this._recountFlags(bookId, chId);
         });
       } catch (cause) {
         const s = line();
@@ -758,6 +769,49 @@ export const useNarrationStore = defineStore("narration", {
         return 0;
       }
     },
+    /** What retaking the book's flagged lines would queue and cost; null when it can't be asked. */
+    async flaggedRetakes(bookId: string): Promise<FlaggedRetakes | null> {
+      try {
+        return await jobsService().flaggedRetakes(bookId);
+      } catch (cause) {
+        toastFailure("price the retakes", cause);
+        return null;
+      }
+    },
+    /** Every flagged line in the book gets another take, one job a chapter. */
+    async retakeFlaggedBook(bookId: string): Promise<void> {
+      const jobsStore = useJobsStore();
+      const libraryStore = useLibraryStore();
+      const uiStore = useUiStore();
+      try {
+        const { jobs, lines, busy, chapters } = await jobsService().retakeFlagged(bookId);
+        libraryStore.chapters[bookId] = chapters;
+        if (jobs.length) await jobsStore._changed();
+        const left = busy ? ` ${plural(busy, "chapter")} being narrated left alone.` : "";
+        if (!lines)
+          uiStore.toast("Nothing to retake", {
+            description: `Every flagged line already has a retake waiting for a verdict.${left}`,
+          });
+        else
+          uiStore.toast(`Retake · ${plural(lines, "flagged line")}`, {
+            description: `Queued across ${plural(jobs.length, "chapter")}; each take lands beside its line, ready to compare.${left}`,
+            timeout: 8000,
+          });
+      } catch (cause) {
+        toastFailure("queue the retakes", cause);
+      }
+    },
+    /** A chapter's flag count from its script here, so the book's total follows a flag at once. */
+    _recountFlags(bookId: string, chId: number): void {
+      const libraryStore = useLibraryStore();
+      const scriptsStore = useScriptsStore();
+
+      const c = libraryStore.chapter(bookId, chId);
+      if (!c?.lines || !scriptsStore.held(bookId, chId)) return;
+      const n = scriptsStore.segmentsOf(bookId, chId).filter((s) => s.flag).length;
+      const { flagged: _, ...rest } = c.lines;
+      c.lines = n ? { ...rest, flagged: n } : rest;
+    },
     /** Keep the new take: it becomes the clip in the book, the old one joins the take list. */
     acceptTake(bookId: string, chId: number, segId: number): void {
       const scriptsStore = useScriptsStore();
@@ -800,6 +854,7 @@ export const useNarrationStore = defineStore("narration", {
         stepRevision(bookId, chId, revision);
         const c = libraryStore.chapter(bookId, chId);
         if (c) Object.assign(c, chapter);
+        this._recountFlags(bookId, chId);
         // the server checks whichever clip stays against the line as it reads now
         const stale = segment.audio.status === "stale";
         const why = stale ? this.clipDrift(bookId, segment)[0] : undefined;

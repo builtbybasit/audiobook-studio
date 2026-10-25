@@ -34,6 +34,7 @@ import VoiceTable from "@/views/narration/VoiceTable.vue";
 import EndpointPanel from "@/views/narration/EndpointPanel.vue";
 import LexiconPanel from "@/views/narration/LexiconPanel.vue";
 import RunEstimate from "@/views/narration/RunEstimate.vue";
+import RetakeFlagged from "@/views/narration/RetakeFlagged.vue";
 import { TabsContent, TabsRoot } from "reka-ui";
 import JobLedger from "@/views/narration/JobLedger.vue";
 import { useNarrationData } from "@/views/narration/useNarrationData";
@@ -308,6 +309,7 @@ const openedRequests = computed(() =>
             </template>
           </div>
         </div>
+        <RetakeFlagged :book-id="bookId" />
       </div>
       <div class="min-h-0 min-w-0 max-lg:h-[70vh]">
         <EmptyState

@@ -239,7 +239,7 @@ function onRowKey(e: KeyboardEvent, s: Segment) {
               ? `${counts.stale} edited after narration, ${unrendered} never rendered (new halves of a split)`
               : 'lines edited after narration'
           "
-          @click="narrationStore.renarrateStale(bookId, chapterId)"
+          @click="narrationStore.renarrateStale(bookId, [chapterId])"
         >
           <RetryIcon class="icon-sm" /> Re-narrate changed ({{ changed }})
         </button>

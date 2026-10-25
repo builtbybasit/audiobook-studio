@@ -8,6 +8,8 @@ import { join } from "node:path";
 import type {
   Cast,
   ChapterScript,
+  FlaggedRetakes,
+  FlaggedRetakesQueued,
   ImportedBook,
   Job,
   Judged,
@@ -685,6 +687,60 @@ describe("a retake", () => {
       jsonBody({ ids: [] }),
     );
     expect(empty.status).toBe(400);
+  });
+});
+
+describe("retaking the book's flagged lines", () => {
+  const flag = (api: TestApi, id: string, ch: number, seg: number) =>
+    api.request(`/api/books/${id}/chapters/${ch}/lines/${seg}/flag`, {
+      ...jsonBody({ kind: "delivery", note: "" }),
+      method: "PUT",
+    });
+  const preview = async (api: TestApi, id: string) =>
+    (await api.request<FlaggedRetakes>(`/api/books/${id}/retakes/flagged`)).body;
+
+  test("takes every flagged line, one job a chapter as one run, but not one already waiting", async () => {
+    const { api, id } = await narrated();
+    await narrate(api, id, [2]);
+    await api.runner.idle();
+    const [one, two] = [(await scriptOf(api, id)).segments, (await scriptOf(api, id, 2)).segments];
+    for (const s of one.slice(0, 3)) await flag(api, id, 1, s.id);
+    await flag(api, id, 2, two[0].id);
+    // a retake already waiting for its verdict is left alone
+    await retake(api, id, [one[2].id]);
+    await api.runner.idle();
+    const counts = (await chaptersOf(api, id)).map((c) => c.lines?.flagged);
+    expect(counts.slice(0, 2)).toEqual([3, 1]);
+
+    expect(await preview(api, id)).toMatchObject({ lines: 3, chapters: 2, busy: 0 });
+    const { status, body } = await api.request<FlaggedRetakesQueued>(
+      `/api/books/${id}/retakes/flagged`,
+      jsonBody({}),
+    );
+    expect(status).toBe(202);
+    expect(body.lines).toBe(3);
+    expect(body.jobs.map((j) => [j.chapterId, j.bulk?.index, j.bulk?.total])).toEqual([
+      [1, 1, 2],
+      [2, 2, 2],
+    ]);
+    expect(new Set(body.jobs.map((j) => j.bulk?.id)).size).toBe(1);
+    await api.runner.idle();
+    const waiting = async (ch: number) =>
+      (await scriptOf(api, id, ch)).segments.filter((s) => s.candidate).map((s) => s.id);
+    expect(await waiting(1)).toEqual(one.slice(0, 3).map((s) => s.id));
+    expect(await waiting(2)).toEqual([two[0].id]);
+  });
+
+  test("leaves out a chapter being narrated", async () => {
+    const gate = gatedSpeechProvider();
+    const { api, id } = await scripted(testApi({ speech: gate.provider }));
+    await flag(api, id, 1, (await scriptOf(api, id)).segments[0].id);
+    await flag(api, id, 2, (await scriptOf(api, id, 2)).segments[0].id);
+    await narrate(api, id, [2]);
+    await gate.started;
+    expect(await preview(api, id)).toMatchObject({ lines: 1, chapters: 1, busy: 1 });
+    gate.release();
+    await api.runner.idle();
   });
 });
 

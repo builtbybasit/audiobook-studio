@@ -601,7 +601,11 @@ describe("editing a script with a server answering", () => {
     expect(scriptsStore._revision[key(id, 1)]).toBe(2);
     expect(history.versions.value).toEqual([]);
     expect(history.head.value.origin.kind).toBe("scripted");
+    // the book's flag count follows at once, without reading the chapters again
+    const flagged = () => libraryStore.chapter(id, 1)?.lines?.flagged;
+    expect(flagged()).toBe(1);
     await narrationStore.clearFlag(id, 1, line.id);
+    expect(flagged()).toBeUndefined();
     expect(readScript(api.db, id, 1)[0].flag).toBeUndefined();
     expect(scriptsStore.segmentsOf(id, 1)[0].flag).toBeUndefined();
     expect(history.head.value.origin.kind).toBe("scripted");
@@ -1056,7 +1060,7 @@ describe("narration with a server answering", () => {
     scriptsStore.updateSegment(id, 1, a.id, { text: "Changed since it was rendered." });
     await scriptsStore._settled(id, 1);
     expect(scriptsStore.segmentsOf(id, 1)[0].audio.status).toBe("stale");
-    narrationStore.renarrateStale(id, 1);
+    narrationStore.renarrateStale(id, [1]);
     await settle();
     await api.runner.idle();
     await poll();
@@ -1176,6 +1180,15 @@ describe("the dictionary with a server answering", () => {
     scriptsStore.updateSegment(id, 1, a.id, { text: "Edited after the Undo." });
     await scriptsStore._settled(id, 1);
     expect(toasts.filter((t) => t.kind === "error")).toEqual([]);
+  });
+
+  test("a chapter not read here reads as stale once the server answers", async () => {
+    const { id } = await narrated();
+    // as on the Cast page, where no script is read
+    delete scriptsStore.segments[key(id, 1)];
+    castStore.addTerm(id, "twice", "twyce");
+    await settle();
+    expect(libraryStore.chapter(id, 1)?.narration).toBe("stale");
   });
 
   test("an Undo clicked before the change is answered still puts the clip back", async () => {

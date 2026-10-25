@@ -9,6 +9,8 @@ import type {
   ChapterScript,
   EditedScript,
   Flagged,
+  FlaggedRetakes,
+  FlaggedRetakesQueued,
   Judged,
   RetakesQueued,
 } from "@/types";
@@ -155,6 +157,21 @@ export function scriptRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
       return c.json(result satisfies RetakesQueued, 202);
     },
   );
+
+  /** What retaking every flagged line in the book would queue, and its price. */
+  app.get("/:id/retakes/flagged", validate("param", BookParam), (c) =>
+    c.json(narration.flaggedRetakes(db, c.req.valid("param").id) satisfies FlaggedRetakes),
+  );
+
+  /** One job a chapter, as one run; answers with them and the chapters as they now stand. */
+  app.post("/:id/retakes/flagged", validate("param", BookParam), (c) => {
+    const result = narration.retakeFlagged(db, runner, c.req.valid("param").id);
+    c.var.logger.info(
+      { jobs: result.jobs.length, lines: result.lines, busy: result.busy },
+      "flagged retakes queued",
+    );
+    return c.json(result satisfies FlaggedRetakesQueued, 202);
+  });
 
   /** Answers with the line and the chapter as they now stand. */
   app.post(

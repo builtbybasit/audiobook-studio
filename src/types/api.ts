@@ -148,6 +148,24 @@ export interface VoiceSpeedRedone {
   }[];
 }
 
+/** The book's flagged lines as a retake would take them. */
+export interface FlaggedRetakes {
+  lines: number;
+  chapters: number;
+  /** chapters left out: a run is in flight there */
+  busy: number;
+  /** USD at current rates; null when a line's endpoint has no known price */
+  cost: number | null;
+}
+
+/** One job a chapter, as one run. */
+export interface FlaggedRetakesQueued {
+  jobs: Job[];
+  lines: number;
+  busy: number;
+  chapters: Chapter[];
+}
+
 export interface RetakesQueued {
   /** null when nothing was queued */
   job: Job | null;

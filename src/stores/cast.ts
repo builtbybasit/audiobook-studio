@@ -13,7 +13,14 @@ import { speechReadiness } from "@/lib/endpoints";
 import { norm } from "@/lib/scriptReview";
 import { speedSplit } from "@/lib/providers";
 import { pronunciationMoved } from "@/lib/reading";
-import { chapterSeconds, lexMatcher, pacingOrDefault, termOf } from "@/lib/speech";
+import {
+  chapterSeconds,
+  lexMatcher,
+  nameSaid,
+  pacingOrDefault,
+  sayNameAs,
+  termOf,
+} from "@/lib/speech";
 import {
   type CharacterSlot,
   characterSlot,
@@ -546,7 +553,7 @@ export const useCastStore = defineStore("cast", {
         this._moved(
           bookId,
           r.characters,
-          r.speakers.map((s) => ({ moved: s.moved, to: NARRATOR })),
+          r.speakers.map((s) => ({ from: s.name, moved: s.moved, to: NARRATOR })),
         );
         return r;
       });
@@ -570,7 +577,7 @@ export const useCastStore = defineStore("cast", {
     _moved(
       bookId: string,
       characters: Character[],
-      moves: { moved: RevisedLines[]; to: string }[],
+      moves: { from?: string; moved: RevisedLines[]; to: string }[],
     ): void {
       const libraryStore = useLibraryStore();
       const scriptsStore = useScriptsStore();
@@ -581,6 +588,10 @@ export const useCastStore = defineStore("cast", {
       const after = new Map(characters.map((c) => [c.name, c]));
       const cv = libraryStore.bookById(bookId)?.characterVoice;
       this._answered(bookId, { characters });
+      // as the server relinked them (`relinkTerms`)
+      for (const { from, to } of moves)
+        for (const e of this.lexiconOf(bookId))
+          if (from && e.speaker === from) e.speaker = to === NARRATOR ? undefined : to;
       // an unread chapter has nothing to move and reads its revision with its script
       for (const { moved, to } of moves)
         for (const { chapterId, ids, revision } of moved)
@@ -737,6 +748,20 @@ export const useCastStore = defineStore("cast", {
           : `“${e.term}” is said “${e.say}”`,
       );
     },
+    /** Read `name` aloud as `says` wherever the book has it; null reads it as written again. */
+    sayName(bookId: string, name: string, says: string | null): void {
+      const list = this.lexiconOf(bookId);
+      const next = sayNameAs(list, name, says);
+      if (JSON.stringify(next) === JSON.stringify(list)) return;
+      const revert = this._lexSnapshot(bookId);
+      this.lexicon[bookId] = next;
+      const said = nameSaid(next, name);
+      this._lexChanged(
+        bookId,
+        revert,
+        said ? `“${name}” is said “${said}”` : `“${name}” is said as written`,
+      );
+    },
     removeTerm(bookId: string, id: number): void {
       const list = this.lexiconOf(bookId);
       const e = list.find((x) => x.id === id);
@@ -831,7 +856,7 @@ export const useCastStore = defineStore("cast", {
       const aliases = [...(this.characters[bookId]?.find((c) => c.name === from)?.aliases ?? [])];
       const ok = await this._write(bookId, "characters", "rename this speaker", async () => {
         const r = await this._service().renameCharacter(bookId, from, to);
-        this._moved(bookId, r.characters, [{ moved: r.moved, to }]);
+        this._moved(bookId, r.characters, [{ from, moved: r.moved, to }]);
         return true;
       });
       if (!ok) return null;
@@ -870,7 +895,7 @@ export const useCastStore = defineStore("cast", {
         this._moved(
           bookId,
           r.characters,
-          r.speakers.map((s, i) => ({ moved: s.moved, to: merges[i].into })),
+          r.speakers.map((s, i) => ({ from: s.name, moved: s.moved, to: merges[i].into })),
         );
         return r;
       });

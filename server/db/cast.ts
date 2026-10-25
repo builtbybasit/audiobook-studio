@@ -355,6 +355,14 @@ export function relinkPersonas(db: Db | Tx, bookId: string, from: string, to: st
     .run();
 }
 
+/** A speaker's "Narrator says" entries move with them; null leaves them plain entries. */
+export function relinkTerms(db: Db | Tx, bookId: string, from: string, to: string | null): void {
+  db.update(lexiconEntries)
+    .set({ speaker: to })
+    .where(and(eq(lexiconEntries.bookId, bookId), eq(lexiconEntries.speaker, from)))
+    .run();
+}
+
 /** Every book's speakers, character voice and clips on `from` move to `to`, as if always on it. */
 export function moveVoiceRefs(tx: Tx, from: VoiceRef, to: VoiceRef): void {
   tx.update(characters).set({ voice: to }).where(eq(characters.voice, from)).run();

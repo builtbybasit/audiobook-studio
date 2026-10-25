@@ -7,7 +7,15 @@ import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
-import { speak, marks, silenceOf, DEFAULT_PACING, pauseAfter, sayable } from "@/lib/speech";
+import {
+  speak,
+  marks,
+  silenceOf,
+  DEFAULT_PACING,
+  pauseAfter,
+  sayable,
+  sayNameAs,
+} from "@/lib/speech";
 import type { LexEntry, Segment, ToastOptions } from "@/types";
 import { demoServer } from "./support/demoServer";
 import { openDemoBook } from "./support/demoBook";
@@ -48,6 +56,26 @@ describe("the dictionary", () => {
     const out = marks("Ji Ning bowed.", [entry("Ji Ning", "Jee Ning")]);
     expect(out).toEqual([{ text: "Ji Ning", say: "Jee Ning" }, { text: " bowed." }]);
     expect(out.map((m) => m.text).join("")).toBe("Ji Ning bowed.");
+  });
+
+  const line = "Aisha smiled; Aisha Bizvel bowed.";
+  test.each([
+    [
+      "word for word, so the first name alone changes too",
+      "Alisa Bizvel",
+      "Alisa smiled; Alisa Bizvel bowed.",
+    ],
+    ["the whole name when the word counts differ", "Alisa", "Aisha smiled; Alisa bowed."],
+    ["as written again when cleared", null, line],
+  ])("a speaker's name is said %s", (_, says, heard) => {
+    // a respelling of the same word is switched off, not lost
+    const list = sayNameAs(
+      sayNameAs([entry("Aisha", "eye-SHA")], "Aisha Bizvel", "Ava Bizvel"),
+      "Aisha Bizvel",
+      says,
+    );
+    expect(speak(line, list).text).toBe(heard);
+    expect(list).toContainEqual(entry("Aisha", "eye-SHA", { enabled: false }));
   });
 });
 

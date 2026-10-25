@@ -90,6 +90,40 @@ export const hitsIn = (text: string, list: LexEntry[]): LexHit[] => lexMatcher(l
 /** `lexMatcher(list).speak`, for one line. */
 export const speak = (text: string, list: LexEntry[]): Spoken => lexMatcher(list).speak(text);
 
+/** What the narrator says for `name`: its own entries applied to it, or null when it has none. */
+export function nameSaid(list: LexEntry[], name: string): string | null {
+  const own = list.filter((e) => e.speaker === name);
+  return own.length ? speak(name, own).text : null;
+}
+
+/**
+ * The dictionary with `name` said as `says` (null: as written). Word for word when the word counts
+ * match, so "Aisha" alone changes too; else the whole name. A plain entry for a changed word is
+ * switched off, not lost, as two live entries for one term would fight.
+ */
+export function sayNameAs(list: LexEntry[], name: string, says: string | null): LexEntry[] {
+  const from = name.trim().split(/\s+/);
+  const to = (says ?? "").trim().split(/\s+/).filter(Boolean);
+  // ponytail: unequal counts map the whole name only; a word-alignment step if that bites
+  const pairs = !to.length
+    ? []
+    : from.length === to.length
+      ? from.map((w, i) => [w, to[i]] as const).filter(([w, s]) => w !== s)
+      : [[from.join(" "), to.join(" ")] as const];
+  const same = (e: LexEntry, term: string) => termOf(e).toLowerCase() === term.toLowerCase();
+  const out = list
+    .filter((e) => e.speaker !== name || pairs.some(([w]) => same(e, w)))
+    .map((e) => (!e.speaker && pairs.some(([w]) => same(e, w)) ? { ...e, enabled: false } : e));
+  let id = Math.max(0, ...list.map((e) => e.id));
+  for (const [term, say] of pairs) {
+    const i = out.findIndex((e) => same(e, term) && e.speaker === name);
+    const e: LexEntry = { id: out[i]?.id ?? ++id, term, say, enabled: true, speaker: name };
+    if (i < 0) out.push(e);
+    else out[i] = e;
+  }
+  return out;
+}
+
 /**
  * What a voice may be sent: Latin letters (books are English), digits, reading punctuation and the
  * symbols a voice says (`+5`, `10%`). Never `[]{}`: Fish reads `[…]` as its own tag.

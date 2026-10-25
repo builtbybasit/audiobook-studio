@@ -1,0 +1,1 @@
+ALTER TABLE `lexicon_entries` ADD `speaker` text;

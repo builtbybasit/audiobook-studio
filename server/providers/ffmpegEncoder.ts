@@ -1,7 +1,8 @@
 // The audiobook encoder: AAC in an M4B, or MP3, with chapter marks, via the installed ffmpeg
 // (required at boot, `server/index.ts`). The clips go in as one raw PCM stream on stdin, a few
 // decoded ahead, so the only thing on temporary disk is the encoded audio; marks are counted off
-// that stream. `loudnorm` runs in two passes because its one-pass form is a dynamic normaliser.
+// that stream. `ebur128` measures (~7× faster than a `loudnorm` pass), then `loudnorm` levels in
+// its linear mode: its one-pass form is a dynamic normaliser.
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -148,28 +149,50 @@ function loudnormStats(log: string): Record<string, string> | null {
   }
 }
 
+/** The figures `ebur128` prints at the end; null for silence or under 400 ms, which it calls −70. */
+function ebur128Stats(log: string): Measured | null {
+  const at = log.lastIndexOf("Summary:");
+  if (at < 0) return null;
+  const summary = log.slice(at);
+  // the first Threshold is the integrated one; the loudness range has its own
+  const figure = (label: string): number =>
+    Number(new RegExp(`${label}:\\s+(-?[\\d.]+|-inf)`).exec(summary)?.[1]);
+  const m = { i: figure("I"), tp: figure("Peak"), lra: figure("LRA"), thresh: figure("Threshold") };
+  return m.i > -70 && Number.isFinite(m.tp) ? m : null;
+}
+
+interface Measured {
+  i: number;
+  tp: number;
+  lra: number;
+  thresh: number;
+}
+
 /**
  * Pass two: one linear gain to the target. Linear mode needs the raised peaks under `TP` and the
  * range under its LRA target, or loudnorm quietly goes dynamic; so the range target is the one
  * measured, and peaks the gain would push over are limited first. The limiter sees samples, not
  * true peaks, hence the half-dB margin; it cannot go below −24 dB.
  */
-function levelling(target: number, m: Record<string, string>): { filter: string; limited: number } {
-  const peak = Number(m.input_tp);
-  const gain = target - Number(m.input_i);
+function levelling(
+  target: number,
+  m: Measured,
+): { filter: string; limiter: string | null; limited: number } {
+  const peak = m.tp;
+  const gain = target - m.i;
   const ceiling = peak + gain > TP ? Math.max(-24, TP - gain - 0.5) : null;
   const loudnorm = [
-    `loudnorm=I=${target}:TP=${TP}:LRA=${Math.min(50, Math.max(11, Math.ceil(Number(m.input_lra))))}`,
-    `measured_I=${m.input_i}:measured_TP=${ceiling ?? peak}`,
-    // 0 reads as "not measured", which rules linear out
-    `measured_LRA=${Math.max(0.01, Number(m.input_lra))}:measured_thresh=${m.input_thresh}`,
-    `offset=${m.target_offset}:linear=true:print_format=json`,
+    `loudnorm=I=${target}:TP=${TP}:LRA=${Math.min(50, Math.max(11, Math.ceil(m.lra)))}`,
+    `measured_I=${m.i}:measured_TP=${ceiling ?? peak}`,
+    // 0 reads as "not measured", which rules linear out; linear mode sets its own offset
+    `measured_LRA=${Math.max(0.01, m.lra)}:measured_thresh=${m.thresh}`,
+    `linear=true:print_format=json`,
   ].join(":");
+  const limiter =
+    ceiling == null ? null : `alimiter=limit=${10 ** (ceiling / 20)}:level=false:latency=true`;
   return {
-    filter:
-      ceiling == null
-        ? loudnorm
-        : `alimiter=limit=${10 ** (ceiling / 20)}:level=false:latency=true,${loudnorm}`,
+    filter: limiter ? `${limiter},${loudnorm}` : loudnorm,
+    limiter,
     limited: ceiling == null ? 0 : peak - ceiling,
   };
 }
@@ -380,6 +403,7 @@ export function ffmpegEncoder(options: FfmpegOptions = {}): AudiobookEncoder {
       out,
       signal,
       onChapter,
+      onMeasured,
       cover,
       tags,
     }: EncodeInput): Promise<EncodedFile> {
@@ -411,17 +435,25 @@ export function ffmpegEncoder(options: FfmpegOptions = {}): AudiobookEncoder {
         let measuredLufs: number | undefined;
         let limited = 0;
         if (options.loudness != null) {
-          const plain = `loudnorm=I=${options.loudness}:TP=${TP}:LRA=11:print_format=json`;
-          // pass one only measures
-          const { log } = await run(bin, [...input, "-af", plain, "-f", "null", "-"], signal, {
-            input: pass().feed,
-          });
-          const stats = loudnormStats(log);
-          // Silence measures -inf, which pass two refuses ("Result too large"); write it as is.
-          if (!stats) filter = ["-af", plain];
-          else if (Number.isFinite(Number(stats.input_i))) {
-            measuredLufs = Number(stats.input_i);
-            const level = levelling(options.loudness, stats);
+          const measure = async (
+            before: string,
+            onEach?: EncodeInput["onChapter"],
+          ): Promise<Measured | null> => {
+            const af = `${before}ebur128=peak=true:framelog=quiet`;
+            const { log } = await run(bin, [...input, "-af", af, "-f", "null", "-"], signal, {
+              input: pass(onEach).feed,
+            });
+            return ebur128Stats(log);
+          };
+          // pass one only measures. Silence has no gain to level it by; it is written as is.
+          const stats = await measure("", onMeasured && ((_, i) => onMeasured(i)));
+          if (stats) {
+            measuredLufs = stats.i;
+            let level = levelling(options.loudness, stats);
+            // the limiter takes loudness off with the peaks, so the gain is set from what it leaves
+            const after = level.limiter && (await measure(`${level.limiter},`));
+            if (after)
+              level = levelling(options.loudness, { ...stats, i: after.i, thresh: after.thresh });
             filter = ["-af", level.filter];
             limited = level.limited;
           }

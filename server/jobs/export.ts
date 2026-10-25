@@ -60,6 +60,8 @@ export interface BuildInput {
 
 const mb = (bytes: number): number => Math.round((bytes / 1024 / 1024) * 100) / 100;
 
+const MEASURING = "Measuring loudness";
+
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
 /** "−25.0 LUFS in, −18.1 out · one gain, peaks limited 4.2 dB" */
@@ -397,12 +399,17 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
     const written: exports.WrittenFile[] = [];
     const signatures = new Map<number, string>();
     let done = 0;
+    // a normalised build reads every chapter twice: once to measure, once to encode
+    const measuring = run.settings.normalize && encoder.normalizes;
+    let measured = 0;
 
     const tick = (stage: string, file: number, fileName: string): void => {
-      const pct = Math.round((done / Math.max(1, entry.chapterIds.length)) * 100);
+      const units = entry.chapterIds.length * (measuring ? 2 : 1);
+      const pct = Math.round(((done + measured) / Math.max(1, units)) * 100);
       ctx.progress(pct);
       exports.setBuildProgress(db, entry.id, Math.min(99, pct));
-      setRun(db, job.id, { ...run, stage, file, fileName, done });
+      const count = stage === MEASURING ? measured : done;
+      setRun(db, job.id, { ...run, stage, file, fileName, done: count });
     };
 
     for (const [position, file] of entry.files.entries()) {
@@ -446,7 +453,7 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
         plan.push({ id, title, parts });
       }
 
-      tick("Encoding", position + 1, file.name);
+      tick(measuring ? MEASURING : "Encoding", position + 1, file.name);
       const result = await encoder.encode({
         chapters: plan,
         gap: run.settings.chapterGap,
@@ -454,6 +461,10 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
         signal,
         cover,
         tags: tagsOf(details, file, position, entry.files.length, known),
+        onMeasured: () => {
+          measured++;
+          tick(MEASURING, position + 1, file.name);
+        },
         onChapter: () => {
           done++;
           tick("Encoding", position + 1, file.name);

@@ -693,7 +693,7 @@ describe.skipIf(!ffmpeg)("building with ffmpeg", () => {
     30_000,
   );
 
-  test("a quiet clip with loud peaks is levelled by one gain, not a dynamic normaliser", async () => {
+  test("a quiet clip with loud peaks is levelled by one gain, not a dynamic normaliser, and the measuring pass reports progress", async () => {
     // −29 LUFS with clicks near −7 dBFS: the 11 dB gain would carry them past the ceiling, which
     // sends loudnorm's linear mode quietly back to dynamic unless they are limited first.
     const dir = mkdtempSync(join(tmpdir(), "audiobook-loud-"));
@@ -707,12 +707,16 @@ describe.skipIf(!ffmpeg)("building with ffmpeg", () => {
       const body = new Uint8Array(pcm.buffer);
       const head = wavHeader({ channels: 1, sampleRate: rate, bits: 16 }, body.byteLength);
       writeFileSync(join(dir, "a.wav"), Buffer.concat([head, body]));
+      const ticks: string[] = [];
       const written = await ffmpegEncoder({ loudness: -18 }).encode({
         chapters: [{ id: 1, title: "One", parts: [{ kind: "clip", path: join(dir, "a.wav") }] }],
         gap: 0,
         out: join(dir, "out.m4b"),
         signal: new AbortController().signal,
+        onMeasured: () => ticks.push("measured"),
+        onChapter: () => ticks.push("encoded"),
       });
+      expect(ticks).toEqual(["measured", "encoded"]);
       expect(written.levelled?.linear).toBe(true);
       expect(written.levelled?.limited).toBeGreaterThan(0);
       expect(written.levelled?.lufs).toBeCloseTo(-18, 0);

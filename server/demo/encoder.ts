@@ -49,7 +49,9 @@ export function simulatedEncoders(inner: EncoderChoice): EncoderChoice {
             ...input,
             chapters: [{ id: first.id, title: first.title, parts: sample }],
             onChapter: undefined,
+            onMeasured: undefined,
           });
+          if (encoder.normalizes) chapters.forEach((_, i) => input.onMeasured?.(i));
           chapters.forEach((c, i) => input.onChapter?.(c, i));
           return { ...written, seconds: at, chapters };
         },

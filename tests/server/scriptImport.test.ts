@@ -16,6 +16,7 @@ import type {
   ScriptFileTerm,
   ScriptManifest,
   VoiceMatch,
+  VoiceRef,
 } from "@/types";
 import { readCast, readLexicon, replaceLexicon, upsertCharacter } from "~/db/cast";
 import { getChapterBody } from "~/db/library";
@@ -399,8 +400,23 @@ describe("the cast and the dictionary", () => {
         file: { gender: "f", description: "a clerk", style: "", speed: 1.25 },
       },
     ]);
-    expect(got.cast.aliases).toEqual([{ name: "Mara", add: ["Miss Mara"] }]);
+    expect(got.cast.fill).toEqual([{ name: "Mara", aliases: ["Miss Mara"] }]);
   });
+
+  test.each([
+    ["the same link", "Tobin", [{ name: "Mara", age: "teen", masked: true }]],
+    // linked by hand: the reader's choice, not a spoiler to hide
+    ["a link made by hand", "Doran", [{ name: "Mara", age: "teen" }]],
+  ] as const)(
+    "a speaker the book has gets the file's age and hiding over %s",
+    async (_, of, fill) => {
+      have({ personaOf: of });
+      const got = await plan(
+        await zipOf({ cast: [speaker({ personaOf: "Tobin", masked: true, age: "teen" })] }),
+      );
+      expect(got.cast.fill).toEqual([...fill]);
+    },
+  );
 
   test("adds the terms the book lacks and lists the ones it spells differently", async () => {
     replaceLexicon(api.db, id, [{ id: 1, term: "Aeloria", say: "ay-LOR-ee-ah", enabled: true }]);
@@ -496,27 +512,46 @@ describe("voices", () => {
   };
   const privateVoice: VoiceMatch = { kind: "private" };
 
-  test.each<[string, Endpoint["voices"], boolean, VoiceMatch]>([
-    [
-      "the same id and label on an enabled endpoint is here",
-      [{ id: "v1", label: "Sera", gender: "f" }],
-      true,
-      here,
-    ],
+  const sera1 = { id: "v1", label: "Sera", gender: "f" } as const;
+  const byName = (ref: VoiceRef): VoiceMatch => ({
+    kind: "here",
+    options: [{ endpointId: "fish", endpointName: "Fish Audio", ref }],
+    byName: true,
+  });
+  test.each<[string, Partial<Endpoint>, VoiceMatch]>([
+    ["the same id and label on an enabled endpoint is here", { voices: [sera1] }, here],
     [
       "the same id under another label is someone else",
-      [{ id: "v1", label: "Doran", gender: "m" }],
-      true,
+      { voices: [{ id: "v1", label: "Doran", gender: "m" }] },
       privateVoice,
     ],
     [
       "the voice on a disabled endpoint is not offered",
-      [{ id: "v1", label: "Sera", gender: "f" }],
-      false,
+      { voices: [sera1], enabled: false },
       privateVoice,
     ],
-  ])("%s", async (_, voices, enabled, match) => {
-    await save([endpoint({ voices, enabled })]);
+    [
+      "the same voice on a server at another address is here, by name",
+      { baseUrl: "http://192.168.1.20:8087/v1", voices: [sera1] },
+      byName("fish/v1"),
+    ],
+    [
+      "the one voice of that name under a new id is here, by name",
+      { voices: [{ id: "v7", label: "sera", gender: "f" }] },
+      byName("fish/v7"),
+    ],
+    [
+      "two voices of that name are left to pick",
+      {
+        voices: [
+          { id: "v7", label: "Sera", gender: "f" },
+          { id: "v8", label: "Sera", gender: "f" },
+        ],
+      },
+      privateVoice,
+    ],
+  ])("%s", async (_, over, match) => {
+    await save([endpoint(over)]);
     const got = await plan(await zipOf({ cast: [withVoice("Tobin", "v1")] }));
     expect(got.voices.map((r) => r.match)).toEqual([match]);
   });
@@ -587,7 +622,7 @@ describe("voices", () => {
           withVoice("Mara", "v1"),
           withVoice("Ines", "v1"),
           withVoice("Tobin", "v1"),
-          withVoice("Vex", "clone"),
+          withVoice("Vex", "clone", "Vex"),
         ],
       }),
     );

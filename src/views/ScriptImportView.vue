@@ -628,6 +628,9 @@ const SKIPPED = {
                   <span v-else
                     >{{ row.hint.voiceLabel }} · {{ row.match.options[0]?.endpointName }}</span
                   >
+                  <div v-if="row.match.byName" class="text-[11px] text-zinc-500">
+                    matched by name
+                  </div>
                 </template>
                 <template v-else-if="row.match.kind === 'public'">
                   {{ row.hint.voiceLabel }}

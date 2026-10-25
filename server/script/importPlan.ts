@@ -23,6 +23,7 @@ import type {
   Segment,
   SpeakerDetails,
   TermDetails,
+  Voice,
   VoiceHint,
   VoiceMatch,
   VoiceRow,
@@ -189,7 +190,7 @@ function bookPlan(
   if (file.thoughts) out.thoughts = file.thoughts;
   if (file.characterVoice) {
     const enabled = endpoints.filter((e) => e.enabled);
-    const here = (hint: VoiceHint) => hereOptions(hint, enabled)[0]?.ref;
+    const here = (hint: VoiceHint) => voiceHere(hint, enabled)?.options[0]?.ref;
     const fileCv = file.characterVoice;
     const voice: CharacterVoice = {
       by: fileCv.by,
@@ -374,13 +375,13 @@ const sameDetails = (a: SpeakerDetails, b: SpeakerDetails): boolean =>
   a.effect === b.effect &&
   a.thoughts === b.thoughts;
 
-/** Add what the book lacks, keep what it has, and union the aliases, which only ever adds matches. */
+/** Add what the book lacks, keep what it has, and fill what it left blank (`fill`). */
 function castDiff(
   cast: Character[],
   file: ScriptFileSpeaker[],
   effectName: (id: string | undefined) => string | undefined,
 ): ScriptImportPlan["cast"] {
-  const out: ScriptImportPlan["cast"] = { add: [], differ: [], aliases: [] };
+  const out: ScriptImportPlan["cast"] = { add: [], differ: [], fill: [] };
   for (const speaker of file) {
     const have = cast.find((c) => c.name === speaker.name);
     if (!have) {
@@ -390,9 +391,15 @@ function castDiff(
     const book = detailsOf(have, effectName(have.effect), effectName(have.thoughts));
     const theirs = detailsOf(speaker, speaker.effect, speaker.thoughts);
     if (!sameDetails(book, theirs)) out.differ.push({ name: speaker.name, book, file: theirs });
+    const fill: ScriptImportPlan["cast"]["fill"][number] = { name: speaker.name };
     const known = new Set([have.name, ...have.aliases]);
-    const add = [...new Set(speaker.aliases)].filter((a) => !known.has(a));
-    if (add.length) out.aliases.push({ name: speaker.name, add });
+    const aliases = [...new Set(speaker.aliases)].filter((a) => !known.has(a));
+    if (aliases.length) fill.aliases = aliases;
+    if (!have.age && speaker.age) fill.age = speaker.age;
+    // only over the same link: one made by hand is the reader's, not a spoiler
+    if (!have.masked && speaker.masked && (have.personaOf ?? "") === (speaker.personaOf ?? ""))
+      fill.masked = true;
+    if (fill.aliases || fill.age || fill.masked) out.fill.push(fill);
   }
   return out;
 }
@@ -477,8 +484,7 @@ async function voiceRows(
       const have = cast.find((c) => c.name === speaker.name);
       const current = have?.voice ?? null;
       const isNew = !have;
-      const same = enabled.filter((e) => hostOf(e.baseUrl) === hint.provider);
-      const match = await matchVoice(hint, same, ask);
+      const match = await matchVoice(hint, enabled, ask);
       const usable = match.kind === "here" || match.kind === "public";
       const row: VoiceRow = {
         speaker: speaker.name,
@@ -497,28 +503,54 @@ async function voiceRows(
   return rows.filter((r): r is VoiceRow => r !== null);
 }
 
-/** The hint's voice on these endpoints: same provider host, voice id and label. */
-function hereOptions(hint: VoiceHint, endpoints: readonly Endpoint[]) {
-  return endpoints.flatMap((e) =>
-    hostOf(e.baseUrl) === hint.provider &&
-    e.voices.some((v) => v.id === hint.voiceId && v.label === hint.voiceLabel)
-      ? [{ endpointId: e.id, endpointName: e.name, ref: `${e.id}/${hint.voiceId}` }]
-      : [],
+/** Each endpoint's one voice that `pick` finds; an endpoint with none or several offers none. */
+function hereOptions(endpoints: readonly Endpoint[], pick: (v: Voice) => boolean) {
+  return endpoints.flatMap((e) => {
+    const found = e.voices.filter(pick);
+    return found.length === 1
+      ? [{ endpointId: e.id, endpointName: e.name, ref: `${e.id}/${found[0].id}` }]
+      : [];
+  });
+}
+
+const sameVoice = (hint: VoiceHint) => (v: Voice) =>
+  v.id === hint.voiceId && v.label === hint.voiceLabel;
+
+/**
+ * The hint's voice on these endpoints, asking no one: on the file's provider by id and name; else
+ * on any by id and name (a server at another address); else by name alone (cloned again, new id).
+ */
+function voiceHere(
+  hint: VoiceHint,
+  enabled: readonly Endpoint[],
+): Extract<VoiceMatch, { kind: "here" }> | null {
+  const exact = sameVoice(hint);
+  const label = hint.voiceLabel.trim().toLowerCase();
+  const options = hereOptions(
+    enabled.filter((e) => hostOf(e.baseUrl) === hint.provider),
+    exact,
   );
+  if (options.length) return { kind: "here", options };
+  for (const pick of [exact, (v: Voice) => v.label.trim().toLowerCase() === label]) {
+    const elsewhere = hereOptions(enabled, pick);
+    if (elsewhere.length) return { kind: "here", options: elsewhere, byName: true };
+  }
+  return null;
 }
 
 async function matchVoice(
   hint: VoiceHint,
-  endpoints: readonly Endpoint[],
+  enabled: readonly Endpoint[],
   ask: (e: Endpoint, query: VoiceQuery) => Promise<Lookup>,
 ): Promise<VoiceMatch> {
-  const options = hereOptions(hint, endpoints);
-  if (options.length) return { kind: "here", options };
+  const here = voiceHere(hint, enabled);
+  if (here) return here;
+  const exact = sameVoice(hint);
+  const provider = enabled.filter((e) => hostOf(e.baseUrl) === hint.provider);
 
   // Not here yet: can the provider hand it over (its library, or Fish's public catalogue by id)?
-  const same = (v: FoundVoice): boolean => v.id === hint.voiceId && v.label === hint.voiceLabel;
   let failed: string | undefined;
-  for (const e of endpoints) {
+  for (const e of provider) {
     // only Fish has a public catalogue
     const queries: VoiceQuery[] = [{ source: "library" }];
     if (isFishAudio(e)) queries.push({ source: "public", query: hint.voiceId });
@@ -528,7 +560,7 @@ async function matchVoice(
         failed ??= `${e.name} could not be asked: ${answer.failed}`;
         continue;
       }
-      const found = answer.voices.find(same);
+      const found = answer.voices.find(exact);
       if (found) {
         const { sample: _sample, ...voice } = found;
         return { kind: "public", endpointId: e.id, endpointName: e.name, voice };

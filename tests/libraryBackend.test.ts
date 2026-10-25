@@ -520,7 +520,7 @@ describe("a book's settings with a server answering", () => {
       chapters: [matched(1), matched(3)],
       refused: [],
       ignored: [],
-      cast: { add: [], differ: [], aliases: [] },
+      cast: { add: [], differ: [], fill: [] },
       lexicon: { add: [], differ: [] },
       voices: [],
       effects: { known: [], add: [], missing: [] },

@@ -446,24 +446,26 @@ export const useTransferStore = defineStore("transfer", {
           ...(speaker.personaOf && !personaRefusal(speaker.name, speaker.personaOf, cast())
             ? { personaOf: speaker.personaOf }
             : {}),
+          ...(speaker.masked ? { masked: true } : {}),
+          ...(speaker.age ? { age: speaker.age } : {}),
           ...slotsOf(speaker, idOf),
         };
         pushed.set(c.name, castStore._addSpeaker(bookId, c));
         added.push(c.name);
       }
-      // aliases only add ways to recognise someone, so a union loses nothing
-      const aliased: string[] = [];
-      for (const { name, add } of plan.cast.aliases) {
+      // what a speaker the book has gains: aliases only add ways to recognise them, so a union
+      // loses nothing; age and the spoiler mark only fill blanks
+      const patched: string[] = [];
+      for (const { name, aliases = [], ...blanks } of plan.cast.fill) {
         const c = cast().find((x) => x.name === name);
-        const fresh = add.filter(
-          (a) => a !== name && !c?.aliases.includes(a) && !cast().some((x) => x.name === a),
+        if (!c) continue;
+        const fresh = aliases.filter(
+          (a) => a !== name && !c.aliases.includes(a) && !cast().some((x) => x.name === a),
         );
-        if (!c || !fresh.length) continue;
-        pushed.set(
-          name,
-          castStore._patchSpeaker(bookId, name, { aliases: [...c.aliases, ...fresh] }),
-        );
-        aliased.push(name);
+        if (!fresh.length && !blanks.age && !blanks.masked) continue;
+        const patch = fresh.length ? { ...blanks, aliases: [...c.aliases, ...fresh] } : blanks;
+        pushed.set(name, castStore._patchSpeaker(bookId, name, patch));
+        patched.push(name);
       }
 
       // ---- the chapters, each written the way a restore writes one
@@ -558,7 +560,7 @@ export const useTransferStore = defineStore("transfer", {
         .map(({ chapter }) => ({ chapterId: chapter.chapterId, title: chapter.title }));
       const onServer = new Set([...pushed.keys()].filter((_, i) => castLanded[i]));
       report.speakers = speakers.filter((name) => onServer.has(name));
-      const aliasedNow = aliased.filter((name) => onServer.has(name));
+      const patchedNow = patched.filter((name) => onServer.has(name));
       report.terms = staled ? terms : 0;
       const voicedNow = voiced.filter((_, i) => voicesLanded[i]);
       report.voices = voicedNow.length;
@@ -592,7 +594,7 @@ export const useTransferStore = defineStore("transfer", {
         !report.speakers.length &&
         !report.terms &&
         !report.voices &&
-        !aliasedNow.length &&
+        !patchedNow.length &&
         !report.samples.length &&
         !report.effects.length &&
         !report.book
@@ -629,14 +631,19 @@ export const useTransferStore = defineStore("transfer", {
         }`,
         timeout: 12000,
         undo: () => {
-          // the voices and the aliases go back as they were; so do the endpoints' voice lists
+          // the voices, aliases and filled blanks go back as they were; so do the endpoints' voices
           for (const { name, voice } of voicedNow)
             void castStore._patchSpeaker(bookId, name, { voice });
           for (const { endpointId, voiceId } of addedVoices)
             endpointsStore._dropVoice(endpointId, voiceId);
-          for (const name of aliasedNow) {
+          for (const name of patchedNow) {
             const b = castBefore.find((x) => x.name === name);
-            if (b) void castStore._patchSpeaker(bookId, name, { aliases: [...b.aliases] });
+            if (b)
+              void castStore._patchSpeaker(bookId, name, {
+                aliases: [...b.aliases],
+                age: b.age,
+                masked: b.masked,
+              });
           }
           delete this.reports[bookId];
           // before any speaker goes, or the row cascades away under it

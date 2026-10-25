@@ -327,6 +327,8 @@ export const CastFileSchema = v.array(
     color: v.optional(v.string()),
     major: v.optional(v.boolean()),
     personaOf: v.optional(v.pipe(v.string(), v.trim())),
+    masked: v.optional(v.boolean()),
+    age: v.optional(v.picklist(AGES)),
     voice: v.optional(VoiceHintSchema),
     effect: v.optional(EffectName),
     thoughts: v.optional(EffectName),

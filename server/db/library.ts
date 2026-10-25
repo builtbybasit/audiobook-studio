@@ -169,6 +169,7 @@ function lineCounts(
       failed: heard("failed"),
       skipped: sql<number>`sum(case when ${quiet} then 1 else 0 end)`,
       mended: sql<number>`sum(case when ${segments.mended} is null then 0 else 1 end)`,
+      flagged: sql<number>`sum(case when ${segments.flag} is null then 0 else 1 end)`,
     })
     .from(segments)
     .leftJoin(
@@ -193,6 +194,7 @@ function lineCounts(
         failed: Number(r.failed),
         skipped: Number(r.skipped),
         ...(Number(r.mended) ? { mended: Number(r.mended) } : {}),
+        ...(Number(r.flagged) ? { flagged: Number(r.flagged) } : {}),
       },
     ]),
   );

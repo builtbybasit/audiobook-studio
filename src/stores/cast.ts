@@ -65,6 +65,7 @@ import { defineStore } from "pinia";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useExistingLinesStore } from "@/stores/existingLines";
 import { useLibraryStore } from "@/stores/library";
+import { useNarrationStore } from "@/stores/narration";
 import { useScriptsStore } from "@/stores/scripts";
 import { useSpeakerSamplesStore } from "@/stores/speakerSamples";
 import { toastFailure } from "@/stores/toastFailure";
@@ -696,6 +697,11 @@ export const useCastStore = defineStore("cast", {
             revert();
             await this._pushLexicon(bookId, staled ?? undefined);
           }),
+        // always offered: `n` counts only the chapters read here; the answer marks them all
+        action: {
+          label: "Re-narrate",
+          run: () => void pushed.then(() => useNarrationStore().renarrateStale(bookId)),
+        },
       });
     },
     /**
@@ -704,6 +710,7 @@ export const useCastStore = defineStore("cast", {
      * Returns the lines staled, for an Undo; null when refused.
      */
     _pushLexicon(bookId: string, restore?: ChapterLines[]): Promise<ChapterLines[] | null> {
+      const libraryStore = useLibraryStore();
       const scriptsStore = useScriptsStore();
 
       return this._write(bookId, "lexicon", "save the dictionary", async () => {
@@ -715,8 +722,11 @@ export const useCastStore = defineStore("cast", {
         this._answered(bookId, { lexicon: entries });
         // usually already stale here; this catches a clip only the server had. The lines and
         // revisions are the server's even if a later list is waiting.
-        for (const { chapterId, ids, revision } of stale)
+        for (const { chapterId, ids, revision } of stale) {
           scriptsStore._applyLines(bookId, chapterId, ids, {}, revision);
+          // a chapter not read here learns it only from this answer
+          libraryStore._staleChapter(bookId, chapterId);
+        }
         for (const { chapterId, revision } of restored)
           scriptsStore._adoptRevision(bookId, chapterId, revision);
         return stale.map(({ chapterId, ids }) => ({ chapterId, ids }));

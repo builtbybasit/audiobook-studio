@@ -7,6 +7,8 @@ import type {
   NarrationQueued,
   NarrationScope,
   RetakesQueued,
+  FlaggedRetakes,
+  FlaggedRetakesQueued,
   ScriptingQueued,
 } from "@/types";
 import { HttpClient, seg, type FetchLike } from "@/services/http";
@@ -33,6 +35,10 @@ export interface JobsService {
   transcribeChapters(bookId: string, ids: number[], again?: boolean): Promise<TranscribeQueued>;
   /** Each line renders beside the clip it may replace, as one job. */
   retakeLines(bookId: string, chapterId: number, ids: number[]): Promise<RetakesQueued>;
+  /** What retaking every flagged line in the book would queue, and its price. */
+  flaggedRetakes(bookId: string): Promise<FlaggedRetakes>;
+  /** Every flagged line in the book: one job a chapter, as one run. */
+  retakeFlagged(bookId: string): Promise<FlaggedRetakesQueued>;
   buildExport(
     bookId: string,
     ids: number[],
@@ -101,6 +107,14 @@ export class HttpJobsService implements JobsService {
     return this.http.post<RetakesQueued>(`/books/${seg(bookId)}/chapters/${chapterId}/retakes`, {
       ids,
     });
+  }
+
+  flaggedRetakes(bookId: string): Promise<FlaggedRetakes> {
+    return this.http.get<FlaggedRetakes>(`/books/${seg(bookId)}/retakes/flagged`);
+  }
+
+  retakeFlagged(bookId: string): Promise<FlaggedRetakesQueued> {
+    return this.http.post<FlaggedRetakesQueued>(`/books/${seg(bookId)}/retakes/flagged`, {});
   }
 
   buildExport(

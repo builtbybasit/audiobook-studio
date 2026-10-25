@@ -77,14 +77,6 @@ const staleLines = computed(() =>
     0,
   ),
 );
-// The "missing & changed" scope, as `renarrateStale`; the server picks the lines.
-function renarrate() {
-  void narrationStore.startRun(
-    props.bookId,
-    staleChapters.value.map((c) => c.id),
-    { scope: "fill" },
-  );
-}
 const overrides = computed(() => castStore.pauseOverrides(props.bookId));
 const PRESETS = [0.2, 0.35, 0.6, 1];
 /** the pauses inside a line, and the lengths offered for each */
@@ -263,7 +255,10 @@ const INLINE = [
           {{ plural(staleChapters.length, "chapter") }} need narrating again: their audio reads an
           older script or spelling, or was never rendered.</span
         >
-        <button class="btn-ghost btn-xs shrink-0 border-amber-400" @click="renarrate">
+        <button
+          class="btn-ghost btn-xs shrink-0 border-amber-400"
+          @click="narrationStore.renarrateStale(bookId)"
+        >
           <RetryIcon class="icon-sm" /> Re-narrate them
         </button>
       </div>

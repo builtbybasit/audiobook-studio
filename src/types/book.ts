@@ -125,6 +125,8 @@ export interface LineCounts {
   skipped: number;
   /** lines the run mended (`Segment.mended`), read aloud or not; absent means none */
   mended?: number;
+  /** lines whose audio is flagged (`Segment.flag`); absent means none */
+  flagged?: number;
 }
 
 export interface Volume {

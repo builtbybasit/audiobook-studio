@@ -90,7 +90,7 @@ export const hitsIn = (text: string, list: LexEntry[]): LexHit[] => lexMatcher(l
 /** `lexMatcher(list).speak`, for one line. */
 export const speak = (text: string, list: LexEntry[]): Spoken => lexMatcher(list).speak(text);
 
-/** What the narrator says for `name`: its own entries applied to it, or null when it has none. */
+/** How `name` is read aloud: its own entries applied to it, or null when it has none. */
 export function nameSaid(list: LexEntry[], name: string): string | null {
   const own = list.filter((e) => e.speaker === name);
   return own.length ? speak(name, own).text : null;

@@ -355,7 +355,7 @@ export function relinkPersonas(db: Db | Tx, bookId: string, from: string, to: st
     .run();
 }
 
-/** A speaker's "Narrator says" entries move with them; null leaves them plain entries. */
+/** A speaker's read-aloud entries move with them; null leaves them plain entries. */
 export function relinkTerms(db: Db | Tx, bookId: string, from: string, to: string | null): void {
   db.update(lexiconEntries)
     .set({ speaker: to })

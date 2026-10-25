@@ -18,7 +18,7 @@ export interface LexEntry {
   matchCase?: boolean;
   /** off keeps the entry in the list without applying it */
   enabled: boolean;
-  /** the speaker whose "Narrator says" name this is; follows their renames */
+  /** the speaker whose read-aloud name this is; follows their renames */
   speaker?: string;
 }
 

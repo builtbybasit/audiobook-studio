@@ -87,19 +87,19 @@ function addAlias(c: Character) {
       <div v-if="c.name !== 'Narrator'" class="space-y-1 text-xs font-medium">
         <div class="flex items-center gap-1">
           <label class="flex items-center gap-2"
-            ><UiSwitch :model-value="saysOn" @update:model-value="switchSays" /> Narrator says
+            ><UiSwitch :model-value="saysOn" @update:model-value="switchSays" /> Read aloud as
             another name</label
           >
           <UiHint
-            label="narrator says"
-            text="Read aloud instead of this name wherever the book has it, one word for another; the text on screen stays."
+            label="read aloud as"
+            text="Used in place of this name in every line, narration and dialogue; the text on screen stays the same."
           />
         </div>
         <input
           v-if="saysOn"
           :value="said ?? c.name"
           class="input w-full"
-          :aria-label="`What the narrator says for ${c.name}`"
+          :aria-label="`Name read aloud for ${c.name}`"
           @change="castStore.sayName(bookId, c.name, ($event.target as HTMLInputElement).value)"
         />
       </div>

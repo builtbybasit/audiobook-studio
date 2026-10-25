@@ -72,7 +72,7 @@ function planOf(
     ],
     refused: [],
     ignored: [],
-    cast: { add: [], differ: [], aliases: [] },
+    cast: { add: [], differ: [], fill: [] },
     lexicon: { add: [], differ: [] },
     voices: [],
     effects: { known: [], add: [], missing: [] },
@@ -120,7 +120,7 @@ describe("what a script file carries", () => {
             },
           ],
           differ: [],
-          aliases: [],
+          fill: [],
         },
         effects: {
           known: [],

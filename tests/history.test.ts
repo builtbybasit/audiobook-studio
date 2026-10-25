@@ -405,7 +405,7 @@ describe("importing a script file", () => {
       chapters,
       refused: [],
       ignored: [],
-      cast: { add: [], differ: [], aliases: [] },
+      cast: { add: [], differ: [], fill: [] },
       lexicon: { add: [], differ: [] },
       voices: [],
       effects: { known: [], add: [], missing: [] },
@@ -532,12 +532,14 @@ describe("importing a script file", () => {
               gender: "m",
               description: "A traveller",
               style: "hushed",
+              age: "young adult",
+              masked: true,
             },
             { name: "Ferryman", aliases: [], gender: "m", description: "", style: "" },
             { name: "Nobody Here", aliases: [], gender: "f", description: "", style: "" },
           ],
           differ: [],
-          aliases: [{ name: "Elder Mo", add: ["Old Mo"] }],
+          fill: [{ name: "Elder Mo", aliases: ["Old Mo"], age: "elderly", masked: true }],
         },
         lexicon: { add: [{ term: "Zhenwu", say: "Jen-woo", enabled: true }], differ: [] },
       },
@@ -564,12 +566,15 @@ describe("importing a script file", () => {
       description: "A traveller",
       style: "hushed",
       voice: ref,
+      age: "young adult",
+      masked: true,
     });
     expect(speaker("Stranger")!.aliases).toEqual(["the man in grey"]);
     expect(speaker("Ferryman")!.voice).toBe("fish/public-ferry");
     expect(fish.voices).toHaveLength(fishVoices + 1);
     expect(report.unused).toEqual(["Nobody Here"]);
     expect(speaker("Elder Mo")!.aliases).toContain("Old Mo");
+    expect(speaker("Elder Mo")).toMatchObject({ age: "elderly", masked: true });
     expect(castStore.lexiconOf("cliche").some((e) => e.term === "Zhenwu")).toBe(true);
 
     await undoLast();
@@ -608,7 +613,7 @@ describe("importing a script file", () => {
             file("Nobody Here"),
           ],
           differ: [],
-          aliases: [],
+          fill: [],
         },
       },
     );
@@ -640,7 +645,7 @@ describe("importing a script file", () => {
     });
     const term = castStore.lexiconOf("cliche")[0];
     readIn([fileChapter(1, (lines) => (dialogue(lines)[0].direction = "quietly"))], {
-      cast: { add: [], differ, aliases: [] },
+      cast: { add: [], differ, fill: [] },
       lexicon: {
         add: [],
         differ: [
@@ -756,7 +761,7 @@ describe("voice samples a script file carries", () => {
       ],
       refused: [],
       ignored: [],
-      cast: { add: [], differ: [], aliases: [] },
+      cast: { add: [], differ: [], fill: [] },
       lexicon: { add: [], differ: [] },
       voices: voices(speaker),
       effects: { known: [], add: [], missing: [] },

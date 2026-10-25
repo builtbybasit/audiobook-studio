@@ -82,6 +82,9 @@ export interface ScriptFileSpeaker {
   voice?: VoiceHint;
   /** the speaker in this file they are a persona of (`Character.personaOf`), by name */
   personaOf?: string;
+  /** `Character.masked`: the link is the model's, shown behind a spoiler */
+  masked?: boolean;
+  age?: Age;
   /** `voices/<slug>/`: the zip folder with this speaker's recordings and `samples.json` */
   samples?: string;
   /** the effect they wear, by name */
@@ -227,7 +230,12 @@ export interface TermDiff {
  *   unchecked  the provider could not be asked in time; shown as a failed lookup, not as private
  */
 export type VoiceMatch =
-  | { kind: "here"; options: { endpointId: string; endpointName: string; ref: VoiceRef }[] }
+  | {
+      kind: "here";
+      options: { endpointId: string; endpointName: string; ref: VoiceRef }[];
+      /** found on another endpoint than the file's, by id and name or by name alone */
+      byName?: true;
+    }
   | { kind: "public"; endpointId: string; endpointName: string; voice: Voice }
   | { kind: "private" }
   | { kind: "unchecked"; reason: string };
@@ -267,8 +275,11 @@ export interface ScriptImportPlan {
     add: ScriptFileSpeaker[];
     /** speakers both have with different details; the book's are kept unless replaced */
     differ: SpeakerDiff[];
-    /** aliases the file knows for a speaker the book has, unioned when applied */
-    aliases: { name: string; add: string[] }[];
+    /**
+     * What the file adds to a speaker the book has, without asking: aliases it knows (unioned, as
+     * they only add matches) and the blanks it fills
+     */
+    fill: { name: string; aliases?: string[]; age?: Age; masked?: true }[];
   };
   lexicon: {
     add: ScriptFileTerm[];

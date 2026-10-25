@@ -99,7 +99,15 @@ test("the zip holds a manifest, the cast with voice hints, the dictionary and on
   });
   // a persona of hers, carried by name, at her voice's own pace
   await api.request(`/api/books/${id}/characters/${encodeURIComponent("The Mask")}`, {
-    ...jsonBody({ ...mara, name: "The Mask", voice: null, personaOf: mara.name, speed: 1 }),
+    ...jsonBody({
+      ...mara,
+      name: "The Mask",
+      voice: null,
+      personaOf: mara.name,
+      masked: true,
+      age: "teen",
+      speed: 1,
+    }),
     method: "PUT",
   });
   await api.request(`/api/books/${id}/lexicon`, {
@@ -145,7 +153,12 @@ test("the zip holds a manifest, the cast with voice hints, the dictionary and on
     voiceLabel: "Ash",
   });
   expect(JSON.stringify(speakers)).not.toContain("studio/ash");
-  expect(speakers.find((s) => s.name === "The Mask")?.personaOf).toBe(mara.name);
+  // the link stays behind its spoiler on the other side
+  expect(speakers.find((s) => s.name === "The Mask")).toMatchObject({
+    personaOf: mara.name,
+    masked: true,
+    age: "teen",
+  });
   expect(speakers.find((s) => s.name === mara.name)?.personaOf).toBeUndefined();
   expect(speakers.find((s) => s.name === mara.name)?.speed).toBe(1.25);
   expect(speakers.find((s) => s.name === "The Mask")?.speed).toBe(1);

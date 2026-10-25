@@ -7,7 +7,15 @@ import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
-import { speak, marks, silenceOf, DEFAULT_PACING, pauseAfter, sayable } from "@/lib/speech";
+import {
+  speak,
+  marks,
+  silenceOf,
+  DEFAULT_PACING,
+  pauseAfter,
+  sayable,
+  sayNameAs,
+} from "@/lib/speech";
 import type { LexEntry, Segment, ToastOptions } from "@/types";
 import { demoServer } from "./support/demoServer";
 import { openDemoBook } from "./support/demoBook";
@@ -48,6 +56,32 @@ describe("the dictionary", () => {
     const out = marks("Ji Ning bowed.", [entry("Ji Ning", "Jee Ning")]);
     expect(out).toEqual([{ text: "Ji Ning", say: "Jee Ning" }, { text: " bowed." }]);
     expect(out.map((m) => m.text).join("")).toBe("Ji Ning bowed.");
+  });
+
+  const line = "Aisha smiled; Aisha Bizvel bowed; Old Bizvel was old.";
+  test.each([
+    ["Aisha Bizvel", "Alisa Bizvel", [], "Alisa smiled; Alisa Bizvel bowed; Old Bizvel was old."],
+    ["Aisha Bizvel", "Alisa Stone", [], "Alisa smiled; Alisa Stone bowed; Old Stone was old."],
+    // a surname the family shares stays theirs
+    [
+      "Aisha Bizvel",
+      "Alisa Stone",
+      ["Old Bizvel"],
+      "Alisa smiled; Alisa Stone bowed; Old Bizvel was old.",
+    ],
+    // other word counts: the full name and the first name
+    ["Aisha Bizvel", "Alisa", [], "Alisa smiled; Alisa bowed; Old Bizvel was old."],
+    // a name's ordinary word leaves the word in prose alone
+    ["Old Bizvel", "Young Bizvel", [], "Aisha smiled; Aisha Bizvel bowed; Young Bizvel was old."],
+    ["Aisha Bizvel", null, [], line],
+  ])("%s read aloud as %s (others %j)", (name, says, others, heard) => {
+    const list = sayNameAs(sayNameAs([], name, "Ava Vale"), name, says, others);
+    expect(speak(line, list).text).toBe(heard);
+  });
+
+  test("a respelling of a word in the name is switched off, not lost", () => {
+    const list = sayNameAs([entry("Aisha", "eye-SHA")], "Aisha Bizvel", "Alisa Bizvel");
+    expect(list).toContainEqual(entry("Aisha", "eye-SHA", { enabled: false }));
   });
 });
 

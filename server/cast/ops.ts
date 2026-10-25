@@ -117,6 +117,7 @@ export function renameCharacter(db: Db, bookId: string, from: string, to: string
     const aliases = [...new Set([...was.aliases, from])].filter((a) => a !== to);
     cast.upsertCharacter(tx, bookId, { ...requireCharacter(tx, bookId, to), aliases });
     cast.relinkPersonas(tx, bookId, from, to);
+    cast.relinkTerms(tx, bookId, from, to);
     const moved = reattribute(tx, bookId, from, to, settle());
     return { characters: cast.readCast(tx, bookId), moved };
   });
@@ -179,6 +180,7 @@ function mergeOne(
   const samples = moveSpeakerSamples(tx, bookId, from, into);
   cast.deleteCharacterRow(tx, bookId, from);
   cast.relinkPersonas(tx, bookId, from, personaOf || into === NARRATOR ? null : into);
+  cast.relinkTerms(tx, bookId, from, into === NARRATOR ? null : into);
   return { name: from, moved: reattribute(tx, bookId, from, into, settle()), samples };
 }
 
@@ -197,6 +199,7 @@ export function removeCharacters(db: Db, bookId: string, names: readonly string[
       const samples = discardSpeakerSamples(tx, bookId, name, NARRATOR);
       cast.deleteCharacterRow(tx, bookId, name);
       cast.relinkPersonas(tx, bookId, name, null);
+      cast.relinkTerms(tx, bookId, name, null);
       return { name, moved: reattribute(tx, bookId, name, NARRATOR, settle()), samples };
     });
     return { characters: cast.readCast(tx, bookId), speakers };

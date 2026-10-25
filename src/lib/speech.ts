@@ -90,6 +90,57 @@ export const hitsIn = (text: string, list: LexEntry[]): LexHit[] => lexMatcher(l
 /** `lexMatcher(list).speak`, for one line. */
 export const speak = (text: string, list: LexEntry[]): Spoken => lexMatcher(list).speak(text);
 
+/** How `name` is read aloud: its own entries applied to it, or null when it has none. */
+export function nameSaid(list: LexEntry[], name: string): string | null {
+  const own = list.filter((e) => e.speaker === name);
+  return own.length ? speak(name, own).text : null;
+}
+
+/**
+ * The dictionary with `name` said as `says` (null: as written). A changed word is swapped alone, so
+ * "Aisha" by itself changes too, unless one of `others` (the rest of the cast's names) has it: then
+ * only inside the full name. Word counts that differ change the full name and the first word.
+ * A plain entry for a changed word is switched off, not lost, as two live ones would fight.
+ */
+export function sayNameAs(
+  list: LexEntry[],
+  name: string,
+  says: string | null,
+  others: readonly string[] = [],
+): LexEntry[] {
+  const from = name.trim().split(/\s+/);
+  const to = (says ?? "").trim().split(/\s+/).filter(Boolean);
+  const shared = new Set(others.flatMap((n) => n.toLowerCase().split(/\s+/)));
+  const pairs: (readonly [string, string])[] = [];
+  if (to.length && to.join(" ") !== from.join(" ")) {
+    const even = from.length === to.length;
+    const alone = even
+      ? from.map((w, i) => [w, to[i]] as const)
+      : from.length > 1
+        ? [[from[0], to[0]] as const]
+        : [];
+    const changed = alone.filter(([w, s]) => w !== s);
+    const free = changed.filter(([w]) => !shared.has(w.toLowerCase()));
+    pairs.push(...free);
+    if (!even || free.length < changed.length) pairs.push([from.join(" "), to.join(" ")]);
+  }
+  const same = (e: LexEntry, term: string) => termOf(e).toLowerCase() === term.toLowerCase();
+  const out = list
+    .filter((e) => e.speaker !== name || pairs.some(([w]) => same(e, w)))
+    .map((e) => (!e.speaker && pairs.some(([w]) => same(e, w)) ? { ...e, enabled: false } : e));
+  let id = Math.max(0, ...list.map((e) => e.id));
+  for (const [term, say] of pairs) {
+    const i = out.findIndex((e) => same(e, term) && e.speaker === name);
+    const e: LexEntry = { id: out[i]?.id ?? ++id, term, say, enabled: true, speaker: name };
+    // a lone word keeps its capital, so "Old" in a name leaves "old" in the prose alone
+    // ponytail: "Old" opening a sentence still changes; checking the book's own casing if it bites
+    if (!term.includes(" ")) e.matchCase = true;
+    if (i < 0) out.push(e);
+    else out[i] = e;
+  }
+  return out;
+}
+
 /**
  * What a voice may be sent: Latin letters (books are English), digits, reading punctuation and the
  * symbols a voice says (`+5`, `10%`). Never `[]{}`: Fish reads `[…]` as its own tag.

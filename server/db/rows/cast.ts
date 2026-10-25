@@ -64,6 +64,7 @@ export function toLexEntry(row: LexRow): LexEntry {
   if (row.ipa != null) e.ipa = row.ipa;
   if (row.note != null) e.note = row.note;
   if (row.matchCase) e.matchCase = true;
+  if (row.speaker != null) e.speaker = row.speaker;
   return e;
 }
 
@@ -81,6 +82,7 @@ export function lexiconValues(
     note: e.note ?? null,
     matchCase: e.matchCase ?? null,
     enabled: e.enabled,
+    speaker: e.speaker ?? null,
     position,
   };
 }

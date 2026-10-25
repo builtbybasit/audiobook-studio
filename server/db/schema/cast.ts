@@ -60,6 +60,8 @@ export const lexiconEntries = sqliteTable(
     /** for a term that is also an ordinary word */
     matchCase: integer("match_case", { mode: "boolean" }),
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    /** a `characters.name` by value, kept in step by the cast ops */
+    speaker: text("speaker"),
     position: integer("position").notNull().default(0),
   },
   (t) => [

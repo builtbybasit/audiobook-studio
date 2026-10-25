@@ -160,6 +160,7 @@ export const LexEntrySchema = v.object({
   note: v.optional(v.string()),
   matchCase: v.optional(v.boolean()),
   enabled: v.boolean(),
+  speaker: v.optional(v.string()),
 }) satisfies v.GenericSchema<unknown, LexEntry>;
 
 const SegmentType = v.picklist(["dialogue", "narration", "thought", "watermark", "note"]);

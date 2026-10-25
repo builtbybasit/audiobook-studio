@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // One speaker's full record, opened under a Cast table row: every field but the voice.
-import { ref, useId } from "vue";
+import { computed, ref, useId } from "vue";
 
 import { useCastStore } from "@/stores/cast";
 import { useSpeakerSamplesStore } from "@/stores/speakerSamples";
@@ -12,6 +12,7 @@ import SpoilerText from "@/components/SpoilerText.vue";
 import PersonaSection from "@/views/cast/persona/PersonaSection.vue";
 import { Plus as AddIcon, X as CloseIcon } from "@lucide/vue";
 import { AGES } from "@/lib/cast";
+import { nameSaid } from "@/lib/speech";
 import type { Age, Character, Gender } from "@/types";
 
 const props = defineProps<{
@@ -48,6 +49,17 @@ const waiting = (name: string) => {
   return w ? [w] : [];
 };
 
+// shown while switched on, before anything is typed; after, the entries say it is on
+const said = computed(() => nameSaid(castStore.lexiconOf(bookId), props.c.name));
+const saying = ref(false);
+const saysOn = computed(() => saying.value || said.value != null);
+const words = (s: string) => s.trim().split(/\s+/).length;
+const uneven = computed(() => said.value != null && words(said.value) !== words(props.c.name));
+function switchSays(on: boolean) {
+  saying.value = on;
+  if (!on) castStore.sayName(bookId, props.c.name, null);
+}
+
 const alias = ref("");
 function addAlias(c: Character) {
   if (castStore.addAlias(bookId, c.name, alias.value)) alias.value = "";
@@ -73,6 +85,29 @@ function addAlias(c: Character) {
             castStore.renameCharacter(bookId, c.name, ($event.target as HTMLInputElement).value)
           "
         />
+      </div>
+      <div v-if="c.name !== 'Narrator'" class="space-y-1 text-xs font-medium">
+        <div class="flex items-center gap-1">
+          <label class="flex items-center gap-2"
+            ><UiSwitch :model-value="saysOn" @update:model-value="switchSays" /> Read aloud as
+            another name</label
+          >
+          <UiHint
+            label="read aloud as"
+            text="Used in place of this name in every line, narration and dialogue; the text on screen stays the same."
+          />
+        </div>
+        <input
+          v-if="saysOn"
+          :value="said ?? c.name"
+          class="input w-full"
+          :aria-label="`Name read aloud for ${c.name}`"
+          @change="castStore.sayName(bookId, c.name, ($event.target as HTMLInputElement).value)"
+        />
+        <p v-if="uneven" class="text-[11px] font-normal text-zinc-500">
+          Only the full name and first name change; keep the same number of words to change each
+          part.
+        </p>
       </div>
       <div class="flex flex-wrap items-end gap-4">
         <div class="space-y-1 text-xs font-medium">

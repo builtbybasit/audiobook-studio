@@ -207,6 +207,20 @@ describe("renaming and merging", () => {
     expect(scriptRevision(api.db, id, 3)).toBe(0);
   });
 
+  test("a speaker's said-as entries follow a rename and a merge, and stay plain on removal", async () => {
+    const { api, id } = await scripted();
+    const said = { id: 1, term: "Mara", say: "Mira", enabled: true, speaker: "Mara" };
+    await api.request(`/api/books/${id}/lexicon`, put({ entries: [said] }));
+    const speakerOf = async () => (await castOf(api, id)).lexicon[0].speaker;
+    await api.request(`/api/books/${id}/characters/Mara/rename`, jsonBody({ to: "Mara Voss" }));
+    expect(await speakerOf()).toBe("Mara Voss");
+    await merge(api, id, [{ from: "Mara Voss", into: "Tobin" }]);
+    expect(await speakerOf()).toBe("Tobin");
+    await remove(api, id, "Tobin");
+    // still applied: the book still has the name
+    expect((await castOf(api, id)).lexicon[0]).toEqual({ ...said, speaker: undefined });
+  });
+
   test("a rename onto a name the cast has is refused and points at merging", async () => {
     const { api, id } = await scripted();
     const { status, body } = await api.request<Failure>(

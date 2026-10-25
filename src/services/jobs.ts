@@ -9,6 +9,7 @@ import type {
   RetakesQueued,
   FlaggedRetakes,
   FlaggedRetakesQueued,
+  FlagsCleared,
   ScriptingQueued,
 } from "@/types";
 import { HttpClient, seg, type FetchLike } from "@/services/http";
@@ -38,7 +39,9 @@ export interface JobsService {
   /** What retaking every flagged line in the book would queue, and its price. */
   flaggedRetakes(bookId: string): Promise<FlaggedRetakes>;
   /** Every flagged line in the book: one job a chapter, as one run. */
-  retakeFlagged(bookId: string): Promise<FlaggedRetakesQueued>;
+  retakeFlagged(bookId: string, review: boolean): Promise<FlaggedRetakesQueued>;
+  /** Every flag in the book comes down; the clips stay. */
+  clearFlags(bookId: string): Promise<FlagsCleared>;
   buildExport(
     bookId: string,
     ids: number[],
@@ -113,8 +116,14 @@ export class HttpJobsService implements JobsService {
     return this.http.get<FlaggedRetakes>(`/books/${seg(bookId)}/retakes/flagged`);
   }
 
-  retakeFlagged(bookId: string): Promise<FlaggedRetakesQueued> {
-    return this.http.post<FlaggedRetakesQueued>(`/books/${seg(bookId)}/retakes/flagged`, {});
+  retakeFlagged(bookId: string, review: boolean): Promise<FlaggedRetakesQueued> {
+    return this.http.post<FlaggedRetakesQueued>(`/books/${seg(bookId)}/retakes/flagged`, {
+      review,
+    });
+  }
+
+  clearFlags(bookId: string): Promise<FlagsCleared> {
+    return this.http.delete<FlagsCleared>(`/books/${seg(bookId)}/flags`);
   }
 
   buildExport(

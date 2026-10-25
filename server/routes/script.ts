@@ -11,6 +11,7 @@ import type {
   Flagged,
   FlaggedRetakes,
   FlaggedRetakesQueued,
+  FlagsCleared,
   Judged,
   RetakesQueued,
 } from "@/types";
@@ -39,6 +40,7 @@ const Checkpoint = v.object({
 const Retakes = v.object({
   ids: v.pipe(v.array(v.pipe(v.number(), v.integer(), v.minValue(1))), v.minLength(1)),
 });
+const FlaggedRetake = v.object({ review: v.optional(v.boolean(), false) });
 const Verdict = v.object({ verdict: v.picklist(["accept", "reject"]) });
 /** What is wrong with a line's clip, in the listener's words. */
 const Flag = v.object({
@@ -164,14 +166,29 @@ export function scriptRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
   );
 
   /** One job a chapter, as one run; answers with them and the chapters as they now stand. */
-  app.post("/:id/retakes/flagged", validate("param", BookParam), (c) => {
-    const result = narration.retakeFlagged(db, runner, c.req.valid("param").id);
-    c.var.logger.info(
-      { jobs: result.jobs.length, lines: result.lines, busy: result.busy },
-      "flagged retakes queued",
-    );
-    return c.json(result satisfies FlaggedRetakesQueued, 202);
-  });
+  app.post(
+    "/:id/retakes/flagged",
+    validate("param", BookParam),
+    validate("json", FlaggedRetake),
+    (c) => {
+      const result = narration.retakeFlagged(
+        db,
+        runner,
+        c.req.valid("param").id,
+        c.req.valid("json"),
+      );
+      c.var.logger.info(
+        { jobs: result.jobs.length, lines: result.lines, busy: result.busy },
+        "flagged retakes queued",
+      );
+      return c.json(result satisfies FlaggedRetakesQueued, 202);
+    },
+  );
+
+  /** Every flag in the book comes down; answers with the lines and the chapters. */
+  app.delete("/:id/flags", validate("param", BookParam), (c) =>
+    c.json(narration.clearFlags(db, c.req.valid("param").id) satisfies FlagsCleared),
+  );
 
   /** Answers with the line and the chapter as they now stand. */
   app.post(

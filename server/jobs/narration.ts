@@ -33,6 +33,7 @@ import * as library from "~/db/library";
 import {
   acceptCandidate,
   bumpRevision,
+  clearFlag,
   dropCandidate,
   LineGone,
   readScript,
@@ -637,7 +638,11 @@ function lineRun(o: {
         )
           clip = { ...clip, status: "stale" };
         writeClip(tx, at.bookId, at.id, s.id, slot, clip);
-        if (replacement && clip.status !== "failed") acceptCandidate(tx, at.bookId, at.id, s.id);
+        // kept unheard, as a verdict would keep it: the flag was on the clip it replaced
+        if (replacement && clip.status !== "failed") {
+          acceptCandidate(tx, at.bookId, at.id, s.id);
+          clearFlag(tx, at.bookId, at.id, s.id);
+        }
       });
     } catch (e) {
       if (!(e instanceof LineGone)) throw e;

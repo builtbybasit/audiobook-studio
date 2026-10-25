@@ -166,6 +166,12 @@ export interface FlaggedRetakesQueued {
   chapters: Chapter[];
 }
 
+/** `cleared`: each chapter's lines whose flag came down, at their new revisions. */
+export interface FlagsCleared {
+  cleared: RevisedLines[];
+  chapters: Chapter[];
+}
+
 export interface RetakesQueued {
   /** null when nothing was queued */
   job: Job | null;

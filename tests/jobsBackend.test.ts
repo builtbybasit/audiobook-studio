@@ -589,6 +589,17 @@ describe("editing a script with a server answering", () => {
     expect(speakers).not.toContain("Mara");
   });
 
+  test("clearing the book's flags takes them off the lines here, at the server's revision", async () => {
+    const { id } = await scriptedAndOpen();
+    const narrationStore = useNarrationStore();
+    const line = scriptsStore.segmentsOf(id, 1)[0];
+    await narrationStore.flagSegment(id, 1, line.id, "delivery");
+    await narrationStore.clearFlagsBook(id);
+    expect(scriptsStore.segmentsOf(id, 1)[0].flag).toBeUndefined();
+    expect(libraryStore.chapter(id, 1)?.lines?.flagged).toBeUndefined();
+    expect(scriptsStore._revision[key(id, 1)]).toBe(scriptRevision(api.db, id, 1)!);
+  });
+
   test("a flag is written to its line alone, and adds nothing to the history", async () => {
     const { id, history } = await scriptedAndOpen();
     const narrationStore = useNarrationStore();

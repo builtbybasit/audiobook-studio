@@ -778,13 +778,16 @@ export const useNarrationStore = defineStore("narration", {
         return null;
       }
     },
-    /** Every flagged line in the book gets another take, one job a chapter. */
-    async retakeFlaggedBook(bookId: string): Promise<void> {
+    /**
+     * Every flagged line in the book gets another take, one job a chapter. Unless `review`, each
+     * take replaces its clip as it lands and its flag comes down, so nothing waits to be heard.
+     */
+    async retakeFlaggedBook(bookId: string, review = false): Promise<void> {
       const jobsStore = useJobsStore();
       const libraryStore = useLibraryStore();
       const uiStore = useUiStore();
       try {
-        const { jobs, lines, busy, chapters } = await jobsService().retakeFlagged(bookId);
+        const { jobs, lines, busy, chapters } = await jobsService().retakeFlagged(bookId, review);
         libraryStore.chapters[bookId] = chapters;
         if (jobs.length) await jobsStore._changed();
         const left = busy ? ` ${plural(busy, "chapter")} being narrated left alone.` : "";
@@ -794,11 +797,33 @@ export const useNarrationStore = defineStore("narration", {
           });
         else
           uiStore.toast(`Retake · ${plural(lines, "flagged line")}`, {
-            description: `Queued across ${plural(jobs.length, "chapter")}; each take lands beside its line, ready to compare.${left}`,
+            description: `Queued across ${plural(jobs.length, "chapter")}; ${review ? "each take lands beside its line, ready to compare" : "each take replaces its clip as it lands"}.${left}`,
             timeout: 8000,
           });
       } catch (cause) {
         toastFailure("queue the retakes", cause);
+      }
+    },
+    /** Every flag in the book comes down, here as on the server; the clips stay. */
+    async clearFlagsBook(bookId: string): Promise<void> {
+      const libraryStore = useLibraryStore();
+      const scriptsStore = useScriptsStore();
+      const uiStore = useUiStore();
+      try {
+        const { cleared, chapters } = await jobsService().clearFlags(bookId);
+        for (const { chapterId, ids, revision } of cleared) {
+          const set = new Set(ids);
+          for (const s of scriptsStore.segmentsOf(bookId, chapterId))
+            if (set.has(s.id)) delete s.flag;
+          scriptsStore._adoptRevision(bookId, chapterId, revision);
+        }
+        libraryStore.chapters[bookId] = chapters;
+        const n = cleared.reduce((a, c) => a + c.ids.length, 0);
+        uiStore.toast(`${plural(n, "flag")} cleared`, {
+          description: "The clips stay as they are.",
+        });
+      } catch (cause) {
+        toastFailure("clear the flags", cause);
       }
     },
     /** A chapter's flag count from its script here, so the book's total follows a flag at once. */

@@ -1,10 +1,12 @@
 // A person's operations on one line's narration: ask for a retake, and keep or drop it. A retake
-// is queued like a bulk run at the `pending` scope and never `auto`, so it waits beside the clip in
-// the book for a verdict. Both settle the chapter, since its length is asked of the clips that play.
+// is queued like a bulk run at the `pending` scope and waits beside the clip in the book for a
+// verdict, unless the book's flagged lines were retaken without review (`auto`). Both settle the
+// chapter, since its length is asked of the clips that play.
 import type {
   Book,
   FlaggedRetakes,
   FlaggedRetakesQueued,
+  FlagsCleared,
   Job,
   Judged,
   RetakesQueued,
@@ -78,6 +80,7 @@ function enqueueRetakes(
   queued: readonly Segment[],
   cost: NarrationCost,
   bulk: { id: number; index: number; total: number },
+  auto = false,
 ): Job | null {
   const { job, created } = runner.enqueue({
     kind: "narration",
@@ -89,7 +92,7 @@ function enqueueRetakes(
     // with the job row, so the slots are held before the run can start
     onCreated: (tx) => {
       for (const s of queued) {
-        const { slot, queued: clip } = queuedSlot(s.audio, { auto: false });
+        const { slot, queued: clip } = queuedSlot(s.audio, { auto });
         writeClip(tx, bookId, chapterId, s.id, slot, clip);
       }
       library.setChapterNarration(tx, bookId, chapterId, "queued", 0);
@@ -176,8 +179,16 @@ export function flaggedRetakes(db: Db, bookId: string): FlaggedRetakes {
   };
 }
 
-/** Every flagged line in the book gets another take: one job a chapter, as one run. */
-export function retakeFlagged(db: Db, runner: Runner, bookId: string): FlaggedRetakesQueued {
+/**
+ * Every flagged line in the book gets another take: one job a chapter, as one run. Unless
+ * `review`, each take replaces its clip as it lands and takes the flag down.
+ */
+export function retakeFlagged(
+  db: Db,
+  runner: Runner,
+  bookId: string,
+  { review }: { review: boolean },
+): FlaggedRetakesQueued {
   const { plan, busy } = flaggedPlan(db, bookId);
   const all = plan.flatMap((p) => p.queued);
   // the whole run before any of it is written
@@ -189,12 +200,30 @@ export function retakeFlagged(db: Db, runner: Runner, bookId: string): FlaggedRe
   plan.forEach(({ chapterId, queued }, i) => {
     const bulk = { id: runId, index: i + 1, total: plan.length };
     const cost = narrationCost(db, bookId, queued);
-    const job = enqueueRetakes(runner, bookId, chapterId, queued, cost, bulk);
+    const job = enqueueRetakes(runner, bookId, chapterId, queued, cost, bulk, !review);
     if (!job) return void late++;
     jobs.push(job);
     lines += queued.length;
   });
   return { jobs, lines, busy: busy + late, chapters: library.listChapters(db, bookId) };
+}
+
+/** Takes down every flag in the book, the person's and Transcribe's; the clips stay. */
+export function clearFlags(db: Db, bookId: string): FlagsCleared {
+  requireBook(db, bookId);
+  const cleared = db.transaction((tx) =>
+    library
+      .listChapters(tx, bookId)
+      .filter((c) => c.lines?.flagged)
+      .map((c) => {
+        const ids = readScript(tx, bookId, c.id)
+          .filter((s) => s.flag)
+          .map((s) => s.id);
+        for (const id of ids) clearFlag(tx, bookId, c.id, id);
+        return { chapterId: c.id, ids, revision: bumpRevision(tx, bookId, c.id) };
+      }),
+  );
+  return { cleared, chapters: library.listChapters(db, bookId) };
 }
 
 /**

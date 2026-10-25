@@ -10,6 +10,7 @@ import type {
   ChapterScript,
   FlaggedRetakes,
   FlaggedRetakesQueued,
+  FlagsCleared,
   ImportedBook,
   Job,
   Judged,
@@ -699,7 +700,7 @@ describe("retaking the book's flagged lines", () => {
   const preview = async (api: TestApi, id: string) =>
     (await api.request<FlaggedRetakes>(`/api/books/${id}/retakes/flagged`)).body;
 
-  test("takes every flagged line, one job a chapter as one run, but not one already waiting", async () => {
+  test("takes every flagged line for review, one job a chapter as one run, but not one already waiting", async () => {
     const { api, id } = await narrated();
     await narrate(api, id, [2]);
     await api.runner.idle();
@@ -715,7 +716,7 @@ describe("retaking the book's flagged lines", () => {
     expect(await preview(api, id)).toMatchObject({ lines: 3, chapters: 2, busy: 0 });
     const { status, body } = await api.request<FlaggedRetakesQueued>(
       `/api/books/${id}/retakes/flagged`,
-      jsonBody({}),
+      jsonBody({ review: true }),
     );
     expect(status).toBe(202);
     expect(body.lines).toBe(3);
@@ -729,6 +730,46 @@ describe("retaking the book's flagged lines", () => {
       (await scriptOf(api, id, ch)).segments.filter((s) => s.candidate).map((s) => s.id);
     expect(await waiting(1)).toEqual(one.slice(0, 3).map((s) => s.id));
     expect(await waiting(2)).toEqual([two[0].id]);
+  });
+
+  test("without review, each take replaces its clip and takes the flag down", async () => {
+    const { api, id } = await narrated();
+    const [line] = (await scriptOf(api, id)).segments;
+    await flag(api, id, 1, line.id);
+    await api.request(`/api/books/${id}/retakes/flagged`, jsonBody({}));
+    await api.runner.idle();
+    const after = (await scriptOf(api, id)).segments.find((s) => s.id === line.id)!;
+    expect(after.candidate).toBeUndefined();
+    expect(after.flag).toBeUndefined();
+    expect(after.audio.n).toBe(2);
+    expect((await chaptersOf(api, id))[0].lines?.flagged).toBeUndefined();
+  });
+
+  test("clearing the flags keeps every clip", async () => {
+    const { api, id } = await narrated();
+    await narrate(api, id, [2]);
+    await api.runner.idle();
+    const lines = async () => [
+      ...(await scriptOf(api, id)).segments,
+      ...(await scriptOf(api, id, 2)).segments,
+    ];
+    const [one, two] = [(await scriptOf(api, id)).segments, (await scriptOf(api, id, 2)).segments];
+    await flag(api, id, 1, one[0].id);
+    await flag(api, id, 2, two[0].id);
+    const before = await lines();
+
+    const { status, body } = await api.request<FlagsCleared>(`/api/books/${id}/flags`, {
+      method: "DELETE",
+    });
+    expect(status).toBe(200);
+    expect(body.cleared.map((c) => [c.chapterId, c.ids])).toEqual([
+      [1, [one[0].id]],
+      [2, [two[0].id]],
+    ]);
+    const after = await lines();
+    expect(after.filter((s) => s.flag)).toEqual([]);
+    expect(after.map((s) => s.audio)).toEqual(before.map((s) => s.audio));
+    expect(body.chapters.filter((c) => c.lines?.flagged)).toEqual([]);
   });
 
   test("leaves out a chapter being narrated", async () => {

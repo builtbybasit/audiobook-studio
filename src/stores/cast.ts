@@ -751,7 +751,10 @@ export const useCastStore = defineStore("cast", {
     /** Read `name` aloud as `says` wherever the book has it; null reads it as written again. */
     sayName(bookId: string, name: string, says: string | null): void {
       const list = this.lexiconOf(bookId);
-      const next = sayNameAs(list, name, says);
+      const others = this.charactersOf(bookId)
+        .filter((c) => c.name !== name)
+        .flatMap((c) => [c.name, ...c.aliases]);
+      const next = sayNameAs(list, name, says, others);
       if (JSON.stringify(next) === JSON.stringify(list)) return;
       const revert = this._lexSnapshot(bookId);
       this.lexicon[bookId] = next;

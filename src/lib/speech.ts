@@ -97,19 +97,33 @@ export function nameSaid(list: LexEntry[], name: string): string | null {
 }
 
 /**
- * The dictionary with `name` said as `says` (null: as written). Word for word when the word counts
- * match, so "Aisha" alone changes too; else the whole name. A plain entry for a changed word is
- * switched off, not lost, as two live entries for one term would fight.
+ * The dictionary with `name` said as `says` (null: as written). A changed word is swapped alone, so
+ * "Aisha" by itself changes too, unless one of `others` (the rest of the cast's names) has it: then
+ * only inside the full name. Word counts that differ change the full name and the first word.
+ * A plain entry for a changed word is switched off, not lost, as two live ones would fight.
  */
-export function sayNameAs(list: LexEntry[], name: string, says: string | null): LexEntry[] {
+export function sayNameAs(
+  list: LexEntry[],
+  name: string,
+  says: string | null,
+  others: readonly string[] = [],
+): LexEntry[] {
   const from = name.trim().split(/\s+/);
   const to = (says ?? "").trim().split(/\s+/).filter(Boolean);
-  // ponytail: unequal counts map the whole name only; a word-alignment step if that bites
-  const pairs = !to.length
-    ? []
-    : from.length === to.length
-      ? from.map((w, i) => [w, to[i]] as const).filter(([w, s]) => w !== s)
-      : [[from.join(" "), to.join(" ")] as const];
+  const shared = new Set(others.flatMap((n) => n.toLowerCase().split(/\s+/)));
+  const pairs: (readonly [string, string])[] = [];
+  if (to.length && to.join(" ") !== from.join(" ")) {
+    const even = from.length === to.length;
+    const alone = even
+      ? from.map((w, i) => [w, to[i]] as const)
+      : from.length > 1
+        ? [[from[0], to[0]] as const]
+        : [];
+    const changed = alone.filter(([w, s]) => w !== s);
+    const free = changed.filter(([w]) => !shared.has(w.toLowerCase()));
+    pairs.push(...free);
+    if (!even || free.length < changed.length) pairs.push([from.join(" "), to.join(" ")]);
+  }
   const same = (e: LexEntry, term: string) => termOf(e).toLowerCase() === term.toLowerCase();
   const out = list
     .filter((e) => e.speaker !== name || pairs.some(([w]) => same(e, w)))
@@ -118,6 +132,9 @@ export function sayNameAs(list: LexEntry[], name: string, says: string | null): 
   for (const [term, say] of pairs) {
     const i = out.findIndex((e) => same(e, term) && e.speaker === name);
     const e: LexEntry = { id: out[i]?.id ?? ++id, term, say, enabled: true, speaker: name };
+    // a lone word keeps its capital, so "Old" in a name leaves "old" in the prose alone
+    // ponytail: "Old" opening a sentence still changes; checking the book's own casing if it bites
+    if (!term.includes(" ")) e.matchCase = true;
     if (i < 0) out.push(e);
     else out[i] = e;
   }

@@ -53,6 +53,8 @@ const waiting = (name: string) => {
 const said = computed(() => nameSaid(castStore.lexiconOf(bookId), props.c.name));
 const saying = ref(false);
 const saysOn = computed(() => saying.value || said.value != null);
+const words = (s: string) => s.trim().split(/\s+/).length;
+const uneven = computed(() => said.value != null && words(said.value) !== words(props.c.name));
 function switchSays(on: boolean) {
   saying.value = on;
   if (!on) castStore.sayName(bookId, props.c.name, null);
@@ -102,6 +104,10 @@ function addAlias(c: Character) {
           :aria-label="`Name read aloud for ${c.name}`"
           @change="castStore.sayName(bookId, c.name, ($event.target as HTMLInputElement).value)"
         />
+        <p v-if="uneven" class="text-[11px] font-normal text-zinc-500">
+          Only the full name and first name change; keep the same number of words to change each
+          part.
+        </p>
       </div>
       <div class="flex flex-wrap items-end gap-4">
         <div class="space-y-1 text-xs font-medium">

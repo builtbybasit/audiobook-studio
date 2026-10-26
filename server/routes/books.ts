@@ -126,6 +126,8 @@ const Settings = v.pipe(
     autoTranscribe: v.optional(v.nullable(v.boolean())),
     pronounceOff: v.optional(v.nullable(v.boolean())),
     exactCounts: v.optional(v.nullable(v.boolean())),
+    /** `null` forgets it */
+    wiki: v.optional(v.nullable(v.pipe(v.string(), v.trim(), v.url(), v.maxLength(300)))),
     /** an effect's id or "none"; `null` follows the library's */
     thoughts: v.optional(v.nullable(EffectIdSchema)),
     characterVoice: v.optional(

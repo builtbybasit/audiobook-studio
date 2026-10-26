@@ -82,6 +82,8 @@ export interface BookSettings {
   pronounceOff?: true | null;
   /** `Book.exactCounts`; `null` = rough counts */
   exactCounts?: true | null;
+  /** `Book.wiki`; `null` forgets it */
+  wiki?: string | null;
   /** `Book.thoughts`: an id or "none"; `null` = the library's */
   thoughts?: ThoughtChoice | null;
   /** `Book.characterVoice`; `null` = the Narrator's */

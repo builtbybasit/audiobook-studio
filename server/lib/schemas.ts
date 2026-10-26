@@ -184,6 +184,8 @@ export const CharacterSchema = v.object({
   personaOf: unset(v.pipe(v.string(), v.trim(), v.nonEmpty())),
   /** a disguise the scripting model found; kept through an edit that leaves the link alone */
   masked: v.optional(v.boolean()),
+  /** the wiki page last filled from; null or absent = none */
+  wiki: unset(v.object({ url: v.pipe(v.string(), v.url()), at: v.number() })),
 }) satisfies v.GenericSchema<unknown, Character>;
 
 export const LexEntrySchema = v.object({

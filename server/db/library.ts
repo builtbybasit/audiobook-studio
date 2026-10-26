@@ -698,6 +698,8 @@ export interface BookSettings {
   pronounceOff?: boolean | null;
   /** show exact line counts on the Cast page; `null` goes back to rough ones */
   exactCounts?: boolean | null;
+  /** the book's fan wiki; `null` forgets it */
+  wiki?: string | null;
   /** an effect's id or "none"; `null` follows the library's */
   thoughts?: ThoughtChoice | null;
   /** the voice for speakers with none of their own; `null` goes back to the Narrator's */
@@ -726,6 +728,7 @@ export function setBookSettings(db: Db | Tx, bookId: string, s: BookSettings): v
   if (s.autoTranscribe !== undefined) set.autoTranscribe = s.autoTranscribe;
   if (s.pronounceOff !== undefined) set.pronounceOff = s.pronounceOff;
   if (s.exactCounts !== undefined) set.exactCounts = s.exactCounts;
+  if (s.wiki !== undefined) set.wiki = s.wiki;
   if (s.thoughts !== undefined) set.thoughts = s.thoughts;
   if (s.characterVoice !== undefined) set.characterVoice = s.characterVoice;
   if (!Object.keys(set).length) return;

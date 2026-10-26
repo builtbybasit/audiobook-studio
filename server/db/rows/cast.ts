@@ -25,6 +25,7 @@ export function toCharacter(row: CharacterRow): Character {
   if (row.age != null) c.age = row.age;
   if (row.voiceType != null) c.voiceType = row.voiceType;
   if (row.masked) c.masked = true;
+  if (row.wiki != null) c.wiki = row.wiki;
   return c;
 }
 
@@ -51,6 +52,7 @@ export function characterValues(
     thoughts: c.thoughts ?? null,
     personaOf: c.personaOf ?? null,
     masked: c.masked ?? null,
+    wiki: c.wiki ?? null,
     speed: c.speed ?? null,
     position,
   };

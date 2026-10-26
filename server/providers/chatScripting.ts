@@ -14,6 +14,7 @@ import type {
   RenderedPrompt,
   SegmentType,
   TokenUsage,
+  VoiceType,
 } from "@/types";
 import {
   BUILT_IN_PROMPT,
@@ -27,6 +28,7 @@ import {
 import { NARRATOR } from "@/lib/cast";
 import { wordsOf } from "@/lib/gaps";
 import { normalizeUsage } from "@/lib/pricing";
+import { DELIVERIES, PITCHES, TEXTURES } from "@/lib/voiceProfile";
 import { reasoningRequest } from "@/lib/reasoning";
 import { UNKNOWN_SPEAKER } from "~/providers/fake";
 import {
@@ -545,6 +547,7 @@ const CastNote = v.object({
   aliases: v.optional(v.nullable(v.array(v.string()))),
   description: v.optional(v.nullable(v.string())),
   personaOf: v.optional(v.unknown()),
+  voiceType: v.optional(v.unknown()),
 });
 
 const EFFECT_NAME_MAX = 80;
@@ -580,6 +583,30 @@ function ageOf(said: string | null | undefined): Age | undefined {
   return undefined;
 }
 
+const listed = <T extends string>(list: readonly T[], said: unknown): T | undefined => {
+  const w = typeof said === "string" ? said.trim().toLowerCase() : "";
+  return list.find((x) => x === w);
+};
+
+/** What of a note's voice type uses the shared words; anything else is dropped, not guessed. */
+function voiceTypeOf(said: unknown): VoiceType | undefined {
+  if (!said || typeof said !== "object") return undefined;
+  const s = said as Record<string, unknown>;
+  const pitch = listed(PITCHES, s.pitch);
+  const texture = listed(TEXTURES, s.texture);
+  const delivery = Array.isArray(s.delivery)
+    ? [
+        ...new Set(s.delivery.map((d) => listed(DELIVERIES, d)).filter((d) => d !== undefined)),
+      ].slice(0, 3)
+    : [];
+  const out: VoiceType = {
+    ...(pitch ? { pitch } : {}),
+    ...(texture ? { texture } : {}),
+    ...(delivery.length ? { delivery } : {}),
+  };
+  return Object.keys(out).length ? out : undefined;
+}
+
 /** The readable cast notes, skipping the Narrator, "Unknown" and aliases equal to the name. */
 function castOf(said: unknown): PromptCastMember[] {
   if (!Array.isArray(said)) return [];
@@ -596,10 +623,12 @@ function castOf(said: unknown): PromptCastMember[] {
     const of = typeof read.output.personaOf === "string" ? oneLine(read.output.personaOf) : "";
     const unknown = /^(?:unknown|someone unknown|\?)$/i.test(of);
     const age = ageOf(read.output.age);
+    const voiceType = voiceTypeOf(read.output.voiceType);
     out.push({
       name,
       gender: genderOf(read.output.gender),
       ...(age ? { age } : {}),
+      ...(voiceType ? { voiceType } : {}),
       aliases,
       description: oneLine(read.output.description ?? "").slice(0, DESCRIPTION_MAX),
       ...(unknown ? { masked: true } : of && of !== name ? { personaOf: of } : {}),
@@ -1017,6 +1046,10 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
   return {
     name: "Chat completions",
     callsProfile: true,
+    // ponytail: seam stub, replaced by the ask implementation
+    async ask() {
+      throw new ProviderError("Not built yet", 0, false);
+    },
     async script({
       title,
       text,

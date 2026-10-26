@@ -3,6 +3,35 @@
 export type Gender = "m" | "f" | "n" | "?";
 export type Age = "child" | "teen" | "young adult" | "middle-aged" | "elderly";
 
+/** Pitch within the voice's gender: a low woman's voice is still higher than most men's. */
+export type Pitch = "low" | "mid" | "high";
+/** husky = breathy or gravelly (much air or rasp), clear = little of either */
+export type Texture = "husky" | "clear";
+export type Delivery =
+  | "calm"
+  | "warm"
+  | "cold"
+  | "gentle"
+  | "playful"
+  | "cheerful"
+  | "energetic"
+  | "shy"
+  | "sly"
+  | "haughty"
+  | "stern"
+  | "menacing"
+  | "weary"
+  | "theatrical"
+  | "seductive"
+  | "deadpan";
+
+/** How someone sounds, in the words a voice profile and a cast note share; absent = unknown. */
+export interface VoiceType {
+  pitch?: Pitch;
+  texture?: Texture;
+  delivery?: Delivery[];
+}
+
 /** Where a too-long segment may be cut, in fallback order. */
 export type SplitMode = "paragraph" | "sentence" | "clause" | "word" | "char";
 

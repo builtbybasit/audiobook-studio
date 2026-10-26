@@ -1,6 +1,6 @@
 // Voices, and how a speaker resolves to one. A character stores a `VoiceRef`; the rest is what the
 // pickers and routing checks read back out of it.
-import type { Gender, VoiceRef } from "@/types/common";
+import type { Age, Delivery, Gender, VoiceRef } from "@/types/common";
 import type { Endpoint } from "@/types/endpoint";
 
 /** A multiplier: 1 is the voice's own pace, above 1 faster. */
@@ -15,6 +15,41 @@ export interface Voice {
   label: string;
   /** pace for every speaker on it who sets none (`speakerSpeed`); absent = 1 */
   speed?: number;
+  profile?: VoiceProfile;
+}
+
+/** Measured from the kept samples (`server/voices/measure.py`); bands come from `voiceBands`. */
+export interface MeasuredVoice {
+  /** median pitch, Hz */
+  f0: number;
+  /** harmonics-to-noise ratio, dB: low = husky */
+  hnr: number;
+  /** pitch spread p5–p95, semitones: low = steady, high = lively */
+  rangeSt: number;
+  /** seconds of voiced speech measured; little means the numbers are rough */
+  voicedSec: number;
+}
+
+/** What is known about how a voice sounds and suits; every field may be blank or edited by hand. */
+export interface VoiceProfile {
+  measured?: MeasuredVoice;
+  /** how old the voice sounds, not the character's age in its source */
+  age?: Age;
+  delivery?: Delivery[];
+  /** kinds of character it fits, a few words each */
+  suits?: string[];
+  /** kinds of character it does badly */
+  avoid?: string[];
+  /** one line */
+  summary?: string;
+  /** an in-character line for previews */
+  previewLine?: string;
+  /** whether it could carry a whole book as Narrator */
+  narrator?: { fit: boolean; why: string };
+  /** a delivery note offered to a speaker given this voice (`Character.style`) */
+  style?: string;
+  /** the page it was filled from */
+  source?: { url: string; at: number };
 }
 
 /** A catalogue result not yet on an endpoint. Adding one keeps only the `Voice`. */
@@ -90,4 +125,16 @@ export interface RoutingIssue {
   reason: string;
   kind: RoutingIssueKind;
   endpoint?: Endpoint;
+}
+
+/** `POST /api/endpoints/:id/voices/:voice/profile`: a fill to merge (`mergeProfile`), not saved. */
+export interface VoiceProfileFill {
+  profile: VoiceProfile;
+  /** one short line per step skipped or failed, e.g. "No samples kept, so nothing was measured" */
+  notes: string[];
+}
+
+/** `POST /api/books/:id/voice-suggestions`: the scripting model's picks for some speakers. */
+export interface VoiceSuggestions {
+  picks: { speaker: string; voices: { voice: VoiceRef; why: string }[] }[];
 }

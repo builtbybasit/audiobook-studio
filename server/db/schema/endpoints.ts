@@ -20,6 +20,7 @@ import type {
   SplitMode,
   TagBracket,
   TtsBillingUnit,
+  VoiceProfile,
 } from "@/types";
 
 /** A named account several endpoints can point at. */
@@ -154,6 +155,7 @@ export const voices = sqliteTable(
     gender: text("gender").$type<Gender>().notNull().default("?"),
     /** null = 1, the voice's own pace */
     speed: real("speed"),
+    profile: text("profile", { mode: "json" }).$type<VoiceProfile>(),
     position: integer("position").notNull().default(0),
   },
   (t) => [primaryKey({ columns: [t.endpointId, t.id] })],

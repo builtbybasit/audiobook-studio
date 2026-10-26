@@ -12,6 +12,7 @@ import * as v from "valibot";
 import type { RenderedPrompt, TokenUsage } from "@/types";
 import { normalizeUsage } from "@/lib/pricing";
 import { cliOf, type CliShape } from "@/lib/providers/cli";
+import { DELIVERIES, PITCHES, TEXTURES } from "@/lib/voiceProfile";
 import { builtInPrompt, checkedScript, NO_PROFILE, probeWith } from "~/providers/chatScripting";
 import { sleep } from "~/providers/fake";
 import { ProviderError, type CallOptions } from "~/providers/http";
@@ -78,7 +79,7 @@ const ANSWER_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["name", "gender", "age", "aliases", "description", "personaOf"],
+        required: ["name", "gender", "age", "aliases", "description", "personaOf", "voiceType"],
         properties: {
           name: { type: "string" },
           gender: { type: "string", enum: ["male", "female", "non-binary", "unknown"] },
@@ -89,6 +90,16 @@ const ANSWER_SCHEMA = {
           aliases: { type: "array", items: { type: "string" } },
           description: { type: "string" },
           personaOf: { type: ["string", "null"] },
+          voiceType: {
+            type: ["object", "null"],
+            additionalProperties: false,
+            required: ["pitch", "texture", "delivery"],
+            properties: {
+              pitch: { type: ["string", "null"], enum: [...PITCHES, null] },
+              texture: { type: ["string", "null"], enum: [...TEXTURES, null] },
+              delivery: { type: "array", items: { type: "string", enum: [...DELIVERIES] } },
+            },
+          },
         },
       },
     },
@@ -598,6 +609,10 @@ export function cliScriptingProvider(options: CliScriptingOptions = {}): Scripti
   return {
     name: "Command-line tools",
     callsProfile: true,
+    // ponytail: seam stub, replaced by the ask implementation
+    async ask() {
+      throw new ProviderError("Not built yet", 0, false);
+    },
     async script({ title, text, signal, progress, target, cast, prompt, lenient, sent, repair }) {
       if (!target) throw new ProviderError(NO_PROFILE, 0, false);
       progress?.(0, 1);

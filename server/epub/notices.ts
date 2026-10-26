@@ -10,6 +10,10 @@ import { countWords } from "~/epub/text";
 const SHORT_WORDS = 600;
 /** Above this, a chapter is a full one: a note inside it is a note *plus* story. */
 const FULL_WORDS = 900;
+/** Fewer words than this, with no notice in them, is a page with nothing to narrate: an image's caption, a divider. */
+const TINY_WORDS = 20;
+/** Under this share of the book's usual chapter, a chapter is worth a look whatever it says. */
+const SHORT_SHARE = 0.05;
 
 /**
  * What gives a kind away, most specific first; the first match names the note. Phrases, not
@@ -99,6 +103,17 @@ const SINGLE_QUOTED = /(?:^|[\s([—–])[‘']\p{L}[^\n]*?[,.!?…—–][’']
 /** Curly apostrophes read as straight ones, so "I’m back" is the same words as "I'm back". */
 const straight = (text: string): string => text.replace(/[‘’]/g, "'");
 
+/** The prose under the chapter's heading: the import repeats the title as the first block. */
+function withoutTitle(text: string, title: string): string {
+  const [first, ...rest] = text.split("\n\n");
+  return first.trim() === title.trim() ? rest.join("\n\n") : text;
+}
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
+}
+
 interface Signals {
   words: number;
   links: number;
@@ -151,6 +166,7 @@ const REASON: Record<NoticeKind, string> = {
   title: "Title looks like a notice, text reads as story",
   empty: "Nothing to read on this page",
   front: "Cover or front matter, not story",
+  short: "Much shorter than the other chapters",
 };
 
 /** Text reduced to what it says, so two postings of the same notice compare equal. */
@@ -176,16 +192,22 @@ function blockIsNote(block: string): boolean {
 export function detectNotices(chapters: readonly ParsedChapter[]): (ChapterNote | null)[] {
   // Fingerprint → title. A duplicate names its original by title: no reading number exists yet.
   const seen = new Map<string, string>();
+  // Judged on the prose under the heading, so `*` markers don't hide keywords or split fingerprints.
+  const texts = chapters.map((c) => withoutTitle(plainText(c.text), c.title));
+  const signals = texts.map((text, i) => read(text, chapters[i].title));
+  const usual = median(signals.filter((_, i) => !chapters[i].unreadable).map((s) => s.words));
 
-  return chapters.map((chapter) => {
+  return chapters.map((chapter, i) => {
     const { title } = chapter;
-    // Judged on the prose, so `*` markers don't hide keywords or split fingerprints.
-    const text = plainText(chapter.text);
-    const s = read(text, title);
+    const text = texts[i];
+    const s = signals[i];
     const titleLooksLikeNotice = NOTICE_TITLE.test(straight(title));
 
     const note = (kind: NoticeKind, evidence: string[], at?: "start" | "end"): ChapterNote => ({
-      verdict: kind === "mixed" || kind === "title" || kind === "unreadable" ? "review" : "skip",
+      verdict:
+        kind === "mixed" || kind === "title" || kind === "unreadable" || kind === "short"
+          ? "review"
+          : "skip",
       kind,
       reason:
         kind === "mixed"
@@ -236,6 +258,10 @@ export function detectNotices(chapters: readonly ParsedChapter[]): (ChapterNote 
       return note(s.kind?.kind ?? "progress", evidenceFor(s));
     }
 
+    // Almost nothing under the title, none of it a notice: an image page, say.
+    if (s.words < TINY_WORDS && !s.hasDialogue)
+      return note("empty", [`only ${s.words} words`, `the book lists it as “${title.trim()}”`]);
+
     // ---- a full chapter with a note stuck to one end ----
     if (s.words >= FULL_WORDS) {
       const blocks = text.split("\n\n").filter((b) => b.trim());
@@ -261,6 +287,10 @@ export function detectNotices(chapters: readonly ParsedChapter[]): (ChapterNote 
           `${s.words} words`,
         ]);
     }
+
+    // Story by every sign, but tiny beside the rest: a teaser or a stray page.
+    if (s.words < usual * SHORT_SHARE)
+      return note("short", [`${s.words} words`, `chapters here run about ${usual} words`]);
 
     return null;
   });

@@ -37,7 +37,7 @@ export interface Pacing {
 export type ScriptingStatus = "none" | "queued" | "running" | "done" | "failed" | "fallback";
 
 /**
- * What a non-story chapter turned out to be. `mixed`, `title` and `unreadable` need a person;
+ * What a non-story chapter turned out to be. `mixed`, `title`, `short` and `unreadable` need a person;
  * `unreadable` is the import failing to read a listed chapter, shown in the same review.
  */
 export type NoticeKind =
@@ -57,10 +57,11 @@ export type NoticeKind =
   | "title"
   | "empty"
   | "front"
+  | "short"
   | "unreadable";
 
 /** The kinds the demo has wording for: it reads no files, so nothing in it can be unreadable. */
-export type DemoNoticeKind = Exclude<NoticeKind, "unreadable" | "empty" | "front">;
+export type DemoNoticeKind = Exclude<NoticeKind, "unreadable" | "empty" | "front" | "short">;
 
 /**
  * An import-time suggestion that a chapter looks like a notice. It never removes anything:

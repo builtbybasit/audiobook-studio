@@ -1,11 +1,16 @@
 // Deciding which chapters are not story. The guess only attaches a note (the review decides), so
 // these assert the note attached and, just as much, that story chapters get none.
 import { describe, expect, test } from "bun:test";
+import { eq } from "drizzle-orm";
 
 import type { ChapterNote } from "@/types";
+import { chapters } from "~/db/schema";
 import { detectNotices } from "~/epub/notices";
 import type { ParsedChapter } from "~/epub/parse";
 import { countWords } from "~/epub/text";
+import { recheckNotices } from "~/db/notices";
+import { epubFile, story } from "../support/epub";
+import { testApi } from "../support/server";
 
 const chapter = (title: string, text: string): ParsedChapter => ({
   title,
@@ -21,6 +26,10 @@ const storyText = (n = 60): string =>
     (_, i) =>
       `“We settle the account tonight,” said Aurelie, and the clerk wrote the ${i + 1}th line into the ledger without once looking up from his work.`,
   ).join("\n\n");
+
+/** A scene of a few lines: short, but more than an image caption. */
+const scene = (first: string): string =>
+  `${first}\n\nThe road out of the valley was long, and nobody spoke of it afterwards.`;
 
 const noteOn = (chs: ParsedChapter[], i = 0): ChapterNote | null => detectNotices(chs)[i];
 
@@ -168,12 +177,39 @@ describe("notices in a web-novel EPUB", () => {
     expect(note?.evidence).toContain("the file could not be read");
   });
 
-  test("a chapter with no text is suggested for skipping, and says it is empty", () => {
+  test.each([
+    ["no text", ""],
+    // the import writes the title as the chapter's first line; an image page keeps only that
+    ["only its heading", "# Chapter 12: Illustrations"],
+    ["a caption", "# Chapter 12: Illustrations\n\nMap of the eastern provinces"],
+  ])("a chapter with %s is suggested for skipping as empty", (_, text) => {
     // a blank page would be narrated as silence; the reason says what it is, not "notice"
-    const note = noteOn([chapter("Chapter 12", "")]);
+    const note = noteOn([chapter("Chapter 12: Illustrations", text)]);
     expect(note?.kind).toBe("empty");
     expect(note?.verdict).toBe("skip");
-    expect(note?.evidence).toContain("no text at all");
+  });
+
+  test("a story chapter far shorter than the rest is sent for review, not skipped", () => {
+    const short = Array.from({ length: 6 }, () => "The gate closed behind them.").join("\n\n");
+    const notes = detectNotices([
+      chapter("One", storyText()),
+      chapter("Two", short),
+      chapter("Three", storyText()),
+    ]);
+    expect(notes[1]?.kind).toBe("short");
+    expect(notes[1]?.verdict).toBe("review");
+    expect(notes[0]).toBeNull();
+  });
+
+  test("a note under the chapter's heading is found at the start", () => {
+    const note = noteOn([
+      chapter(
+        "Arrears",
+        `# Arrears\n\nAuthor's note: sorry for the delay, and thank you for reading.\n\n${storyText()}`,
+      ),
+    ]);
+    expect(note?.kind).toBe("mixed");
+    expect(note?.at).toBe("start");
   });
 
   test("a cover, a title page or a contents page is front matter, with or without words", () => {
@@ -228,7 +264,7 @@ describe("notices in a web-novel EPUB", () => {
       "His health had been failing since the winter, though he told no one.",
       "Her brother was drafted in the spring and marched south with the rest.",
     ];
-    for (const text of narration) expect(noteOn([chapter("Chapter 4", text)])).toBeNull();
+    for (const text of narration) expect(noteOn([chapter("Chapter 4", scene(text))])).toBeNull();
   });
 
   test("the same words aimed at readers are still told apart", () => {
@@ -245,7 +281,9 @@ describe("notices in a web-novel EPUB", () => {
   test("a title only looks like a notice if the word is whole", () => {
     // "Noticed" and "Updated" are story titles; a short chapter under one is not an announcement
     for (const title of ["Noticed", "Updated Orders"])
-      expect(noteOn([chapter(title, "The ship left harbour before the tide turned.")])).toBeNull();
+      expect(
+        noteOn([chapter(title, scene("The ship left harbour before the tide turned."))]),
+      ).toBeNull();
   });
 
   test("every note a chapter can carry is one the review can act on", () => {
@@ -261,4 +299,30 @@ describe("notices in a web-novel EPUB", () => {
     expect(notes.every((n) => n.reason.length > 0)).toBe(true);
     expect(notes.every((n) => n.evidence.length > 0)).toBe(true);
   });
+});
+
+test("a recheck notes chapters imported before a rule, and leaves earlier notes alone", async () => {
+  const api = testApi();
+  const { body } = await api.import<{ book: { id: string } }>(
+    await epubFile({
+      chapters: [
+        { title: "One", paragraphs: story() },
+        { title: "Illustrations", paragraphs: [] },
+        { title: "Two", paragraphs: story() },
+      ],
+    }),
+  );
+  const old = { verdict: "skip", kind: "hiatus", reason: "kept", evidence: ["kept"] };
+  // as an older import left it: no note on the image page, a note of its own on the first chapter
+  api.db.update(chapters).set({ note: null }).where(eq(chapters.bookId, body.book.id)).run();
+  api.db.update(chapters).set({ note: old }).where(eq(chapters.title, "One")).run();
+
+  expect(recheckNotices(api.db)).toBe(1);
+  const notes = api.db.select({ note: chapters.note }).from(chapters).orderBy(chapters.id).all();
+  expect(notes.map((r) => (r.note as ChapterNote | null)?.kind)).toEqual([
+    "hiatus",
+    "empty",
+    undefined,
+  ]);
+  expect(recheckNotices(api.db)).toBe(0);
 });

@@ -19,11 +19,18 @@ import SpeedPicker from "@/components/SpeedPicker.vue";
 import VoicePicker from "@/components/VoicePicker.vue";
 import SpoilerText from "@/components/SpoilerText.vue";
 import ReadFailure from "@/components/ReadFailure.vue";
-import { Cloud as ThoughtIcon, Plus as AddIcon, VenetianMask as MaskIcon } from "@lucide/vue";
+import {
+  BookOpenText as WikiIcon,
+  Cloud as ThoughtIcon,
+  Plus as AddIcon,
+  VenetianMask as MaskIcon,
+} from "@lucide/vue";
 import CastRecord from "@/views/cast/CastRecord.vue";
 import CastSelectionBar from "@/views/cast/CastSelectionBar.vue";
 import BookDefaults from "@/views/cast/BookDefaults.vue";
 import VoiceGaps from "@/views/cast/VoiceGaps.vue";
+import WikiFillDialog from "@/views/cast/WikiFillDialog.vue";
+import type { WikiScope } from "@/stores/cast";
 import EffectsSheet from "@/views/cast/effects/EffectsSheet.vue";
 import ReapplyBar from "@/views/cast/effects/ReapplyBar.vue";
 import type { EffectSubject } from "@/views/cast/effects/subject";
@@ -254,6 +261,13 @@ async function commitAdd() {
   // a hand-added speaker has no lines, so "most lines" files them at the bottom
   await reveal(name);
 }
+const wikiOpen = ref(false);
+const wikiStart = ref<WikiScope>("main");
+function fillFromWiki(scope: WikiScope) {
+  wikiStart.value = scope;
+  wikiOpen.value = true;
+}
+
 const duplicate = computed(
   () => !!newName.value.trim() && cast.value.some((c) => c.name === newName.value.trim()),
 );
@@ -299,6 +313,9 @@ const duplicate = computed(
         </form>
         <button v-else class="btn-ghost btn-xs" @click="startAdd">
           <AddIcon class="icon-sm" /> Add speaker
+        </button>
+        <button class="btn-ghost btn-xs" @click="fillFromWiki('main')">
+          <WikiIcon class="icon-sm" /> Fill from wiki…
         </button>
         <input v-model="q" class="input w-48" placeholder="Find a speaker…" />
         <label class="flex items-center gap-1.5 text-xs"
@@ -673,6 +690,13 @@ const duplicate = computed(
       />
     </div>
     <EffectsSheet v-model:open="sheetOpen" :book-id="bookId" :subject="sheetFor" />
-    <CastSelectionBar v-if="sel.size" :book-id="bookId" :selected="sel" @clear="sel = new Set()" />
+    <CastSelectionBar
+      v-if="sel.size"
+      :book-id="bookId"
+      :selected="sel"
+      @clear="sel = new Set()"
+      @wiki="fillFromWiki('selected')"
+    />
+    <WikiFillDialog v-model:open="wikiOpen" :book-id="bookId" :selected="sel" :start="wikiStart" />
   </div>
 </template>

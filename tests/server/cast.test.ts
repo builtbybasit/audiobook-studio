@@ -241,6 +241,7 @@ describe("renaming and merging", () => {
         voice: "studio/ash",
         description: "A clerk.",
         voiceType: { pitch: "high", texture: "husky" },
+        wiki: { url: "https://w.test/wiki/Tobin", at: 1 },
       }),
     );
     await api.request(
@@ -251,7 +252,11 @@ describe("renaming and merging", () => {
     expect(names(body.characters)).toEqual(["Narrator", "Mara"]);
     expect(body.characters[1].aliases).toEqual(["Tobin"]);
     // what Mara left blank, Tobin fills
-    expect(body.characters[1]).toMatchObject({ voice: "studio/ash", description: "A clerk." });
+    expect(body.characters[1]).toMatchObject({
+      voice: "studio/ash",
+      description: "A clerk.",
+      wiki: { url: "https://w.test/wiki/Tobin", at: 1 },
+    });
     expect(body.characters[1].voiceType).toEqual({ pitch: "low", texture: "husky" });
     expect(speakersOf(readScript(api.db, id, 1))).toEqual(["Narrator", "Mara"]);
     expect(body.speakers.map((s) => [s.name, s.moved.length])).toEqual([["Tobin", 2]]);

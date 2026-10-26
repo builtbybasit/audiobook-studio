@@ -200,6 +200,7 @@ function speakerOf(
   if (c.masked) out.masked = true;
   if (c.age) out.age = c.age;
   if (c.voiceType) out.voiceType = c.voiceType;
+  if (c.wiki) out.wiki = c.wiki;
   if (c.speed != null) out.speed = c.speed;
   const voice = voiceHint(c.voice, endpoints);
   if (voice) out.voice = voice;

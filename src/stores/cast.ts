@@ -25,6 +25,7 @@ import {
   type CharacterSlot,
   characterSlot,
   characterVoiceFor,
+  lineBand,
   NARRATOR,
   newSpeaker,
   personaOwner,
@@ -39,6 +40,7 @@ import { clone } from "@/lib/utils";
 import { type Bands, FIT_MIN, fitPlan, type LibraryVoice, profiled } from "@/lib/voiceMatch";
 import { voiceBands } from "@/lib/voiceProfile";
 import {
+  ApiError,
   type Cast,
   type ChapterLines,
   type LibraryService,
@@ -60,8 +62,10 @@ import type {
   RoutingIssue,
   Segment,
   SpeakerEffectUse,
+  SpeakerWikiFill,
   ThoughtChoice,
   VoiceRef,
+  VoiceType,
 } from "@/types";
 import { defineStore } from "pinia";
 import { useEndpointsStore } from "@/stores/endpoints";
@@ -152,6 +156,35 @@ function unmerged(now: Character, was: Character): Character {
   if (was.gender === "?") out.gender = "?";
   if (!was.age) delete out.age;
   if (!was.voiceType) delete out.voiceType;
+  return out;
+}
+
+/** Which speakers "Fill from wiki" asks about. */
+export type WikiScope = "main" | "selected" | "many";
+/** The fields a page may fill. */
+export type WikiPatch = Partial<Pick<Character, "gender" | "age" | "voiceType">>;
+/** Why a speaker is never looked up on a wiki; none when they can be. */
+export const wikiSkip = (c: Character): string | undefined =>
+  c.name === NARRATOR
+    ? "The Narrator has no wiki page"
+    : c.personaOf || c.masked
+      ? "Skipped for personas and masked speakers: their page could give away who they are"
+      : undefined;
+/**
+ * What a page's tags would change: only the speaker's blanks (gender only while "?"), so their
+ * own edits and the cast notes win. Empty when nothing is new.
+ */
+export function wikiPatch(c: Character, fill: SpeakerWikiFill["fill"]): WikiPatch {
+  const out: WikiPatch = {};
+  if (c.gender === "?" && fill.gender && fill.gender !== "?") out.gender = fill.gender;
+  if (!c.age && fill.age) out.age = fill.age;
+  const had = c.voiceType ?? {};
+  const vt: VoiceType = {};
+  if (!had.pitch && fill.voiceType?.pitch) vt.pitch = fill.voiceType.pitch;
+  if (!had.texture && fill.voiceType?.texture) vt.texture = fill.voiceType.texture;
+  if (!had.delivery?.length && fill.voiceType?.delivery?.length)
+    vt.delivery = fill.voiceType.delivery.slice(0, 3);
+  if (Object.keys(vt).length) out.voiceType = { ...had, ...vt };
   return out;
 }
 
@@ -347,6 +380,31 @@ export const useCastStore = defineStore("cast", {
     /** Why the scripting model can't be asked for voices, or none when it can. */
     aiBlocker(): string | undefined {
       return useScriptingStore().runBlockers[0];
+    },
+    /**
+     * Who a "Fill from wiki" of `scope` asks about, most lines first, and how many it skips
+     * (`wikiSkip`; the Narrator is never counted).
+     */
+    wikiScope(): (
+      bookId: string,
+      scope: WikiScope,
+      selected?: ReadonlySet<string>,
+    ) => { names: string[]; skipped: number } {
+      return (bookId, scope, selected) => {
+        const stats = this.castStats(bookId);
+        const lines = (c: Character) => stats[c.name]?.lines ?? 0;
+        const pool = (this.characters[bookId] ?? []).filter(
+          (c) =>
+            c.name !== NARRATOR &&
+            (scope === "main"
+              ? c.major
+              : scope === "selected"
+                ? !!selected?.has(c.name)
+                : lineBand(lines(c)) === "many"),
+        );
+        const asked = pool.filter((c) => !wikiSkip(c)).sort((a, b) => lines(b) - lines(a));
+        return { names: asked.map((c) => c.name), skipped: pool.length - asked.length };
+      };
     },
     /** The server's counts, once a page has read them (`useSpeakerCounts`); none before. */
     castStats(): (bookId: string) => Record<string, CastStat> {
@@ -1025,18 +1083,39 @@ export const useCastStore = defineStore("cast", {
       const { name: _name, aliases: _aliases, ...rest } = patch;
       // a link set or removed by hand drops the model's finding, as on the server
       const relinked = "personaOf" in rest && rest.personaOf !== c.personaOf;
-      const reach = (this.characters[bookId] ?? []).filter((x) => x === c || x.personaOf === name);
-      const heard = () => reach.map((x) => this.effectiveVoice(bookId, x.name).ref);
-      const was = heard();
-      Object.assign(c, rest);
-      if (relinked) delete c.masked;
-      const now = heard();
-      const moved =
-        "voice" in rest
-          ? []
-          : reach.filter((x, i) => !x.voice && now[i] !== was[i]).map((x) => x.name);
+      const revoiced = this._revoiced(bookId, new Set([name]), () => {
+        Object.assign(c, rest);
+        if (relinked) delete c.masked;
+      });
+      const moved = "voice" in rest ? [] : revoiced;
       const saved = await this._push(bookId, name);
       if (saved && moved.length) await useExistingLinesStore().askVoice(bookId, moved);
+    },
+    /**
+     * Run `change` and return the voiceless speakers, of `names` and their personas, whose lines it
+     * moved to another voice (gender, age or a persona link picks the Character voice slot).
+     */
+    _revoiced(bookId: string, names: ReadonlySet<string>, change: () => void): string[] {
+      const reach = (this.characters[bookId] ?? []).filter(
+        (x) => names.has(x.name) || (x.personaOf != null && names.has(x.personaOf)),
+      );
+      const heard = () => reach.map((x) => this.effectiveVoice(bookId, x.name).ref);
+      const was = heard();
+      change();
+      const now = heard();
+      return reach.filter((x, i) => !x.voice && now[i] !== was[i]).map((x) => x.name);
+    },
+    /** Patch several speakers with one request; lines a patch moved to another voice are asked about. */
+    async _patchMany(bookId: string, patches: Map<string, Partial<Character>>): Promise<boolean> {
+      const moved = this._revoiced(bookId, new Set(patches.keys()), () => {
+        for (const c of this.characters[bookId] ?? []) {
+          const p = patches.get(c.name);
+          if (p) Object.assign(c, p);
+        }
+      });
+      const ok = await this._putMany(bookId, [...patches.keys()]);
+      if (ok && moved.length) await useExistingLinesStore().askVoice(bookId, moved);
+      return ok;
     },
     /** Take the model's "masked" finding off a speaker; their link stays. */
     async unmask(bookId: string, name: string): Promise<void> {
@@ -1061,6 +1140,12 @@ export const useCastStore = defineStore("cast", {
      * another voice (`existingLines`). False when refused.
      */
     async _pushVoices(bookId: string, names: string[], title?: string): Promise<boolean> {
+      const ok = await this._putMany(bookId, names);
+      if (ok) await useExistingLinesStore().askVoice(bookId, names, title);
+      return ok;
+    },
+    /** Write these speakers as they stand with one request; false when refused. */
+    async _putMany(bookId: string, names: string[]): Promise<boolean> {
       const ok = await this._write(bookId, "characters", "save these speakers", async () => {
         const list = (this.characters[bookId] ?? []).filter((c) => names.includes(c.name));
         if (list.length)
@@ -1072,7 +1157,6 @@ export const useCastStore = defineStore("cast", {
           });
         return true;
       });
-      if (ok) await useExistingLinesStore().askVoice(bookId, names, title);
       return ok ?? false;
     },
     /**
@@ -1339,6 +1423,81 @@ export const useCastStore = defineStore("cast", {
       } catch {
         return false;
       }
+    },
+    /**
+     * Ask the wiki about each speaker in turn, one request each so a Stop (`signal`) is quick;
+     * `onRow` hears each answer. Resolves with the answers so far: all, or up to a Stop or a failed
+     * request (said). Changes nothing: `applyWikiFills` does.
+     */
+    async wikiFills(
+      bookId: string,
+      names: string[],
+      opts: {
+        url?: string;
+        signal?: AbortSignal;
+        onRow?: (row: SpeakerWikiFill, done: number) => void;
+      } = {},
+    ): Promise<SpeakerWikiFill[]> {
+      const { url, signal, onRow } = opts;
+      const profile = useScriptingStore().runProfile;
+      if (!profile || this.aiBlocker) {
+        useUiStore().toast("Can’t read the wiki", { kind: "error", description: this.aiBlocker });
+        return [];
+      }
+      const rows: SpeakerWikiFill[] = [];
+      const add = (row: SpeakerWikiFill) => {
+        rows.push(row);
+        onRow?.(row, rows.length);
+      };
+      for (const name of names) {
+        if (signal?.aborted) break;
+        try {
+          const ask = { name, profile: profile.id, ...(url ? { url } : {}) };
+          add(await this._service().speakerWiki(bookId, ask, signal));
+        } catch (cause) {
+          if (signal?.aborted) break;
+          // renamed or removed meanwhile: that row's note; anything else would fail every row
+          if (cause instanceof ApiError && cause.status === 404) {
+            add({ name, url: null, fill: {}, notes: [`${name} is no longer in the cast`] });
+            continue;
+          }
+          toastFailure("read the wiki", cause);
+          break;
+        }
+      }
+      return rows;
+    },
+    /**
+     * Fill the speakers' blanks from their pages (`wikiPatch`) with one request, noting the page,
+     * with Undo. A voiceless speaker's new gender or age can move their voice: that is asked about.
+     * Returns how many speakers got a field.
+     */
+    applyWikiFills(bookId: string, rows: SpeakerWikiFill[]): number {
+      const at = Date.now();
+      const patches = new Map<string, Partial<Character>>();
+      const undo = new Map<string, Partial<Character>>();
+      for (const row of rows) {
+        const c = this.byName[bookId]?.get(row.name);
+        if (!c || wikiSkip(c)) continue;
+        const patch: Partial<Character> = wikiPatch(c, row.fill);
+        if (!Object.keys(patch).length) continue;
+        if (row.url) patch.wiki = { url: row.url, at };
+        patches.set(c.name, patch);
+        // only the fields filled go back: an edit made since to another stays
+        const was = clone(c) as Partial<Character>;
+        undo.set(
+          c.name,
+          Object.fromEntries(Object.keys(patch).map((k) => [k, was[k as keyof Character]])),
+        );
+      }
+      const n = patches.size;
+      if (!n) return 0;
+      void this._patchMany(bookId, patches);
+      useUiStore().toast(`Filled ${n} speaker${n === 1 ? "" : "s"} from the wiki`, {
+        kind: "success",
+        undo: () => void this._patchMany(bookId, undo),
+      });
+      return n;
     },
     /**
      * A plan with its main speakers' rows (up to 30, most lines first) swapped for the model's first

@@ -1,13 +1,15 @@
 <script setup lang="ts">
-// Merge or remove the ticked speakers. Neither asks first: the toast's Undo puts back what moved.
+// Merge, remove or fill from the wiki the ticked speakers. Merge and remove don't ask first: the
+// toast's Undo puts back what moved.
 import { computed } from "vue";
 
 import { useCast } from "@/queries";
 import { useCastStore } from "@/stores/cast";
 import { UiCombobox } from "@/ui";
+import { BookOpenText as WikiIcon } from "@lucide/vue";
 
 const props = defineProps<{ bookId: string; selected: ReadonlySet<string> }>();
-const emit = defineEmits<{ clear: [] }>();
+const emit = defineEmits<{ clear: []; wiki: [] }>();
 
 const castStore = useCastStore();
 const { characters: cast } = useCast(props.bookId);
@@ -51,6 +53,13 @@ function remove() {
       class="w-56"
       @pick="mergeInto"
     />
+    <button
+      class="btn-ghost btn-xs"
+      data-tip="Fill their blank age, gender and voice type from the book’s wiki"
+      @click="emit('wiki')"
+    >
+      <WikiIcon class="icon-sm" /> Fill from wiki
+    </button>
     <button
       class="btn-ghost btn-xs text-red-600 dark:text-red-400"
       data-tip="Their lines go to the Narrator"

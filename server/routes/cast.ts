@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import type { Env as PinoEnv } from "hono-pino";
 import * as v from "valibot";
 
+import type { FetchLike } from "@/services/http";
 import type {
   Cast,
   LexiconSaved,
@@ -10,12 +11,14 @@ import type {
   MovedSpeakers,
   NarrationQueued,
   OldVoice,
+  SpeakerWikiFill,
   VoiceSuggestions,
 } from "@/types";
 import type { Db } from "~/db/client";
 import { oldVoice, revoice } from "~/cast/oldVoice";
 import * as ops from "~/cast/ops";
 import { suggestVoicesFor } from "~/cast/suggest";
+import { fillFromWiki } from "~/cast/wiki";
 import type { Runner } from "~/jobs/runner";
 import { BookParam } from "~/lib/http";
 import { CharacterSchema, ChapterLinesSchema, LexEntrySchema } from "~/lib/schemas";
@@ -51,6 +54,11 @@ const SuggestVoices = v.object({
   profile: v.pipe(v.string(), v.nonEmpty()),
   speakers: v.array(Name),
 });
+const WikiFill = v.object({
+  name: Name,
+  profile: v.pipe(v.string(), v.nonEmpty()),
+  url: v.optional(v.pipe(v.string(), v.trim(), v.url(), v.maxLength(500))),
+});
 const Lexicon = v.object({
   entries: v.array(LexEntrySchema),
   /** the lines an earlier change staled, which an Undo asks to have back */
@@ -61,6 +69,8 @@ export function castRoutes(
   db: Db,
   runner: Runner,
   scripting: ScriptingProvider = endpointScriptingProvider(),
+  /** reads wiki pages; the network by default */
+  fetch?: FetchLike,
 ): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
 
@@ -86,6 +96,24 @@ export function castRoutes(
           c.req.valid("json"),
           c.req.raw.signal,
         )) satisfies VoiceSuggestions,
+      ),
+  );
+
+  /** One speaker's age, gender and voice type from their wiki page, as tags; nothing is saved. */
+  app.post(
+    "/:id/characters/wiki",
+    validate("param", BookParam),
+    validate("json", WikiFill),
+    async (c) =>
+      c.json(
+        (await fillFromWiki(
+          db,
+          scripting,
+          c.req.valid("param").id,
+          c.req.valid("json"),
+          c.req.raw.signal,
+          fetch,
+        )) satisfies SpeakerWikiFill,
       ),
   );
 

@@ -86,6 +86,8 @@ export interface ScriptFileSpeaker {
   masked?: boolean;
   age?: Age;
   voiceType?: VoiceType;
+  /** `Character.wiki` */
+  wiki?: { url: string; at: number };
   /** `voices/<slug>/`: the zip folder with this speaker's recordings and `samples.json` */
   samples?: string;
   /** the effect they wear, by name */
@@ -286,6 +288,7 @@ export interface ScriptImportPlan {
       age?: Age;
       /** only the fields the book's speaker leaves blank */
       voiceType?: VoiceType;
+      wiki?: { url: string; at: number };
       masked?: true;
     }[];
   };

@@ -36,6 +36,7 @@ import type {
   Segment,
   SegmentFlag,
   SpeakerSamples,
+  SpeakerWikiFill,
   StoredSamples,
   ThoughtChoice,
   VersionOrigin,
@@ -205,6 +206,12 @@ export interface LibraryService {
   cast(bookId: string): Promise<Cast>;
   /** The scripting model's voice picks for up to 30 speakers, asked of `profile`. */
   voiceSuggestions(bookId: string, profile: string, speakers: string[]): Promise<VoiceSuggestions>;
+  /** What one speaker's wiki page says (tags only), asked of `profile`; `url` or the book's wiki. */
+  speakerWiki(
+    bookId: string,
+    ask: { name: string; profile: string; url?: string },
+    signal?: AbortSignal,
+  ): Promise<SpeakerWikiFill>;
   /** Each speaker's spoken lines across the book; a speaker with none is absent. */
   speakerCounts(bookId: string): Promise<Record<string, CastStat>>;
   /** New or replaced. Returns the cast as it now stands. */
@@ -473,6 +480,19 @@ export class HttpLibraryService implements LibraryService {
     return this.http.post<VoiceSuggestions>(`/books/${seg(bookId)}/voice-suggestions`, {
       profile,
       speakers,
+    });
+  }
+
+  speakerWiki(
+    bookId: string,
+    ask: { name: string; profile: string; url?: string },
+    signal?: AbortSignal,
+  ): Promise<SpeakerWikiFill> {
+    return this.http.send<SpeakerWikiFill>(`/books/${seg(bookId)}/characters/wiki`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(ask),
+      signal,
     });
   }
 

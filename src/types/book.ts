@@ -1,6 +1,6 @@
 // The library: a book, its volumes, chapters and cast, and the per-book settings (pronunciation
 // dictionary, pacing) that change how it sounds without changing a word of it.
-import type { Age, Gender, VoiceRef } from "@/types/common";
+import type { Age, Gender, VoiceRef, VoiceType } from "@/types/common";
 import type { ThoughtChoice } from "@/types/effect";
 import type { BookPrompt } from "@/types/scripting";
 
@@ -232,6 +232,8 @@ export interface Character {
   gender: Gender;
   /** absent = unknown */
   age?: Age;
+  /** how they sound, from the cast notes or by hand; matched against voice profiles */
+  voiceType?: VoiceType;
   description: string;
   voice: VoiceRef | null;
   /** free-text delivery note applied to every line */

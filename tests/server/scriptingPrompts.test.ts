@@ -411,6 +411,7 @@ describe("what a model says beside its lines", () => {
               name: "Tobiah",
               gender: "m",
               age: "elderly",
+              voiceType: { pitch: "low", delivery: ["weary"] },
               aliases: ["the old man", "m"],
               description: "An innkeeper.",
             },
@@ -418,6 +419,7 @@ describe("what a model says beside its lines", () => {
               name: "Mara",
               gender: "m",
               age: "young adult",
+              voiceType: { pitch: "high", texture: "clear", delivery: ["cold"] },
               aliases: ["the clerk"],
               description: "Someone else.",
             },
@@ -446,6 +448,7 @@ describe("what a model says beside its lines", () => {
         aliases: ["M"],
         gender: "f",
         age: "teen",
+        voiceType: { pitch: "low" },
         description: "Keeps the ledger.",
         color: "#c33",
       })
@@ -501,6 +504,7 @@ describe("what a model says beside its lines", () => {
     expect(named("Tobiah")).toMatchObject({
       gender: "m",
       age: "elderly",
+      voiceType: { pitch: "low", delivery: ["weary"] },
       // "m" is Mara's already, whatever its case
       aliases: ["the old man"],
       description: "An innkeeper.",
@@ -508,6 +512,8 @@ describe("what a model says beside its lines", () => {
     expect(named("Mara")).toMatchObject({
       gender: "f",
       age: "teen",
+      // the pitch set by hand stays; only the blank fields fill
+      voiceType: { pitch: "low", texture: "clear", delivery: ["cold"] },
       aliases: ["M", "the clerk"],
       description: "Keeps the ledger.",
     });

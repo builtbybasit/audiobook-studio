@@ -184,6 +184,28 @@ export function fakeScriptingProvider(options: FakeScriptingOptions = {}): Scrip
       });
       return { lines: out };
     },
+    async ask({ system, user, signal, sent, target, simulated }) {
+      const startedAt = Date.now();
+      if (target?.simulation?.latencyMs) await sleep(target.simulation.latencyMs, signal);
+      if (options.failWith) throw new Error(options.failWith);
+      sent?.({
+        startedAt,
+        finishedAt: Date.now(),
+        attempts: 1,
+        rateLimited: false,
+        status: "done",
+        simulated: true,
+        usage: normalizeUsage(
+          {
+            inputTokens: tokensIn(system + user),
+            outputTokens: tokensIn(JSON.stringify(simulated)),
+            cachedInput: null,
+          },
+          "internal",
+        ),
+      });
+      return structuredClone(simulated);
+    },
     async probe() {
       return { ok: true, message: "Simulated: answered here, without a request", ms: 0 };
     },

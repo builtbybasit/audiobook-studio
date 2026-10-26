@@ -79,11 +79,28 @@ export interface ScriptAnswer {
   patched?: number;
 }
 
+/** A one-off question with a small JSON answer, outside chapter scripting (voice profiles, picks). */
+export interface AskInput {
+  system: string;
+  user: string;
+  /** strict JSON schema of the answer: every property required, optional ones nullable */
+  schema: Record<string, unknown>;
+  /** null when no profile was named; a real provider then refuses */
+  target: ScriptTarget | null;
+  signal: AbortSignal;
+  /** called once for every request that reached the wire, as for `script` */
+  sent?: (request: SentScript) => void;
+  /** what a simulated profile answers, so the demo and tests get a well-formed reply */
+  simulated: unknown;
+}
+
 export interface ScriptingProvider {
   readonly name: string;
   /** whether the profile's own model does the work, so the history names that model */
   readonly callsProfile?: boolean;
   script(input: ScriptInput): Promise<ScriptAnswer>;
+  /** the parsed JSON, unchecked: the caller validates its own shape; throws `ProviderError` */
+  ask?(input: AskInput): Promise<unknown>;
   /** the Test button; `prompt` absent means the built-in one, filled with `sampleVars` */
   probe?(
     target: ScriptTarget,

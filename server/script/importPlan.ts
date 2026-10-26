@@ -31,7 +31,7 @@ import type {
 import { isFishAudio } from "@/lib/endpointShapes";
 import { wordsOf } from "@/lib/gaps";
 import { fromFileLine, NEW_EFFECT } from "@/lib/scriptFile";
-import { readCast, readLexicon } from "~/db/cast";
+import { readCast, readLexicon, voiceTypeGaps } from "~/db/cast";
 import type { Db } from "~/db/client";
 import { listEffects } from "~/db/effects";
 import { readEndpoints } from "~/db/endpoints";
@@ -396,10 +396,12 @@ function castDiff(
     const aliases = [...new Set(speaker.aliases)].filter((a) => !known.has(a));
     if (aliases.length) fill.aliases = aliases;
     if (!have.age && speaker.age) fill.age = speaker.age;
+    const voiceType = voiceTypeGaps(have.voiceType, speaker.voiceType);
+    if (voiceType) fill.voiceType = voiceType;
     // only over the same link: one made by hand is the reader's, not a spoiler
     if (!have.masked && speaker.masked && (have.personaOf ?? "") === (speaker.personaOf ?? ""))
       fill.masked = true;
-    if (fill.aliases || fill.age || fill.masked) out.fill.push(fill);
+    if (fill.aliases || fill.age || fill.voiceType || fill.masked) out.fill.push(fill);
   }
   return out;
 }

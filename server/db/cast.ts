@@ -16,7 +16,15 @@ import {
   sql,
 } from "drizzle-orm";
 
-import type { CastStat, Character, CharacterVoice, LexEntry, SegmentType, VoiceRef } from "@/types";
+import type {
+  CastStat,
+  Character,
+  CharacterVoice,
+  LexEntry,
+  SegmentType,
+  VoiceRef,
+  VoiceType,
+} from "@/types";
 import {
   NARRATOR,
   chapterCast,
@@ -224,6 +232,27 @@ export function ensureSpeakers(db: Db | Tx, bookId: string, names: Iterable<stri
   return added;
 }
 
+/** The fields of `from` that `have` leaves blank; delivery counts as one field, never unioned. */
+export function voiceTypeGaps(
+  have: VoiceType | undefined,
+  from: VoiceType | undefined,
+): VoiceType | undefined {
+  const out: VoiceType = {};
+  if (!have?.pitch && from?.pitch) out.pitch = from.pitch;
+  if (!have?.texture && from?.texture) out.texture = from.texture;
+  if (!have?.delivery?.length && from?.delivery?.length) out.delivery = [...from.delivery];
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** `have` with its blanks filled from `from`. */
+export function withVoiceType(
+  have: VoiceType | undefined,
+  from: VoiceType | undefined,
+): VoiceType | undefined {
+  const gaps = voiceTypeGaps(have, from);
+  return gaps ? { ...have, ...gaps } : have;
+}
+
 /**
  * Fills blanks from the model's cast notes and returns whose entries changed. Never overwrites;
  * aliases are only added, and one another speaker already uses stays theirs. Notes on speakers not
@@ -251,6 +280,10 @@ export function learnCast(
     }
     if (!c.age && note.age) {
       c.age = note.age;
+      touched = true;
+    }
+    if (voiceTypeGaps(c.voiceType, note.voiceType)) {
+      c.voiceType = withVoiceType(c.voiceType, note.voiceType);
       touched = true;
     }
     if (!c.description.trim() && note.description?.trim()) {

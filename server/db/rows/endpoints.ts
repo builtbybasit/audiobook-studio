@@ -43,6 +43,7 @@ export const toVoice = (row: VoiceRow): Voice => ({
   gender: row.gender,
   label: row.label,
   ...(row.speed != null ? { speed: row.speed } : {}),
+  ...(row.profile != null ? { profile: row.profile } : {}),
 });
 
 export function toRateWindow(row: WindowRow): RateWindow {
@@ -364,6 +365,7 @@ export const voiceValues = (
   label: v.label,
   gender: v.gender,
   speed: v.speed ?? null,
+  profile: v.profile ?? null,
   position,
 });
 

@@ -11,6 +11,7 @@ import type {
   EndpointProbe,
   KeptVoiceSamples,
   VoiceListPage,
+  VoiceProfileFill,
   VoiceSpeedLines,
   VoiceSpeedRedone,
 } from "@/types";
@@ -39,7 +40,10 @@ import type { Providers } from "~/providers/target";
 import { OutsideServerError, type LocalServers } from "~/servers/localServers";
 import type { VoiceFiles } from "~/voices/files";
 import * as clone from "~/voices/clone";
+import type { VoiceMeter } from "~/voices/measure";
 import * as samples from "~/voices/ops";
+import { fillProfile } from "~/voices/profile";
+import type { FetchLike } from "@/services/http";
 
 const Config = v.object({
   endpoints: v.array(EndpointSchema),
@@ -74,6 +78,12 @@ const VoiceParam = v.object({
   voice: v.pipe(v.string(), v.nonEmpty(), v.maxLength(200)),
 });
 const SampleParam = v.object({ ...VoiceParam.entries, file: v.string() });
+
+/** absent `profile` = no AI step; an empty `url` is none */
+const ProfileFill = v.object({
+  url: v.optional(v.pipe(v.string(), v.trim(), v.maxLength(2000))),
+  profile: v.optional(v.pipe(v.string(), v.trim(), v.maxLength(200))),
+});
 
 type Form = FormData;
 
@@ -122,6 +132,8 @@ export function endpointRoutes(
   effects?: EffectRunner,
   /** none in the demo: nothing listed, nothing started */
   servers?: LocalServers,
+  /** a voice profile's measuring (none without uv) and page reading */
+  profiles: { meter?: VoiceMeter; fetch?: FetchLike } = {},
 ): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
 
@@ -327,6 +339,30 @@ export function endpointRoutes(
     c.var.logger.info({ id, voice, as: made.voice.id }, "voice remade");
     return c.json(made.voice satisfies ClonedVoice, 201);
   });
+
+  /** A fill for the page to merge (`mergeProfile`); nothing is saved here. */
+  app.post(
+    "/:id/voices/:voice/profile",
+    validate("param", VoiceParam),
+    validate("json", ProfileFill),
+    async (c) => {
+      const { id, voice } = c.req.valid("param");
+      const { url, profile } = c.req.valid("json");
+      const fill = await fillProfile(
+        db,
+        { scripting: providers.scripting, files: voiceFiles, ...profiles },
+        id,
+        voice,
+        { url: url || undefined, profile: profile || undefined },
+        c.req.raw.signal,
+      );
+      c.var.logger.info(
+        { id, voice, filled: Object.keys(fill.profile), notes: fill.notes.length },
+        "voice profile filled",
+      );
+      return c.json(fill satisfies VoiceProfileFill);
+    },
+  );
 
   /** On the endpoint's server, for good; the page then drops it from the endpoint. */
   app.delete("/:id/voices/:voice", validate("param", VoiceParam), async (c) => {

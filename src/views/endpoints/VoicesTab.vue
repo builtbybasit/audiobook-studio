@@ -12,6 +12,7 @@ import { computed, reactive, ref, watch } from "vue";
 import { keyInPlace } from "@/services/endpointSettings";
 import {
   Archive as KeptIcon,
+  AudioWaveform as MeasureIcon,
   AudioLines as SourceIcon,
   LoaderCircle as BusyIcon,
   Pause as PauseIcon,
@@ -28,6 +29,7 @@ import { plural } from "@/lib/contents";
 import { isFishAudio } from "@/lib/endpoints";
 import { cloningOf, speechProviderOf } from "@/lib/providers";
 import { MAX_SAMPLE_TEXT, SAMPLE_LINES } from "@/lib/endpointShapes";
+import { measuredWords, ROUGH_BELOW_SEC } from "@/lib/voiceProfile";
 import {
   pickProblem,
   requestOf,
@@ -38,8 +40,9 @@ import CloneVoicePanel from "@/views/endpoints/CloneVoicePanel.vue";
 import FishVoiceSearch from "@/views/endpoints/FishVoiceSearch.vue";
 import { GENDER_ICON, GENDERS } from "@/views/endpoints/genders";
 import SamplePicker from "@/views/endpoints/SamplePicker.vue";
+import VoiceProfileSheet from "@/views/endpoints/VoiceProfileSheet.vue";
 import SpeedPicker from "@/components/SpeedPicker.vue";
-import type { Endpoint, Gender, KeptVoiceSamples, Voice } from "@/types";
+import type { Endpoint, Gender, KeptVoiceSamples, Voice, VoiceProfileFill } from "@/types";
 
 const props = defineProps<{ endpoint: Endpoint }>();
 const castStore = useCastStore();
@@ -248,6 +251,91 @@ async function copyTranscript(k: KeptVoiceSamples) {
     uiStore.toast("Could not copy the transcript", { kind: "error" });
   }
 }
+// ---------- profiles ----------
+// One sheet for the tab; a row shows only a line of words, so a long list stays cheap.
+const sheetOpen = ref(false);
+const sheetFor = ref<string | null>(null);
+function openProfile(id: string) {
+  sheetFor.value = id;
+  sheetOpen.value = true;
+}
+/** "young adult · ~mid · husky · calm, sly"; "~" marks words measured from too little speech. */
+function profileLine(v: Voice): { text: string; rough: boolean } | null {
+  const p = v.profile;
+  if (!p) return null;
+  const w = p.measured && measuredWords(p.measured, v.gender, endpointsStore.voiceBands);
+  const mark = w && w.rough ? "~" : "";
+  const parts = [
+    p.age,
+    w && w.pitch && mark + w.pitch,
+    w && w.texture && mark + w.texture,
+    p.delivery?.join(", "),
+  ].filter(Boolean);
+  return { text: parts.join(" · ") || "profile", rough: !!w && w.rough };
+}
+/** Each shown row's line and tip, once per change rather than per render. */
+const profileLines = computed(() => {
+  const out: Record<string, { text: string; tip: string }> = {};
+  for (const v of shown.value) {
+    const line = profileLine(v);
+    if (line)
+      out[v.id] = {
+        text: line.text,
+        tip: [
+          v.profile?.summary,
+          line.rough ? `~ rough: under ${ROUGH_BELOW_SEC} s of speech measured` : "",
+          "Open the profile",
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      };
+  }
+  return out;
+});
+
+// Free and one at a time, so a library cloned before profiles gets measured in one go.
+const unmeasured = computed(() =>
+  props.endpoint.voices.filter((v) => kept.value[v.id] && !v.profile?.measured),
+);
+const measuring = reactive({ on: false, done: 0, total: 0, stop: false });
+async function measureAll() {
+  if (measuring.on) return void (measuring.stop = true);
+  const ep = props.endpoint;
+  const list = unmeasured.value.map((v) => ({ id: v.id, label: v.label }));
+  Object.assign(measuring, { on: true, done: 0, total: list.length, stop: false });
+  let measured = 0;
+  let why = "";
+  const work = (async () => {
+    for (const v of list) {
+      if (measuring.stop) break;
+      const fill: VoiceProfileFill = await endpointsStore
+        .fillVoiceProfile(ep.id, v.id, { ai: false })
+        .catch((e: unknown) => ({
+          profile: {},
+          notes: [e instanceof Error ? e.message : String(e)],
+        }));
+      measuring.done++;
+      if (fill.profile.measured) measured++;
+      else why ||= `${v.label}: ${fill.notes[0] ?? "not measured"}`;
+      // the first failing with none measured is most likely the machine (no uv), not the voice
+      if (!measured && why) break;
+    }
+    return measured;
+  })();
+  try {
+    await uiStore.toastLoading(work, {
+      loading: `Measuring ${plural(list.length, "voice")}…`,
+      success: (n) =>
+        n === list.length
+          ? `Measured ${plural(n, "voice")}`
+          : `Measured ${n} of ${plural(list.length, "voice")}`,
+    });
+    if (why) uiStore.toast("Some voices were not measured", { kind: "warn", description: why });
+  } finally {
+    measuring.on = false;
+  }
+}
+
 const sampleTitle = computed(() =>
   needsKeyFirst.value
     ? "Save a key for this endpoint first: a sample is a real request"
@@ -383,7 +471,7 @@ const sampleTitle = computed(() =>
         @update:model-value="(v) => (endpoint.makesVoices = v)"
       />
     </section>
-    <CloneVoicePanel :endpoint="endpoint" @cloned="loadKept" />
+    <CloneVoicePanel :endpoint="endpoint" @cloned="loadKept" @profile="openProfile" />
 
     <section class="card p-3">
       <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -395,6 +483,26 @@ const sampleTitle = computed(() =>
           />
         </h3>
         <div class="flex flex-wrap items-center gap-2">
+          <button
+            v-if="unmeasured.length || measuring.on"
+            class="btn-ghost btn-xs"
+            :data-tip="
+              measuring.on
+                ? 'Stop after the voice being measured'
+                : 'Free · pitch, clarity and intonation from each voice’s kept samples, one at a time'
+            "
+            @click="measureAll"
+          >
+            <BusyIcon v-if="measuring.on" class="icon-sm animate-spin" />
+            <MeasureIcon v-else class="icon-sm" />
+            {{
+              measuring.on
+                ? measuring.stop
+                  ? "Stopping…"
+                  : `Stop · ${measuring.done} of ${measuring.total}`
+                : `Measure ${plural(unmeasured.length, "voice")}`
+            }}
+          </button>
           <input
             v-if="endpoint.voices.length"
             v-model="ownLine"
@@ -459,6 +567,24 @@ const sampleTitle = computed(() =>
             :label="`Speed for ${v.label}`"
             @update:model-value="(x) => endpointsStore.setVoiceSpeed(endpoint, v.id, x)"
           />
+          <button
+            v-if="profileLines[v.id]"
+            class="max-w-64 shrink truncate rounded px-1.5 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-100 hover:text-violet-600 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            :data-tip="profileLines[v.id].tip"
+            :aria-label="`Profile of ${v.label}: ${profileLines[v.id].text}`"
+            @click="openProfile(v.id)"
+          >
+            {{ profileLines[v.id].text }}
+          </button>
+          <button
+            v-else
+            class="btn-ghost btn-xs shrink-0 text-zinc-400"
+            :aria-label="`Add a profile for ${v.label}`"
+            data-tip="Describe how it sounds and what it suits, from a character page or by hand"
+            @click="openProfile(v.id)"
+          >
+            Add profile
+          </button>
           <span
             class="min-w-0 flex-1 truncate font-mono text-[11px] text-zinc-500"
             :data-tip="v.id"
@@ -573,5 +699,11 @@ const sampleTitle = computed(() =>
         </div>
       </form>
     </section>
+    <VoiceProfileSheet
+      v-model:open="sheetOpen"
+      :endpoint="endpoint"
+      :voice-id="sheetFor"
+      :kept="sheetFor ? kept[sheetFor] : undefined"
+    />
   </div>
 </template>

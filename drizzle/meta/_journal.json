@@ -337,6 +337,13 @@
       "when": 1792926786777,
       "tag": "0047_spoken_name",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "6",
+      "when": 1793017893254,
+      "tag": "0048_voice_profiles",
+      "breakpoints": true
     }
   ]
 }

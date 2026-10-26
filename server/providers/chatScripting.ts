@@ -14,6 +14,7 @@ import type {
   RenderedPrompt,
   SegmentType,
   TokenUsage,
+  VoiceType,
 } from "@/types";
 import {
   BUILT_IN_PROMPT,
@@ -27,6 +28,7 @@ import {
 import { NARRATOR } from "@/lib/cast";
 import { wordsOf } from "@/lib/gaps";
 import { normalizeUsage } from "@/lib/pricing";
+import { DELIVERIES, PITCHES, TEXTURES } from "@/lib/voiceProfile";
 import { reasoningRequest } from "@/lib/reasoning";
 import { UNKNOWN_SPEAKER } from "~/providers/fake";
 import {
@@ -38,6 +40,7 @@ import {
   type CallStats,
 } from "~/providers/http";
 import type {
+  AskInput,
   ScriptAnswer,
   ScriptInput,
   ScriptRepair,
@@ -545,6 +548,7 @@ const CastNote = v.object({
   aliases: v.optional(v.nullable(v.array(v.string()))),
   description: v.optional(v.nullable(v.string())),
   personaOf: v.optional(v.unknown()),
+  voiceType: v.optional(v.unknown()),
 });
 
 const EFFECT_NAME_MAX = 80;
@@ -580,6 +584,30 @@ function ageOf(said: string | null | undefined): Age | undefined {
   return undefined;
 }
 
+const listed = <T extends string>(list: readonly T[], said: unknown): T | undefined => {
+  const w = typeof said === "string" ? said.trim().toLowerCase() : "";
+  return list.find((x) => x === w);
+};
+
+/** What of a note's voice type uses the shared words; anything else is dropped, not guessed. */
+function voiceTypeOf(said: unknown): VoiceType | undefined {
+  if (!said || typeof said !== "object") return undefined;
+  const s = said as Record<string, unknown>;
+  const pitch = listed(PITCHES, s.pitch);
+  const texture = listed(TEXTURES, s.texture);
+  const delivery = Array.isArray(s.delivery)
+    ? [
+        ...new Set(s.delivery.map((d) => listed(DELIVERIES, d)).filter((d) => d !== undefined)),
+      ].slice(0, 3)
+    : [];
+  const out: VoiceType = {
+    ...(pitch ? { pitch } : {}),
+    ...(texture ? { texture } : {}),
+    ...(delivery.length ? { delivery } : {}),
+  };
+  return Object.keys(out).length ? out : undefined;
+}
+
 /** The readable cast notes, skipping the Narrator, "Unknown" and aliases equal to the name. */
 function castOf(said: unknown): PromptCastMember[] {
   if (!Array.isArray(said)) return [];
@@ -596,10 +624,12 @@ function castOf(said: unknown): PromptCastMember[] {
     const of = typeof read.output.personaOf === "string" ? oneLine(read.output.personaOf) : "";
     const unknown = /^(?:unknown|someone unknown|\?)$/i.test(of);
     const age = ageOf(read.output.age);
+    const voiceType = voiceTypeOf(read.output.voiceType);
     out.push({
       name,
       gender: genderOf(read.output.gender),
       ...(age ? { age } : {}),
+      ...(voiceType ? { voiceType } : {}),
       aliases,
       description: oneLine(read.output.description ?? "").slice(0, DESCRIPTION_MAX),
       ...(unknown ? { masked: true } : of && of !== name ? { personaOf: of } : {}),
@@ -889,17 +919,37 @@ function said(raw: unknown): string {
 export const NO_PROFILE =
   "This run named no scripting profile; choose one on the Scripting page and run it again";
 
+/** An `ask` as a prompt: the schema rides in the system message for providers that cannot take it. */
+export const askPrompt = ({ system, user, schema }: AskInput): RenderedPrompt => ({
+  system: `${system}\n\nAnswer with one JSON object only, matching this JSON schema:\n${JSON.stringify(schema)}`,
+  user,
+});
+
+/** An `ask` answer's JSON; a reply with none is refused like a malformed script. */
+export function askedJson(who: string, content: string, status: number): unknown {
+  try {
+    return jsonIn(content);
+  } catch {
+    const said = oneLine(content);
+    throw new BadAnswer(
+      `${who} did not answer with JSON: “${said.length > 80 ? said.slice(0, 80) + "…" : said}”`,
+      status,
+      false,
+    );
+  }
+}
+
 /** Refuses a run with no profile, or a keyed profile with no key, before any request. */
 export function chatScriptingProvider(options: ChatScriptingOptions = {}): ScriptingProvider {
-  async function request(
+  /** One completion, retried and reported; `read` turns the final message into the answer. */
+  async function request<T>(
     target: ScriptTarget,
     prompt: RenderedPrompt,
-    text: string,
     signal: AbortSignal,
-    sent?: (request: SentScript) => void,
-    lenient = false,
-    repair?: ScriptRepair,
-  ): Promise<{ answer: ScriptAnswer; reasoningTokens: number | null }> {
+    sent: ((request: SentScript) => void) | undefined,
+    read: (content: string, status: number) => T,
+    chunked: boolean,
+  ): Promise<{ answer: T; reasoningTokens: number | null }> {
     requireKey(target);
     const reasoning = reasoningRequest(target.baseUrl, target.reasoning);
     const body = {
@@ -971,7 +1021,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
     const usage = usageOf(raw);
     const reasoningTokens = reasoningTokensOf(raw);
     try {
-      const answer = readAnswer(target, text, res.status, raw, lenient, repair);
+      const answer = read(contentOf(target, res.status, raw, chunked), res.status);
       report(usage);
       return { answer, reasoningTokens };
     } catch (e) {
@@ -981,14 +1031,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
     }
   }
 
-  function readAnswer(
-    target: ScriptTarget,
-    text: string,
-    status: number,
-    raw: unknown,
-    lenient: boolean,
-    repair?: ScriptRepair,
-  ): ScriptAnswer {
+  function contentOf(target: ScriptTarget, status: number, raw: unknown, chunked: boolean): string {
     const parsed = v.safeParse(Completion, raw);
     if (!parsed.success)
       throw new ProviderError(
@@ -1005,18 +1048,49 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
         target.reasoning && target.reasoning !== "off"
           ? "raise it or lower the reasoning level on the Endpoints page (the model’s thinking counts against it)"
           : "raise it on the Endpoints page (a reasoning model spends part of it thinking)";
-      throw new ChunkMisfit(
-        `${target.name}’s answer was cut off at max output tokens (${cap}); ${remedy} or use smaller chunks`,
+      throw new (chunked ? ChunkMisfit : BadAnswer)(
+        `${target.name}’s answer was cut off at max output tokens (${cap}); ${remedy}${chunked ? " or use smaller chunks" : ""}`,
         status,
         false,
       );
     }
-    return checkedScript(target.name, choice.message?.content ?? "", text, status, lenient, repair);
+    return choice.message?.content ?? "";
   }
+
+  const scriptRequest = (
+    target: ScriptTarget,
+    prompt: RenderedPrompt,
+    text: string,
+    signal: AbortSignal,
+    sent?: (request: SentScript) => void,
+    lenient = false,
+    repair?: ScriptRepair,
+  ) =>
+    request(
+      target,
+      prompt,
+      signal,
+      sent,
+      (content, status) => checkedScript(target.name, content, text, status, lenient, repair),
+      true,
+    );
 
   return {
     name: "Chat completions",
     callsProfile: true,
+    async ask(input) {
+      const { target, signal, sent } = input;
+      if (!target) throw new ProviderError(NO_PROFILE, 0, false);
+      const { answer } = await request(
+        target,
+        askPrompt(input),
+        signal,
+        sent,
+        (content, status) => askedJson(target.name, content, status),
+        false,
+      );
+      return answer;
+    },
     async script({
       title,
       text,
@@ -1031,7 +1105,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
     }: ScriptInput) {
       if (!target) throw new ProviderError(NO_PROFILE, 0, false);
       progress?.(0, 1);
-      const { answer } = await request(
+      const { answer } = await scriptRequest(
         target,
         prompt ?? builtInPrompt(title, cast, text),
         text,
@@ -1044,6 +1118,8 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
       return answer;
     },
     probe: (target, signal, given) =>
-      probeWith(target, signal, given, (prompt, text) => request(target, prompt, text, signal)),
+      probeWith(target, signal, given, (prompt, text) =>
+        scriptRequest(target, prompt, text, signal),
+      ),
   };
 }

@@ -12,15 +12,18 @@ import * as v from "valibot";
 import type { RenderedPrompt, TokenUsage } from "@/types";
 import { normalizeUsage } from "@/lib/pricing";
 import { cliOf, type CliShape } from "@/lib/providers/cli";
-import { builtInPrompt, checkedScript, NO_PROFILE, probeWith } from "~/providers/chatScripting";
+import { DELIVERIES, PITCHES, TEXTURES } from "@/lib/voiceProfile";
+import {
+  askedJson,
+  askPrompt,
+  builtInPrompt,
+  checkedScript,
+  NO_PROFILE,
+  probeWith,
+} from "~/providers/chatScripting";
 import { sleep } from "~/providers/fake";
 import { ProviderError, type CallOptions } from "~/providers/http";
-import type {
-  ScriptAnswer,
-  ScriptRepair,
-  ScriptTarget,
-  ScriptingProvider,
-} from "~/providers/scripting";
+import type { ScriptRepair, ScriptTarget, ScriptingProvider } from "~/providers/scripting";
 import type { SentScript } from "~/providers/sent";
 
 export interface CliScriptingOptions {
@@ -78,7 +81,7 @@ const ANSWER_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["name", "gender", "age", "aliases", "description", "personaOf"],
+        required: ["name", "gender", "age", "aliases", "description", "personaOf", "voiceType"],
         properties: {
           name: { type: "string" },
           gender: { type: "string", enum: ["male", "female", "non-binary", "unknown"] },
@@ -89,6 +92,16 @@ const ANSWER_SCHEMA = {
           aliases: { type: "array", items: { type: "string" } },
           description: { type: "string" },
           personaOf: { type: ["string", "null"] },
+          voiceType: {
+            type: ["object", "null"],
+            additionalProperties: false,
+            required: ["pitch", "texture", "delivery"],
+            properties: {
+              pitch: { type: ["string", "null"], enum: [...PITCHES, null] },
+              texture: { type: ["string", "null"], enum: [...TEXTURES, null] },
+              delivery: { type: "array", items: { type: "string", enum: [...DELIVERIES] } },
+            },
+          },
         },
       },
     },
@@ -118,6 +131,7 @@ export function invocation(
   target: ScriptTarget,
   prompt: RenderedPrompt,
   dir: string,
+  schema: Record<string, unknown> = ANSWER_SCHEMA,
 ): Invocation {
   const program = cli.path || cli.program;
   const effort = target.reasoning ? cli.effort(target.reasoning).value : null;
@@ -155,7 +169,7 @@ export function invocation(
         "-",
       ],
       stdin: prompt.followUp ? `${prompt.user}\n\n${prompt.followUp}` : prompt.user,
-      files: { [SYSTEM_FILE]: prompt.system, [SCHEMA_FILE]: JSON.stringify(ANSWER_SCHEMA) },
+      files: { [SYSTEM_FILE]: prompt.system, [SCHEMA_FILE]: JSON.stringify(schema) },
     };
   // a follow-up goes as a second content block, which only stream-json input can carry
   const blocks = prompt.followUp
@@ -473,15 +487,15 @@ const defaultBackoff: NonNullable<CallOptions["backoffMs"]> = (attempt, t) =>
 export function cliScriptingProvider(options: CliScriptingOptions = {}): ScriptingProvider {
   const backoff = options.backoffMs ?? defaultBackoff;
 
-  async function request(
+  /** One run, retried and reported; `read` turns the final message into the answer. */
+  async function request<T>(
     target: ScriptTarget,
     prompt: RenderedPrompt,
-    text: string,
     signal: AbortSignal,
-    sent?: (request: SentScript) => void,
-    lenient = false,
-    repair?: ScriptRepair,
-  ): Promise<{ answer: ScriptAnswer; reasoningTokens: number | null }> {
+    sent: ((request: SentScript) => void) | undefined,
+    read: (content: string) => T,
+    schema?: Record<string, unknown>,
+  ): Promise<{ answer: T; reasoningTokens: number | null }> {
     const cli = cliOf(target.baseUrl);
     if (!cli) throw new ProviderError(`${target.name} does not name a command-line tool`, 0, false);
     const attempts = 1 + Math.max(0, target.maxRetries);
@@ -511,7 +525,7 @@ export function cliScriptingProvider(options: CliScriptingOptions = {}): Scripti
       let failed: ProviderError;
       let usage: TokenUsage | null = null;
       try {
-        const call = invocation(cli, target, prompt, dir);
+        const call = invocation(cli, target, prompt, dir, schema);
         for (const [name, body] of Object.entries(call.files))
           await writeFile(join(dir, name), body);
         // after the awaits, so a cancel during them never starts the tool
@@ -559,16 +573,9 @@ export function cliScriptingProvider(options: CliScriptingOptions = {}): Scripti
           usage = outcome.usage;
           if (outcome.content != null) {
             try {
-              const script = checkedScript(
-                target.name,
-                outcome.content,
-                text,
-                200,
-                lenient,
-                repair,
-              );
+              const answer = read(outcome.content);
               report(usage, "done");
-              return { answer: script, reasoningTokens: outcome.reasoningTokens };
+              return { answer, reasoningTokens: outcome.reasoningTokens };
             } catch (e) {
               // keep what a refused answer said, for the Activity tab
               if (e instanceof ProviderError) report(usage, "failed", e, outcome.content);
@@ -595,13 +602,39 @@ export function cliScriptingProvider(options: CliScriptingOptions = {}): Scripti
     }
   }
 
+  const scriptRequest = (
+    target: ScriptTarget,
+    prompt: RenderedPrompt,
+    text: string,
+    signal: AbortSignal,
+    sent?: (request: SentScript) => void,
+    lenient = false,
+    repair?: ScriptRepair,
+  ) =>
+    request(target, prompt, signal, sent, (content) =>
+      checkedScript(target.name, content, text, 200, lenient, repair),
+    );
+
   return {
     name: "Command-line tools",
     callsProfile: true,
+    async ask(input) {
+      const { target, signal, sent, schema } = input;
+      if (!target) throw new ProviderError(NO_PROFILE, 0, false);
+      const { answer } = await request(
+        target,
+        askPrompt(input),
+        signal,
+        sent,
+        (content) => askedJson(target.name, content, 200),
+        schema,
+      );
+      return answer;
+    },
     async script({ title, text, signal, progress, target, cast, prompt, lenient, sent, repair }) {
       if (!target) throw new ProviderError(NO_PROFILE, 0, false);
       progress?.(0, 1);
-      const { answer } = await request(
+      const { answer } = await scriptRequest(
         target,
         prompt ?? builtInPrompt(title, cast, text),
         text,
@@ -614,6 +647,8 @@ export function cliScriptingProvider(options: CliScriptingOptions = {}): Scripti
       return answer;
     },
     probe: (target, signal, given) =>
-      probeWith(target, signal, given, (prompt, text) => request(target, prompt, text, signal)),
+      probeWith(target, signal, given, (prompt, text) =>
+        scriptRequest(target, prompt, text, signal),
+      ),
   };
 }

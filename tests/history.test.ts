@@ -516,6 +516,7 @@ describe("importing a script file", () => {
     await open(1);
     const fish = endpointsStore.endpoints.find((e) => e.id === "fish")!;
     const kept = endpointsStore.endpoints.find((e) => e.voices.length && e.id !== "fish")!;
+    await castStore._patchSpeaker("cliche", "Elder Mo", { voiceType: { pitch: "low" } });
     readIn(
       [
         fileChapter(1, (lines) => {
@@ -533,13 +534,22 @@ describe("importing a script file", () => {
               description: "A traveller",
               style: "hushed",
               age: "young adult",
+              voiceType: { pitch: "mid" },
               masked: true,
             },
             { name: "Ferryman", aliases: [], gender: "m", description: "", style: "" },
             { name: "Nobody Here", aliases: [], gender: "f", description: "", style: "" },
           ],
           differ: [],
-          fill: [{ name: "Elder Mo", aliases: ["Old Mo"], age: "elderly", masked: true }],
+          fill: [
+            {
+              name: "Elder Mo",
+              aliases: ["Old Mo"],
+              age: "elderly",
+              voiceType: { texture: "husky" },
+              masked: true,
+            },
+          ],
         },
         lexicon: { add: [{ term: "Zhenwu", say: "Jen-woo", enabled: true }], differ: [] },
       },
@@ -567,6 +577,7 @@ describe("importing a script file", () => {
       style: "hushed",
       voice: ref,
       age: "young adult",
+      voiceType: { pitch: "mid" },
       masked: true,
     });
     expect(speaker("Stranger")!.aliases).toEqual(["the man in grey"]);
@@ -575,6 +586,8 @@ describe("importing a script file", () => {
     expect(report.unused).toEqual(["Nobody Here"]);
     expect(speaker("Elder Mo")!.aliases).toContain("Old Mo");
     expect(speaker("Elder Mo")).toMatchObject({ age: "elderly", masked: true });
+    // the blank fields fill around the pitch already set
+    expect(speaker("Elder Mo")!.voiceType).toEqual({ pitch: "low", texture: "husky" });
     expect(castStore.lexiconOf("cliche").some((e) => e.term === "Zhenwu")).toBe(true);
 
     await undoLast();

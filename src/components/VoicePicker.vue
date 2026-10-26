@@ -9,6 +9,9 @@ import { useEndpointsStore } from "@/stores/endpoints";
 import { computed, ref, watch } from "vue";
 
 import { SAMPLE_TITLE, useVoiceSample } from "@/composables/useVoiceSample";
+import { suggestVoices } from "@/lib/voiceMatch";
+import { NARRATOR } from "@/lib/cast";
+import SpoilerText from "@/components/SpoilerText.vue";
 import type { Component } from "vue";
 import {
   Check as CheckIcon,
@@ -18,6 +21,7 @@ import {
   Mars as MaleIcon,
   Pause as PauseIcon,
   Play as PlayIcon,
+  Sparkles as AskAiIcon,
   Venus as FemaleIcon,
 } from "@lucide/vue";
 import {
@@ -91,9 +95,50 @@ const rows = computed(() =>
     }))
     .filter((g) => g.voices.length),
 );
+// Suggestions are scored only while open, for this one speaker, and only unfiltered: a search or
+// gender filter means the user is looking for something else.
+const character = computed(() =>
+  props.speaker && props.speaker !== NARRATOR
+    ? castStore.byName[props.bookId]?.get(props.speaker)
+    : undefined,
+);
+const unfiltered = computed(() => open.value && !q.value && gender.value === "all");
+const aiPicks = computed(() => {
+  const c = character.value;
+  if (!c || !unfiltered.value) return [];
+  return (castStore.aiPicks[props.bookId]?.[c.name] ?? []).flatMap((p) => {
+    const r = endpointsStore.resolveVoice(p.voice);
+    return r?.endpoint.enabled ? [{ ...p, r }] : [];
+  });
+});
+const asked = computed(
+  () => !!character.value && !!castStore.aiPicks[props.bookId]?.[character.value.name],
+);
+const suggested = computed(() => {
+  const c = character.value;
+  const { voices, bands, profiled } = castStore.matchPool;
+  if (!c || !unfiltered.value || !profiled) return [];
+  const ai = new Set(aiPicks.value.map((p) => p.voice));
+  return suggestVoices(c, voices, bands, usedBy.value)
+    .filter((s) => !ai.has(s.voice))
+    .map((s) => ({ ...s, r: endpointsStore.resolveVoice(s.voice)! }));
+});
+// the model is asked about main speakers only: a minor one is not worth the request
+const canAsk = computed(() => !!character.value?.major && unfiltered.value);
+const asking = ref<string | null>(null);
+async function ask() {
+  const name = character.value?.name;
+  if (!name || asking.value || castStore.aiBlocker) return;
+  asking.value = name;
+  await castStore.askVoices(props.bookId, [name]);
+  asking.value = null;
+}
 const G: Partial<Record<Gender, Component>> = { m: MaleIcon, f: FemaleIcon, n: NeutralIcon };
 function pick(v: unknown) {
-  emit("update:modelValue", v === "__null__" ? null : String(v));
+  const s = String(v);
+  if (s === "__ask__") return void ask();
+  // a suggested voice is listed twice, so its item's value is prefixed to stay unique
+  emit("update:modelValue", s === "__null__" ? null : s.replace(/^(s|ai):/, ""));
   open.value = false;
 }
 const voiceSample = useVoiceSample();
@@ -174,6 +219,57 @@ function onClosed(e: Event) {
               >{{ emptyLabel
               }}<CheckIcon v-if="!modelValue" class="ml-auto icon-sm text-violet-500"
             /></ListboxItem>
+            <ListboxGroup v-if="suggested.length || aiPicks.length || canAsk">
+              <ListboxGroupLabel
+                class="px-2 pb-0.5 pt-1.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-400"
+                >Suggested</ListboxGroupLabel
+              >
+              <ListboxItem
+                v-for="p in aiPicks"
+                :key="`ai:${p.voice}`"
+                :value="`ai:${p.voice}`"
+                class="ui-item flex-wrap"
+              >
+                <AskAiIcon class="icon-sm text-violet-500" aria-label="picked by AI" />
+                <span class="min-w-0 truncate">{{ p.r.voice.label }}</span>
+                <span class="text-[10px] text-zinc-400">· {{ p.r.endpoint.name }}</span>
+                <CheckIcon v-if="modelValue === p.voice" class="ml-auto icon-sm text-violet-500" />
+                <!-- written from the speaker's description: a spoiler until asked for -->
+                <span v-if="p.why" class="basis-full pl-5 text-[10px] text-zinc-500" @click.stop
+                  ><SpoilerText :text="p.why" label="why · show" small
+                /></span>
+              </ListboxItem>
+              <ListboxItem
+                v-for="s in suggested"
+                :key="`s:${s.voice}`"
+                :value="`s:${s.voice}`"
+                class="ui-item"
+              >
+                <component :is="G[s.r.voice.gender] ?? NeutralIcon" class="icon-sm text-zinc-400" />
+                <span class="min-w-0 truncate">{{ s.r.voice.label }}</span>
+                <span class="ml-2 min-w-0 truncate text-[10px] text-zinc-400">{{
+                  s.reasons.join(" · ")
+                }}</span>
+                <CheckIcon v-if="modelValue === s.voice" class="ml-auto icon-sm text-violet-500" />
+              </ListboxItem>
+              <ListboxItem
+                v-if="canAsk"
+                value="__ask__"
+                :disabled="!!asking || !!castStore.aiBlocker"
+                class="ui-item text-xs text-violet-600 dark:text-violet-300"
+                :data-tip="
+                  castStore.aiBlocker ??
+                  'The scripting model ranks your voices for this speaker from their notes and the voice profiles'
+                "
+              >
+                <BusyIcon v-if="asking" class="icon-sm animate-spin" />
+                <AskAiIcon v-else class="icon-sm" />
+                {{ asking ? "Asking…" : asked ? "Ask AI again" : "Ask AI" }}
+                <span v-if="asked && !aiPicks.length && !asking" class="text-[10px] text-zinc-400"
+                  >· no picks last time</span
+                >
+              </ListboxItem>
+            </ListboxGroup>
             <ListboxGroup v-for="g in rows" :key="g.endpoint.id">
               <ListboxGroupLabel
                 class="flex items-center gap-1.5 px-2 pb-0.5 pt-1.5 text-[10px] font-semibold uppercase tracking-wider text-zinc-400"

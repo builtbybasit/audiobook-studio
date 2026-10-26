@@ -2,7 +2,7 @@
 // version never rolls them back.
 import { index, integer, primaryKey, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
-import type { Age, Gender, VoiceRef } from "@/types";
+import type { Age, Gender, VoiceRef, VoiceType } from "@/types";
 import { books } from "~/db/schema/library";
 
 /** One speaker, keyed by name as `Segment.speaker` is; a rename must move the lines with it. */
@@ -18,6 +18,8 @@ export const characters = sqliteTable(
     gender: text("gender").$type<Gender>().notNull().default("?"),
     /** null = unknown */
     age: text("age").$type<Age>(),
+    /** null = unknown */
+    voiceType: text("voice_type", { mode: "json" }).$type<VoiceType>(),
     description: text("description").notNull().default(""),
     /** `<endpointId>/<voiceId>`; null = borrows the Narrator's voice */
     voice: text("voice").$type<VoiceRef>(),

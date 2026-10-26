@@ -27,6 +27,7 @@ import type {
   VersionOrigin,
 } from "@/types";
 import { AGES } from "@/lib/cast";
+import { DELIVERIES, PITCHES, TEXTURES } from "@/lib/voiceProfile";
 import { REASONING_EFFORTS } from "@/lib/prompt";
 import { SAMPLE_RATES } from "@/lib/speech";
 import type { StoredEndpoint } from "@/lib/endpointTelemetry";
@@ -121,6 +122,37 @@ const unset = <T>(schema: v.GenericSchema<T>) =>
     ),
   );
 
+const Short = (max: number) => v.pipe(v.string(), v.trim(), v.maxLength(max));
+const Words = v.pipe(v.array(v.pipe(Short(80), v.nonEmpty())), v.maxLength(12));
+
+export const VoiceTypeSchema = v.object({
+  pitch: v.optional(v.picklist(PITCHES)),
+  texture: v.optional(v.picklist(TEXTURES)),
+  delivery: v.optional(v.pipe(v.array(v.picklist(DELIVERIES)), v.maxLength(5))),
+});
+
+const Measured = v.pipe(v.number(), v.finite(), v.minValue(0));
+
+export const VoiceProfileSchema = v.object({
+  measured: v.optional(
+    v.object({
+      f0: Measured,
+      hnr: v.pipe(v.number(), v.finite()),
+      rangeSt: Measured,
+      voicedSec: Measured,
+    }),
+  ),
+  age: v.optional(v.picklist(AGES)),
+  delivery: v.optional(v.pipe(v.array(v.picklist(DELIVERIES)), v.maxLength(5))),
+  suits: v.optional(Words),
+  avoid: v.optional(Words),
+  summary: v.optional(Short(300)),
+  previewLine: v.optional(Short(500)),
+  narrator: v.optional(v.object({ fit: v.boolean(), why: Short(300) })),
+  style: v.optional(Short(300)),
+  source: v.optional(v.object({ url: v.pipe(v.string(), v.url()), at: v.number() })),
+});
+
 const SpeakerSpeed = v.pipe(
   v.number(),
   v.minValue(SPEAKER_SPEED.min),
@@ -133,6 +165,8 @@ export const CharacterSchema = v.object({
   gender: Gender,
   /** null or absent = unknown */
   age: unset(v.picklist(AGES)),
+  /** null or absent = unknown */
+  voiceType: unset(VoiceTypeSchema),
   description: v.string(),
   voice: v.nullable(v.string()),
   style: v.string(),
@@ -329,6 +363,7 @@ export const CastFileSchema = v.array(
     personaOf: v.optional(v.pipe(v.string(), v.trim())),
     masked: v.optional(v.boolean()),
     age: v.optional(v.picklist(AGES)),
+    voiceType: v.optional(VoiceTypeSchema),
     voice: v.optional(VoiceHintSchema),
     effect: v.optional(EffectName),
     thoughts: v.optional(EffectName),
@@ -492,7 +527,13 @@ export const EndpointSchema = v.object({
   failRate: v.pipe(v.number(), v.minValue(0), v.maxValue(1)),
   price: v.pipe(v.number(), v.minValue(0)),
   voices: v.array(
-    v.object({ id: Id, gender: Gender, label: v.string(), speed: unset(SpeakerSpeed) }),
+    v.object({
+      id: Id,
+      gender: Gender,
+      label: v.string(),
+      speed: unset(SpeakerSpeed),
+      profile: unset(VoiceProfileSchema),
+    }),
   ),
   billing: v.optional(
     v.object({

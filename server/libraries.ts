@@ -7,6 +7,7 @@ import type { Env as PinoEnv } from "hono-pino";
 import type { SpeechRate } from "~/audio/ffmpeg";
 import type { EffectRunner } from "~/audio/effects";
 import type { ThoughtEffect } from "~/audio/thoughtEffect";
+import type { VoiceMeter } from "~/voices/measure";
 import type { TrimSilence } from "~/audio/trim";
 import { createApp } from "~/app";
 import { demoClips } from "~/audio/demoClips";
@@ -49,6 +50,8 @@ export interface LibraryOptions {
   encoders: EncoderChoice;
   /** Pedalboard under uv; absent = no voice effects, as on a machine without uv */
   effects?: EffectRunner;
+  /** Praat under uv, for voice profiles; absent = profiles are filled unmeasured */
+  meter?: VoiceMeter;
   /** a `thought` line's effect where `effects` can't run; absent = left as the voice made it */
   thoughtEffect?: ThoughtEffect;
   /** cuts the voice's own silence off each clip; absent = kept as sent */
@@ -182,6 +185,7 @@ export function openLibrary(options: LibraryOptions): Library {
     voiceFiles,
     gate,
     effects: options.effects,
+    meter: options.meter,
     demo,
     servers: options.demo ? undefined : (options.servers ?? localServers),
   });

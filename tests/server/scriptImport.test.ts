@@ -404,15 +404,33 @@ describe("the cast and the dictionary", () => {
   });
 
   test.each([
-    ["the same link", "Tobin", [{ name: "Mara", age: "teen", masked: true }]],
+    [
+      "the same link",
+      "Tobin",
+      [{ name: "Mara", age: "teen", voiceType: { texture: "clear" }, masked: true }],
+    ],
     // linked by hand: the reader's choice, not a spoiler to hide
-    ["a link made by hand", "Doran", [{ name: "Mara", age: "teen" }]],
+    [
+      "a link made by hand",
+      "Doran",
+      [{ name: "Mara", age: "teen", voiceType: { texture: "clear" } }],
+    ],
   ] as const)(
-    "a speaker the book has gets the file's age and hiding over %s",
+    "a speaker the book has gets the file's age, voice type blanks and hiding over %s",
     async (_, of, fill) => {
-      have({ personaOf: of });
+      // the pitch set by hand stays
+      have({ personaOf: of, voiceType: { pitch: "low" } });
       const got = await plan(
-        await zipOf({ cast: [speaker({ personaOf: "Tobin", masked: true, age: "teen" })] }),
+        await zipOf({
+          cast: [
+            speaker({
+              personaOf: "Tobin",
+              masked: true,
+              age: "teen",
+              voiceType: { pitch: "high", texture: "clear" },
+            }),
+          ],
+        }),
       );
       expect(got.cast.fill).toEqual([...fill]);
     },

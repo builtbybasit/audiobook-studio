@@ -23,6 +23,7 @@ export function toCharacter(row: CharacterRow): Character {
   if (row.personaOf != null) c.personaOf = row.personaOf;
   if (row.speed != null) c.speed = row.speed;
   if (row.age != null) c.age = row.age;
+  if (row.voiceType != null) c.voiceType = row.voiceType;
   if (row.masked) c.masked = true;
   return c;
 }
@@ -38,6 +39,7 @@ export function characterValues(
     aliases: c.aliases,
     gender: c.gender,
     age: c.age ?? null,
+    voiceType: c.voiceType ?? null,
     description: c.description,
     voice: c.voice,
     style: c.style,

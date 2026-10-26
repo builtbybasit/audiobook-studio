@@ -106,6 +106,7 @@ test("the zip holds a manifest, the cast with voice hints, the dictionary and on
       personaOf: mara.name,
       masked: true,
       age: "teen",
+      voiceType: { pitch: "low", delivery: ["sly"] },
       speed: 1,
     }),
     method: "PUT",
@@ -158,6 +159,7 @@ test("the zip holds a manifest, the cast with voice hints, the dictionary and on
     personaOf: mara.name,
     masked: true,
     age: "teen",
+    voiceType: { pitch: "low", delivery: ["sly"] },
   });
   expect(speakers.find((s) => s.name === mara.name)?.personaOf).toBeUndefined();
   expect(speakers.find((s) => s.name === mara.name)?.speed).toBe(1.25);

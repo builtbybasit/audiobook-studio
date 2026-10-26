@@ -209,10 +209,10 @@ export function paletteCommands(router: Router, mod: string): Command[] {
       out.push({
         id: "act-auto",
         group: "Actions",
-        label: "Auto-assign voices by gender",
+        label: `Auto-assign voices by ${castStore.matchBy}`,
         hint: "unvoiced cast",
         run: () => {
-          castStore.autoAssignByGender(b);
+          castStore.autoAssign(b);
           void router.push(`/book/${b}/narration`);
         },
       });

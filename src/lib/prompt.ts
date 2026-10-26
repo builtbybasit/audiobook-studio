@@ -14,8 +14,10 @@ import type {
   ReasoningEffort,
   RenderedPrompt,
   ResolvedPrompt,
+  VoiceType,
 } from "@/types";
 import { NARRATOR } from "@/lib/cast";
+import { DELIVERIES } from "@/lib/voiceProfile";
 
 export const REASONING_EFFORTS: readonly ReasoningEffort[] = ["off", "low", "medium", "high"];
 
@@ -167,12 +169,13 @@ Besides the lines, the answer has:
   - "age": "child", "teen", "young adult", "middle-aged", "elderly" or "unknown".
   - "aliases": other names they are called by, such as "Mar" or "the Captain". A description is not a name: never "the old man" or "the beautiful woman". [] when they have none.
   - "description": one short sentence on who they are, and how they sound if the text says.
+  - "voiceType": how they sound, from what the text says or clearly implies: "pitch" ("low", "mid" or "high" for their gender), "texture" ("husky" or "clear") and "delivery" (up to three of ${DELIVERIES.join(", ")}); null for what it does not tell.
   - "personaOf": only for a disguise (rule 5): who wears it, or "unknown". For an entry marked "masked, identity unknown", the wearer once the text reveals them. Otherwise null.
 - "recap": one to three sentences on where the excerpt leaves off, for whoever scripts the text that follows it: who is present, including anyone who has not spoken; where they are; who spoke last and to whom; any question left unanswered; and what the text is calling each of them. Use the names from "speaker".
 %PRONOUNCE%
 
 Answer with JSON only, in this shape:
-{"lines":[{"type":"narration","speaker":"${NARRATOR}","text":"The door opened."},{"type":"dialogue","speaker":"Mara","text":"Come in,","direction":"soft, wary"},{"type":"narration","speaker":"${NARRATOR}","text":"said Mara softly."}],"cast":[{"name":"Mara","gender":"female","age":"young adult","aliases":["Mar"],"description":"A young lamplighter, quick and wary."}],"recap":"Mara has let a stranger in out of the cold, at her door; she spoke last, to him, and he has not answered."%PRONOUNCE_SAMPLE%}`;
+{"lines":[{"type":"narration","speaker":"${NARRATOR}","text":"The door opened."},{"type":"dialogue","speaker":"Mara","text":"Come in,","direction":"soft, wary"},{"type":"narration","speaker":"${NARRATOR}","text":"said Mara softly."}],"cast":[{"name":"Mara","gender":"female","age":"young adult","aliases":["Mar"],"description":"A young lamplighter, quick and wary.","voiceType":{"pitch":"mid","texture":null,"delivery":["energetic","shy"]}}],"recap":"Mara has let a stranger in out of the cold, at her door; she spoke last, to him, and he has not answered."%PRONOUNCE_SAMPLE%}`;
 
 /** With no line effects offered. */
 export const OUTPUT_FORMAT = outputFormat(SCRIPT_MARKERS[0]);
@@ -288,6 +291,7 @@ export interface PromptCastMember {
   aliases?: readonly string[];
   gender?: Gender;
   age?: Age;
+  voiceType?: VoiceType;
   description?: string;
   personaOf?: string;
   /** `Character.masked`; with no `personaOf`, the wearer is unknown */

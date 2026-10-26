@@ -30,7 +30,8 @@ export function chapterParts(
     note.kind === "title" ||
     note.kind === "unreadable" ||
     note.kind === "empty" ||
-    note.kind === "front"
+    note.kind === "front" ||
+    note.kind === "short"
   )
     return [{ text: storyOf(bookId, chId, prose) }];
   if (note.kind === "mixed") {

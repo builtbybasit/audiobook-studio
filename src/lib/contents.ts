@@ -26,6 +26,7 @@ export const NOTICE_LABEL: Record<NoticeKind, string> = {
   title: "Notice-like titles",
   empty: "Empty pages",
   front: "Cover and front matter",
+  short: "Very short chapters",
 };
 
 /** A note the user has not acted on: neither skipped nor kept. */

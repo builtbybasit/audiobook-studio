@@ -9,7 +9,11 @@ import { useSpeakerSamplesStore, type CloneFromSamples } from "@/stores/speakerS
 import { computed, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { keyInPlace } from "@/services/endpointSettings";
-import { Upload as CloneIcon, TriangleAlert as WarnIcon } from "@lucide/vue";
+import {
+  LoaderCircle as BusyIcon,
+  Upload as CloneIcon,
+  TriangleAlert as WarnIcon,
+} from "@lucide/vue";
 import { UiHint } from "@/ui";
 import { cloneModelsFor, cloningOf, speechProviderOf } from "@/lib/providers";
 import {
@@ -19,10 +23,10 @@ import {
   type SampleRow,
 } from "@/views/endpoints/cloneForm";
 import SamplePicker from "@/views/endpoints/SamplePicker.vue";
-import type { Endpoint, SpeakerSamples } from "@/types";
+import type { Endpoint, SpeakerSamples, Voice } from "@/types";
 
 const props = defineProps<{ endpoint: Endpoint }>();
-const emit = defineEmits<{ cloned: [] }>();
+const emit = defineEmits<{ cloned: []; profile: [voiceId: string] }>();
 const endpointsStore = useEndpointsStore();
 const uiStore = useUiStore();
 const samplesStore = useSpeakerSamplesStore();
@@ -38,6 +42,8 @@ const cloneModels = computed(() => cloneModelsFor(props.endpoint));
 const clone = reactive({
   title: "",
   samples: [] as SampleRow[],
+  /** a character page to describe the voice from */
+  page: "",
   busy: false,
 });
 const cloneProblem = computed(() =>
@@ -114,7 +120,35 @@ function forgetLink() {
   void router.replace({ query: rest });
 }
 function reset() {
-  Object.assign(clone, { title: "", samples: [] });
+  Object.assign(clone, { title: "", samples: [], page: "" });
+}
+
+// ---------- describing the new voice ----------
+// Its samples are always measured; the page is read only when one was given.
+const describing = ref<string | null>(null);
+async function describe(voice: Voice, page: string) {
+  const open = { label: "Open profile", run: () => emit("profile", voice.id) };
+  describing.value = voice.label;
+  try {
+    const fill = await endpointsStore.fillVoiceProfile(props.endpoint.id, voice.id, {
+      ai: !!page,
+      ...(page ? { url: page } : {}),
+    });
+    const got = Object.keys(fill.profile).length > 0;
+    uiStore.toast(got ? `Described ${voice.label}` : `${voice.label} has no profile yet`, {
+      kind: got && !fill.notes.length ? "success" : "warn",
+      description: fill.notes.join(" "),
+      action: open,
+    });
+  } catch (cause) {
+    uiStore.toast(`Could not describe ${voice.label}`, {
+      kind: "warn",
+      description: cause instanceof Error ? cause.message : String(cause),
+      action: open,
+    });
+  } finally {
+    describing.value = null;
+  }
 }
 function putAside() {
   from.value = null;
@@ -130,6 +164,7 @@ async function makeVoice() {
       ...requestOf(clone.samples),
     });
     if (voice) {
+      void describe(voice, clone.page.trim());
       if (from.value) {
         const made = from.value;
         from.value = null;
@@ -176,6 +211,22 @@ async function makeVoice() {
           maxlength="100"
           placeholder="Narrator — Mara"
       /></label>
+      <div class="space-y-1 text-xs font-medium">
+        <span
+          >Wiki page
+          <UiHint
+            label="the wiki page"
+            text="Reads the character's page to describe the voice. Optional."
+        /></span>
+        <input
+          v-model="clone.page"
+          type="url"
+          class="input block w-full max-w-md"
+          placeholder="Fandom or wiki page"
+          aria-label="Wiki page"
+          spellcheck="false"
+        />
+      </div>
       <!-- a hand pick detaches the voice from the linked speaker -->
       <SamplePicker v-model="clone.samples" :cloning="cloning" @pick="from = null" />
       <p
@@ -191,6 +242,12 @@ async function makeVoice() {
         </button>
         <span v-if="needsKeyFirst" class="text-[11px] text-amber-600 dark:text-amber-400"
           >Save a key for this endpoint first.</span
+        >
+        <span
+          v-if="describing"
+          class="flex items-center gap-1 text-[11px] text-zinc-500"
+          role="status"
+          ><BusyIcon class="icon-sm animate-spin" /> Describing {{ describing }}…</span
         >
       </div>
     </form>

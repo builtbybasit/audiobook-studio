@@ -239,6 +239,37 @@ describe("Claude Code", () => {
   });
 });
 
+describe("an ask", () => {
+  const SCHEMA = { type: "object", properties: { picks: { type: "array" } } };
+  const ask = (t: ScriptTarget, sent: SentScript[] = []) => ({
+    system: "Pick voices.",
+    user: "Mara",
+    schema: SCHEMA,
+    target: t,
+    signal: new AbortController().signal,
+    sent: (r: SentScript) => sent.push(r),
+    simulated: null,
+  });
+
+  test("Codex is held to the ask's schema and its JSON handed back", async () => {
+    const cli = fakeCli("codex", { stdout: codexEvents(), answer: '{"picks":["a"]}' });
+    const sent: SentScript[] = [];
+    expect(await provider.ask!(ask(target(`codex:${cli.path}`), sent))).toEqual({ picks: ["a"] });
+    expect(cli.calls()[0].system).toContain('"picks"');
+    expect(sent).toMatchObject([{ status: "done" }]);
+  });
+
+  test("Claude Code gets the schema in its prompt; an answer that is not JSON is refused", async () => {
+    const cli = fakeCli("claude", { stdout: claudeResult("I would pick Ava.") });
+    const sent: SentScript[] = [];
+    await expect(provider.ask!(ask(target(`claude-code:${cli.path}`), sent))).rejects.toThrow(
+      /did not answer with JSON: “I would pick Ava/,
+    );
+    expect(cli.calls()[0].system).toContain('"picks"');
+    expect(sent).toMatchObject([{ status: "failed", error: { body: "I would pick Ava." } }]);
+  });
+});
+
 describe("a run that does not answer", () => {
   test("a failure it names no reason for is tried again, then reported with its exit code", async () => {
     const cli = fakeCli("codex", { stderr: "something broke", exit: 2 });

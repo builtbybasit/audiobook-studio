@@ -233,16 +233,26 @@ describe("renaming and merging", () => {
 
   test("a merge folds the name and its aliases into the speaker that stays", async () => {
     const { api, id } = await scripted();
-    const tobin = (await castOf(api, id)).characters[2];
+    const [, mara, tobin] = (await castOf(api, id)).characters;
     await api.request(
       `/api/books/${id}/characters/Tobin`,
-      put({ ...tobin, voice: "studio/ash", description: "A clerk." }),
+      put({
+        ...tobin,
+        voice: "studio/ash",
+        description: "A clerk.",
+        voiceType: { pitch: "high", texture: "husky" },
+      }),
+    );
+    await api.request(
+      `/api/books/${id}/characters/Mara`,
+      put({ ...mara, voiceType: { pitch: "low" } }),
     );
     const { body } = await merge(api, id, [{ from: "Tobin", into: "Mara" }]);
     expect(names(body.characters)).toEqual(["Narrator", "Mara"]);
     expect(body.characters[1].aliases).toEqual(["Tobin"]);
     // what Mara left blank, Tobin fills
     expect(body.characters[1]).toMatchObject({ voice: "studio/ash", description: "A clerk." });
+    expect(body.characters[1].voiceType).toEqual({ pitch: "low", texture: "husky" });
     expect(speakersOf(readScript(api.db, id, 1))).toEqual(["Narrator", "Mara"]);
     expect(body.speakers.map((s) => [s.name, s.moved.length])).toEqual([["Tobin", 2]]);
   });

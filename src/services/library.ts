@@ -39,6 +39,7 @@ import type {
   StoredSamples,
   ThoughtChoice,
   VersionOrigin,
+  VoiceSuggestions,
   VolumeStart,
 } from "@/types";
 import { HttpClient, seg, type FetchLike } from "@/services/http";
@@ -200,6 +201,8 @@ export interface LibraryService {
 
   // ---------- the cast ----------
   cast(bookId: string): Promise<Cast>;
+  /** The scripting model's voice picks for up to 30 speakers, asked of `profile`. */
+  voiceSuggestions(bookId: string, profile: string, speakers: string[]): Promise<VoiceSuggestions>;
   /** Each speaker's spoken lines across the book; a speaker with none is absent. */
   speakerCounts(bookId: string): Promise<Record<string, CastStat>>;
   /** New or replaced. Returns the cast as it now stands. */
@@ -462,6 +465,13 @@ export class HttpLibraryService implements LibraryService {
 
   cast(bookId: string): Promise<Cast> {
     return this.http.get<Cast>(`/books/${seg(bookId)}/cast`);
+  }
+
+  voiceSuggestions(bookId: string, profile: string, speakers: string[]): Promise<VoiceSuggestions> {
+    return this.http.post<VoiceSuggestions>(`/books/${seg(bookId)}/voice-suggestions`, {
+      profile,
+      speakers,
+    });
   }
 
   async speakerCounts(bookId: string): Promise<Record<string, CastStat>> {

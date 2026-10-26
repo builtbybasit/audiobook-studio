@@ -16,6 +16,7 @@ import {
   type VoiceListPage,
   type VoiceListQuery,
   type VoiceCloneRequest,
+  type VoiceProfileAsk,
   type VoiceSample,
 } from "@/services/endpointSettings";
 import { useEndpointsStore, WRITE_DELAY_MS } from "@/stores/endpoints";
@@ -28,8 +29,10 @@ import type {
   EndpointKind,
   EndpointLive,
   KeptVoiceSamples,
+  VoiceProfileFill,
 } from "@/types";
 import { testPinia, type TestPinia } from "./support/pinia";
+import { openaiProfile } from "./support/profiles";
 
 const TELEMETRY = ["history", "failures", "rateLimits", "backoffUntil", "lastError", "fetching"];
 
@@ -140,6 +143,24 @@ class FakeService implements EndpointSettingsService {
   }
   async keptSamples(): Promise<KeptVoiceSamples[]> {
     return [];
+  }
+  /** what each profile fill was asked, with how many writes had gone out by then */
+  filled: { voice: string; body: VoiceProfileAsk; puts: number }[] = [];
+  fillAnswer: VoiceProfileFill = {
+    profile: {
+      measured: { f0: 120, hnr: 9, rangeSt: 12, voicedSec: 30 },
+      age: "elderly",
+      summary: "a dry old storyteller",
+    },
+    notes: ["The page had no voice section"],
+  };
+  async fillVoiceProfile(
+    _id: string,
+    voice: string,
+    body: VoiceProfileAsk,
+  ): Promise<VoiceProfileFill> {
+    this.filled.push({ voice, body, puts: this.puts.length });
+    return clone(this.fillAnswer);
   }
   /** each recording sent to be heard, with how many writes had gone out by then */
   heard: { name: string; puts: number }[] = [];
@@ -848,6 +869,64 @@ describe("cloning a voice with a server answering", () => {
     expect(svc.deleted).toEqual(["mara"]);
     expect(ep.voices.map((v) => v.id)).not.toContain("mara");
     expect(undo).toBeUndefined();
+  });
+});
+
+describe("voice profiles with a server answering", () => {
+  const PAGE = "https://example.fandom.com/wiki/Mara";
+
+  test("a fill only fills blanks, keeps its notes, and is saved; clearing it can be undone", async () => {
+    const cfg = server();
+    cfg.endpoints[0].voices[0].profile = { age: "teen" };
+    svc.held = cfg;
+    await endpointsStore.load();
+    const ep = endpointsStore.endpoints[0];
+    ep.voices[0].label = "Alloy (old)";
+
+    const fill = await endpointsStore.fillVoiceProfile(ep.id, "alloy", { ai: false });
+    // the label edit was sent before the server was asked
+    expect(svc.filled[0].puts).toBe(1);
+    expect(ep.voices[0].profile).toEqual({
+      age: "teen",
+      measured: svc.fillAnswer.profile.measured,
+      summary: "a dry old storyteller",
+    });
+    expect(fill.notes).toEqual(svc.fillAnswer.notes);
+    expect(endpointsStore.profileNotes["srv-tts/alloy"]).toEqual(svc.fillAnswer.notes);
+    await settle();
+    expect(svc.puts.at(-1)!.endpoints[0].voices[0].profile?.age).toBe("teen");
+
+    let undo: (() => void) | null | undefined;
+    useUiStore().toast = (_msg, opts) => ((undo = opts?.undo), "");
+    endpointsStore.clearVoiceProfile(ep.id, "alloy");
+    expect(ep.voices[0].profile).toBeUndefined();
+    undo!();
+    expect(ep.voices[0].profile?.age).toBe("teen");
+  });
+
+  test.each([
+    ["measuring only asks for no model and reads no page", false, true, {}, []],
+    [
+      "with no scripting profile, only measures and says what to add",
+      true,
+      false,
+      {},
+      ["Add a scripting profile to fill the rest from the page"],
+    ],
+    [
+      "with a scripting profile, sends it and the page",
+      true,
+      true,
+      { profile: "openai", url: PAGE },
+      [],
+    ],
+  ] as const)("%s", async (_name, ai, withProfile, body, notes) => {
+    svc.held = { ...server(), profiles: withProfile ? [openaiProfile({ needsKey: false })] : [] };
+    svc.fillAnswer = { profile: {}, notes: [] };
+    await endpointsStore.load();
+    const fill = await endpointsStore.fillVoiceProfile("srv-tts", "alloy", { ai, url: PAGE });
+    expect(svc.filled[0].body).toEqual(body);
+    expect(fill.notes).toEqual([...notes]);
   });
 });
 

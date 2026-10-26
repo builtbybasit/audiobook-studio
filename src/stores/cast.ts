@@ -36,6 +36,8 @@ import {
   voiceRef,
 } from "@/lib/cast";
 import { clone } from "@/lib/utils";
+import { type Bands, FIT_MIN, fitPlan, type LibraryVoice, profiled } from "@/lib/voiceMatch";
+import { voiceBands } from "@/lib/voiceProfile";
 import {
   type Cast,
   type ChapterLines,
@@ -67,12 +69,20 @@ import { useExistingLinesStore } from "@/stores/existingLines";
 import { useLibraryStore } from "@/stores/library";
 import { useNarrationStore } from "@/stores/narration";
 import { useScriptsStore } from "@/stores/scripts";
+import { useScriptingStore } from "@/stores/scripting";
 import { useSpeakerSamplesStore } from "@/stores/speakerSamples";
 import { toastFailure } from "@/stores/toastFailure";
 import { useUiStore } from "@/stores/ui";
+/** One of the scripting model's voice picks; `why` is written from the speaker, so a spoiler. */
+export interface AiVoicePick {
+  voice: VoiceRef;
+  why: string;
+}
 interface CastState {
   characters: Record<string, Character[]>;
   lexicon: Record<string, LexEntry[]>;
+  /** the scripting model's picks this session, by book then speaker */
+  aiPicks: Record<string, Record<string, AiVoicePick[]>>;
 }
 const lineCount = (moved: RevisedLines[]) => moved.reduce((n, m) => n + m.ids.length, 0);
 /** Undo of a request-backed change; resolves once the server agrees. */
@@ -121,7 +131,13 @@ export interface AutoVoiceAssignment {
   voiceLabel: string;
   endpoint: string;
   matchedGender: boolean;
+  major: boolean;
+  /** why it fits, in tag words (matching by fit only) */
+  reasons?: string[];
+  /** the scripting model's reason, when it picked this voice */
+  why?: string;
 }
+export type MatchBy = "fit" | "gender";
 /**
  * `into` as it stood before a merge filled its blanks: the merge's aliases, persona link and filled
  * fields go back, edits made since stay.
@@ -135,11 +151,12 @@ function unmerged(now: Character, was: Character): Character {
   if (!was.description.trim()) out.description = was.description;
   if (was.gender === "?") out.gender = "?";
   if (!was.age) delete out.age;
+  if (!was.voiceType) delete out.voiceType;
   return out;
 }
 
 export const useCastStore = defineStore("cast", {
-  state: (): CastState => ({ characters: {}, lexicon: {} }),
+  state: (): CastState => ({ characters: {}, lexicon: {}, aiPicks: {} }),
   getters: {
     charactersOf(s): (id: string) => Character[] {
       return (id: string): Character[] => s.characters[id] ?? [];
@@ -310,6 +327,26 @@ export const useCastStore = defineStore("cast", {
         }
         return out;
       };
+    },
+    /** Voices a speaker can be given (enabled endpoints), and the bands their numbers read by. */
+    matchPool(): { voices: LibraryVoice[]; bands: Bands; profiled: number } {
+      const endpointsStore = useEndpointsStore();
+      const voices = endpointsStore.enabledEndpoints.flatMap((e) =>
+        e.voices.map((voice) => ({ ref: voiceRef(e.id, voice.id), voice })),
+      );
+      return {
+        voices,
+        bands: voiceBands(endpointsStore.endpoints.flatMap((e) => e.voices)),
+        profiled: voices.filter((v) => profiled(v.voice)).length,
+      };
+    },
+    /** How auto-assign matches unless told: by fit once enough voices have a profile. */
+    matchBy(): MatchBy {
+      return this.matchPool.profiled >= FIT_MIN ? "fit" : "gender";
+    },
+    /** Why the scripting model can't be asked for voices, or none when it can. */
+    aiBlocker(): string | undefined {
+      return useScriptingStore().runBlockers[0];
     },
     /** The server's counts, once a page has read them (`useSpeakerCounts`); none before. */
     castStats(): (bookId: string) => Record<string, CastStat> {
@@ -1202,45 +1239,53 @@ export const useCastStore = defineStore("cast", {
         },
       });
     },
-    autoAssignPlan(bookId: string): AutoVoiceAssignment[] {
+    autoAssignPlan(bookId: string, by?: MatchBy): AutoVoiceAssignment[] {
       const endpointsStore = useEndpointsStore();
-
-      // pool: voices on enabled endpoints, grouped by the voice list's gender tag
-      const all = endpointsStore.enabledEndpoints.flatMap((e) =>
-        e.voices.map((v) => ({ ref: voiceRef(e.id, v.id), gender: v.gender })),
-      );
-      if (!all.length) return [];
-      const byGender: Partial<Record<Gender, typeof all>> = {
-        m: all.filter((v) => v.gender === "m"),
-        f: all.filter((v) => v.gender === "f"),
-        n: all.filter((v) => v.gender === "n"),
-      };
-      const used: Partial<Record<Gender, number>> = {};
-      const plan: AutoVoiceAssignment[] = [];
+      const cast = this.characters[bookId] ?? [];
       const byName = this.byName[bookId] ?? new Map<string, Character>();
-      // an unread cast has no one to assign; a voiceless linked persona keeps their character's
-      for (const c of this.characters[bookId] ?? []) {
-        if (c.voice || c.name === "Narrator" || personaOwner(c, byName)) continue;
-        const byG = byGender[c.gender];
-        const pool = byG?.length ? byG : all;
-        const i = used[c.gender] ?? 0;
-        used[c.gender] = i + 1;
-        const voice = pool[i % pool.length].ref;
+      const row = (c: Character, voice: VoiceRef, reasons?: string[]): AutoVoiceAssignment => {
         const resolved = endpointsStore.resolveVoice(voice)!;
-        plan.push({
+        return {
           name: c.name,
           gender: c.gender,
           voice,
           voiceLabel: resolved.voice.label,
           endpoint: resolved.endpoint.name,
-          matchedGender: !!byG?.length,
-        });
+          matchedGender: c.gender !== "?" && resolved.voice.gender === c.gender,
+          major: c.major,
+          ...(reasons ? { reasons } : {}),
+        };
+      };
+      const { voices, bands } = this.matchPool;
+      if ((by ?? this.matchBy) === "fit")
+        return fitPlan(cast, voices, bands, this.castStats(bookId)).map((r) =>
+          row(byName.get(r.name)!, r.voice, r.reasons),
+        );
+
+      // round-robin through the voices of each speaker's gender, or all of them when none
+      if (!voices.length) return [];
+      const byGender: Partial<Record<Gender, LibraryVoice[]>> = {
+        m: voices.filter((v) => v.voice.gender === "m"),
+        f: voices.filter((v) => v.voice.gender === "f"),
+        n: voices.filter((v) => v.voice.gender === "n"),
+      };
+      const used: Partial<Record<Gender, number>> = {};
+      const plan: AutoVoiceAssignment[] = [];
+      // an unread cast has no one to assign; a voiceless linked persona keeps their character's
+      for (const c of cast) {
+        if (c.voice || c.name === NARRATOR || personaOwner(c, byName)) continue;
+        const byG = byGender[c.gender];
+        const pool = byG?.length ? byG : voices;
+        const i = used[c.gender] ?? 0;
+        used[c.gender] = i + 1;
+        plan.push(row(c, pool[i % pool.length].ref));
       }
       return plan;
     },
-    autoAssignByGender(bookId: string): number {
+    /** Apply a plan (`autoAssignPlan`, perhaps refined) to the speakers still unvoiced, with Undo. */
+    autoAssign(bookId: string, given?: AutoVoiceAssignment[]): number {
       const uiStore = useUiStore();
-      const plan = this.autoAssignPlan(bookId);
+      const plan = given ?? this.autoAssignPlan(bookId);
       if (!plan.length) return 0;
       const cast = this.characters[bookId];
       const assigned: string[] = [];
@@ -1264,6 +1309,84 @@ export const useCastStore = defineStore("cast", {
         },
       });
       return plan.length;
+    },
+    /**
+     * Ask the scripting model to pick voices for up to 30 speakers; the picks are kept for the
+     * session (`aiPicks`). False when it could not be asked or failed; a toast says why.
+     */
+    async askVoices(bookId: string, speakers: string[]): Promise<boolean> {
+      const uiStore = useUiStore();
+      const profile = useScriptingStore().runProfile;
+      if (!profile || this.aiBlocker) {
+        uiStore.toast("Can’t ask for voices", { kind: "error", description: this.aiBlocker });
+        return false;
+      }
+      const names = speakers.slice(0, 30);
+      try {
+        const { picks } = await uiStore.toastLoading(
+          this._service().voiceSuggestions(bookId, profile.id, names),
+          {
+            loading: `Asking ${profile.name} for voices…`,
+            success: (r) => `${r.picks.length} of ${names.length} speakers got picks`,
+            error: "Voice suggestions failed",
+          },
+        );
+        const book = (this.aiPicks[bookId] ??= {});
+        for (const p of picks) book[p.speaker] = p.voices;
+        // a speaker asked about and given nothing is remembered as such, so not asked again blindly
+        for (const n of names) book[n] ??= [];
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    /**
+     * A plan with its main speakers' rows (up to 30, most lines first) swapped for the model's first
+     * pick that no other main speaker has; undefined when the model could not be asked.
+     */
+    async refinePlan(
+      bookId: string,
+      plan: AutoVoiceAssignment[],
+    ): Promise<AutoVoiceAssignment[] | undefined> {
+      const endpointsStore = useEndpointsStore();
+      const stats = this.castStats(bookId);
+      const main = plan
+        .filter((r) => r.major)
+        .sort((a, b) => (stats[b.name]?.lines ?? 0) - (stats[a.name]?.lines ?? 0))
+        .slice(0, 30);
+      if (
+        !main.length ||
+        !(await this.askVoices(
+          bookId,
+          main.map((r) => r.name),
+        ))
+      )
+        return;
+      const picks = this.aiPicks[bookId] ?? {};
+      const taken = new Set<VoiceRef>();
+      for (const c of this.characters[bookId] ?? []) if (c.major && c.voice) taken.add(c.voice);
+      for (const r of plan) if (r.major) taken.add(r.voice);
+      const swapped = new Map<string, AutoVoiceAssignment>();
+      for (const r of main) {
+        const pick = picks[r.name]?.find(
+          (p) =>
+            (p.voice === r.voice || !taken.has(p.voice)) && endpointsStore.resolveVoice(p.voice),
+        );
+        if (!pick) continue;
+        const resolved = endpointsStore.resolveVoice(pick.voice)!;
+        taken.delete(r.voice);
+        taken.add(pick.voice);
+        swapped.set(r.name, {
+          ...r,
+          voice: pick.voice,
+          voiceLabel: resolved.voice.label,
+          endpoint: resolved.endpoint.name,
+          matchedGender: r.gender !== "?" && resolved.voice.gender === r.gender,
+          reasons: undefined,
+          why: pick.why,
+        });
+      }
+      return plan.map((r) => swapped.get(r.name) ?? r);
     },
   },
 });

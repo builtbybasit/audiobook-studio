@@ -43,31 +43,44 @@ describe("automatic voice assignment", () => {
   });
   afterEach(() => pinia.stop());
 
-  test("previews the exact change and undoes it as one action", async () => {
+  test.each(["gender", "fit"] as const)(
+    "matching by %s previews the exact change and undoes it as one action",
+    async (by) => {
+      const cast = useCastStore();
+      const ui = useUiStore();
+      await useEndpointsStore().load();
+      cast._install("starforge", await libraryService().cast("starforge"));
+      const voices = () =>
+        cast.charactersOf("starforge").map((c) => ({ name: c.name, voice: c.voice }));
+      const before = voices();
+      const plan = cast.autoAssignPlan("starforge", by);
+      expect(plan.length).toBeGreaterThan(0);
+      expect(plan.every((row) => row.name !== "Narrator" && row.voice.includes("/"))).toBe(true);
+
+      let undo: (() => void) | undefined;
+      ui.toast = (_message, options) => {
+        undo = options?.undo ?? undefined;
+        return "test";
+      };
+      expect(cast.autoAssign("starforge", plan)).toBe(plan.length);
+      const voiceOf = (name: string) => cast.charactersOf("starforge").find((c) => c.name === name);
+      for (const row of plan) expect(voiceOf(row.name)?.voice).toBe(row.voice);
+      for (const row of before.filter((c) => c.voice))
+        expect(voiceOf(row.name)?.voice).toBe(row.voice);
+
+      undo!();
+      expect(voices()).toEqual(before);
+    },
+  );
+
+  test("matches by fit once three voices have a profile", async () => {
     const cast = useCastStore();
-    const ui = useUiStore();
-    await useEndpointsStore().load();
-    cast._install("starforge", await libraryService().cast("starforge"));
-    const voices = () =>
-      cast.charactersOf("starforge").map((c) => ({ name: c.name, voice: c.voice }));
-    const before = voices();
-    const plan = cast.autoAssignPlan("starforge");
-    expect(plan.length).toBeGreaterThan(0);
-    expect(plan.every((row) => row.name !== "Narrator" && row.voice.includes("/"))).toBe(true);
-
-    let undo: (() => void) | undefined;
-    ui.toast = (_message, options) => {
-      undo = options?.undo ?? undefined;
-      return "test";
-    };
-    expect(cast.autoAssignByGender("starforge")).toBe(plan.length);
-    const voiceOf = (name: string) => cast.charactersOf("starforge").find((c) => c.name === name);
-    for (const row of plan) expect(voiceOf(row.name)?.voice).toBe(row.voice);
-    for (const row of before.filter((c) => c.voice))
-      expect(voiceOf(row.name)?.voice).toBe(row.voice);
-
-    undo!();
-    expect(voices()).toEqual(before);
+    const endpoints = useEndpointsStore();
+    await endpoints.load();
+    expect(cast.matchBy).toBe("gender");
+    const pool = endpoints.enabledEndpoints.flatMap((e) => e.voices);
+    for (const v of pool.slice(0, 3)) v.profile = { age: "elderly" };
+    expect(cast.matchBy).toBe("fit");
   });
 });
 

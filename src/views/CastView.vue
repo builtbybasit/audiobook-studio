@@ -23,6 +23,7 @@ import { Cloud as ThoughtIcon, Plus as AddIcon, VenetianMask as MaskIcon } from 
 import CastRecord from "@/views/cast/CastRecord.vue";
 import CastSelectionBar from "@/views/cast/CastSelectionBar.vue";
 import BookDefaults from "@/views/cast/BookDefaults.vue";
+import VoiceGaps from "@/views/cast/VoiceGaps.vue";
 import EffectsSheet from "@/views/cast/effects/EffectsSheet.vue";
 import ReapplyBar from "@/views/cast/effects/ReapplyBar.vue";
 import type { EffectSubject } from "@/views/cast/effects/subject";
@@ -185,7 +186,7 @@ function editEffect(subject: EffectSubject) {
 const open = ref<string | null>(null);
 const toggleOpen = (name: string) => (open.value = open.value === name ? null : name);
 
-/** `autoAssignByGender` pools voices by gender, so an unknown is a speaker auto-assign skips. */
+/** Auto-assign can't match an unknown gender, so those speakers get any voice. */
 const unknownGender = computed(() => cast.value.filter((c) => c.gender === "?").length);
 
 /** A row's position is not settled on first mount; scrolling then lands a few pixels off. One frame
@@ -267,8 +268,7 @@ const duplicate = computed(
           {{ cast.length }} speakers across {{ total }} chapters · {{ unreviewed }} unreviewed ·
           {{ voiced }} voiced<template v-if="unknownGender">
             ·
-            <UiTooltip
-              text="Auto-assign pools voices by gender, so it skips a speaker whose gender is unknown."
+            <UiTooltip text="Auto-assign can’t match them by gender, so it picks from every voice."
               ><span class="cursor-help underline decoration-dotted underline-offset-2"
                 >{{ unknownGender }} unknown gender</span
               ></UiTooltip
@@ -370,6 +370,8 @@ const duplicate = computed(
         <button class="btn-ghost btn-xs" @click="keepSuggestion(s.from)">Keep separate</button>
       </div>
     </div>
+
+    <VoiceGaps :book-id="bookId" :stats="stats" />
 
     <ReadFailure
       v-if="unread"

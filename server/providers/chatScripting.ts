@@ -40,6 +40,7 @@ import {
   type CallStats,
 } from "~/providers/http";
 import type {
+  AskInput,
   ScriptAnswer,
   ScriptInput,
   ScriptRepair,
@@ -918,17 +919,37 @@ function said(raw: unknown): string {
 export const NO_PROFILE =
   "This run named no scripting profile; choose one on the Scripting page and run it again";
 
+/** An `ask` as a prompt: the schema rides in the system message for providers that cannot take it. */
+export const askPrompt = ({ system, user, schema }: AskInput): RenderedPrompt => ({
+  system: `${system}\n\nAnswer with one JSON object only, matching this JSON schema:\n${JSON.stringify(schema)}`,
+  user,
+});
+
+/** An `ask` answer's JSON; a reply with none is refused like a malformed script. */
+export function askedJson(who: string, content: string, status: number): unknown {
+  try {
+    return jsonIn(content);
+  } catch {
+    const said = oneLine(content);
+    throw new BadAnswer(
+      `${who} did not answer with JSON: “${said.length > 80 ? said.slice(0, 80) + "…" : said}”`,
+      status,
+      false,
+    );
+  }
+}
+
 /** Refuses a run with no profile, or a keyed profile with no key, before any request. */
 export function chatScriptingProvider(options: ChatScriptingOptions = {}): ScriptingProvider {
-  async function request(
+  /** One completion, retried and reported; `read` turns the final message into the answer. */
+  async function request<T>(
     target: ScriptTarget,
     prompt: RenderedPrompt,
-    text: string,
     signal: AbortSignal,
-    sent?: (request: SentScript) => void,
-    lenient = false,
-    repair?: ScriptRepair,
-  ): Promise<{ answer: ScriptAnswer; reasoningTokens: number | null }> {
+    sent: ((request: SentScript) => void) | undefined,
+    read: (content: string, status: number) => T,
+    chunked: boolean,
+  ): Promise<{ answer: T; reasoningTokens: number | null }> {
     requireKey(target);
     const reasoning = reasoningRequest(target.baseUrl, target.reasoning);
     const body = {
@@ -1000,7 +1021,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
     const usage = usageOf(raw);
     const reasoningTokens = reasoningTokensOf(raw);
     try {
-      const answer = readAnswer(target, text, res.status, raw, lenient, repair);
+      const answer = read(contentOf(target, res.status, raw, chunked), res.status);
       report(usage);
       return { answer, reasoningTokens };
     } catch (e) {
@@ -1010,14 +1031,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
     }
   }
 
-  function readAnswer(
-    target: ScriptTarget,
-    text: string,
-    status: number,
-    raw: unknown,
-    lenient: boolean,
-    repair?: ScriptRepair,
-  ): ScriptAnswer {
+  function contentOf(target: ScriptTarget, status: number, raw: unknown, chunked: boolean): string {
     const parsed = v.safeParse(Completion, raw);
     if (!parsed.success)
       throw new ProviderError(
@@ -1034,21 +1048,48 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
         target.reasoning && target.reasoning !== "off"
           ? "raise it or lower the reasoning level on the Endpoints page (the model’s thinking counts against it)"
           : "raise it on the Endpoints page (a reasoning model spends part of it thinking)";
-      throw new ChunkMisfit(
-        `${target.name}’s answer was cut off at max output tokens (${cap}); ${remedy} or use smaller chunks`,
+      throw new (chunked ? ChunkMisfit : BadAnswer)(
+        `${target.name}’s answer was cut off at max output tokens (${cap}); ${remedy}${chunked ? " or use smaller chunks" : ""}`,
         status,
         false,
       );
     }
-    return checkedScript(target.name, choice.message?.content ?? "", text, status, lenient, repair);
+    return choice.message?.content ?? "";
   }
+
+  const scriptRequest = (
+    target: ScriptTarget,
+    prompt: RenderedPrompt,
+    text: string,
+    signal: AbortSignal,
+    sent?: (request: SentScript) => void,
+    lenient = false,
+    repair?: ScriptRepair,
+  ) =>
+    request(
+      target,
+      prompt,
+      signal,
+      sent,
+      (content, status) => checkedScript(target.name, content, text, status, lenient, repair),
+      true,
+    );
 
   return {
     name: "Chat completions",
     callsProfile: true,
-    // ponytail: seam stub, replaced by the ask implementation
-    async ask() {
-      throw new ProviderError("Not built yet", 0, false);
+    async ask(input) {
+      const { target, signal, sent } = input;
+      if (!target) throw new ProviderError(NO_PROFILE, 0, false);
+      const { answer } = await request(
+        target,
+        askPrompt(input),
+        signal,
+        sent,
+        (content, status) => askedJson(target.name, content, status),
+        false,
+      );
+      return answer;
     },
     async script({
       title,
@@ -1064,7 +1105,7 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
     }: ScriptInput) {
       if (!target) throw new ProviderError(NO_PROFILE, 0, false);
       progress?.(0, 1);
-      const { answer } = await request(
+      const { answer } = await scriptRequest(
         target,
         prompt ?? builtInPrompt(title, cast, text),
         text,
@@ -1077,6 +1118,8 @@ export function chatScriptingProvider(options: ChatScriptingOptions = {}): Scrip
       return answer;
     },
     probe: (target, signal, given) =>
-      probeWith(target, signal, given, (prompt, text) => request(target, prompt, text, signal)),
+      probeWith(target, signal, given, (prompt, text) =>
+        scriptRequest(target, prompt, text, signal),
+      ),
   };
 }

@@ -37,6 +37,7 @@ import type { TranscriptionProvider } from "~/providers/transcription";
 import type { VoiceLister } from "~/providers/voices";
 import type { LocalServers } from "~/servers/localServers";
 import { voiceFiles } from "~/voices/files";
+import type { VoiceMeter } from "~/voices/measure";
 import type { FetchLike } from "@/services/http";
 import type { Book, Character, Endpoint, Job } from "@/types";
 import { epubFile, type EpubInput } from "./epub";
@@ -103,6 +104,10 @@ export interface TestApiOptions {
   trim?: TrimSilence;
   /** the local servers the endpoint routes start and stop; none by default, as in the demo */
   servers?: LocalServers;
+  /** what measures a voice's samples; none by default, so no test runs Python unasked */
+  meter?: VoiceMeter;
+  /** what a voice profile reads pages with; the network by default, so give one */
+  pageFetch?: FetchLike;
 }
 
 /** Per-test directories, so no two suites read each other's files. */
@@ -217,6 +222,8 @@ export function testApi(options: TestApiOptions = {}): TestApi {
     gate,
     effects: options.effects,
     servers: options.servers,
+    meter: options.meter,
+    pageFetch: options.pageFetch,
   });
 
   const request = async <T>(path: string, init?: RequestInit) => {

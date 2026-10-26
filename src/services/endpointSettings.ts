@@ -18,6 +18,7 @@ import type {
   ScriptSettings,
   Transcriber,
   VoiceListPage,
+  VoiceProfileFill,
   VoiceRef,
   VoiceSpeedLines,
   VoiceSpeedRedone,
@@ -102,6 +103,11 @@ export interface EndpointSettingsService {
     voice: string,
     request: Omit<VoiceCloneRequest, "title">,
   ): Promise<KeptVoiceSamples>;
+  /**
+   * Describe a voice: its kept samples measured, `url` read and `profile` (a scripting profile id)
+   * asked, each only when it can be. Nothing is saved; a step that could not run is a note.
+   */
+  fillVoiceProfile(id: string, voice: string, body: VoiceProfileAsk): Promise<VoiceProfileFill>;
   /** On transcriber `id`, or the first enabled one. A real request, priced by the minute sent. */
   transcribe(file: File, id?: string): Promise<{ text: string }>;
   /**
@@ -128,6 +134,11 @@ export interface LocalServers {
   servers: Record<string, LocalServerStatus>;
   /** empty without an NVIDIA GPU */
   gpus: GpuInfo[];
+}
+
+export interface VoiceProfileAsk {
+  url?: string;
+  profile?: string;
 }
 
 export interface VoiceCloneRequest {
@@ -192,6 +203,13 @@ export class HttpEndpointSettingsService implements EndpointSettingsService {
 
   async deleteVoice(id: string, voice: string): Promise<void> {
     await this.http.delete<null>(`/endpoints/${seg(id)}/voices/${seg(voice)}`);
+  }
+
+  fillVoiceProfile(id: string, voice: string, body: VoiceProfileAsk): Promise<VoiceProfileFill> {
+    return this.http.post<VoiceProfileFill>(
+      `/endpoints/${seg(id)}/voices/${seg(voice)}/profile`,
+      body,
+    );
   }
 
   transcribe(file: File, id?: string): Promise<{ text: string }> {

@@ -84,7 +84,11 @@ describe("lines made the old way", () => {
           other: null,
         }),
     ],
-    ["auto-assign", (id: string) => void useCastStore().autoAssignByGender(id)],
+    [
+      "auto-assign",
+      (id: string) =>
+        void useCastStore().autoAssign(id, useCastStore().autoAssignPlan(id, "gender")),
+    ],
   ])("%s asks about the lines it moved to another voice", async (_, change) => {
     const { id } = await heard();
     await useEndpointsStore().load();

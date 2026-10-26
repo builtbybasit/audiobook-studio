@@ -11,6 +11,7 @@ import { DEMO_BASE, openLibrary, REAL_BASE, serveLibraries } from "~/libraries";
 import { log } from "~/log";
 import { ffmpegAvailable, ffmpegEncoders } from "~/providers/ffmpegEncoder";
 import { localServers } from "~/servers/localServers";
+import { parselmouthMeter } from "~/voices/measure";
 
 const boot = log.child({ name: "boot" });
 
@@ -31,6 +32,13 @@ void effects
   .then((ok) =>
     boot.info({ pedalboard: ok }, ok ? "voice effects run" : "no uv: voice effects fall back"),
   );
+// also under uv, also probed now, so the first voice profile doesn't wait on Praat's download
+const meter = parselmouthMeter({ ffmpeg: env.FFMPEG_BIN });
+void meter
+  .unavailable()
+  .then((why) =>
+    boot.info({ praat: !why }, why ? "voices are not measured" : "voices are measured"),
+  );
 const thoughtEffect = ffmpegThoughtEffect(env.FFMPEG_BIN);
 const speechRate = ffmpegSpeechRate(env.FFMPEG_BIN);
 const trim = ffmpegTrim(env.FFMPEG_BIN);
@@ -44,6 +52,7 @@ const real = openLibrary({
   voiceDir: env.VOICE_DIR,
   encoders,
   effects,
+  meter,
   thoughtEffect,
   speechRate,
   trim,
@@ -57,6 +66,7 @@ const demo = openLibrary({
   voiceDir: join(env.DEMO_DIR, "voices"),
   encoders,
   effects,
+  meter,
   thoughtEffect,
   speechRate,
   trim,

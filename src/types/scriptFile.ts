@@ -3,7 +3,7 @@
 // travels as a hint the importer judges; expression tags travel in `text` as `{tag}` markers.
 import type { BookPrompt } from "@/types/scripting";
 import type { CharacterVoice, GenderSlot, Pacing } from "@/types/book";
-import type { Age, Gender, VoiceRef } from "@/types/common";
+import type { Age, Gender, VoiceRef, VoiceType } from "@/types/common";
 import type { Step } from "@/types/effect";
 import type { Segment, SegmentType } from "@/types/segment";
 import type { KeptSample, Voice } from "@/types/voice";
@@ -85,6 +85,7 @@ export interface ScriptFileSpeaker {
   /** `Character.masked`: the link is the model's, shown behind a spoiler */
   masked?: boolean;
   age?: Age;
+  voiceType?: VoiceType;
   /** `voices/<slug>/`: the zip folder with this speaker's recordings and `samples.json` */
   samples?: string;
   /** the effect they wear, by name */
@@ -279,7 +280,14 @@ export interface ScriptImportPlan {
      * What the file adds to a speaker the book has, without asking: aliases it knows (unioned, as
      * they only add matches) and the blanks it fills
      */
-    fill: { name: string; aliases?: string[]; age?: Age; masked?: true }[];
+    fill: {
+      name: string;
+      aliases?: string[];
+      age?: Age;
+      /** only the fields the book's speaker leaves blank */
+      voiceType?: VoiceType;
+      masked?: true;
+    }[];
   };
   lexicon: {
     add: ScriptFileTerm[];

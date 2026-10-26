@@ -26,6 +26,7 @@
     "tests/support/batchServer.ts",
     "tests/support/fakeCli.ts",
     "tests/support/liveExcerpt.ts",
+    "tests/support/meter.ts",
     "src/types/**/*.ts",
     "src/lib/**/*.ts"
   ]

@@ -35,6 +35,7 @@ import { invalidate } from "@/queries/invalidate";
 import { keys } from "@/queries/keys";
 import { encodingOf } from "@/lib/endpointShapes";
 import { packBackup, unpackBackup, type PackVoice } from "@/lib/settingsBackup";
+import { mergeProfile, voiceBands, type VoiceBands } from "@/lib/voiceProfile";
 import type {
   BatchLimits,
   ConnectionTest,
@@ -43,6 +44,7 @@ import type {
   EndpointKind,
   EndpointLive,
   ExpressionConfig,
+  Gender,
   KeptVoiceSamples,
   Profile,
   ProfilePrompt,
@@ -53,6 +55,8 @@ import type {
   Transcriber,
   Voice,
   VoiceOption,
+  VoiceProfile,
+  VoiceProfileFill,
   VoiceRef,
 } from "@/types";
 import { defineStore } from "pinia";
@@ -74,6 +78,8 @@ interface EndpointsState {
   credentials: Credential[];
   /** The voice ids each endpoint's server listed when last asked; null when it couldn't be asked. */
   onServer: Record<string, string[] | null>;
+  /** What each voice's last profile fill could not do, by voice ref; this session only. */
+  profileNotes: Record<VoiceRef, string[]>;
   loaded: boolean;
 }
 
@@ -232,6 +238,9 @@ const blankTranscriber = (): Transcriber => ({
   perMinute: 0,
 });
 
+const voiceIn = (endpoints: Endpoint[], endpointId: string, voiceId: string): Voice | undefined =>
+  endpoints.find((e) => e.id === endpointId)?.voices.find((v) => v.id === voiceId);
+
 function cancelTimer(): void {
   if (timer) clearTimeout(timer);
   timer = null;
@@ -245,6 +254,7 @@ export const useEndpointsStore = defineStore("endpoints", {
     prompt: null,
     credentials: [],
     onServer: {},
+    profileNotes: {},
     loaded: false,
   }),
   getters: {
@@ -288,6 +298,10 @@ export const useEndpointsStore = defineStore("endpoints", {
             ? `${ref.split("/")[1]} (missing)`
             : "";
       };
+    },
+    /** Measured words are relative to every voice the library has, on any endpoint. */
+    voiceBands(s): Partial<Record<Gender, VoiceBands>> {
+      return voiceBands(s.endpoints.flatMap((e) => e.voices));
     },
     voiceOptions(s): VoiceOption[] {
       return s.endpoints.flatMap((e) =>
@@ -909,6 +923,70 @@ export const useEndpointsStore = defineStore("endpoints", {
               : `${ep.name}: voice list unavailable`,
       });
       return work.catch(() => 0);
+    },
+    /**
+     * Describe a voice and merge it in, filling only blanks (`mergeProfile`); the write-behind
+     * saves it. `ai` asks the scripting profile runs go to, when it can take one. Returns the fill
+     * with every note; throws when the server refused, for the caller to say.
+     */
+    async fillVoiceProfile(
+      endpointId: string,
+      voiceId: string,
+      { url, ai }: { url?: string; ai: boolean },
+    ): Promise<VoiceProfileFill> {
+      const scriptingStore = useScriptingStore();
+      const notes: string[] = [];
+      let profile: string | undefined;
+      if (ai) {
+        const p = scriptingStore.runProfile;
+        if (p && !scriptingStore.runBlockers.length) profile = p.id;
+        else
+          notes.push(
+            this.profiles.length
+              ? `The page was not read: ${scriptingStore.runBlockers[0]}`
+              : "Add a scripting profile to fill the rest from the page",
+          );
+      }
+      try {
+        // the server measures the voice it has saved
+        await this.flushWrites();
+        const fill = await this._service().fillVoiceProfile(endpointId, voiceId, {
+          // a page nobody will read is not fetched
+          ...(profile && url ? { url } : {}),
+          ...(profile ? { profile } : {}),
+        });
+        const v = voiceIn(this.endpoints, endpointId, voiceId);
+        if (v) v.profile = mergeProfile(v.profile, fill.profile);
+        const all = [...notes, ...fill.notes];
+        this.profileNotes[voiceRef(endpointId, voiceId)] = all;
+        return { profile: fill.profile, notes: all };
+      } finally {
+        if (profile) void invalidate({ key: keys.endpointRequests });
+      }
+    },
+    /** Change some profile fields by hand; a blank one is dropped, and an empty profile with it. */
+    setVoiceProfile(endpointId: string, voiceId: string, patch: Partial<VoiceProfile>): void {
+      const v = voiceIn(this.endpoints, endpointId, voiceId);
+      if (!v) return;
+      const next: Record<string, unknown> = { ...v.profile, ...patch };
+      for (const [k, x] of Object.entries(next))
+        if (x == null || x === "" || (Array.isArray(x) && !x.length)) delete next[k];
+      if (Object.keys(next).length) v.profile = next as VoiceProfile;
+      else delete v.profile;
+    },
+    clearVoiceProfile(endpointId: string, voiceId: string): void {
+      const v = voiceIn(this.endpoints, endpointId, voiceId);
+      if (!v?.profile) return;
+      const was = v.profile;
+      delete v.profile;
+      delete this.profileNotes[voiceRef(endpointId, voiceId)];
+      useUiStore().toast(`Cleared the profile of ${v.label}`, {
+        // found again: a save in between replaces the voice objects
+        undo: () => {
+          const now = voiceIn(this.endpoints, endpointId, voiceId);
+          if (now) now.profile = was;
+        },
+      });
     },
     /** Adds voices whose ids are new; returns how many. */
     mergeVoices(ep: Endpoint, found: Voice[]): number {

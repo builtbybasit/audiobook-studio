@@ -38,6 +38,8 @@ import { transferRoutes } from "~/routes/transfer";
 import { bookUsageRoutes, endpointUsageRoutes } from "~/routes/usage";
 import type { LocalServers } from "~/servers/localServers";
 import { voiceFiles as voiceFilesIn, type VoiceFiles } from "~/voices/files";
+import type { VoiceMeter } from "~/voices/measure";
+import type { FetchLike } from "@/services/http";
 
 /** Messages for Hono refusals that come without one. */
 const REFUSED: Partial<Record<number, string>> = {
@@ -73,6 +75,10 @@ export interface AppOptions {
   gate?: SpeechGate;
   /** what a preview of an effect is rendered with; none by default, so previews answer 503 */
   effects?: EffectRunner;
+  /** what measures a voice's samples; none = profiles are filled unmeasured, as without uv */
+  meter?: VoiceMeter;
+  /** what reads a character page for a voice profile; the network by default */
+  pageFetch?: FetchLike;
   /** `<base>/demo/*` controls; given to the demo library alone so the real one can't be emptied */
   demo?: DemoControls;
   /** the servers on this machine the endpoints start; none = none listed or started (the demo) */
@@ -91,6 +97,8 @@ export function createApp(
     voiceFiles = voiceFilesIn(env.VOICE_DIR),
     gate = createSpeechGate(),
     effects,
+    meter,
+    pageFetch,
     demo,
     servers,
   }: AppOptions = {},
@@ -130,7 +138,7 @@ export function createApp(
     `${base}/books`,
     bookRoutes(db, runner, files, exports.files, providers.scripting, effects),
   );
-  app.route(`${base}/books`, castRoutes(db, runner));
+  app.route(`${base}/books`, castRoutes(db, runner, providers.scripting));
   app.route(`${base}/books`, scriptRoutes(db, runner));
   app.route(`${base}/books`, exportRoutes(db, runner, exports, coverFiles(files)));
   app.route(`${base}/books`, transferRoutes(db, providers, files, voiceFiles));
@@ -139,7 +147,10 @@ export function createApp(
   app.route(`${base}/jobs`, jobRoutes(db, runner));
   app.route(
     `${base}/endpoints`,
-    endpointRoutes(db, providers, voiceFiles, gate, runner, effects, servers),
+    endpointRoutes(db, providers, voiceFiles, gate, runner, effects, servers, {
+      meter,
+      fetch: pageFetch,
+    }),
   );
   app.route(`${base}/endpoints`, endpointUsageRoutes(db));
   app.route(`${base}/effects`, effectRoutes(db, files, effects));

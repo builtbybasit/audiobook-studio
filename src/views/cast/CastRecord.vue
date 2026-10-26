@@ -3,6 +3,7 @@
 import { computed, ref, useId } from "vue";
 
 import { useCastStore } from "@/stores/cast";
+import { useEndpointsStore } from "@/stores/endpoints";
 import { useSpeakerSamplesStore } from "@/stores/speakerSamples";
 import { plural } from "@/lib/contents";
 import { sizeLabel } from "@/lib/audioFormat";
@@ -13,7 +14,8 @@ import PersonaSection from "@/views/cast/persona/PersonaSection.vue";
 import { Plus as AddIcon, X as CloseIcon } from "@lucide/vue";
 import { AGES } from "@/lib/cast";
 import { nameSaid } from "@/lib/speech";
-import type { Age, Character, Gender } from "@/types";
+import { DELIVERIES, PITCHES, TEXTURES } from "@/lib/voiceProfile";
+import type { Age, Character, Delivery, Gender, Pitch, Texture, VoiceType } from "@/types";
 
 const props = defineProps<{
   bookId: string;
@@ -23,6 +25,7 @@ const props = defineProps<{
 }>();
 
 const castStore = useCastStore();
+const endpointsStore = useEndpointsStore();
 const samplesStore = useSpeakerSamplesStore();
 const bookId = props.bookId;
 
@@ -34,6 +37,33 @@ const AGE_OPTIONS = [
   ...AGES.map((value) => ({ value, label: value })),
   { value: "?", label: "unknown" },
 ];
+
+const unknownOr = (words: readonly string[]) => [
+  ...words.map((value) => ({ value, label: value })),
+  { value: "?", label: "unknown" },
+];
+const PITCH_OPTIONS = unknownOr(PITCHES);
+const TEXTURE_OPTIONS = unknownOr(TEXTURES);
+/** Merge into their voice type; a field set to unknown is dropped, and an empty type with it. */
+function setVoiceType(patch: VoiceType) {
+  const next: VoiceType = { ...props.c.voiceType, ...patch };
+  if (!next.pitch) delete next.pitch;
+  if (!next.texture) delete next.texture;
+  if (!next.delivery?.length) delete next.delivery;
+  void castStore.updateCharacter(bookId, props.c.name, {
+    voiceType: Object.keys(next).length ? next : undefined,
+  });
+}
+const delivery = computed(() => props.c.voiceType?.delivery ?? []);
+function toggleDelivery(d: Delivery) {
+  const on = delivery.value.includes(d);
+  setVoiceType({ delivery: on ? delivery.value.filter((x) => x !== d) : [...delivery.value, d] });
+}
+// offered, never applied on its own: a style change marks their finished lines as changed
+const voiceStyle = computed(() => {
+  const style = endpointsStore.resolveVoice(props.c.voice)?.voice.profile?.style?.trim();
+  return style && style !== props.c.style.trim() ? style : undefined;
+});
 
 // The description is written from the whole book, so it hides behind a button (no spoilers);
 // one empty when the record opened stays shown while typed in.
@@ -115,7 +145,7 @@ function addAlias(c: Character) {
             Gender
             <UiHint
               label="gender"
-              text="Auto-assign picks this speaker’s voice from those of their gender; an unknown gender is skipped."
+              text="Auto-assign picks this speaker’s voice from those of their gender; with an unknown gender it picks from every voice."
             />
           </div>
           <UiSelect
@@ -145,6 +175,38 @@ function addAlias(c: Character) {
             "
           />
         </div>
+        <div class="space-y-1 text-xs font-medium">
+          <div class="flex items-center gap-1">
+            Pitch
+            <UiHint
+              label="voice type"
+              text="How they sound, from the cast notes or set here. Matched against voice profiles for suggestions and auto-assign; pitch is within their gender."
+            />
+          </div>
+          <UiSelect
+            :model-value="c.voiceType?.pitch ?? '?'"
+            :options="PITCH_OPTIONS"
+            size="xs"
+            class="w-24"
+            :aria-label="`Pitch for ${c.name}`"
+            @update:model-value="
+              (v) => setVoiceType({ pitch: v === '?' ? undefined : (v as Pitch) })
+            "
+          />
+        </div>
+        <div class="space-y-1 text-xs font-medium">
+          <div>Texture</div>
+          <UiSelect
+            :model-value="c.voiceType?.texture ?? '?'"
+            :options="TEXTURE_OPTIONS"
+            size="xs"
+            class="w-24"
+            :aria-label="`Texture for ${c.name}`"
+            @update:model-value="
+              (v) => setVoiceType({ texture: v === '?' ? undefined : (v as Texture) })
+            "
+          />
+        </div>
         <div class="flex items-center gap-1 pb-1 text-xs font-medium">
           <label class="flex items-center gap-2"
             ><UiSwitch
@@ -157,6 +219,30 @@ function addAlias(c: Character) {
             label="main cast"
             text="Main cast get their own card on the Narration stage; minor speakers are collapsed there and read in the Character voice or the Narrator’s until given one."
           />
+        </div>
+      </div>
+      <div class="space-y-1 text-xs font-medium">
+        <div>
+          Delivery <span class="font-normal text-zinc-400">· up to three, none = unknown</span>
+        </div>
+        <div class="flex flex-wrap gap-1" role="group" :aria-label="`Delivery for ${c.name}`">
+          <button
+            v-for="d in DELIVERIES"
+            :key="d"
+            type="button"
+            class="chip"
+            :class="delivery.includes(d) ? 'chip-on' : 'chip-off'"
+            :aria-pressed="delivery.includes(d)"
+            :disabled="!delivery.includes(d) && delivery.length >= 3"
+            :data-tip="
+              !delivery.includes(d) && delivery.length >= 3
+                ? 'Up to three — untick one first'
+                : undefined
+            "
+            @click="toggleDelivery(d)"
+          >
+            {{ d }}
+          </button>
         </div>
       </div>
       <div class="space-y-1 text-xs font-medium">
@@ -175,6 +261,19 @@ function addAlias(c: Character) {
             })
           "
         />
+        <p v-if="voiceStyle" class="flex items-center gap-1 text-[11px] font-normal text-zinc-500">
+          <span class="min-w-0 truncate">Voice style: ‘{{ voiceStyle }}’</span>
+          <span aria-hidden="true">·</span>
+          <button
+            type="button"
+            class="shrink-0 text-violet-600 hover:underline dark:text-violet-300"
+            data-tip="Replaces their delivery style; lines already narrated will show as changed"
+            :aria-label="`Use the voice’s style for ${c.name}`"
+            @click="castStore.updateCharacter(bookId, c.name, { style: voiceStyle })"
+          >
+            Use
+          </button>
+        </p>
       </div>
       <div
         v-for="w in waiting(c.name)"

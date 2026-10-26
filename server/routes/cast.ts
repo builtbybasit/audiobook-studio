@@ -10,14 +10,18 @@ import type {
   MovedSpeakers,
   NarrationQueued,
   OldVoice,
+  VoiceSuggestions,
 } from "@/types";
 import type { Db } from "~/db/client";
 import { oldVoice, revoice } from "~/cast/oldVoice";
 import * as ops from "~/cast/ops";
+import { suggestVoicesFor } from "~/cast/suggest";
 import type { Runner } from "~/jobs/runner";
 import { BookParam } from "~/lib/http";
 import { CharacterSchema, ChapterLinesSchema, LexEntrySchema } from "~/lib/schemas";
 import { validate } from "~/lib/validate";
+import { endpointScriptingProvider } from "~/providers/endpointScripting";
+import type { ScriptingProvider } from "~/providers/scripting";
 
 const NameParam = v.object({ id: v.string(), name: v.pipe(v.string(), v.nonEmpty()) });
 const Rename = v.object({ to: v.pipe(v.string(), v.trim(), v.nonEmpty("must not be empty")) });
@@ -43,13 +47,21 @@ const Revoice = v.object({
   names: Names,
   chapters: v.pipe(v.array(v.pipe(v.number(), v.integer(), v.minValue(1))), v.minLength(1)),
 });
+const SuggestVoices = v.object({
+  profile: v.pipe(v.string(), v.nonEmpty()),
+  speakers: v.array(Name),
+});
 const Lexicon = v.object({
   entries: v.array(LexEntrySchema),
   /** the lines an earlier change staled, which an Undo asks to have back */
   restore: v.optional(v.array(ChapterLinesSchema)),
 });
 
-export function castRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
+export function castRoutes(
+  db: Db,
+  runner: Runner,
+  scripting: ScriptingProvider = endpointScriptingProvider(),
+): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
 
   app.get("/:id/cast", validate("param", BookParam), (c) =>
@@ -58,6 +70,23 @@ export function castRoutes(db: Db, runner: Runner): Hono<PinoEnv> {
 
   app.get("/:id/speaker-counts", validate("param", BookParam), (c) =>
     c.json({ counts: ops.speakerCounts(db, c.req.valid("param").id) }),
+  );
+
+  /** The scripting model's voice picks for up to 30 speakers; closing the request cancels it. */
+  app.post(
+    "/:id/voice-suggestions",
+    validate("param", BookParam),
+    validate("json", SuggestVoices),
+    async (c) =>
+      c.json(
+        (await suggestVoicesFor(
+          db,
+          scripting,
+          c.req.valid("param").id,
+          c.req.valid("json"),
+          c.req.raw.signal,
+        )) satisfies VoiceSuggestions,
+      ),
   );
 
   /** Several speakers new or replaced, all or nothing. */

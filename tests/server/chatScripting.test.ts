@@ -2,7 +2,7 @@
 // sends, what it accepts back, and what it refuses — above all an answer that drops the prose.
 import { describe, expect, test } from "bun:test";
 
-import type { SegmentType } from "@/types";
+import type { SegmentType, VoiceType } from "@/types";
 import {
   ChunkMisfit,
   chatScriptingProvider,
@@ -12,7 +12,7 @@ import {
   NO_PROFILE,
 } from "~/providers/chatScripting";
 import { ProviderError } from "~/providers/http";
-import type { ScriptedLine, ScriptInput, ScriptTarget } from "~/providers/scripting";
+import type { AskInput, ScriptedLine, ScriptInput, ScriptTarget } from "~/providers/scripting";
 import type { SentScript } from "~/providers/sent";
 
 const TEXT = "The door opened. “Come in,” said Mara softly.";
@@ -759,5 +759,65 @@ describe("a reasoning level", () => {
     expect(await probe(details(0), "off")).toMatch(/; 0 reasoning tokens$/);
     expect(await probe(details("lots"))).toMatch(/spoken by Mara$/);
     expect(await probe({ completion_tokens_details: null })).toMatch(/spoken by Mara$/);
+  });
+});
+
+describe("an ask", () => {
+  const ask = (over: Partial<AskInput> = {}): AskInput => ({
+    system: "Pick voices.",
+    user: "Mara",
+    schema: { type: "object", properties: { picks: { type: "array" } } },
+    target: target(),
+    signal: new AbortController().signal,
+    simulated: null,
+    ...over,
+  });
+
+  test("hands back the answer's JSON, the schema in the system message, reported done", async () => {
+    const { sent: wire, provider } = gateway(() =>
+      completion('```json\n{"picks":["a"]}\n```', "stop", USAGE),
+    );
+    const sent: SentScript[] = [];
+    expect(await provider.ask!(ask({ sent: (r) => sent.push(r) }))).toEqual({ picks: ["a"] });
+    const [system] = wire[0].body.messages as { content: string }[];
+    expect(system.content).toContain('"picks"');
+    expect(wire[0].body.response_format).toEqual({ type: "json_object" });
+    expect(sent).toMatchObject([{ status: "done", usage: { inputTokens: 1200 } }]);
+  });
+
+  test("refuses an answer that is not JSON, and keeps it for the Activity tab", async () => {
+    const { provider } = gateway(() => completion("Sorry, I can't help with that."));
+    const sent: SentScript[] = [];
+    await expect(provider.ask!(ask({ sent: (r) => sent.push(r) }))).rejects.toThrow(
+      /did not answer with JSON: “Sorry/,
+    );
+    expect(sent[0]).toMatchObject({ status: "failed" });
+  });
+});
+
+describe("a cast note's voice type", () => {
+  test.each<[string, unknown, VoiceType | undefined]>([
+    [
+      "keeps the shared words, whatever their case",
+      { pitch: " Low ", texture: "HUSKY", delivery: ["Calm", "stern"] },
+      { pitch: "low", texture: "husky", delivery: ["calm", "stern"] },
+    ],
+    [
+      "drops words outside the lists and keeps the rest",
+      { pitch: "baritone", texture: null, delivery: ["gravelly", "weary", "weary"] },
+      { delivery: ["weary"] },
+    ],
+    ["drops a voice type with nothing usable", { pitch: "deep", delivery: "calm" }, undefined],
+    ["drops one that is not an object", "low and husky", undefined],
+    [
+      "keeps at most three delivery words",
+      { delivery: ["calm", "warm", "cold", "gentle"] },
+      { delivery: ["calm", "warm", "cold"] },
+    ],
+  ])("%s", async (_, voiceType, want) => {
+    const { provider } = gateway(() =>
+      completion(JSON.stringify({ lines: LINES, cast: [{ name: "Mara", voiceType }] })),
+    );
+    expect((await provider.script(input())).cast![0].voiceType).toEqual(want);
   });
 });

@@ -1,7 +1,8 @@
-// What a voice row says of the likeness report: chips for the nearest voices, warnings for a kept
-// recording shared with another voice or samples of different people, and the clone check's line.
+// What the likeness report says of a voice: chips for the nearest voices, warnings for a kept
+// recording shared with another voice or samples of different people, the row icon's one-line tip,
+// and the clone check's line.
 import { bandOf, likenessKey, likenessOf, NEAREST, type LikenessBand } from "@/lib/voiceLikeness";
-import type { AlikeVoice, VoiceLikeness } from "@/types";
+import type { AlikeVoice, Endpoint, VoiceLikeness } from "@/types";
 
 /** A voice's label and its endpoint's name; ids where nothing saved names them. */
 export type FindVoice = (
@@ -9,8 +10,21 @@ export type FindVoice = (
   voiceId: string,
 ) => { label: string; endpoint: string };
 
+/** Names from the saved endpoints; a voice none lists shows its id. */
+export function voiceFinder(endpoints: readonly Endpoint[]): FindVoice {
+  const names = new Map<string, { label: string; endpoint: string }>();
+  for (const e of endpoints)
+    for (const v of e.voices)
+      names.set(likenessKey(e.id, v.id), { label: v.label || v.id, endpoint: e.name });
+  return (endpointId, voiceId) =>
+    names.get(likenessKey(endpointId, voiceId)) ?? {
+      label: voiceId,
+      endpoint: endpoints.find((e) => e.id === endpointId)?.name ?? endpointId,
+    };
+}
+
 export interface SoundsLike {
-  chips: { key: string; text: string; tip: string; same: boolean }[];
+  chips: { key: string; text: string; tip: string; score: string; same: boolean }[];
   warnings: string[];
 }
 
@@ -38,6 +52,7 @@ export function soundsLike(l: VoiceLikeness, find: FindVoice): SoundsLike | null
           key,
           text: `${nameOf(a, here, find)} · ${BAND_WORD[band]}`,
           tip: `${a.score.toFixed(2)}${away}`,
+          score: a.score.toFixed(2),
           same: band === "same",
         },
       ];
@@ -66,4 +81,9 @@ export function doubleOf(
   if (twin) return `${own} keeps the same recording as ${nameOf(twin, endpointId, find)}`;
   const same = l.nearest.find((a) => bandOf(a.score) === "same");
   return same ? `${own} sounds like ${nameOf(same, endpointId, find)} — same voice` : null;
+}
+
+/** The row icon's tip: warnings first, then each match with its score. */
+export function tipOf(row: SoundsLike): string {
+  return [...row.warnings, ...row.chips.map((c) => `${c.text} ${c.score}`)].join("; ");
 }

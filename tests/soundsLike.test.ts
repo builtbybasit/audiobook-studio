@@ -2,8 +2,14 @@
 // named, unknown voices by id, a twin said once as a warning.
 import { describe, expect, test } from "bun:test";
 
-import type { VoiceLikeness } from "@/types";
-import { doubleOf, soundsLike, type FindVoice } from "@/views/endpoints/soundsLike";
+import type { Endpoint, VoiceLikeness } from "@/types";
+import {
+  doubleOf,
+  soundsLike,
+  tipOf,
+  voiceFinder,
+  type FindVoice,
+} from "@/views/endpoints/soundsLike";
 
 const NAMES: Record<string, string> = { "fish/mara": "Mara", "omni/mara": "Mara", "omni/bo": "Bo" };
 const find: FindVoice = (e, v) => ({
@@ -51,6 +57,33 @@ describe("a voice row", () => {
     expect(
       soundsLike(voice({ nearest: [{ endpointId: "omni", voiceId: "bo", score: 0.3 }] }), find),
     ).toBeNull();
+  });
+});
+
+describe("the row icon's tip", () => {
+  test("puts warnings first and names each match once, with its score", () => {
+    const twin = { endpointId: "omni", voiceId: "bo", score: 0.99 };
+    const row = soundsLike(
+      voice({
+        nearest: [twin, { endpointId: "fish", voiceId: "mara", score: 0.6 }],
+        twins: [twin],
+      }),
+      find,
+    )!;
+    expect(tipOf(row)).toBe("Same recording as Bo; Mara on Fish Audio · very alike 0.60");
+  });
+});
+
+describe("voiceFinder", () => {
+  test("names saved voices and falls back to ids", () => {
+    const find = voiceFinder([
+      { id: "omni", name: "OmniVoice", voices: [{ id: "bo", label: "Bo", gender: "m" }] },
+    ] as Endpoint[]);
+    expect([find("omni", "bo"), find("omni", "gone"), find("lost", "x")]).toEqual([
+      { label: "Bo", endpoint: "OmniVoice" },
+      { label: "gone", endpoint: "OmniVoice" },
+      { label: "x", endpoint: "lost" },
+    ]);
   });
 });
 

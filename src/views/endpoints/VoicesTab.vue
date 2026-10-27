@@ -21,6 +21,7 @@ import {
   RefreshCw as FetchIcon,
   RotateCcw as RemakeIcon,
   TriangleAlert as WarnIcon,
+  Users as AlikeIcon,
   X as RemoveIcon,
   Search as SearchIcon,
 } from "@lucide/vue";
@@ -30,7 +31,6 @@ import { isFishAudio } from "@/lib/endpoints";
 import { cloningOf, speechProviderOf } from "@/lib/providers";
 import { MAX_SAMPLE_TEXT, SAMPLE_LINES } from "@/lib/endpointShapes";
 import { measuredWords, ROUGH_BELOW_SEC } from "@/lib/voiceProfile";
-import { likenessKey } from "@/lib/voiceLikeness";
 import { useVoiceLikeness } from "@/queries/voiceLikeness";
 import {
   pickProblem,
@@ -45,7 +45,8 @@ import SamplePicker from "@/views/endpoints/SamplePicker.vue";
 import {
   doubleOf,
   soundsLike,
-  type FindVoice,
+  tipOf,
+  voiceFinder,
   type SoundsLike,
 } from "@/views/endpoints/soundsLike";
 import VoiceProfileSheet from "@/views/endpoints/VoiceProfileSheet.vue";
@@ -361,27 +362,20 @@ const {
   refresh: refreshLikeness,
   refetch: refetchLikeness,
 } = useVoiceLikeness(likenessOn);
-const voiceNames = computed(() => {
-  const out = new Map<string, { label: string; endpoint: string }>();
-  for (const e of endpointsStore.endpoints)
-    for (const v of e.voices)
-      out.set(likenessKey(e.id, v.id), { label: v.label || v.id, endpoint: e.name });
-  return out;
-});
-const findVoice: FindVoice = (endpointId, voiceId) =>
-  voiceNames.value.get(likenessKey(endpointId, voiceId)) ?? {
-    label: voiceId,
-    endpoint: endpointsStore.endpoints.find((e) => e.id === endpointId)?.name ?? endpointId,
-  };
+const findVoice = computed(() => voiceFinder(endpointsStore.endpoints));
+// an icon inside the row's profile button, its tip listing the matches; the sheet shows them in full
 const alike = computed(() => {
-  const out: Record<string, SoundsLike> = {};
+  const out: Record<string, SoundsLike & { tip: string }> = {};
   for (const l of likeness.value?.voices ?? []) {
     if (l.endpointId !== props.endpoint.id) continue;
-    const row = soundsLike(l, findVoice);
-    if (row) out[l.voiceId] = row;
+    const row = soundsLike(l, findVoice.value);
+    if (row) out[l.voiceId] = { ...row, tip: tipOf(row) };
   }
   return out;
 });
+/** A row's tip or label with its likeness first, when it has one. */
+const withAlike = (voiceId: string, text: string): string =>
+  alike.value[voiceId] ? `${alike.value[voiceId].tip} · ${text}` : text;
 const likenessProblem = computed(() =>
   likenessError.value
     ? `Couldn't compare voices: ${likenessError.value.message}`
@@ -397,7 +391,7 @@ async function compareAgain() {
 /** After a voice's samples changed: say once if it now doubles another voice. */
 async function checkDouble(voiceId: string) {
   const { data } = await compareAgain();
-  const line = data && doubleOf(data.voices, props.endpoint.id, voiceId, findVoice);
+  const line = data && doubleOf(data.voices, props.endpoint.id, voiceId, findVoice.value);
   if (line) uiStore.toast(line, { kind: "warning" });
 }
 async function onCloned(voiceId: string) {
@@ -553,21 +547,14 @@ const sampleTitle = computed(() =>
             />
           </h3>
           <p
-            v-if="likenessOn"
+            v-if="likenessOn && (likenessStatus === 'loading' || likenessProblem)"
             class="mt-0.5 flex flex-wrap items-center gap-1 text-[11px] text-zinc-500"
             role="status"
           >
-            Sounds like
-            <UiHint
-              label="sounds like"
-              text="Each voice's kept samples are compared by a speaker-recognition model; “same voice” means another sample of it, or the same actor."
-            />
             <template v-if="likenessStatus === 'loading'">
               <BusyIcon class="icon-sm animate-spin" /> Comparing voices…
             </template>
-            <span v-else-if="likenessProblem" class="text-amber-600 dark:text-amber-400">
-              · {{ likenessProblem }}
-            </span>
+            <span v-else class="text-amber-600 dark:text-amber-400">{{ likenessProblem }}</span>
           </p>
         </div>
         <div class="flex flex-wrap items-center gap-2">
@@ -658,20 +645,51 @@ const sampleTitle = computed(() =>
           <button
             v-if="profileLines[v.id]"
             class="max-w-64 shrink truncate rounded px-1.5 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-100 hover:text-violet-600 dark:text-zinc-300 dark:hover:bg-zinc-800"
-            :data-tip="profileLines[v.id].tip"
-            :aria-label="`Profile of ${v.label}: ${profileLines[v.id].text}`"
+            :data-tip="withAlike(v.id, profileLines[v.id].tip)"
+            :aria-label="`Profile of ${v.label}: ${withAlike(v.id, profileLines[v.id].text)}`"
             @click="openProfile(v.id)"
           >
-            {{ profileLines[v.id].text }}
+            <span
+              v-if="alike[v.id]"
+              class="mr-1 inline-flex items-center gap-0.5 align-[-2px]"
+              :class="
+                alike[v.id].warnings.length
+                  ? 'text-amber-600 dark:text-amber-400'
+                  : alike[v.id].chips.some((c) => c.same)
+                    ? 'text-violet-600 dark:text-violet-400'
+                    : 'text-zinc-400'
+              "
+              ><WarnIcon v-if="alike[v.id].warnings.length" class="icon-sm" /><template v-else
+                ><AlikeIcon class="icon-sm" />{{ alike[v.id].chips.length }}</template
+              ></span
+            >{{ profileLines[v.id].text }}
           </button>
           <button
             v-else
             class="btn-ghost btn-xs shrink-0 text-zinc-400"
-            :aria-label="`Add a profile for ${v.label}`"
-            data-tip="Describe how it sounds and what it suits, from a character page or by hand"
+            :aria-label="withAlike(v.id, `Add a profile for ${v.label}`)"
+            :data-tip="
+              withAlike(
+                v.id,
+                'Describe how it sounds and what it suits, from a character page or by hand',
+              )
+            "
             @click="openProfile(v.id)"
           >
-            Add profile
+            <span
+              v-if="alike[v.id]"
+              class="mr-1 inline-flex items-center gap-0.5 align-[-2px]"
+              :class="
+                alike[v.id].warnings.length
+                  ? 'text-amber-600 dark:text-amber-400'
+                  : alike[v.id].chips.some((c) => c.same)
+                    ? 'text-violet-600 dark:text-violet-400'
+                    : 'text-zinc-400'
+              "
+              ><WarnIcon v-if="alike[v.id].warnings.length" class="icon-sm" /><template v-else
+                ><AlikeIcon class="icon-sm" />{{ alike[v.id].chips.length }}</template
+              ></span
+            >Add profile
           </button>
           <span
             class="min-w-0 flex-1 truncate font-mono text-[11px] text-zinc-500"
@@ -757,24 +775,6 @@ const sampleTitle = computed(() =>
           >
             <RemoveIcon class="icon-sm" />
           </button>
-          <div v-if="alike[v.id]" class="flex w-full flex-wrap items-center gap-1 pl-5 text-[11px]">
-            <span v-if="alike[v.id].chips.length" class="text-zinc-400">Sounds like</span>
-            <span
-              v-for="c in alike[v.id].chips"
-              :key="c.key"
-              class="chip"
-              :class="c.same && 'chip-on'"
-              :data-tip="c.tip"
-              >{{ c.text }}</span
-            >
-            <span
-              v-for="w in alike[v.id].warnings"
-              :key="w"
-              class="flex items-center gap-1 text-amber-600 dark:text-amber-400"
-            >
-              <WarnIcon class="icon-sm" /> {{ w }}
-            </span>
-          </div>
         </li>
       </ul>
 

@@ -38,6 +38,7 @@ import { transferRoutes } from "~/routes/transfer";
 import { bookUsageRoutes, endpointUsageRoutes } from "~/routes/usage";
 import type { LocalServers } from "~/servers/localServers";
 import { voiceFiles as voiceFilesIn, type VoiceFiles } from "~/voices/files";
+import type { VoiceFingerprinter } from "~/voices/fingerprint";
 import type { VoiceMeter } from "~/voices/measure";
 import type { FetchLike } from "@/services/http";
 
@@ -77,6 +78,8 @@ export interface AppOptions {
   effects?: EffectRunner;
   /** what measures a voice's samples; none = profiles are filled unmeasured, as without uv */
   meter?: VoiceMeter;
+  /** what fingerprints kept samples to compare voices; none = no comparison, as without uv */
+  fingerprinter?: VoiceFingerprinter;
   /** what reads a character page for a voice profile; the network by default */
   pageFetch?: FetchLike;
   /** `<base>/demo/*` controls; given to the demo library alone so the real one can't be emptied */
@@ -98,6 +101,7 @@ export function createApp(
     gate = createSpeechGate(),
     effects,
     meter,
+    fingerprinter,
     pageFetch,
     demo,
     servers,
@@ -150,6 +154,7 @@ export function createApp(
     endpointRoutes(db, providers, voiceFiles, gate, runner, effects, servers, {
       meter,
       fetch: pageFetch,
+      fingerprinter,
     }),
   );
   app.route(`${base}/endpoints`, endpointUsageRoutes(db));

@@ -40,6 +40,7 @@ import type { Providers } from "~/providers/target";
 import { OutsideServerError, type LocalServers } from "~/servers/localServers";
 import type { VoiceFiles } from "~/voices/files";
 import * as clone from "~/voices/clone";
+import type { VoiceFingerprinter } from "~/voices/fingerprint";
 import type { VoiceMeter } from "~/voices/measure";
 import * as samples from "~/voices/ops";
 import { fillProfile } from "~/voices/profile";
@@ -132,8 +133,8 @@ export function endpointRoutes(
   effects?: EffectRunner,
   /** none in the demo: nothing listed, nothing started */
   servers?: LocalServers,
-  /** a voice profile's measuring (none without uv) and page reading */
-  profiles: { meter?: VoiceMeter; fetch?: FetchLike } = {},
+  /** a voice profile's measuring (none without uv) and page reading; voice comparison's fingerprints */
+  profiles: { meter?: VoiceMeter; fetch?: FetchLike; fingerprinter?: VoiceFingerprinter } = {},
 ): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
 

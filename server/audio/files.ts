@@ -2,6 +2,7 @@
 // The token is never reused (renumbering moves no files; clips cache forever), and the extension
 // is the only record of the format. `path` refuses anything but a book id and a token.
 // Readers go through `ready`, which makes a demo clip's file on first read (`audio/demoClips.ts`).
+import { existsSync } from "node:fs";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -14,6 +15,11 @@ const FILE = new RegExp(`^[a-f0-9-]+\\.(${Object.values(AUDIO_EXT).join("|")})$`
 const BY_EXT = new Map(
   (Object.entries(AUDIO_EXT) as [AudioFormat, string][]).map(([format, ext]) => [ext, format]),
 );
+
+/** A folder and all in it. Bun's `rm` quietly stops when a file in it goes meanwhile, so it asks again. */
+export async function removeTree(path: string): Promise<void> {
+  for (let i = 0; i < 3 && existsSync(path); i++) await rm(path, { recursive: true, force: true });
+}
 
 /** The format a clip's file name, path or url says it is in, or null. */
 export function formatOfFile(name: string): AudioFormat | null {
@@ -109,7 +115,7 @@ export function audioFiles(dir: string, base = "/api", make?: MakeClip): AudioFi
     },
     async removeBook(bookId) {
       if (!BOOK_ID.test(bookId)) return;
-      await rm(join(dir, bookId), { recursive: true, force: true });
+      await removeTree(join(dir, bookId));
     },
   };
 }

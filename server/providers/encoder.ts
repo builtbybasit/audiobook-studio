@@ -26,8 +26,10 @@ export interface EncodeInput {
   /** already checked to be a JPEG or PNG on disk */
   cover?: { path: string; type: "image/jpeg" | "image/png" } | null;
   tags?: EncodeTags | null;
-  /** called as each chapter lands, for the Queue's progress */
-  onChapter?: (chapter: EncodedChapter, index: number) => void;
+  /** where this book's chapter audio is kept between builds; absent, only for this one */
+  cache?: string;
+  /** called as each chapter's audio is ready, in any order, for the Queue's progress */
+  onChapter?: (index: number) => void;
   /** called as each chapter is measured, in the loudness pass that runs before the encode */
   onMeasured?: (index: number) => void;
 }
@@ -65,8 +67,10 @@ export interface EncodedFile {
   chapters: EncodedChapter[];
   /** LUFS of the input, where it was measured before levelling */
   measuredLufs?: number;
-  /** what levelling did, as the encoder reported it: one gain or a dynamic normaliser, peaks limited by `limited` dB first */
-  levelled?: { linear: boolean; lufs: number; limited: number };
+  /** what levelling did: one gain to `lufs`, peaks limited by `limited` dB first; `kept` from an earlier build */
+  levelled?: { lufs: number; limited: number; kept: boolean };
+  /** chapters taken as an earlier build encoded them */
+  reused?: number;
 }
 
 export interface AudiobookEncoder {

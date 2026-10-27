@@ -1,7 +1,8 @@
 // The build job: narrated chapters in, an audiobook on disk out. One build per book at a time
 // (`chapterId` null). The file layout comes from `planOf` in src/lib/exports.ts, the same planner
-// the page previews with, so nothing here re-derives it. An update is a full re-encode (AAC/MP3
-// can't be spliced). The previous version stays current until the new one lands.
+// the page previews with, so nothing here re-derives it. An M4B reuses chapters an earlier build of
+// the book encoded unchanged (`providers/segments.ts`). The previous version stays current until the
+// new one lands.
 import { basename } from "node:path";
 
 import type {
@@ -64,14 +65,16 @@ const MEASURING = "Measuring loudness";
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
-/** "−25.0 LUFS in, −18.1 out · one gain, peaks limited 4.2 dB" */
+/** "−25.0 LUFS in, −18.1 out · one gain, peaks limited 4.2 dB, kept from an earlier build" */
 function loudnessNote({ measuredLufs, levelled }: EncodedFile): string {
   const was = `${measuredLufs!.toFixed(1)} LUFS in`;
   if (!levelled) return was;
-  const how = levelled.linear
-    ? `one gain${levelled.limited > 0 ? `, peaks limited ${levelled.limited.toFixed(1)} dB` : ""}`
-    : "dynamic: the gain moved through the file";
-  return `${was}, ${levelled.lufs.toFixed(1)} out · ${how}`;
+  const how = [
+    "one gain",
+    ...(levelled.limited > 0 ? [`peaks limited ${levelled.limited.toFixed(1)} dB`] : []),
+    ...(levelled.kept ? ["kept from an earlier build"] : []),
+  ];
+  return `${was}, ${levelled.lufs.toFixed(1)} out · ${how.join(", ")}`;
 }
 
 /** The finished version of an audiobook (`exportKey`) that a new build of it follows. */
@@ -393,7 +396,7 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
       });
     if (run.settings.normalize && encoder.normalizes)
       ctx.note(`Loudness normalisation to ${run.settings.loudness} LUFS`, "info", {
-        measured: "EBU R128, measured over the joined audio, then levelled; each file says how",
+        measured: "EBU R128 over each file's joined chapters, then one gain; each file says how",
       });
 
     const written: exports.WrittenFile[] = [];
@@ -458,6 +461,7 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
         chapters: plan,
         gap: run.settings.chapterGap,
         out: path,
+        cache: files.cache(job.bookId) ?? undefined,
         signal,
         cover,
         tags: tagsOf(details, file, position, entry.files.length, known),
@@ -482,6 +486,9 @@ export function exportHandler({ encoders, files }: ExportPorts, clips: AudioFile
         sizeMB: mb(result.bytes),
         // pre-normalisation loudness, which the Export page can't know until a build
         ...(result.measuredLufs != null ? { loudness: loudnessNote(result) } : {}),
+        ...(result.reused
+          ? { reused: `${result.reused} of ${file.chapterIds.length} chapters` }
+          : {}),
       });
     }
 

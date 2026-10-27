@@ -4,6 +4,7 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { removeTree } from "~/audio/files";
 import { BOOK_ID } from "~/lib/http";
 
 const TOKEN = /^[a-f0-9-]+\.[a-z0-9]+$/;
@@ -13,6 +14,8 @@ export interface AudiobookFiles {
   reserve(bookId: string, ext: string): Promise<{ token: string; path: string }>;
   /** null when the row can't name a file */
   path(bookId: string, token: string): string | null;
+  /** this book's chapter audio kept between builds; removed with the book */
+  cache(bookId: string): string | null;
   /** A file already gone is not an error. */
   remove(bookId: string, tokens: readonly string[]): Promise<void>;
   removeBook(bookId: string): Promise<void>;
@@ -33,6 +36,9 @@ export function audiobookFiles(dir: string): AudiobookFiles {
       if (!BOOK_ID.test(bookId) || !TOKEN.test(token)) return null;
       return join(dir, bookId, token);
     },
+    cache(bookId) {
+      return BOOK_ID.test(bookId) ? join(dir, bookId, "cache") : null;
+    },
     async remove(bookId, tokens) {
       for (const token of tokens) {
         const path = this.path(bookId, token);
@@ -41,7 +47,7 @@ export function audiobookFiles(dir: string): AudiobookFiles {
     },
     async removeBook(bookId) {
       if (!BOOK_ID.test(bookId)) return;
-      await rm(join(dir, bookId), { recursive: true, force: true });
+      await removeTree(join(dir, bookId));
     },
   };
 }

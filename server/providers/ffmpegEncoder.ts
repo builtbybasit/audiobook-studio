@@ -1,16 +1,38 @@
 // The audiobook encoder: AAC in an M4B, or MP3, with chapter marks, via the installed ffmpeg
-// (required at boot, `server/index.ts`). The clips go in as one raw PCM stream on stdin, a few
-// decoded ahead, so the only thing on temporary disk is the encoded audio; marks are counted off
-// that stream. `ebur128` measures (~7× faster than a `loudnorm` pass), then `loudnorm` levels in
-// its linear mode: its one-pass form is a dynamic normaliser.
-import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+// (required at boot, `server/index.ts`). Clips go in as raw PCM on stdin, a few decoded ahead.
+// Loudness is measured per chapter and levelled with one gain per file (`loudness.ts`); an M4B is
+// joined from per-chapter AAC kept between builds (`segments.ts`), so a rebuild encodes only what
+// changed. An MP3, or chapters too close to join cleanly, is encoded in one pass.
+import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { availableParallelism, tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 import type { ExportSettings } from "@/types";
 import { formatOfFile } from "~/audio/files";
 import { probeClip } from "~/audio/probe";
 import { inBackground } from "~/lib/background";
+import {
+  filterOf,
+  keeps,
+  levelOf,
+  limiterOf,
+  loudnessOf,
+  measuredOf,
+  type Levelling,
+  type Measured,
+} from "~/providers/loudness";
+import {
+  adtsFrames,
+  alive,
+  FRAME,
+  joinable,
+  keyOf,
+  leadOf,
+  pruneSegments,
+  segmentStore,
+  tailOf,
+  type Segment,
+} from "~/providers/segments";
 import type {
   AudiobookEncoder,
   EncodeChapter,
@@ -51,8 +73,8 @@ const RAW: Record<number, string> = { 8: "u8", 16: "s16le", 24: "s24le", 32: "s3
 const AHEAD = 4;
 /** `<prefix><pid>-<uuid>`: the pid says whether the process that made it is still alive */
 const WORK = "audiobook-ffmpeg-";
-/** the true-peak ceiling loudnorm levels to */
-const TP = -1.5;
+/** chapters measured or encoded at once: AAC and ebur128 each take one core */
+const JOBS = Math.max(1, Math.min(8, availableParallelism() - 1));
 
 /** The ffmpeg version line, or null when there is none to run. */
 export async function ffmpegAvailable(bin = "ffmpeg"): Promise<string | null> {
@@ -138,65 +160,6 @@ async function run(
   }
 }
 
-/** The figures `loudnorm` prints at the end of a pass. */
-function loudnormStats(log: string): Record<string, string> | null {
-  const at = log.lastIndexOf("{");
-  if (at < 0) return null;
-  try {
-    return JSON.parse(log.slice(at, log.lastIndexOf("}") + 1)) as Record<string, string>;
-  } catch {
-    return null;
-  }
-}
-
-/** The figures `ebur128` prints at the end; null for silence or under 400 ms, which it calls −70. */
-function ebur128Stats(log: string): Measured | null {
-  const at = log.lastIndexOf("Summary:");
-  if (at < 0) return null;
-  const summary = log.slice(at);
-  // the first Threshold is the integrated one; the loudness range has its own
-  const figure = (label: string): number =>
-    Number(new RegExp(`${label}:\\s+(-?[\\d.]+|-inf)`).exec(summary)?.[1]);
-  const m = { i: figure("I"), tp: figure("Peak"), lra: figure("LRA"), thresh: figure("Threshold") };
-  return m.i > -70 && Number.isFinite(m.tp) ? m : null;
-}
-
-interface Measured {
-  i: number;
-  tp: number;
-  lra: number;
-  thresh: number;
-}
-
-/**
- * Pass two: one linear gain to the target. Linear mode needs the raised peaks under `TP` and the
- * range under its LRA target, or loudnorm quietly goes dynamic; so the range target is the one
- * measured, and peaks the gain would push over are limited first. The limiter sees samples, not
- * true peaks, hence the half-dB margin; it cannot go below −24 dB.
- */
-function levelling(
-  target: number,
-  m: Measured,
-): { filter: string; limiter: string | null; limited: number } {
-  const peak = m.tp;
-  const gain = target - m.i;
-  const ceiling = peak + gain > TP ? Math.max(-24, TP - gain - 0.5) : null;
-  const loudnorm = [
-    `loudnorm=I=${target}:TP=${TP}:LRA=${Math.min(50, Math.max(11, Math.ceil(m.lra)))}`,
-    `measured_I=${m.i}:measured_TP=${ceiling ?? peak}`,
-    // 0 reads as "not measured", which rules linear out; linear mode sets its own offset
-    `measured_LRA=${Math.max(0.01, m.lra)}:measured_thresh=${m.thresh}`,
-    `linear=true:print_format=json`,
-  ].join(":");
-  const limiter =
-    ceiling == null ? null : `alimiter=limit=${10 ** (ceiling / 20)}:level=false:latency=true`;
-  return {
-    filter: limiter ? `${limiter},${loudnorm}` : loudnorm,
-    limiter,
-    limited: ceiling == null ? 0 : peak - ceiling,
-  };
-}
-
 /** One clip's samples in `f`: a WAV's own, anything else (and 32-bit, maybe float) via ffmpeg. */
 async function readClip(
   bin: string,
@@ -251,7 +214,7 @@ async function* samples(
   f: WavFormat,
   read: (path: string) => Promise<Uint8Array>,
   sent: Sent,
-  onChapter?: EncodeInput["onChapter"],
+  onChapter?: (index: number) => void,
 ): AsyncGenerator<Uint8Array> {
   const clips = chapters.flatMap((c) =>
     c.parts.flatMap((p) => (p.kind === "clip" ? [p.path] : [])),
@@ -294,7 +257,7 @@ async function* samples(
       seconds: (sent.bytes - start) / rate,
     };
     sent.spans.push(span);
-    onChapter?.(span, i);
+    onChapter?.(i);
   }
 }
 
@@ -362,16 +325,6 @@ function metadataArgs(tags: EncodeTags, format: FfmpegFormat): string[] {
     .flatMap(([key, value]) => ["-metadata", `${key}=${value}`]);
 }
 
-const alive = (pid: number): boolean => {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return (e as NodeJS.ErrnoException).code === "EPERM";
-  }
-};
-
 /**
  * Removes work folders whose process is gone: a crash never reaches `encode`'s cleanup. One named
  * without a pid (the older layout) goes too.
@@ -381,6 +334,82 @@ export async function sweepWork(dir = tmpdir()): Promise<void> {
     if (!name.startsWith(WORK) || alive(Number(name.slice(WORK.length).split("-")[0]))) continue;
     await rm(join(dir, name), { recursive: true, force: true });
   }
+}
+
+const versions = new Map<string, Promise<string | null>>();
+const versionOf = (bin: string): Promise<string | null> => {
+  if (!versions.has(bin)) versions.set(bin, ffmpegAvailable(bin));
+  return versions.get(bin)!;
+};
+
+/**
+ * A chapter's samples as a key. A clip rewritten in place has a new size or modified time, so a
+ * changed voice, effect or line misses even at the same length.
+ */
+async function audioKey(c: EncodeChapter, f: WavFormat, version: string): Promise<string> {
+  const parts = await Promise.all(
+    c.parts.map(async (p) => {
+      if (p.kind === "silence") return `silence ${Math.round(p.seconds * 1000)}`;
+      const s = await stat(p.path);
+      return `${resolve(p.path)} ${s.size} ${s.mtimeMs}`;
+    }),
+  );
+  return keyOf(version, formatLabel(f), ...parts);
+}
+
+/** A chapter's samples after `lead` samples of silence and before `tailOf` more; counted at the end. */
+async function* padded(
+  chapter: AsyncIterable<Uint8Array>,
+  f: WavFormat,
+  lead: number,
+  counted: { audio: number; samples: number },
+): AsyncGenerator<Uint8Array> {
+  const frame = (f.channels * f.bits) / 8;
+  const silence = (n: number) => new Uint8Array(n * frame).fill(silentByte(f));
+  if (lead > 0) yield silence(lead);
+  let bytes = 0;
+  for await (const pcm of chapter) {
+    bytes += pcm.byteLength;
+    yield pcm;
+  }
+  counted.audio = bytes / frame;
+  const tail = tailOf(lead + counted.audio);
+  counted.samples = lead + counted.audio + tail;
+  yield silence(tail);
+}
+
+/** `each` over `items`, `JOBS` at a time; the first failure stops the rest, their ffmpeg killed. */
+async function inParallel<T, R>(
+  items: readonly T[],
+  signal: AbortSignal,
+  each: (item: T, i: number, signal: AbortSignal) => Promise<R>,
+): Promise<R[]> {
+  const stop = new AbortController();
+  const quit = (): void => stop.abort(signal.reason);
+  signal.addEventListener("abort", quit, { once: true });
+  if (signal.aborted) quit();
+  const out: R[] = [];
+  let next = 0;
+  let failed = null as { error: unknown } | null;
+  const worker = async (): Promise<void> => {
+    while (!stop.signal.aborted && next < items.length) {
+      const i = next++;
+      try {
+        out[i] = await each(items[i], i, stop.signal);
+      } catch (error) {
+        failed ??= { error };
+        stop.abort(error);
+      }
+    }
+  };
+  try {
+    await Promise.all(Array.from({ length: Math.min(JOBS, items.length) }, worker));
+  } finally {
+    signal.removeEventListener("abort", quit);
+  }
+  if (signal.aborted) throw signal.reason;
+  if (failed) throw failed.error;
+  return out;
 }
 
 export function ffmpegEncoder(options: FfmpegOptions = {}): AudiobookEncoder {
@@ -397,95 +426,170 @@ export function ffmpegEncoder(options: FfmpegOptions = {}): AudiobookEncoder {
     markers,
     normalizes: options.loudness != null,
 
-    async encode({
-      chapters,
-      gap,
-      out,
-      signal,
-      onChapter,
-      onMeasured,
-      cover,
-      tags,
-    }: EncodeInput): Promise<EncodedFile> {
+    async encode(input: EncodeInput): Promise<EncodedFile> {
+      const { chapters, gap, out, signal, cover, tags } = input;
       const first = chapters.flatMap((c) => c.parts).find((p) => p.kind !== "silence");
       if (!first) throw new Error("there was nothing to write");
       const source = await sourceFormat(first.path);
       const raw = RAW[source.bits];
       if (!raw) throw new Error(`this file is ${formatLabel(source)}, which ffmpeg cannot take`);
-      const input = [
-        "-f",
-        raw,
-        "-ar",
-        String(source.sampleRate),
-        "-ac",
-        String(source.channels),
-        "-i",
-        "pipe:0",
-      ];
-      const read = (path: string): Promise<Uint8Array> => readClip(bin, path, source, signal);
-      const pass = (onEach?: EncodeInput["onChapter"]) => {
-        const sent: Sent = { spans: [], bytes: 0 };
-        return { sent, feed: samples(chapters, gap, source, read, sent, onEach) };
-      };
+      const rate = source.sampleRate;
+      const pcm = ["-f", raw, "-ar", String(rate), "-ac", String(source.channels), "-i", "pipe:0"];
+      const reader = (signal: AbortSignal) => (path: string) => readClip(bin, path, source, signal);
+      /** one chapter's samples, as if it were the whole file */
+      const alone = (c: EncodeChapter, signal: AbortSignal) =>
+        samples([c], 0, source, reader(signal), { spans: [], bytes: 0 });
 
       const work = join(tmpdir(), `${WORK}${process.pid}-${crypto.randomUUID()}`);
       await mkdir(work, { recursive: true });
       try {
+        // without a cache folder, chapters are kept for this build only
+        const store = segmentStore(input.cache ?? work);
+        await mkdir(store.dir, { recursive: true });
+        const version = (await versionOf(bin)) ?? bin;
+        const keys = await Promise.all(chapters.map((c) => audioKey(c, source, version)));
+
+        /** every chapter's loudness, through the limiter at `probe` dB where one is named */
+        const measure = (probe: number | null, onEach?: (i: number) => void) =>
+          inParallel(chapters, signal, async (c, i, signal) => {
+            const name = `${keyOf(keys[i], probe ?? "")}.loudness.json`;
+            let m = await store.read<Measured>(name);
+            if (!m) {
+              const limiter = probe == null ? "" : `${limiterOf(probe)},`;
+              const af = `${limiter}ebur128=peak=true:metadata=1,ametadata=mode=print:key=lavfi.r128.M`;
+              const { log } = await run(bin, [...pcm, "-af", af, "-f", "null", "-"], signal, {
+                input: alone(c, signal),
+              });
+              m = measuredOf(log);
+              await store.write(name, m);
+            }
+            onEach?.(i);
+            return m;
+          });
+
         let filter: string[] = [];
         let measuredLufs: number | undefined;
-        let limited = 0;
-        if (options.loudness != null) {
-          const measure = async (
-            before: string,
-            onEach?: EncodeInput["onChapter"],
-          ): Promise<Measured | null> => {
-            const af = `${before}ebur128=peak=true:framelog=quiet`;
-            const { log } = await run(bin, [...input, "-af", af, "-f", "null", "-"], signal, {
-              input: pass(onEach).feed,
-            });
-            return ebur128Stats(log);
-          };
-          // pass one only measures. Silence has no gain to level it by; it is written as is.
-          const stats = await measure("", onMeasured && ((_, i) => onMeasured(i)));
-          if (stats) {
-            measuredLufs = stats.i;
-            let level = levelling(options.loudness, stats);
+        let levelled: EncodedFile["levelled"];
+        const target = options.loudness;
+        // silence has no gain to level it by; it is written as is
+        const m = target == null ? null : loudnessOf(await measure(null, input.onMeasured));
+        if (target != null && m) {
+          const through = async (probe: number | null) =>
+            probe == null ? m : ((await measure(probe).then(loudnessOf)) ?? m);
+          // An earlier build's gain is kept while it lands within `TOLERANCE`: a new gain would
+          // re-encode every chapter.
+          const kept = (await store.read<Record<string, Levelling>>("levelling.json")) ?? {};
+          const was = kept[target];
+          const wasAfter = was && (await through(was.probe));
+          let l: Levelling;
+          let after: { i: number };
+          if (was && wasAfter && keeps(was, target, m, wasAfter)) [l, after] = [was, wasAfter];
+          else {
+            l = levelOf(target, m);
+            after = m;
             // the limiter takes loudness off with the peaks, so the gain is set from what it leaves
-            const after = level.limiter && (await measure(`${level.limiter},`));
-            if (after)
-              level = levelling(options.loudness, { ...stats, i: after.i, thresh: after.thresh });
-            filter = ["-af", level.filter];
-            limited = level.limited;
+            if (l.ceiling != null) {
+              after = await through(l.ceiling);
+              l = levelOf(target, { i: after.i, peak: m.peak }, l.ceiling);
+            }
+            await store.write("levelling.json", { ...kept, [target]: l });
           }
+          filter = ["-af", filterOf(l)];
+          measuredLufs = m.i;
+          levelled = {
+            lufs: after.i + l.gain,
+            limited: l.ceiling == null ? 0 : m.peak - l.ceiling,
+            kept: l === was,
+          };
         }
 
-        // the audio alone first: its marks need the spans this pass counts
-        const audio = join(work, format === "m4b" ? "audio.m4a" : "audio.mp3");
-        const { sent, feed } = pass(onChapter);
-        const encoded = await run(
-          bin,
-          [
-            ...input,
-            ...filter,
-            // `loudnorm` resamples to 192 kHz; without this the AAC comes out at 96 kHz.
-            "-ar",
-            String(source.sampleRate),
-            "-c:a",
-            CODEC[format],
-            "-b:a",
-            `${bitrate}k`,
-            "-y",
-            audio,
-          ],
-          signal,
-          { input: feed },
-        );
-        // what pass two did, as it says, not as asked
-        const levelled = filter.length ? loudnormStats(encoded.log) : null;
+        const encoding = [
+          ...filter,
+          "-ar",
+          String(rate),
+          "-c:a",
+          CODEC[format],
+          "-b:a",
+          `${bitrate}k`,
+        ];
+        const gapSamples = Math.round(gap * rate);
+        let spans: EncodedChapter[];
+        let samplesOut: number;
+        let reused = 0;
+        let audio: { args: string[]; feed?: AsyncIterator<Uint8Array> };
+        if (format === "m4b" && (chapters.length === 1 || joinable(gapSamples))) {
+          const segment = async (
+            c: EncodeChapter,
+            key: string,
+            lead: number,
+            signal: AbortSignal,
+          ) => {
+            const tmp = store.draft(key);
+            try {
+              const counted = { audio: 0, samples: 0 };
+              await run(bin, [...pcm, ...encoding, "-f", "adts", "-y", tmp], signal, {
+                input: padded(alone(c, signal), source, lead, counted),
+              });
+              // the layout every join is counted on: one frame of priming, then whole frames
+              const frames = adtsFrames(await Bun.file(tmp).bytes());
+              const expected = counted.samples / FRAME + 1;
+              if (frames !== expected)
+                throw new Error(
+                  `ffmpeg wrote “${c.title}” as ${frames ?? "unreadable"} AAC frames where ${expected} were expected`,
+                );
+              const seg: Segment = { lead, ...counted, bytes: Bun.file(tmp).size };
+              await store.keep(key, tmp, seg);
+              return seg;
+            } finally {
+              await rm(tmp, { force: true });
+            }
+          };
+          const segments = await inParallel(chapters, signal, async (c, i, signal) => {
+            const lead = i === 0 ? 0 : leadOf(gapSamples);
+            const key = keyOf(keys[i], lead, encoding.join(" "));
+            let seg = await store.segment(key);
+            if (seg) reused++;
+            else seg = await segment(c, key, lead, signal);
+            input.onChapter?.(i);
+            return { ...seg, path: store.audio(key) };
+          });
+          let at = 0;
+          spans = segments.map((s, i) => {
+            // the later stream's priming plays inside the gap
+            if (i > 0) at += FRAME;
+            const span: EncodedChapter = {
+              id: chapters[i].id,
+              start: Math.round(((at + s.lead) / rate) * 1000),
+              length: Math.round((s.audio / rate) * 1000),
+              seconds: s.audio / rate,
+            };
+            at += s.samples;
+            return span;
+          });
+          // ponytail: the file ends with the last chapter's tail, one to two frames of silence; a
+          // stream copy cuts only whole frames, and ffmpeg sets no edit-list end on copied AAC
+          samplesOut = at;
+          audio = {
+            // the first stream's priming is skipped with an edit list
+            args: ["-itsoffset", (-FRAME / rate).toFixed(6), "-f", "aac", "-i", "pipe:0"],
+            feed: (async function* () {
+              for (const s of segments) yield await Bun.file(s.path).bytes();
+            })(),
+          };
+        } else {
+          const path = join(work, format === "m4b" ? "audio.m4a" : "audio.mp3");
+          const sent: Sent = { spans: [], bytes: 0 };
+          await run(bin, [...pcm, ...encoding, "-y", path], signal, {
+            input: samples(chapters, gap, source, reader(signal), sent, input.onChapter),
+          });
+          spans = sent.spans;
+          samplesOut = sent.bytes / ((source.channels * source.bits) / 8);
+          audio = { args: ["-i", path] };
+        }
 
-        const args = ["-i", audio];
+        const args = [...audio.args];
         if (markers) {
-          await writeFile(join(work, "chapters.txt"), chapterMetadata(chapters, sent.spans));
+          await writeFile(join(work, "chapters.txt"), chapterMetadata(chapters, spans));
           args.push("-i", join(work, "chapters.txt"));
         }
         // The cover is an `attached_pic`, not a video track. ID3v2.3 is always asked for: ffmpeg's
@@ -519,20 +623,17 @@ export function ffmpegEncoder(options: FfmpegOptions = {}): AudiobookEncoder {
           "-y",
           out,
         );
-        await run(bin, args, signal);
+        await run(bin, args, signal, { input: audio.feed });
+        // awaited, so it is over before anything can remove the book's folder
+        if (input.cache) await pruneSegments(input.cache);
 
         return {
           bytes: Bun.file(out).size,
-          seconds: sent.bytes / byteRate(source),
-          chapters: sent.spans,
+          seconds: samplesOut / rate,
+          chapters: spans,
           measuredLufs,
-          ...(levelled && {
-            levelled: {
-              linear: levelled.normalization_type === "linear",
-              lufs: Number(levelled.output_i),
-              limited,
-            },
-          }),
+          levelled,
+          reused,
         };
       } finally {
         await rm(work, { recursive: true, force: true });
@@ -542,7 +643,7 @@ export function ffmpegEncoder(options: FfmpegOptions = {}): AudiobookEncoder {
 }
 
 /**
- * ffmpeg configured per build from the export settings; `normalize` off skips `loudnorm`. Made
+ * ffmpeg configured per build from the export settings; `normalize` off skips levelling. Made
  * once per server, so it clears what a crashed one left in the temporary folder.
  */
 export function ffmpegEncoders(bin = "ffmpeg"): EncoderChoice {

@@ -8,7 +8,7 @@ import { useUiStore } from "@/stores/ui";
 // One speech endpoint's voice catalogue, the only place voices are added, edited or removed.
 // Characters store `<endpoint>/<voice>`, so removing one unroutes speakers in every book; usage is
 // counted library-wide. Voices come from the server's list, by hand, Fish search or cloning.
-import { computed, reactive, ref, watch } from "vue";
+import { computed, nextTick, reactive, ref, watch } from "vue";
 import { keyInPlace } from "@/services/endpointSettings";
 import {
   Archive as KeptIcon,
@@ -30,6 +30,8 @@ import { isFishAudio } from "@/lib/endpoints";
 import { cloningOf, speechProviderOf } from "@/lib/providers";
 import { MAX_SAMPLE_TEXT, SAMPLE_LINES } from "@/lib/endpointShapes";
 import { measuredWords, ROUGH_BELOW_SEC } from "@/lib/voiceProfile";
+import { likenessKey } from "@/lib/voiceLikeness";
+import { useVoiceLikeness } from "@/queries/voiceLikeness";
 import {
   pickProblem,
   requestOf,
@@ -40,6 +42,12 @@ import CloneVoicePanel from "@/views/endpoints/CloneVoicePanel.vue";
 import FishVoiceSearch from "@/views/endpoints/FishVoiceSearch.vue";
 import { GENDER_ICON, GENDERS } from "@/views/endpoints/genders";
 import SamplePicker from "@/views/endpoints/SamplePicker.vue";
+import {
+  doubleOf,
+  soundsLike,
+  type FindVoice,
+  type SoundsLike,
+} from "@/views/endpoints/soundsLike";
 import VoiceProfileSheet from "@/views/endpoints/VoiceProfileSheet.vue";
 import SpeedPicker from "@/components/SpeedPicker.vue";
 import type { Endpoint, Gender, KeptVoiceSamples, Voice, VoiceProfileFill } from "@/types";
@@ -153,6 +161,7 @@ async function keepSamples() {
     if (k) {
       kept.value = { ...kept.value, [k.voiceId]: k };
       keep.voiceId = null;
+      void checkDouble(k.voiceId);
     }
   } finally {
     keep.busy = false;
@@ -170,7 +179,10 @@ const remakeTip = computed(
 async function remake(v: Voice) {
   remaking.value = v.id;
   try {
-    if (await endpointsStore.remakeVoice(props.endpoint, v.id)) await loadKept();
+    if (await endpointsStore.remakeVoice(props.endpoint, v.id)) {
+      await loadKept();
+      void compareAgain();
+    }
   } finally {
     remaking.value = null;
   }
@@ -178,7 +190,10 @@ async function remake(v: Voice) {
 async function remakeLost() {
   remaking.value = true;
   try {
-    if (await endpointsStore.remakeLostVoices(props.endpoint)) await loadKept();
+    if (await endpointsStore.remakeLostVoices(props.endpoint)) {
+      await loadKept();
+      void compareAgain();
+    }
   } finally {
     remaking.value = null;
   }
@@ -336,6 +351,60 @@ async function measureAll() {
   }
 }
 
+// ---------- sounds like ----------
+// One report for the whole library, read once this endpoint has kept samples to compare.
+const likenessOn = computed(() => clonable.value && Object.keys(kept.value).length > 0);
+const {
+  data: likeness,
+  error: likenessError,
+  asyncStatus: likenessStatus,
+  refresh: refreshLikeness,
+  refetch: refetchLikeness,
+} = useVoiceLikeness(likenessOn);
+const voiceNames = computed(() => {
+  const out = new Map<string, { label: string; endpoint: string }>();
+  for (const e of endpointsStore.endpoints)
+    for (const v of e.voices)
+      out.set(likenessKey(e.id, v.id), { label: v.label || v.id, endpoint: e.name });
+  return out;
+});
+const findVoice: FindVoice = (endpointId, voiceId) =>
+  voiceNames.value.get(likenessKey(endpointId, voiceId)) ?? {
+    label: voiceId,
+    endpoint: endpointsStore.endpoints.find((e) => e.id === endpointId)?.name ?? endpointId,
+  };
+const alike = computed(() => {
+  const out: Record<string, SoundsLike> = {};
+  for (const l of likeness.value?.voices ?? []) {
+    if (l.endpointId !== props.endpoint.id) continue;
+    const row = soundsLike(l, findVoice);
+    if (row) out[l.voiceId] = row;
+  }
+  return out;
+});
+const likenessProblem = computed(() =>
+  likenessError.value
+    ? `Couldn't compare voices: ${likenessError.value.message}`
+    : likeness.value?.unavailable,
+);
+// A first kept voice turns the report on, which reads at once: let that read land, then read
+// again, so the answer covers the write and two slow first reads never run side by side.
+async function compareAgain() {
+  await nextTick();
+  if (likenessStatus.value === "loading") await refreshLikeness();
+  return refetchLikeness();
+}
+/** After a voice's samples changed: say once if it now doubles another voice. */
+async function checkDouble(voiceId: string) {
+  const { data } = await compareAgain();
+  const line = data && doubleOf(data.voices, props.endpoint.id, voiceId, findVoice);
+  if (line) uiStore.toast(line, { kind: "warning" });
+}
+async function onCloned(voiceId: string) {
+  await loadKept();
+  await checkDouble(voiceId);
+}
+
 const sampleTitle = computed(() =>
   needsKeyFirst.value
     ? "Save a key for this endpoint first: a sample is a real request"
@@ -471,17 +540,36 @@ const sampleTitle = computed(() =>
         @update:model-value="(v) => (endpoint.makesVoices = v)"
       />
     </section>
-    <CloneVoicePanel :endpoint="endpoint" @cloned="loadKept" @profile="openProfile" />
+    <CloneVoicePanel :endpoint="endpoint" @cloned="onCloned" @profile="openProfile" />
 
     <section class="card p-3">
       <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <h3 class="label">
-          Voices
-          <UiHint
-            label="the voices"
-            text="Renaming a voice re-routes nothing, since the id is what is sent; removing one leaves its speakers unrouted in every book, undoable from the toast."
-          />
-        </h3>
+        <div>
+          <h3 class="label">
+            Voices
+            <UiHint
+              label="the voices"
+              text="Renaming a voice re-routes nothing, since the id is what is sent; removing one leaves its speakers unrouted in every book, undoable from the toast."
+            />
+          </h3>
+          <p
+            v-if="likenessOn"
+            class="mt-0.5 flex flex-wrap items-center gap-1 text-[11px] text-zinc-500"
+            role="status"
+          >
+            Sounds like
+            <UiHint
+              label="sounds like"
+              text="Each voice's kept samples are compared by a speaker-recognition model; “same voice” means another sample of it, or the same actor."
+            />
+            <template v-if="likenessStatus === 'loading'">
+              <BusyIcon class="icon-sm animate-spin" /> Comparing voices…
+            </template>
+            <span v-else-if="likenessProblem" class="text-amber-600 dark:text-amber-400">
+              · {{ likenessProblem }}
+            </span>
+          </p>
+        </div>
         <div class="flex flex-wrap items-center gap-2">
           <button
             v-if="unmeasured.length || measuring.on"
@@ -669,6 +757,24 @@ const sampleTitle = computed(() =>
           >
             <RemoveIcon class="icon-sm" />
           </button>
+          <div v-if="alike[v.id]" class="flex w-full flex-wrap items-center gap-1 pl-5 text-[11px]">
+            <span v-if="alike[v.id].chips.length" class="text-zinc-400">Sounds like</span>
+            <span
+              v-for="c in alike[v.id].chips"
+              :key="c.key"
+              class="chip"
+              :class="c.same && 'chip-on'"
+              :data-tip="c.tip"
+              >{{ c.text }}</span
+            >
+            <span
+              v-for="w in alike[v.id].warnings"
+              :key="w"
+              class="flex items-center gap-1 text-amber-600 dark:text-amber-400"
+            >
+              <WarnIcon class="icon-sm" /> {{ w }}
+            </span>
+          </div>
         </li>
       </ul>
 

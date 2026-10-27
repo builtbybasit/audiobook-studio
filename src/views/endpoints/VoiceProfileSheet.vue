@@ -25,8 +25,11 @@ import { AGES } from "@/lib/cast";
 import { voiceRef } from "@/lib/endpoints";
 import { GENDER } from "@/lib/scriptReview";
 import { DELIVERIES, measuredWords, ROUGH_BELOW_SEC } from "@/lib/voiceProfile";
+import { likenessOf } from "@/lib/voiceLikeness";
+import { useVoiceLikeness } from "@/queries/voiceLikeness";
 import { UiHint, UiSelect, UiSheet, UiSwitch } from "@/ui";
 import { GENDER_ICON } from "@/views/endpoints/genders";
+import { soundsLike, voiceFinder } from "@/views/endpoints/soundsLike";
 import WordChips from "@/views/endpoints/WordChips.vue";
 import type { Age, Delivery, Endpoint, KeptVoiceSamples, VoiceProfile } from "@/types";
 
@@ -48,6 +51,13 @@ const notes = computed(() =>
     ? (endpointsStore.profileNotes[voiceRef(props.endpoint.id, props.voiceId)] ?? [])
     : [],
 );
+// the Voices tab's report, shared by query key; read here too when the sheet opens first
+const { data: likeness } = useVoiceLikeness(() => open.value && !!props.kept);
+const alike = computed(() => {
+  const l =
+    props.voiceId && likenessOf(likeness.value?.voices ?? [], props.endpoint.id, props.voiceId);
+  return l ? soundsLike(l, voiceFinder(endpointsStore.endpoints)) : null;
+});
 const set = (patch: Partial<VoiceProfile>) =>
   props.voiceId && endpointsStore.setVoiceProfile(props.endpoint.id, props.voiceId, patch);
 const text = (e: Event) => (e.target as HTMLInputElement).value.trim();
@@ -269,6 +279,33 @@ const sourceSaid = computed(() => {
             >
           </div>
           <p v-for="n in notes" :key="n" class="text-[11px] text-zinc-500">{{ n }}</p>
+        </section>
+
+        <section v-if="alike" class="space-y-1.5">
+          <div class="label">
+            Sounds like
+            <UiHint
+              label="sounds like"
+              text="Each voice's kept samples are compared by a speaker-recognition model; “same voice” means another sample of it, or the same actor."
+            />
+          </div>
+          <div v-if="alike.chips.length" class="flex flex-wrap items-center gap-1">
+            <span
+              v-for="c in alike.chips"
+              :key="c.key"
+              class="chip"
+              :class="c.same && 'chip-on'"
+              :data-tip="c.tip"
+              >{{ c.text }}</span
+            >
+          </div>
+          <p
+            v-for="w in alike.warnings"
+            :key="w"
+            class="flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400"
+          >
+            <WarnIcon class="icon-sm shrink-0" /> {{ w }}
+          </p>
         </section>
 
         <template v-if="known || byHand">

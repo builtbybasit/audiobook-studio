@@ -37,6 +37,7 @@ import type { TranscriptionProvider } from "~/providers/transcription";
 import type { VoiceLister } from "~/providers/voices";
 import type { LocalServers } from "~/servers/localServers";
 import { voiceFiles } from "~/voices/files";
+import type { VoiceFingerprinter } from "~/voices/fingerprint";
 import type { VoiceMeter } from "~/voices/measure";
 import type { FetchLike } from "@/services/http";
 import type { Book, Character, Endpoint, Job } from "@/types";
@@ -106,6 +107,8 @@ export interface TestApiOptions {
   servers?: LocalServers;
   /** what measures a voice's samples; none by default, so no test runs Python unasked */
   meter?: VoiceMeter;
+  /** what fingerprints kept samples; none by default, for the same reason */
+  fingerprinter?: VoiceFingerprinter;
   /** what a voice profile reads pages with; the network by default, so give one */
   pageFetch?: FetchLike;
 }
@@ -223,6 +226,7 @@ export function testApi(options: TestApiOptions = {}): TestApi {
     effects: options.effects,
     servers: options.servers,
     meter: options.meter,
+    fingerprinter: options.fingerprinter,
     pageFetch: options.pageFetch,
   });
 

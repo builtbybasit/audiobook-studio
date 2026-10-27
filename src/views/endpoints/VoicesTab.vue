@@ -8,7 +8,7 @@ import { useUiStore } from "@/stores/ui";
 // One speech endpoint's voice catalogue, the only place voices are added, edited or removed.
 // Characters store `<endpoint>/<voice>`, so removing one unroutes speakers in every book; usage is
 // counted library-wide. Voices come from the server's list, by hand, Fish search or cloning.
-import { computed, reactive, ref, watch } from "vue";
+import { computed, nextTick, reactive, ref, watch } from "vue";
 import { keyInPlace } from "@/services/endpointSettings";
 import {
   Archive as KeptIcon,
@@ -21,6 +21,7 @@ import {
   RefreshCw as FetchIcon,
   RotateCcw as RemakeIcon,
   TriangleAlert as WarnIcon,
+  Users as AlikeIcon,
   X as RemoveIcon,
   Search as SearchIcon,
 } from "@lucide/vue";
@@ -30,6 +31,7 @@ import { isFishAudio } from "@/lib/endpoints";
 import { cloningOf, speechProviderOf } from "@/lib/providers";
 import { MAX_SAMPLE_TEXT, SAMPLE_LINES } from "@/lib/endpointShapes";
 import { measuredWords, ROUGH_BELOW_SEC } from "@/lib/voiceProfile";
+import { useVoiceLikeness } from "@/queries/voiceLikeness";
 import {
   pickProblem,
   requestOf,
@@ -40,6 +42,13 @@ import CloneVoicePanel from "@/views/endpoints/CloneVoicePanel.vue";
 import FishVoiceSearch from "@/views/endpoints/FishVoiceSearch.vue";
 import { GENDER_ICON, GENDERS } from "@/views/endpoints/genders";
 import SamplePicker from "@/views/endpoints/SamplePicker.vue";
+import {
+  doubleOf,
+  soundsLike,
+  tipOf,
+  voiceFinder,
+  type SoundsLike,
+} from "@/views/endpoints/soundsLike";
 import VoiceProfileSheet from "@/views/endpoints/VoiceProfileSheet.vue";
 import SpeedPicker from "@/components/SpeedPicker.vue";
 import type { Endpoint, Gender, KeptVoiceSamples, Voice, VoiceProfileFill } from "@/types";
@@ -153,6 +162,7 @@ async function keepSamples() {
     if (k) {
       kept.value = { ...kept.value, [k.voiceId]: k };
       keep.voiceId = null;
+      void checkDouble(k.voiceId);
     }
   } finally {
     keep.busy = false;
@@ -170,7 +180,10 @@ const remakeTip = computed(
 async function remake(v: Voice) {
   remaking.value = v.id;
   try {
-    if (await endpointsStore.remakeVoice(props.endpoint, v.id)) await loadKept();
+    if (await endpointsStore.remakeVoice(props.endpoint, v.id)) {
+      await loadKept();
+      void compareAgain();
+    }
   } finally {
     remaking.value = null;
   }
@@ -178,7 +191,10 @@ async function remake(v: Voice) {
 async function remakeLost() {
   remaking.value = true;
   try {
-    if (await endpointsStore.remakeLostVoices(props.endpoint)) await loadKept();
+    if (await endpointsStore.remakeLostVoices(props.endpoint)) {
+      await loadKept();
+      void compareAgain();
+    }
   } finally {
     remaking.value = null;
   }
@@ -336,6 +352,53 @@ async function measureAll() {
   }
 }
 
+// ---------- sounds like ----------
+// One report for the whole library, read once this endpoint has kept samples to compare.
+const likenessOn = computed(() => clonable.value && Object.keys(kept.value).length > 0);
+const {
+  data: likeness,
+  error: likenessError,
+  asyncStatus: likenessStatus,
+  refresh: refreshLikeness,
+  refetch: refetchLikeness,
+} = useVoiceLikeness(likenessOn);
+const findVoice = computed(() => voiceFinder(endpointsStore.endpoints));
+// an icon inside the row's profile button, its tip listing the matches; the sheet shows them in full
+const alike = computed(() => {
+  const out: Record<string, SoundsLike & { tip: string }> = {};
+  for (const l of likeness.value?.voices ?? []) {
+    if (l.endpointId !== props.endpoint.id) continue;
+    const row = soundsLike(l, findVoice.value);
+    if (row) out[l.voiceId] = { ...row, tip: tipOf(row) };
+  }
+  return out;
+});
+/** A row's tip or label with its likeness first, when it has one. */
+const withAlike = (voiceId: string, text: string): string =>
+  alike.value[voiceId] ? `${alike.value[voiceId].tip} · ${text}` : text;
+const likenessProblem = computed(() =>
+  likenessError.value
+    ? `Couldn't compare voices: ${likenessError.value.message}`
+    : likeness.value?.unavailable,
+);
+// A first kept voice turns the report on, which reads at once: let that read land, then read
+// again, so the answer covers the write and two slow first reads never run side by side.
+async function compareAgain() {
+  await nextTick();
+  if (likenessStatus.value === "loading") await refreshLikeness();
+  return refetchLikeness();
+}
+/** After a voice's samples changed: say once if it now doubles another voice. */
+async function checkDouble(voiceId: string) {
+  const { data } = await compareAgain();
+  const line = data && doubleOf(data.voices, props.endpoint.id, voiceId, findVoice.value);
+  if (line) uiStore.toast(line, { kind: "warning" });
+}
+async function onCloned(voiceId: string) {
+  await loadKept();
+  await checkDouble(voiceId);
+}
+
 const sampleTitle = computed(() =>
   needsKeyFirst.value
     ? "Save a key for this endpoint first: a sample is a real request"
@@ -471,17 +534,29 @@ const sampleTitle = computed(() =>
         @update:model-value="(v) => (endpoint.makesVoices = v)"
       />
     </section>
-    <CloneVoicePanel :endpoint="endpoint" @cloned="loadKept" @profile="openProfile" />
+    <CloneVoicePanel :endpoint="endpoint" @cloned="onCloned" @profile="openProfile" />
 
     <section class="card p-3">
       <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <h3 class="label">
-          Voices
-          <UiHint
-            label="the voices"
-            text="Renaming a voice re-routes nothing, since the id is what is sent; removing one leaves its speakers unrouted in every book, undoable from the toast."
-          />
-        </h3>
+        <div>
+          <h3 class="label">
+            Voices
+            <UiHint
+              label="the voices"
+              text="Renaming a voice re-routes nothing, since the id is what is sent; removing one leaves its speakers unrouted in every book, undoable from the toast."
+            />
+          </h3>
+          <p
+            v-if="likenessOn && (likenessStatus === 'loading' || likenessProblem)"
+            class="mt-0.5 flex flex-wrap items-center gap-1 text-[11px] text-zinc-500"
+            role="status"
+          >
+            <template v-if="likenessStatus === 'loading'">
+              <BusyIcon class="icon-sm animate-spin" /> Comparing voices…
+            </template>
+            <span v-else class="text-amber-600 dark:text-amber-400">{{ likenessProblem }}</span>
+          </p>
+        </div>
         <div class="flex flex-wrap items-center gap-2">
           <button
             v-if="unmeasured.length || measuring.on"
@@ -570,20 +645,51 @@ const sampleTitle = computed(() =>
           <button
             v-if="profileLines[v.id]"
             class="max-w-64 shrink truncate rounded px-1.5 py-0.5 text-[11px] text-zinc-600 hover:bg-zinc-100 hover:text-violet-600 dark:text-zinc-300 dark:hover:bg-zinc-800"
-            :data-tip="profileLines[v.id].tip"
-            :aria-label="`Profile of ${v.label}: ${profileLines[v.id].text}`"
+            :data-tip="withAlike(v.id, profileLines[v.id].tip)"
+            :aria-label="`Profile of ${v.label}: ${withAlike(v.id, profileLines[v.id].text)}`"
             @click="openProfile(v.id)"
           >
-            {{ profileLines[v.id].text }}
+            <span
+              v-if="alike[v.id]"
+              class="mr-1 inline-flex items-center gap-0.5 align-[-2px]"
+              :class="
+                alike[v.id].warnings.length
+                  ? 'text-amber-600 dark:text-amber-400'
+                  : alike[v.id].chips.some((c) => c.same)
+                    ? 'text-violet-600 dark:text-violet-400'
+                    : 'text-zinc-400'
+              "
+              ><WarnIcon v-if="alike[v.id].warnings.length" class="icon-sm" /><template v-else
+                ><AlikeIcon class="icon-sm" />{{ alike[v.id].chips.length }}</template
+              ></span
+            >{{ profileLines[v.id].text }}
           </button>
           <button
             v-else
             class="btn-ghost btn-xs shrink-0 text-zinc-400"
-            :aria-label="`Add a profile for ${v.label}`"
-            data-tip="Describe how it sounds and what it suits, from a character page or by hand"
+            :aria-label="withAlike(v.id, `Add a profile for ${v.label}`)"
+            :data-tip="
+              withAlike(
+                v.id,
+                'Describe how it sounds and what it suits, from a character page or by hand',
+              )
+            "
             @click="openProfile(v.id)"
           >
-            Add profile
+            <span
+              v-if="alike[v.id]"
+              class="mr-1 inline-flex items-center gap-0.5 align-[-2px]"
+              :class="
+                alike[v.id].warnings.length
+                  ? 'text-amber-600 dark:text-amber-400'
+                  : alike[v.id].chips.some((c) => c.same)
+                    ? 'text-violet-600 dark:text-violet-400'
+                    : 'text-zinc-400'
+              "
+              ><WarnIcon v-if="alike[v.id].warnings.length" class="icon-sm" /><template v-else
+                ><AlikeIcon class="icon-sm" />{{ alike[v.id].chips.length }}</template
+              ></span
+            >Add profile
           </button>
           <span
             class="min-w-0 flex-1 truncate font-mono text-[11px] text-zinc-500"

@@ -10,3 +10,4 @@ export * from "~/db/schema/settings";
 export * from "~/db/schema/effects";
 export * from "~/db/schema/voiceSamples";
 export * from "~/db/schema/speakerSamples";
+export * from "~/db/schema/sampleFingerprints";

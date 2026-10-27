@@ -39,6 +39,8 @@ export const keys = {
   endpointLive: ["endpoints", "live"] as const,
   /** the local servers the app starts, by `serverKey` */
   localServers: ["endpoints", "servers"] as const,
+  /** how alike every cloned voice sounds to the rest, library-wide */
+  voiceLikeness: ["endpoints", "likeness"] as const,
   /** the library's voice effects and its thought effect, read together */
   effects: ["effects"] as const,
   /** how many of a book's clips have an old sound (`StaleSound`) */

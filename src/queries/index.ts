@@ -28,4 +28,5 @@ export {
   useEndpointSummaries,
 } from "@/queries/endpointHistory";
 export { useEndpointLive } from "@/queries/endpointLive";
+export { useVoiceLikeness } from "@/queries/voiceLikeness";
 export { fetchEffects, staleMoved, useEffects, useStaleSound } from "@/queries/effects";

@@ -29,6 +29,7 @@ import type {
   EndpointKind,
   EndpointLive,
   KeptVoiceSamples,
+  VoiceLikenessReport,
   VoiceProfileFill,
 } from "@/types";
 import { testPinia, type TestPinia } from "./support/pinia";
@@ -143,6 +144,9 @@ class FakeService implements EndpointSettingsService {
   }
   async keptSamples(): Promise<KeptVoiceSamples[]> {
     return [];
+  }
+  async voiceLikeness(): Promise<VoiceLikenessReport> {
+    return { voices: [] };
   }
   /** what each profile fill was asked, with how many writes had gone out by then */
   filled: { voice: string; body: VoiceProfileAsk; puts: number }[] = [];

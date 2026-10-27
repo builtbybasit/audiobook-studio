@@ -17,6 +17,7 @@ import type {
   PromptTemplate,
   ScriptSettings,
   Transcriber,
+  VoiceLikenessReport,
   VoiceListPage,
   VoiceProfileFill,
   VoiceRef,
@@ -103,6 +104,8 @@ export interface EndpointSettingsService {
     voice: string,
     request: Omit<VoiceCloneRequest, "title">,
   ): Promise<KeptVoiceSamples>;
+  /** Every cloned voice with kept samples against the rest; the first call can take minutes. */
+  voiceLikeness(): Promise<VoiceLikenessReport>;
   /**
    * Describe a voice: its kept samples measured, `url` read and `profile` (a scripting profile id)
    * asked, each only when it can be. Nothing is saved; a step that could not run is a note.
@@ -229,6 +232,10 @@ export class HttpEndpointSettingsService implements EndpointSettingsService {
     request: Omit<VoiceCloneRequest, "title">,
   ): Promise<KeptVoiceSamples> {
     return this.http.postFormData<KeptVoiceSamples>(samplesPath(id, voice), samplesForm(request));
+  }
+
+  voiceLikeness(): Promise<VoiceLikenessReport> {
+    return this.http.get<VoiceLikenessReport>("/endpoints/voices/likeness");
   }
 
   async live(): Promise<Record<string, EndpointLive>> {

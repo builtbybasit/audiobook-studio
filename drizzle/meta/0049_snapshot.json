@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "35121a37-23f4-4ba2-8789-4b0adea5022b",
+  "id": "3a2f5c23-4456-4c90-bad4-957d0e36ef47",
   "prevId": "f83e1be4-c69d-48d9-b23c-350ce87a3622",
   "tables": {
     "books": {
@@ -165,13 +165,6 @@
         "exact_counts": {
           "name": "exact_counts",
           "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "wiki": {
-          "name": "wiki",
-          "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
@@ -644,13 +637,6 @@
         "masked": {
           "name": "masked",
           "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "wiki": {
-          "name": "wiki",
-          "type": "text",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
@@ -4124,6 +4110,44 @@
           "onUpdate": "cascade"
         }
       },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "sample_fingerprints": {
+      "name": "sample_fingerprints",
+      "columns": {
+        "file": {
+          "name": "file",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "vector": {
+          "name": "vector",
+          "type": "blob",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "made_at": {
+          "name": "made_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}

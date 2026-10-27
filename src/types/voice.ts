@@ -134,6 +134,33 @@ export interface VoiceProfileFill {
   notes: string[];
 }
 
+/** Another cloned voice and how alike it sounds (`lib/voiceLikeness.ts` for the bands). */
+export interface AlikeVoice {
+  endpointId: string;
+  voiceId: string;
+  /** cosine of the two voices' fingerprints, -1–1 */
+  score: number;
+}
+
+/** One cloned voice with kept samples, against every other in the library. */
+export interface VoiceLikeness {
+  endpointId: string;
+  voiceId: string;
+  /** up to `NEAREST`, best first, only those at `ALIKE_AT` or above */
+  nearest: AlikeVoice[];
+  /** a voice holding one of the same recordings (same file, or `TWIN_AT` or above) */
+  twins: AlikeVoice[];
+  /** its own samples sound like different voices (`MIXED_BELOW`); needs two or more samples */
+  mixed: boolean;
+}
+
+/** `GET /api/endpoints/voices/likeness`: every cloned voice with kept samples. */
+export interface VoiceLikenessReport {
+  voices: VoiceLikeness[];
+  /** why nothing could be compared (no uv, the model failed to load); `voices` is then empty */
+  unavailable?: string;
+}
+
 /** `POST /api/books/:id/voice-suggestions`: the scripting model's picks for some speakers. */
 export interface VoiceSuggestions {
   picks: { speaker: string; voices: { voice: VoiceRef; why: string }[] }[];

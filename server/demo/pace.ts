@@ -1,7 +1,7 @@
 // Paces the demo's simulated work so a person can watch it: demo builds encode tones in a blink,
 // so each chapter is reported at `CHAPTER_MS`. Every simulated wait is divided by the `Pace` the
 // Demo drawer sets (`routes/demo.ts`); a running job picks up a new speed at its next request.
-import type { EncodedChapter, EncoderChoice } from "~/providers/encoder";
+import type { EncoderChoice } from "~/providers/encoder";
 import { sleep } from "~/providers/fake";
 import type { Providers, ProviderTarget } from "~/providers/target";
 
@@ -28,14 +28,14 @@ export function pacedEncoders(
       return {
         ...encoder,
         async encode(input) {
-          const landed: [EncodedChapter, number][] = [];
+          const landed: number[] = [];
           const file = await encoder.encode({
             ...input,
-            onChapter: (chapter, index) => void landed.push([chapter, index]),
+            onChapter: (index) => void landed.push(index),
           });
-          for (const [chapter, index] of landed) {
+          for (const index of landed) {
             await sleep(chapterMs / pace.speed, input.signal);
-            input.onChapter?.(chapter, index);
+            input.onChapter?.(index);
           }
           return file;
         },

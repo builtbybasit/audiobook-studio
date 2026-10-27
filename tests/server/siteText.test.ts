@@ -284,7 +284,8 @@ describe("a line the book does not read", () => {
       )
     ).body.export;
     expect(exported.status).toBe("done");
-    expect(exported.duration).toBeCloseTo(marked.duration, 1);
+    // the file may run a frame or two of silence past the chapter, never the clip
+    expect(exported.duration).toBeLessThan(marked.duration + clip.duration / 2);
 
     await edit(api, id, retype(TEXT.said, "dialogue"));
     const back = await chapterOf(api, id);

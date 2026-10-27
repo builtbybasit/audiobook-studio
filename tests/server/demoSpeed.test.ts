@@ -126,9 +126,7 @@ describe("the demo's speed", () => {
     const inner: AudiobookEncoder = {
       ...ffmpegEncoders().for({} as never),
       async encode(input: EncodeInput) {
-        input.chapters.forEach((c, i) =>
-          input.onChapter?.({ id: c.id, start: 0, length: 0, seconds: 1 }, i),
-        );
+        input.chapters.forEach((_, i) => input.onChapter?.(i));
         return { bytes: 1, seconds: 3, chapters: [] };
       },
     };
@@ -140,13 +138,13 @@ describe("the demo's speed", () => {
         gap: 0,
         out: "",
         signal: new AbortController().signal,
-        onChapter: (c) => void told.push(c.id),
+        onChapter: (i) => void told.push(i),
       });
       return performance.now() - started;
     };
     const slow = await build();
     expect(slow).toBeGreaterThanOrEqual(585);
-    expect(told).toEqual([1, 2, 3]);
+    expect(told).toEqual([0, 1, 2]);
     pace.speed = 10;
     const quick = await build();
     expect(quick).toBeGreaterThanOrEqual(55);

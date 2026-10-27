@@ -48,11 +48,12 @@ export function simulatedEncoders(inner: EncoderChoice): EncoderChoice {
           const written = await encoder.encode({
             ...input,
             chapters: [{ id: first.id, title: first.title, parts: sample }],
+            cache: undefined,
             onChapter: undefined,
             onMeasured: undefined,
           });
           if (encoder.normalizes) chapters.forEach((_, i) => input.onMeasured?.(i));
-          chapters.forEach((c, i) => input.onChapter?.(c, i));
+          chapters.forEach((_, i) => input.onChapter?.(i));
           return { ...written, seconds: at, chapters };
         },
       };

@@ -80,7 +80,7 @@ Everything lives in `data/`: `library.db`, clips, audiobooks and samples. The de
 - Gemini speech is WAV only; ElevenLabs has no Opus.
 - OpenAI `gpt-4o-mini-tts` audio cost assumes 25 audio tokens per second, because OpenAI publishes no figure.
 - Undoing an endpoint's removal brings it back without its key.
-- An export update re-encodes every chapter.
+- An MP3 export, or an M4B with chapters under ¼ s apart, re-encodes every chapter; an M4B reuses the chapters an earlier build encoded unchanged.
 - Changes made in another tab show up on the next save or refresh.
 
 ## Develop

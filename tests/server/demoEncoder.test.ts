@@ -40,7 +40,7 @@ test("writes a sample of the book and accounts for all of it", async () => {
       gap: 1,
       out: join(dir, "out.m4b"),
       signal: new AbortController().signal,
-      onChapter: (c) => void landed.push(c.id),
+      onChapter: (i) => void landed.push(i),
     });
 
     expect(written.seconds).toBeCloseTo(3 * 6.5 + 2, 2);
@@ -49,7 +49,7 @@ test("writes a sample of the book and accounts for all of it", async () => {
       [7500, 6500],
       [15000, 6500],
     ]);
-    expect(landed).toEqual([1, 2, 3]);
+    expect(landed).toEqual([0, 1, 2]);
     // the first clip and the pause after it, then the next clip that takes it past five seconds
     expect(await plays(join(dir, "out.m4b"))).toBeCloseTo(6.5, 0);
     expect(written.bytes).toBeGreaterThan(0);

@@ -344,6 +344,13 @@
       "when": 1793017893254,
       "tag": "0048_voice_profiles",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "6",
+      "when": 1793076200510,
+      "tag": "0049_sample_fingerprints",
+      "breakpoints": true
     }
   ]
 }

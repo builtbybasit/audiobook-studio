@@ -26,7 +26,7 @@ import SamplePicker from "@/views/endpoints/SamplePicker.vue";
 import type { Endpoint, SpeakerSamples, Voice } from "@/types";
 
 const props = defineProps<{ endpoint: Endpoint }>();
-const emit = defineEmits<{ cloned: []; profile: [voiceId: string] }>();
+const emit = defineEmits<{ cloned: [voiceId: string]; profile: [voiceId: string] }>();
 const endpointsStore = useEndpointsStore();
 const uiStore = useUiStore();
 const samplesStore = useSpeakerSamplesStore();
@@ -172,7 +172,7 @@ async function makeVoice() {
         void samplesStore.afterClone(made, `${props.endpoint.id}/${voice.id}`);
       }
       reset();
-      emit("cloned");
+      emit("cloned", voice.id);
     }
   } finally {
     clone.busy = false;

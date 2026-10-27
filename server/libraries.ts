@@ -7,6 +7,7 @@ import type { Env as PinoEnv } from "hono-pino";
 import type { SpeechRate } from "~/audio/ffmpeg";
 import type { EffectRunner } from "~/audio/effects";
 import type { ThoughtEffect } from "~/audio/thoughtEffect";
+import type { VoiceFingerprinter } from "~/voices/fingerprint";
 import type { VoiceMeter } from "~/voices/measure";
 import type { TrimSilence } from "~/audio/trim";
 import { createApp } from "~/app";
@@ -52,6 +53,8 @@ export interface LibraryOptions {
   effects?: EffectRunner;
   /** Praat under uv, for voice profiles; absent = profiles are filled unmeasured */
   meter?: VoiceMeter;
+  /** ECAPA under uv, to compare voices; absent = no comparison */
+  fingerprinter?: VoiceFingerprinter;
   /** a `thought` line's effect where `effects` can't run; absent = left as the voice made it */
   thoughtEffect?: ThoughtEffect;
   /** cuts the voice's own silence off each clip; absent = kept as sent */
@@ -186,6 +189,7 @@ export function openLibrary(options: LibraryOptions): Library {
     gate,
     effects: options.effects,
     meter: options.meter,
+    fingerprinter: options.fingerprinter,
     demo,
     servers: options.demo ? undefined : (options.servers ?? localServers),
   });

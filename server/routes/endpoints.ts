@@ -10,6 +10,7 @@ import type {
   EndpointBatches,
   EndpointProbe,
   KeptVoiceSamples,
+  VoiceLikenessReport,
   VoiceListPage,
   VoiceProfileFill,
   VoiceSpeedLines,
@@ -40,6 +41,8 @@ import type { Providers } from "~/providers/target";
 import { OutsideServerError, type LocalServers } from "~/servers/localServers";
 import type { VoiceFiles } from "~/voices/files";
 import * as clone from "~/voices/clone";
+import type { VoiceFingerprinter } from "~/voices/fingerprint";
+import { voiceLikeness } from "~/voices/likeness";
 import type { VoiceMeter } from "~/voices/measure";
 import * as samples from "~/voices/ops";
 import { fillProfile } from "~/voices/profile";
@@ -132,8 +135,8 @@ export function endpointRoutes(
   effects?: EffectRunner,
   /** none in the demo: nothing listed, nothing started */
   servers?: LocalServers,
-  /** a voice profile's measuring (none without uv) and page reading */
-  profiles: { meter?: VoiceMeter; fetch?: FetchLike } = {},
+  /** a voice profile's measuring (none without uv) and page reading; voice comparison's fingerprints */
+  profiles: { meter?: VoiceMeter; fetch?: FetchLike; fingerprinter?: VoiceFingerprinter } = {},
 ): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
 
@@ -292,6 +295,17 @@ export function endpointRoutes(
       "voice cloned",
     );
     return c.json(voice satisfies ClonedVoice, 201);
+  });
+
+  const likeness = voiceLikeness(db, voiceFiles, profiles.fingerprinter);
+  /** Every cloned voice's alike voices; the first call fingerprints every kept sample. */
+  app.get("/voices/likeness", async (c) => {
+    const { report, fingerprinted } = await likeness(c.req.raw.signal);
+    c.var.logger.info(
+      { voices: report.voices.length, fingerprinted, unavailable: report.unavailable },
+      "voices compared",
+    );
+    return c.json(report satisfies VoiceLikenessReport);
   });
 
   /** Every voice of the endpoint that has its samples kept. */

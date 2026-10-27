@@ -11,6 +11,7 @@ import { DEMO_BASE, openLibrary, REAL_BASE, serveLibraries } from "~/libraries";
 import { log } from "~/log";
 import { ffmpegAvailable, ffmpegEncoders } from "~/providers/ffmpegEncoder";
 import { localServers } from "~/servers/localServers";
+import { ecapaFingerprinter } from "~/voices/fingerprint";
 import { parselmouthMeter } from "~/voices/measure";
 
 const boot = log.child({ name: "boot" });
@@ -39,6 +40,8 @@ void meter
   .then((why) =>
     boot.info({ praat: !why }, why ? "voices are not measured" : "voices are measured"),
   );
+// not probed: its first use downloads torch, so it waits for the voice comparison to be opened
+const fingerprinter = ecapaFingerprinter({ ffmpeg: env.FFMPEG_BIN });
 const thoughtEffect = ffmpegThoughtEffect(env.FFMPEG_BIN);
 const speechRate = ffmpegSpeechRate(env.FFMPEG_BIN);
 const trim = ffmpegTrim(env.FFMPEG_BIN);
@@ -53,6 +56,7 @@ const real = openLibrary({
   encoders,
   effects,
   meter,
+  fingerprinter,
   thoughtEffect,
   speechRate,
   trim,
@@ -67,6 +71,7 @@ const demo = openLibrary({
   encoders,
   effects,
   meter,
+  fingerprinter,
   thoughtEffect,
   speechRate,
   trim,

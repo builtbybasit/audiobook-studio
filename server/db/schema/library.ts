@@ -48,6 +48,8 @@ export const books = sqliteTable("books", {
   pronounceOff: integer("pronounce_off", { mode: "boolean" }),
   /** null = the Cast page shows rough line counts, not exact ones */
   exactCounts: integer("exact_counts", { mode: "boolean" }),
+  /** the book's fan wiki (e.g. https://x.fandom.com); null = none */
+  wiki: text("wiki"),
   /** an effect id or "none"; null = the library's */
   thoughts: text("thoughts"),
   /** for speakers with no voice of their own; null = the Narrator's */

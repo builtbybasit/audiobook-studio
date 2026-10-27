@@ -398,10 +398,11 @@ function castDiff(
     if (!have.age && speaker.age) fill.age = speaker.age;
     const voiceType = voiceTypeGaps(have.voiceType, speaker.voiceType);
     if (voiceType) fill.voiceType = voiceType;
+    if (!have.wiki && speaker.wiki) fill.wiki = speaker.wiki;
     // only over the same link: one made by hand is the reader's, not a spoiler
     if (!have.masked && speaker.masked && (have.personaOf ?? "") === (speaker.personaOf ?? ""))
       fill.masked = true;
-    if (fill.aliases || fill.age || fill.voiceType || fill.masked) out.fill.push(fill);
+    if (fill.aliases || fill.age || fill.voiceType || fill.wiki || fill.masked) out.fill.push(fill);
   }
   return out;
 }

@@ -2,7 +2,8 @@
 // One speaker's full record, opened under a Cast table row: every field but the voice.
 import { computed, ref, useId } from "vue";
 
-import { useCastStore } from "@/stores/cast";
+import { useCastStore, wikiSkip } from "@/stores/cast";
+import { useLibraryStore } from "@/stores/library";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useSpeakerSamplesStore } from "@/stores/speakerSamples";
 import { plural } from "@/lib/contents";
@@ -11,11 +12,21 @@ import { GENDER } from "@/lib/scriptReview";
 import { UiHint, UiSelect, UiSwitch } from "@/ui";
 import SpoilerText from "@/components/SpoilerText.vue";
 import PersonaSection from "@/views/cast/persona/PersonaSection.vue";
-import { Plus as AddIcon, X as CloseIcon } from "@lucide/vue";
+import { BookOpenText as WikiIcon, Plus as AddIcon, X as CloseIcon } from "@lucide/vue";
+import { fillChips, webAddress } from "@/views/cast/wiki";
 import { AGES } from "@/lib/cast";
 import { nameSaid } from "@/lib/speech";
 import { DELIVERIES, PITCHES, TEXTURES } from "@/lib/voiceProfile";
-import type { Age, Character, Delivery, Gender, Pitch, Texture, VoiceType } from "@/types";
+import type {
+  Age,
+  Character,
+  Delivery,
+  Gender,
+  Pitch,
+  SpeakerWikiFill,
+  Texture,
+  VoiceType,
+} from "@/types";
 
 const props = defineProps<{
   bookId: string;
@@ -25,6 +36,7 @@ const props = defineProps<{
 }>();
 
 const castStore = useCastStore();
+const libraryStore = useLibraryStore();
 const endpointsStore = useEndpointsStore();
 const samplesStore = useSpeakerSamplesStore();
 const bookId = props.bookId;
@@ -88,6 +100,44 @@ const uneven = computed(() => said.value != null && words(said.value) !== words(
 function switchSays(on: boolean) {
   saying.value = on;
   if (!on) castStore.sayName(bookId, props.c.name, null);
+}
+
+// One speaker's wiki page: read, previewed as chips, applied only when asked.
+const bookWiki = computed(() => libraryStore.bookById(bookId)?.wiki);
+const wikiHost = computed(() => {
+  try {
+    return bookWiki.value && new URL(bookWiki.value).host;
+  } catch {
+    return undefined;
+  }
+});
+const pageUrl = ref("");
+const badPage = computed(() => !!pageUrl.value.trim() && !webAddress(pageUrl.value));
+const reading = ref(false);
+const found = ref<SpeakerWikiFill | null>(null);
+const foundChips = computed(() => (found.value ? fillChips(props.c, found.value.fill) : []));
+const fillWhy = computed(
+  () =>
+    wikiSkip(props.c) ??
+    castStore.aiBlocker ??
+    (badPage.value
+      ? "Not a web address: start it with https://"
+      : !pageUrl.value.trim() && !bookWiki.value
+        ? "Paste their page’s address, or set the book’s wiki with Fill from wiki…"
+        : undefined),
+);
+async function readPage() {
+  reading.value = true;
+  found.value = null;
+  const [row] = await castStore.wikiFills(bookId, [props.c.name], {
+    url: pageUrl.value.trim() || undefined,
+  });
+  found.value = row ?? null;
+  reading.value = false;
+}
+function applyPage() {
+  if (found.value) castStore.applyWikiFills(bookId, [found.value]);
+  found.value = null;
 }
 
 const alias = ref("");
@@ -354,6 +404,55 @@ function addAlias(c: Character) {
           />
           <button class="btn-ghost btn-xs" type="submit"><AddIcon class="icon-sm" /> Add</button>
         </form>
+      </div>
+    </div>
+    <div v-if="c.name !== 'Narrator'" class="space-y-1 text-xs font-medium lg:col-span-2">
+      <div class="flex items-center gap-1">
+        Wiki page
+        <UiHint
+          label="wiki page"
+          text="Fills their blank age, gender and voice type from this page; nothing they already have changes. Blank looks them up on the book’s wiki."
+        />
+        <span v-if="c.wiki" class="ml-2 font-normal text-zinc-400"
+          >last filled from
+          <SpoilerText :text="c.wiki.url" label="page · show" small>
+            <a
+              :href="c.wiki.url"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="text-violet-600 hover:underline dark:text-violet-300"
+              >page</a
+            >
+          </SpoilerText></span
+        >
+      </div>
+      <form class="flex items-center gap-1" @submit.prevent="readPage">
+        <input
+          v-model="pageUrl"
+          class="input w-full max-w-md py-0.5"
+          inputmode="url"
+          :placeholder="wikiHost ? `blank: looked up on ${wikiHost}` : 'https://…fandom.com/wiki/…'"
+          :aria-label="`Wiki page for ${c.name}`"
+        />
+        <button
+          class="btn-ghost btn-xs"
+          type="submit"
+          :disabled="reading || !!fillWhy"
+          :data-tip="fillWhy"
+        >
+          <WikiIcon class="icon-sm" /> {{ reading ? "Reading…" : "Fill" }}
+        </button>
+      </form>
+      <div v-if="found" class="flex flex-wrap items-center gap-1 font-normal" aria-live="polite">
+        <span v-for="chip in foundChips" :key="chip" class="chip chip-on">{{ chip }}</span>
+        <span v-if="!foundChips.length" class="text-zinc-400">nothing new</span>
+        <button v-if="foundChips.length" class="btn-primary btn-xs ml-1" @click="applyPage">
+          Apply
+        </button>
+        <button class="btn-ghost btn-xs" @click="found = null">Dismiss</button>
+        <span v-if="found.notes.length" class="w-full truncate text-[11px] text-zinc-400">{{
+          found.notes.join(" · ")
+        }}</span>
       </div>
     </div>
     <PersonaSection

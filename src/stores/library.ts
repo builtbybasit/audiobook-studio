@@ -539,6 +539,19 @@ export const useLibraryStore = defineStore("library", {
         on ? "show exact counts" : "show rough counts",
       );
     },
+    /** The book's fan wiki, where "Fill from wiki" looks speakers up; null forgets it. */
+    async setWiki(bookId: string, url: string | null): Promise<void> {
+      const b = this.bookById(bookId);
+      const next = url?.trim() || null;
+      if (!b || (b.wiki ?? null) === next) return;
+      if (next) b.wiki = next;
+      else delete b.wiki;
+      await this._writeSettings(
+        bookId,
+        { wiki: next },
+        next ? "save the wiki address" : "forget the wiki address",
+      );
+    },
     /** Whether chapters are transcribed after narration; only changes what the server queues. */
     async setAutoTranscribe(bookId: string, on: boolean): Promise<void> {
       const b = this.bookById(bookId);

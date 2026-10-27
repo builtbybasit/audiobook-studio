@@ -159,6 +159,8 @@ const SpeakerSpeed = v.pipe(
   v.maxValue(SPEAKER_SPEED.max),
 );
 
+const WikiSource = v.object({ url: v.pipe(v.string(), v.url()), at: v.number() });
+
 export const CharacterSchema = v.object({
   name: v.pipe(v.string(), v.trim(), v.nonEmpty("must not be empty")),
   aliases: v.array(v.pipe(v.string(), v.trim(), v.nonEmpty())),
@@ -184,6 +186,8 @@ export const CharacterSchema = v.object({
   personaOf: unset(v.pipe(v.string(), v.trim(), v.nonEmpty())),
   /** a disguise the scripting model found; kept through an edit that leaves the link alone */
   masked: v.optional(v.boolean()),
+  /** the wiki page last filled from; null or absent = none */
+  wiki: unset(WikiSource),
 }) satisfies v.GenericSchema<unknown, Character>;
 
 export const LexEntrySchema = v.object({
@@ -364,6 +368,7 @@ export const CastFileSchema = v.array(
     masked: v.optional(v.boolean()),
     age: v.optional(v.picklist(AGES)),
     voiceType: v.optional(VoiceTypeSchema),
+    wiki: v.optional(WikiSource),
     voice: v.optional(VoiceHintSchema),
     effect: v.optional(EffectName),
     thoughts: v.optional(EffectName),

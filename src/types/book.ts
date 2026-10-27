@@ -196,6 +196,8 @@ export interface Book {
   pronounceOff?: boolean;
   /** the Cast page shows exact line counts, not rough bands (spoilers); absent = bands */
   exactCounts?: boolean;
+  /** the book's fan wiki, where speakers' pages are looked up (`fillFromWiki`); absent = none */
+  wiki?: string;
   /** Effect for `thought` lines: an id or "none". Absent = the library's (`src/lib/effects.ts`). */
   thoughts?: ThoughtChoice;
   /** the voice a speaker with none of their own is read in; absent = the Narrator's */
@@ -262,6 +264,21 @@ export interface Character {
    * model's note never undoes a person's choice.
    */
   masked?: boolean;
+  /** the wiki page their age, gender and voice type were last filled from */
+  wiki?: { url: string; at: number };
+}
+
+/**
+ * `POST /api/books/:id/characters/wiki`: what a speaker's wiki page says, as tags only (no page
+ * text, nothing about plot), to fill blanks with. Never saved by the server.
+ */
+export interface SpeakerWikiFill {
+  name: string;
+  /** the page read; null when none was found */
+  url: string | null;
+  fill: { gender?: Gender; age?: Age; voiceType?: VoiceType };
+  /** one short line per step skipped or refused, e.g. "No page for Mara on this wiki" */
+  notes: string[];
 }
 
 export interface BookProgress {

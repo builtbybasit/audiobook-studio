@@ -171,6 +171,7 @@ function mergeOne(
           gender: dst.gender === "?" ? src.gender : dst.gender,
           age: dst.age ?? src.age,
           voiceType: cast.withVoiceType(dst.voiceType, src.voiceType),
+          wiki: dst.wiki ?? src.wiki,
         };
   cast.upsertCharacter(tx, bookId, {
     ...dst,

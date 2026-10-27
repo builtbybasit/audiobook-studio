@@ -547,6 +547,7 @@ describe("importing a script file", () => {
               aliases: ["Old Mo"],
               age: "elderly",
               voiceType: { texture: "husky" },
+              wiki: { url: "https://w.test/wiki/Mo", at: 1 },
               masked: true,
             },
           ],
@@ -585,7 +586,11 @@ describe("importing a script file", () => {
     expect(fish.voices).toHaveLength(fishVoices + 1);
     expect(report.unused).toEqual(["Nobody Here"]);
     expect(speaker("Elder Mo")!.aliases).toContain("Old Mo");
-    expect(speaker("Elder Mo")).toMatchObject({ age: "elderly", masked: true });
+    expect(speaker("Elder Mo")).toMatchObject({
+      age: "elderly",
+      wiki: { url: "https://w.test/wiki/Mo", at: 1 },
+      masked: true,
+    });
     // the blank fields fill around the pitch already set
     expect(speaker("Elder Mo")!.voiceType).toEqual({ pitch: "low", texture: "husky" });
     expect(castStore.lexiconOf("cliche").some((e) => e.term === "Zhenwu")).toBe(true);

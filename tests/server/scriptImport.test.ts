@@ -403,20 +403,21 @@ describe("the cast and the dictionary", () => {
     expect(got.cast.fill).toEqual([{ name: "Mara", aliases: ["Miss Mara"] }]);
   });
 
+  const wiki = { url: "https://w.test/wiki/Mara", at: 1 };
   test.each([
     [
       "the same link",
       "Tobin",
-      [{ name: "Mara", age: "teen", voiceType: { texture: "clear" }, masked: true }],
+      [{ name: "Mara", age: "teen", voiceType: { texture: "clear" }, wiki, masked: true }],
     ],
     // linked by hand: the reader's choice, not a spoiler to hide
     [
       "a link made by hand",
       "Doran",
-      [{ name: "Mara", age: "teen", voiceType: { texture: "clear" } }],
+      [{ name: "Mara", age: "teen", voiceType: { texture: "clear" }, wiki }],
     ],
   ] as const)(
-    "a speaker the book has gets the file's age, voice type blanks and hiding over %s",
+    "a speaker the book has gets the file's age, voice type, wiki page blanks and hiding over %s",
     async (_, of, fill) => {
       // the pitch set by hand stays
       have({ personaOf: of, voiceType: { pitch: "low" } });
@@ -428,6 +429,7 @@ describe("the cast and the dictionary", () => {
               masked: true,
               age: "teen",
               voiceType: { pitch: "high", texture: "clear" },
+              wiki,
             }),
           ],
         }),

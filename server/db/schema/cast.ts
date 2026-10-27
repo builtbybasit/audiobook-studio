@@ -41,6 +41,8 @@ export const characters = sqliteTable(
     personaOf: text("persona_of"),
     /** a disguise the scripting model found */
     masked: integer("masked", { mode: "boolean" }),
+    /** the wiki page last filled from */
+    wiki: text("wiki", { mode: "json" }).$type<{ url: string; at: number }>(),
     position: integer("position").notNull().default(0),
   },
   (t) => [primaryKey({ columns: [t.bookId, t.name] })],

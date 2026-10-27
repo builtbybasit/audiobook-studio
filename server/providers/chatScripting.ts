@@ -566,7 +566,7 @@ const DESCRIPTION_MAX = 300;
 
 const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
 
-function genderOf(said: string | null | undefined): Gender {
+export function genderOf(said: string | null | undefined): Gender {
   const g = (said ?? "").trim().toLowerCase();
   if (/^(?:non[- ]?binary|nb|enby|n)$/.test(g)) return "n";
   if (/^(?:f|female|woman|girl)$/.test(g)) return "f";
@@ -574,7 +574,7 @@ function genderOf(said: string | null | undefined): Gender {
   return "?";
 }
 
-function ageOf(said: string | null | undefined): Age | undefined {
+export function ageOf(said: string | null | undefined): Age | undefined {
   const a = (said ?? "").trim().toLowerCase();
   if (/^(?:child|kid|boy|girl|baby|infant|toddler)$/.test(a)) return "child";
   if (/^(?:teen|teenager|adolescent|youth)$/.test(a)) return "teen";
@@ -590,7 +590,7 @@ const listed = <T extends string>(list: readonly T[], said: unknown): T | undefi
 };
 
 /** What of a note's voice type uses the shared words; anything else is dropped, not guessed. */
-function voiceTypeOf(said: unknown): VoiceType | undefined {
+export function voiceTypeOf(said: unknown): VoiceType | undefined {
   if (!said || typeof said !== "object") return undefined;
   const s = said as Record<string, unknown>;
   const pitch = listed(PITCHES, s.pitch);

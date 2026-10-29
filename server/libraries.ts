@@ -25,6 +25,7 @@ import { transcribeHandler } from "~/jobs/transcribe";
 import { effectsHandler } from "~/jobs/effects";
 import { exportHandler } from "~/jobs/export";
 import { narrationHandler } from "~/jobs/narration";
+import { factsHandler, profilesHandler } from "~/jobs/profiles";
 import { createRunner, type Runner } from "~/jobs/runner";
 import { scriptingHandler } from "~/jobs/scripting";
 import { log as defaultLog, type Logger } from "~/log";
@@ -140,6 +141,8 @@ export function openLibrary(options: LibraryOptions): Library {
       export: exportHandler(exports, files),
       transcribe: transcribeHandler(given.transcription, files, gate),
       effects: effectsHandler(options.effects, files),
+      facts: factsHandler(providers.scripting),
+      profiles: profilesHandler(providers.scripting),
     },
     { log },
   );

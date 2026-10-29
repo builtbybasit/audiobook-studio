@@ -225,8 +225,9 @@ type Lane = Pick<Job, "id" | "kind" | "bookId" | "chapterId">;
  * its own keys, so nothing behind it on the same key overtakes it.
  */
 export function firstReady(running: readonly Lane[], queued: readonly Lane[]): Lane | undefined {
-  // `some:` = a job of the book is out; `all:` = a whole-book one is. A profile rewrite only waits
-  // for the book's scripting and fact reading, and holds nothing else back.
+  // `some:` = a job of the book is out; `all:` = a whole-book one is; `reading:` = the book has
+  // scripting or fact reading running or queued anywhere. A profile rewrite waits only for that,
+  // and holds nothing else back.
   const holds = (j: Lane): string[] =>
     j.kind === "profiles"
       ? [`profiles:${j.bookId}`]
@@ -235,11 +236,16 @@ export function firstReady(running: readonly Lane[], queued: readonly Lane[]): L
         : [`some:${j.bookId}`, `${j.kind}:${j.bookId}`, `chapter:${j.bookId}:${j.chapterId}`];
   const needs = (j: Lane): string[] =>
     j.kind === "profiles"
-      ? [`profiles:${j.bookId}`, `scripting:${j.bookId}`, `facts:${j.bookId}`]
+      ? [`profiles:${j.bookId}`, `reading:${j.bookId}`]
       : j.chapterId == null
         ? [`some:${j.bookId}`]
         : [`all:${j.bookId}`, `${j.kind}:${j.bookId}`, `chapter:${j.bookId}:${j.chapterId}`];
-  const held = new Set(running.flatMap(holds));
+  const held = new Set([
+    ...running.flatMap(holds),
+    ...[...running, ...queued]
+      .filter((j) => j.kind === "scripting" || j.kind === "facts")
+      .map((j) => `reading:${j.bookId}`),
+  ]);
   for (const j of queued) {
     if (!needs(j).some((k) => held.has(k))) return j;
     for (const k of holds(j)) held.add(k);
@@ -323,6 +329,15 @@ export function setRun(db: Db | Tx, id: number, run: NonNullable<Job["exportRun"
     .set({ run: { exportRun: run } })
     .where(eq(jobs.id, id))
     .run();
+}
+
+/** Replace a facts or profiles job's detail. */
+export function setCastRun(
+  db: Db | Tx,
+  id: number,
+  run: Pick<Job, "factsRun"> | Pick<Job, "profilesRun">,
+): void {
+  db.update(jobs).set({ run }).where(eq(jobs.id, id)).run();
 }
 
 /** Replace a scripting job's request counts, and its reservation with them. */

@@ -1,14 +1,16 @@
 // The scripting model's voice picks for a few named speakers, from the library's enabled speech
 // voices. Only the speaker's own candidates come back, whatever the model said; a simulated profile
-// answers with the local match (`suggestVoices`). Priced into the book's ledger like a trial.
+// answers with the local match (`suggestVoices`). Stale profiles are rewritten first, so the
+// picks read the whole picture. Priced into the book's ledger like a trial.
 import * as v from "valibot";
 
 import type { Character, Gender, Voice, VoiceRef, VoiceSuggestions } from "@/types";
-import { lineBand, voiceRef } from "@/lib/cast";
+import { describe, lineBand, voiceRef } from "@/lib/cast";
 import { tokenEstimate } from "@/lib/scripting";
 import { suggestVoices, type Bands } from "@/lib/voiceMatch";
 import { measuredWords, voiceBands } from "@/lib/voiceProfile";
 import { speakerCounts } from "~/cast/ops";
+import { rewriteProfiles } from "~/cast/profiles";
 import { readCast } from "~/db/cast";
 import type { Db } from "~/db/client";
 import { readEndpoints, readProfiles } from "~/db/endpoints";
@@ -23,7 +25,7 @@ import { dispatch } from "~/usage/dispatch";
 export const MAX_SPEAKERS = 30;
 const PICKS = 3;
 const WHY_WORDS = 12;
-const DESCRIPTION_MAX = 300;
+const DESCRIPTION_MAX = 1000;
 const USERS_SHOWN = 5;
 
 const GENDER: Record<Gender, string> = { m: "male", f: "female", n: "non-binary", "?": "unknown" };
@@ -122,13 +124,20 @@ export async function suggestVoicesFor(
   if (!names.length) throw badRequest("Name at least one speaker");
   if (names.length > MAX_SPEAKERS)
     throw badRequest(`Ask for at most ${MAX_SPEAKERS} speakers at a time`);
-  const cast = readCast(db, bookId);
-  const byName = new Map(cast.map((c) => [c.name, c]));
-  const unknown = names.filter((n) => !byName.has(n));
+  const known = new Set(readCast(db, bookId).map((c) => c.name));
+  const unknown = names.filter((n) => !known.has(n));
   if (unknown.length) throw badRequest(`Not in this book’s cast: ${unknown.join(", ")}`);
   const profile = readProfiles(db).find((p) => p.id === request.profile);
   if (!profile) throw notFound(`There is no scripting endpoint “${request.profile}”`);
   if (!provider.ask) throw badRequest(`${provider.name} cannot suggest voices`);
+  // the picks go ahead on the profiles as they stand if this fails
+  try {
+    await rewriteProfiles(db, provider, bookId, profile.id, names, signal);
+  } catch {
+    if (signal.aborted) throw signal.reason;
+  }
+  const cast = readCast(db, bookId);
+  const byName = new Map(cast.map((c) => [c.name, c]));
 
   const endpoints = readEndpoints(db);
   const bands = voiceBands(endpoints.flatMap((e) => e.voices));
@@ -155,7 +164,7 @@ export async function suggestVoicesFor(
       c.age ?? "age unknown",
       sound ? `sounds: ${sound}` : "",
       `${lineBand(counts[c.name]?.lines ?? 0)} lines`,
-      oneLine(c.description).slice(0, DESCRIPTION_MAX),
+      oneLine(describe(c)).slice(0, DESCRIPTION_MAX),
     ]
       .filter(Boolean)
       .join(" | ");

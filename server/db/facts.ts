@@ -1,8 +1,8 @@
 // Speakers' facts and the profiles written from them. A profile is stale when facts newer than
 // `profile_up_to` exist (fold them in) or `profile_rebuild` is set (facts went away: start over).
-import { and, asc, eq, gt, inArray, max, or } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNotNull, max, or } from "drizzle-orm";
 
-import type { CastFact, CharacterProfile, FactKind } from "@/types";
+import type { Age, CastFact, CharacterProfile, FactKind, VoiceType } from "@/types";
 import type { Db, Tx } from "~/db/client";
 import { characterFacts, characters } from "~/db/schema";
 
@@ -28,16 +28,24 @@ const markRebuild = (db: Db | Tx, bookId: string, names: readonly string[]): voi
 };
 
 /**
- * One chapter's facts replaced by these; facts on names not in the cast are dropped. Speakers who
- * lost a fact the new set doesn't repeat get a rebuild. Returns how many were saved.
+ * One chapter's facts replaced by these (only `only`'s, when given); facts on names not in the cast
+ * are dropped. Speakers who lost a fact the new set doesn't repeat get a rebuild. Returns how many
+ * were saved.
  */
 export function replaceChapterFacts(
   tx: Tx,
   bookId: string,
   chapterId: number,
   facts: readonly NewFact[],
+  only?: readonly string[],
 ): number {
-  const where = and(eq(characterFacts.bookId, bookId), eq(characterFacts.chapterId, chapterId));
+  if (only && !only.length) return 0;
+  const where = and(
+    eq(characterFacts.bookId, bookId),
+    eq(characterFacts.chapterId, chapterId),
+    only ? inArray(characterFacts.speaker, [...only]) : undefined,
+  );
+  if (only) facts = facts.filter((f) => only.includes(f.speaker));
   const old = tx.select().from(characterFacts).where(where).all();
   const key = (f: { speaker: string; kind: string; text: string }) =>
     `${f.speaker}\n${f.kind}\n${f.text.toLowerCase()}`;
@@ -76,7 +84,7 @@ export function readFacts(db: Db | Tx, bookId: string, speaker: string, after = 
     .map(toFact);
 }
 
-/** Speakers whose profile is behind their facts, in cast order. */
+/** Speakers whose profile is behind their facts, in cast order; with no facts, a profile stands. */
 export function staleSpeakers(db: Db | Tx, bookId: string): string[] {
   const newest = db
     .select({ speaker: characterFacts.speaker, top: max(characterFacts.id).as("top") })
@@ -91,6 +99,7 @@ export function staleSpeakers(db: Db | Tx, bookId: string): string[] {
     .where(
       and(
         eq(characters.bookId, bookId),
+        isNotNull(newest.top),
         or(eq(characters.profileRebuild, true), gt(newest.top, characters.profileUpTo)),
       ),
     )
@@ -99,22 +108,61 @@ export function staleSpeakers(db: Db | Tx, bookId: string): string[] {
     .map((r) => r.name);
 }
 
-/** A rewrite's result; `upTo` is the newest fact id it read. Clears the rebuild mark. */
+export type ProfileRow = Pick<
+  typeof characters.$inferSelect,
+  | "name"
+  | "gender"
+  | "age"
+  | "voiceType"
+  | "profile"
+  | "profileUpTo"
+  | "profileRebuild"
+  | "edited"
+  | "personaOf"
+  | "masked"
+>;
+
+/** What a profile rewrite reads of these speakers. */
+export function profileRows(db: Db | Tx, bookId: string, names: readonly string[]): ProfileRow[] {
+  if (!names.length) return [];
+  return db
+    .select({
+      name: characters.name,
+      gender: characters.gender,
+      age: characters.age,
+      voiceType: characters.voiceType,
+      profile: characters.profile,
+      profileUpTo: characters.profileUpTo,
+      profileRebuild: characters.profileRebuild,
+      edited: characters.edited,
+      personaOf: characters.personaOf,
+      masked: characters.masked,
+    })
+    .from(characters)
+    .where(and(eq(characters.bookId, bookId), inArray(characters.name, [...names])))
+    .all();
+}
+
+/**
+ * A rewrite's result; `upTo` is the newest fact id it read. Clears the rebuild mark. `tags` are
+ * written as given: the caller leaves out what the user set by hand.
+ */
 export function setProfile(
   db: Db | Tx,
   bookId: string,
   name: string,
   profile: CharacterProfile,
   upTo: number,
+  tags: { age?: Age; voiceType?: VoiceType } = {},
 ): void {
   db.update(characters)
-    .set({ profile, profileUpTo: upTo, profileRebuild: false })
+    .set({ profile, profileUpTo: upTo, profileRebuild: false, ...tags })
     .where(and(eq(characters.bookId, bookId), eq(characters.name, name)))
     .run();
 }
 
-/** False when there was no such fact. */
-export function deleteFact(db: Db, bookId: string, id: number): boolean {
+/** Whose fact it was; undefined when there was no such fact. */
+export function deleteFact(db: Db, bookId: string, id: number): string | undefined {
   return db.transaction((tx) => {
     const row = tx
       .delete(characterFacts)
@@ -122,7 +170,7 @@ export function deleteFact(db: Db, bookId: string, id: number): boolean {
       .returning({ speaker: characterFacts.speaker })
       .get();
     if (row) markRebuild(tx, bookId, [row.speaker]);
-    return !!row;
+    return row?.speaker;
   });
 }
 

@@ -140,11 +140,13 @@ describe("refreshing facts", () => {
     expect(getCharacter(api.db, id, "Tom")?.profile?.who).toBe("Tom's fact.");
   });
 
-  test("takes a range of reading numbers, and refuses an unknown endpoint", async () => {
-    const { api, id } = await setup(testApi(), ["One", "Two", "Three"]);
+  test("takes a range of reading numbers or a Retry's chapters, and refuses an unknown endpoint", async () => {
+    const { api, id, ids } = await setup(testApi(), ["One", "Two", "Three"]);
     const refresh = (body: unknown) =>
       api.request<{ queued: number }>(`/api/books/${id}/characters/refresh`, jsonBody(body));
     expect((await refresh({ profile: "sim", from: 2, to: 3 })).body.queued).toBe(2);
+    await api.runner.idle();
+    expect((await refresh({ profile: "sim", chapters: [ids[0]] })).body.queued).toBe(1);
     expect((await refresh({ profile: "nobody" })).status).toBe(404);
     await api.runner.idle();
   });

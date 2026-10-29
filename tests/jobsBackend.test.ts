@@ -306,6 +306,29 @@ describe("the queue with a server answering", () => {
     expect(await libraryService().facts(id, "Mara")).toEqual(rest);
   });
 
+  test("Retry reads a facts job's chapter again on its endpoint, for the same speakers", async () => {
+    const { id } = await scriptedAndOpen();
+    const { id: profile } = openaiProfile();
+    await api.request("/api/endpoints", {
+      ...jsonBody({ endpoints: [], profiles: [openaiProfile()], credentials: makeCredentials() }),
+      method: "PUT",
+    });
+    await libraryService().refreshProfiles(id, { profile, major: true });
+    await api.runner.idle();
+    await poll();
+    const [read] = jobsStore.jobs.filter((j) => j.kind === "facts");
+    jobsStore.retryJob(read.id);
+    await settle();
+    await api.runner.idle();
+    await poll();
+    expect(jobsStore.jobs.filter((j) => j.kind === "facts" && j.id !== read.id)).toEqual([
+      expect.objectContaining({
+        chapterId: read.chapterId,
+        factsRun: expect.objectContaining({ profile, major: true }),
+      }),
+    ]);
+  });
+
   test("opening a scripted chapter reads its script once", async () => {
     const id = await shelved();
     await scriptingStore.runScripting(id, [1], { quiet: true });

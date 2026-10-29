@@ -221,7 +221,7 @@ export interface LibraryService {
   /** Read scripted chapters again for facts (`from`/`to` reading numbers), then rewrite profiles. */
   refreshProfiles(
     bookId: string,
-    ask: { profile: string; from?: number; to?: number; major?: boolean },
+    ask: { profile: string; from?: number; to?: number; chapters?: number[]; major?: boolean },
   ): Promise<{ queued: number }>;
   /** Each speaker's spoken lines across the book; a speaker with none is absent. */
   speakerCounts(bookId: string): Promise<Record<string, CastStat>>;
@@ -527,7 +527,7 @@ export class HttpLibraryService implements LibraryService {
 
   refreshProfiles(
     bookId: string,
-    ask: { profile: string; from?: number; to?: number; major?: boolean },
+    ask: { profile: string; from?: number; to?: number; chapters?: number[]; major?: boolean },
   ): Promise<{ queued: number }> {
     return this.http.post<{ queued: number }>(`/books/${seg(bookId)}/characters/refresh`, ask);
   }

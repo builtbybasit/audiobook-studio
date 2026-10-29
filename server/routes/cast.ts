@@ -73,6 +73,8 @@ const Refresh = v.object({
   profile: v.pipe(v.string(), v.nonEmpty()),
   from: v.optional(ReadingNumber),
   to: v.optional(ReadingNumber),
+  /** a Retry's chapters, by id, instead of a range */
+  chapters: v.optional(v.array(v.pipe(v.number(), v.integer()))),
   major: v.optional(v.boolean()),
 });
 const Lexicon = v.object({

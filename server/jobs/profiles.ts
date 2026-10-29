@@ -232,7 +232,7 @@ export function enqueueFacts(
   db: Db,
   runner: Pick<Runner, "enqueue">,
   bookId: string,
-  request: { profile: string; from?: number; to?: number; major?: boolean },
+  request: { profile: string; from?: number; to?: number; chapters?: number[]; major?: boolean },
 ): number {
   if (!library.getBook(db, bookId)) throw notFound("No such book");
   const p = readProfiles(db).find((x) => x.id === request.profile);
@@ -240,12 +240,14 @@ export function enqueueFacts(
   const chapters = library.listChapters(db, bookId);
   const numbers = chapterNumbers(chapters);
   const { from = 1, to = Infinity, major = false } = request;
+  const only = request.chapters && new Set(request.chapters);
   const targets = chapters.filter((c) => {
     const n = numbers.get(c.id);
     return (
       n != null &&
       n >= from &&
       n <= to &&
+      (!only || only.has(c.id)) &&
       c.scripting === "done" &&
       !queue.activeJob(db, "facts", bookId, c.id)
     );

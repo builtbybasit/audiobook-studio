@@ -10,6 +10,7 @@ import { fetchScript } from "@/queries/chapterScript";
 import { invalidate } from "@/queries/invalidate";
 import { keys } from "@/queries/keys";
 import { jobsService } from "@/services/jobs";
+import { libraryService } from "@/services/library";
 import type { BookSpend, TranscribeQueued, EndpointLoad, Eta, Job, JobKind } from "@/types";
 import { defineStore } from "pinia";
 import { useEndpointsStore } from "@/stores/endpoints";
@@ -32,12 +33,9 @@ const AVG_JOB: Record<JobKind, number> = {
 
 const NO_JOBS: readonly Job[] = [];
 
-/**
- * Whether a Retry can run this job again: a build from its row, a chapter's job as a new run.
- * Facts are read again over a range, by the Cast page's Refresh profiles.
- */
+/** Whether a Retry can run this job again: a build from its row, a chapter's job as a new run. */
 export const retriable = (j: Job): boolean =>
-  j.kind === "export" ? !!j.exportRun : j.chapterId != null && j.kind !== "facts";
+  j.kind === "export" ? !!j.exportRun : j.chapterId != null && (j.kind !== "facts" || !!j.factsRun);
 
 export const useJobsStore = defineStore("jobs", {
   state: () => ({}),
@@ -178,23 +176,40 @@ export const useJobsStore = defineStore("jobs", {
     _retry(jobs: readonly Job[]): void {
       const scriptingStore = useScriptingStore();
 
-      const runs = new Map<string, { kind: JobKind; bookId: string; ids: number[] }>();
+      const runs = new Map<
+        string,
+        { kind: JobKind; bookId: string; ids: number[]; facts?: Job["factsRun"] }
+      >();
       for (const j of jobs) {
         if (j.kind === "export") {
           this.retryJob(j.id);
           continue;
         }
         if (j.chapterId == null) continue;
-        const k = `${j.kind}:${j.bookId}`;
-        const run = runs.get(k) ?? { kind: j.kind, bookId: j.bookId, ids: [] };
+        // facts go again on the endpoint and speakers they were read for
+        const k = `${j.kind}:${j.bookId}:${j.factsRun?.profile ?? ""}:${j.factsRun?.major ?? ""}`;
+        const run = runs.get(k) ?? { kind: j.kind, bookId: j.bookId, ids: [], facts: j.factsRun };
         runs.set(k, run);
         if (!run.ids.includes(j.chapterId)) run.ids.push(j.chapterId);
       }
-      for (const { kind, bookId, ids } of runs.values())
+      for (const { kind, bookId, ids, facts } of runs.values())
         if (kind === "scripting") void scriptingStore.startRun(bookId, ids, { quiet: true });
+        else if (kind === "facts" && facts) void this._retryFacts(bookId, ids, facts);
         // a transcription hears what the chapter holds now; the server skips what was heard already
         else if (kind === "transcribe") void this.transcribeChapters(bookId, ids, { quiet: true });
         else if (kind === "narration") void this._retryNarration(bookId, ids);
+    },
+    async _retryFacts(
+      bookId: string,
+      chapters: number[],
+      { profile, major }: NonNullable<Job["factsRun"]>,
+    ): Promise<void> {
+      try {
+        await libraryService().refreshProfiles(bookId, { profile, chapters, major });
+      } catch (cause) {
+        toastFailure("read the chapters for cast facts again", cause);
+      }
+      void invalidate({ key: keys.jobs });
     },
     /**
      * Failed lines are asked of the scripts, read first where no page has (a failed replacement

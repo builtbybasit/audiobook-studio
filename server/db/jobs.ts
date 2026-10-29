@@ -31,7 +31,16 @@ export interface EnqueueInput {
   chapterId: number | null;
   label: string;
   bulk?: Job["bulk"];
-  run?: Pick<Job, "scriptRun" | "narrationRun" | "exportRun" | "transcribeRun" | "effectsRun">;
+  run?: Pick<
+    Job,
+    | "scriptRun"
+    | "narrationRun"
+    | "exportRun"
+    | "transcribeRun"
+    | "effectsRun"
+    | "factsRun"
+    | "profilesRun"
+  >;
   /**
    * Runs in the same transaction, only when the job is created, so a change like a chapter marked
    * `queued` cannot land after the worker has picked the job up.

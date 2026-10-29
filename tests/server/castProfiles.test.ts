@@ -1,9 +1,9 @@
 // Cast profiles from facts: the rewrite folds in only what is new (or everything after a rebuild
 // mark), keeps the user's hand-set tags and skips disguises; facts jobs re-read scripted chapters;
-// the facts routes and the refresh run.
+// the facts routes and the refresh run, whose jobs count their requests' tokens.
 import { describe, expect, test } from "bun:test";
 
-import type { CastFact, Character, FactKind } from "@/types";
+import type { CastFact, Character, FactKind, Job } from "@/types";
 import { SIMULATED_BASE_URL, SIMULATED_SCRIPTING_MODEL } from "@/lib/providers";
 import { newProfile } from "@/lib/scripting";
 import { rewriteProfiles } from "~/cast/profiles";
@@ -138,6 +138,14 @@ describe("refreshing facts", () => {
     expect(texts("Mara")).not.toContain("Old fact.");
     expect(texts("Tom")).toEqual(["Tom's fact."]);
     expect(getCharacter(api.db, id, "Tom")?.profile?.who).toBe("Tom's fact.");
+    // each job counts what its requests used
+    const { body } = await api.request<{ jobs: Job[] }>("/api/jobs");
+    const facts = body.jobs.find((j) => j.kind === "facts")?.factsRun;
+    const profiles = body.jobs.find((j) => j.kind === "profiles")?.profilesRun;
+    expect(facts).toMatchObject({ speakers: 1, usage: { requests: 1 } });
+    expect(profiles).toMatchObject({ rewritten: profiles?.speakers, usage: { requests: 1 } });
+    expect(facts?.usage?.inputTokens).toBeGreaterThan(0);
+    expect(profiles?.usage?.outputTokens).toBeGreaterThan(0);
   });
 
   test("takes a range of reading numbers or a Retry's chapters, and refuses an unknown endpoint", async () => {

@@ -2,11 +2,11 @@
 // book's `profiles` job rewrites every stale profile once its scripting and fact reading are done.
 import * as v from "valibot";
 
-import type { Segment } from "@/types";
+import type { Job, Segment } from "@/types";
 import { FACT_KINDS, NARRATOR } from "@/lib/cast";
 import { chapterNumbers } from "@/lib/chapterNumber";
 import { tokenEstimate } from "@/lib/scripting";
-import { rewriteProfiles, staleProfiles } from "~/cast/profiles";
+import { noUsage, rewriteProfiles, staleProfiles, tally } from "~/cast/profiles";
 import { readCast } from "~/db/cast";
 import type { Db } from "~/db/client";
 import { readProfiles } from "~/db/endpoints";
@@ -45,6 +45,12 @@ export function profilesHandler(provider: ScriptingProvider): JobHandler {
         return;
       }
       ctx.note("Rewriting profiles", "info", { speakers: names.length });
+      const run: NonNullable<Job["profilesRun"]> = {
+        profile,
+        speakers: names.length,
+        usage: noUsage(),
+      };
+      queue.setCastRun(db, job.id, { profilesRun: run });
       const { rewritten, failed } = await rewriteProfiles(
         db,
         provider,
@@ -52,9 +58,19 @@ export function profilesHandler(provider: ScriptingProvider): JobHandler {
         profile,
         names,
         signal,
-        (done, total) => ctx.progress((done / total) * 100),
+        (done, total) => {
+          ctx.progress((done / total) * 100);
+          queue.setCastRun(db, job.id, { profilesRun: run });
+        },
+        run.usage,
       );
-      queue.setCastRun(db, job.id, { profilesRun: { profile, rewritten: rewritten.length } });
+      queue.setCastRun(db, job.id, {
+        profilesRun: {
+          ...run,
+          rewritten: rewritten.length,
+          ...(failed.length ? { failed } : {}),
+        },
+      });
       ctx.note("Profiles rewritten", failed.length ? "warning" : "info", {
         rewritten: rewritten.length,
         ...(failed.length ? { failed: failed.join(", ") } : {}),
@@ -168,6 +184,7 @@ export function factsHandler(provider: ScriptingProvider): JobHandler {
       const segs = readScript(db, job.bookId, job.chapterId);
       const speakers = speakersOf(db, job.bookId, segs, queued.major);
       let facts: NewFact[] = [];
+      const usage = noUsage();
       if (speakers.length) {
         const user = `Speakers: ${speakers.join(", ")}\n\nThe chapter:\n${scriptText(segs)}`;
         // ponytail: one request per chapter; split with `chunksOf` if chapters outgrow a model
@@ -197,7 +214,7 @@ export function factsHandler(provider: ScriptingProvider): JobHandler {
             schema: SCHEMA,
             target: scriptTarget(db, p),
             signal,
-            sent: (report) => void money.sent(report),
+            sent: (report) => tally(usage, report, money.sent(report)),
             simulated: simulatedFacts(segs, speakers),
           });
           facts = factsIn(said, new Set(speakers));
@@ -207,6 +224,10 @@ export function factsHandler(provider: ScriptingProvider): JobHandler {
           throw e;
         } finally {
           money.release();
+          // kept when the request failed, too
+          queue.setCastRun(db, job.id, {
+            factsRun: { ...queued, speakers: speakers.length, usage },
+          });
         }
       }
       // the chapter's lane keeps a re-script out while this runs; major only keeps the others'
@@ -216,7 +237,9 @@ export function factsHandler(provider: ScriptingProvider): JobHandler {
           ? replaceChapterFacts(tx, at.bookId, at.id, facts, queued.major ? speakers : undefined)
           : 0;
       });
-      queue.setCastRun(db, job.id, { factsRun: { ...queued, facts: saved } });
+      queue.setCastRun(db, job.id, {
+        factsRun: { ...queued, speakers: speakers.length, facts: saved, usage },
+      });
       ctx.note("Facts read", "info", { speakers: speakers.length, facts: saved });
       if (staleProfiles(db, job.bookId).length) enqueueProfiles(db, job.bookId, p.id);
     },

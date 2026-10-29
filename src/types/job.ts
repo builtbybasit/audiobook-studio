@@ -23,6 +23,16 @@ export interface JobEvent {
   detail?: Record<string, string | number>;
 }
 
+/** What a cast job's requests have used so far. */
+export interface CastUsage {
+  requests: number;
+  /** the cached slice included */
+  inputTokens: number;
+  outputTokens: number;
+  cachedInput: number;
+  cost: number;
+}
+
 export interface Job {
   id: number;
   kind: JobKind;
@@ -112,14 +122,22 @@ export interface Job {
     profile: string;
     /** only the speakers marked major */
     major: boolean;
+    /** speakers asked about */
+    speakers?: number;
     /** facts saved */
     facts?: number;
+    usage?: CastUsage;
   };
   /** The book's stale profiles rewritten from their facts. */
   profilesRun?: {
     profile: string;
+    /** stale speakers to rewrite */
+    speakers?: number;
     /** speakers rewritten */
     rewritten?: number;
+    /** whose profile stayed as it was */
+    failed?: string[];
+    usage?: CastUsage;
   };
   /** A Re-apply's reach; absent = the whole book. */
   effectsRun?: ExistingScope;

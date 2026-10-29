@@ -216,15 +216,20 @@ type Lane = Pick<Job, "id" | "kind" | "bookId" | "chapterId">;
  * its own keys, so nothing behind it on the same key overtakes it.
  */
 export function firstReady(running: readonly Lane[], queued: readonly Lane[]): Lane | undefined {
-  // `some:` = a job of the book is out; `all:` = a whole-book one is
+  // `some:` = a job of the book is out; `all:` = a whole-book one is. A profile rewrite only waits
+  // for the book's scripting and fact reading, and holds nothing else back.
   const holds = (j: Lane): string[] =>
-    j.chapterId == null
-      ? [`some:${j.bookId}`, `all:${j.bookId}`]
-      : [`some:${j.bookId}`, `${j.kind}:${j.bookId}`, `chapter:${j.bookId}:${j.chapterId}`];
+    j.kind === "profiles"
+      ? [`profiles:${j.bookId}`]
+      : j.chapterId == null
+        ? [`some:${j.bookId}`, `all:${j.bookId}`]
+        : [`some:${j.bookId}`, `${j.kind}:${j.bookId}`, `chapter:${j.bookId}:${j.chapterId}`];
   const needs = (j: Lane): string[] =>
-    j.chapterId == null
-      ? [`some:${j.bookId}`]
-      : [`all:${j.bookId}`, `${j.kind}:${j.bookId}`, `chapter:${j.bookId}:${j.chapterId}`];
+    j.kind === "profiles"
+      ? [`profiles:${j.bookId}`, `scripting:${j.bookId}`, `facts:${j.bookId}`]
+      : j.chapterId == null
+        ? [`some:${j.bookId}`]
+        : [`all:${j.bookId}`, `${j.kind}:${j.bookId}`, `chapter:${j.bookId}:${j.chapterId}`];
   const held = new Set(running.flatMap(holds));
   for (const j of queued) {
     if (!needs(j).some((k) => held.has(k))) return j;

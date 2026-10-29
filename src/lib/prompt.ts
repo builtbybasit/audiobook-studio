@@ -6,6 +6,7 @@ import type {
   Age,
   BookPrompt,
   Effect,
+  FactKind,
   ScriptedTag,
   Gender,
   ProfilePrompt,
@@ -296,6 +297,8 @@ export interface PromptCastMember {
   personaOf?: string;
   /** `Character.masked`; with no `personaOf`, the wearer is unknown */
   masked?: boolean;
+  /** in a cast note only: lasting traits the excerpt states */
+  facts?: { kind: FactKind; text: string }[];
 }
 
 export interface PromptVars {

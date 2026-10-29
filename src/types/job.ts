@@ -5,7 +5,14 @@ import type { ExportSettings } from "@/types/export";
 import type { NarrationScope } from "@/types/run";
 import type { Profile, ResolvedPrompt } from "@/types/scripting";
 
-export type JobKind = "scripting" | "narration" | "export" | "transcribe" | "effects";
+export type JobKind =
+  | "scripting"
+  | "narration"
+  | "export"
+  | "transcribe"
+  | "effects"
+  | "facts"
+  | "profiles";
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 
 export interface JobEvent {
@@ -99,6 +106,20 @@ export interface Job {
     fileName: string;
     stage: string;
     done: number;
+  };
+  /** One chapter's script read again for cast facts, by this scripting endpoint. */
+  factsRun?: {
+    profile: string;
+    /** only the speakers marked major */
+    major: boolean;
+    /** facts saved */
+    facts?: number;
+  };
+  /** The book's stale profiles rewritten from their facts. */
+  profilesRun?: {
+    profile: string;
+    /** speakers rewritten */
+    rewritten?: number;
   };
   /** A Re-apply's reach; absent = the whole book. */
   effectsRun?: ExistingScope;

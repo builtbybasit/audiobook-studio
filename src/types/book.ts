@@ -236,7 +236,10 @@ export interface Character {
   age?: Age;
   /** how they sound, from the cast notes or by hand; matched against voice profiles */
   voiceType?: VoiceType;
+  /** the user's own description; when blank, `profile` stands in (`describe`) */
   description: string;
+  /** written by the model from their facts; read-only to the client */
+  profile?: CharacterProfile;
   voice: VoiceRef | null;
   /** free-text delivery note applied to every line */
   style: string;
@@ -266,6 +269,24 @@ export interface Character {
   masked?: boolean;
   /** the wiki page their age, gender and voice type were last filled from */
   wiki?: { url: string; at: number };
+}
+
+/** A speaker's profile, rewritten from their facts in chapter order; three short paragraphs. */
+export interface CharacterProfile {
+  who: string;
+  personality: string;
+  voice: string;
+}
+
+/** `FACT_KINDS` in src/lib/cast.ts lists them */
+export type FactKind = "role" | "background" | "relationship" | "personality" | "voice";
+
+/** A lasting trait the text states, from one chapter's script; the chapter is never shown. */
+export interface CastFact {
+  id: number;
+  speaker: string;
+  kind: FactKind;
+  text: string;
 }
 
 /**

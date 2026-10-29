@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { retriable, useJobsStore } from "@/stores/jobs";
 import { plural } from "@/lib/contents";
+import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
 
 import { computed, ref, watch } from "vue";
@@ -18,6 +19,7 @@ const props = defineProps<{ job: Job | null; now: number }>();
 const emit = defineEmits<{ close: [] }>();
 const jobsStore = useJobsStore();
 const libraryStore = useLibraryStore();
+const endpointsStore = useEndpointsStore();
 const tab = ref("activity");
 const search = ref("");
 const issuesOnly = ref(false);
@@ -34,6 +36,10 @@ watch(
   },
 );
 // the list's row carries no log, so the sheet reads the job whole
+const castRun = computed(() => props.job?.factsRun ?? props.job?.profilesRun);
+const castEndpoint = computed(() =>
+  endpointsStore.profiles.find((p) => p.id === castRun.value?.profile),
+);
 const { data: read } = useJob(() => props.job?.id);
 const logged = computed(() => (read.value?.id === props.job?.id ? read.value : undefined));
 const events = computed(() => logged.value?.activity ?? []);
@@ -491,6 +497,54 @@ async function copy() {
                   >— those lines stay unchecked</span
                 >
               </dd></template
+            >
+            <template v-if="castRun"
+              ><dt class="text-zinc-500">Endpoint</dt>
+              <dd class="break-words">{{ castEndpoint?.name ?? castRun.profile }}</dd>
+              <dt class="text-zinc-500">Model</dt>
+              <dd class="break-all">{{ castEndpoint?.model ?? "—" }}</dd>
+              <template v-if="job.factsRun"
+                ><dt class="text-zinc-500">Speakers</dt>
+                <dd>
+                  {{ job.factsRun.speakers ?? "—" }}
+                  <span class="text-xs text-zinc-500"
+                    >—
+                    {{
+                      job.factsRun.major ? "major speakers only" : "everyone but the Narrator"
+                    }}</span
+                  >
+                </dd>
+                <dt class="text-zinc-500">Facts saved</dt>
+                <dd>{{ job.factsRun.facts ?? "—" }}</dd></template
+              >
+              <template v-if="job.profilesRun"
+                ><dt class="text-zinc-500">Rewritten</dt>
+                <dd>
+                  {{ job.profilesRun.rewritten ?? 0 }}/{{ job.profilesRun.speakers ?? "—" }}
+                  speakers
+                </dd>
+                <template v-if="job.profilesRun.failed"
+                  ><dt class="text-zinc-500">Failed</dt>
+                  <dd>
+                    {{ job.profilesRun.failed.join(", ") }}
+                    <span class="text-xs text-zinc-500">— their profiles stay as they were</span>
+                  </dd></template
+                ></template
+              >
+              <template v-if="castRun.usage"
+                ><dt class="text-zinc-500">Requests</dt>
+                <dd>{{ castRun.usage.requests }}</dd>
+                <dt class="text-zinc-500">Input / output</dt>
+                <dd>
+                  {{ castRun.usage.inputTokens.toLocaleString() }} /
+                  {{ castRun.usage.outputTokens.toLocaleString() }} tokens
+                  <span v-if="castRun.usage.cachedInput" class="text-xs text-zinc-500"
+                    >— {{ castRun.usage.cachedInput.toLocaleString() }} input tokens cached</span
+                  >
+                </dd>
+                <dt class="text-zinc-500">Charged</dt>
+                <dd>${{ castRun.usage.cost.toFixed(6) }}</dd></template
+              ></template
             >
           </dl>
           <p class="mt-5 text-xs leading-relaxed text-zinc-500">

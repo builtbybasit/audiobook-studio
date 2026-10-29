@@ -3,7 +3,16 @@
 // list is folded in batches, each carrying the profile on. Disguises are skipped (spoilers).
 import * as v from "valibot";
 
-import type { Age, CastFact, CharacterProfile, Gender, Profile, VoiceType } from "@/types";
+import type {
+  Age,
+  CastFact,
+  CastUsage,
+  CharacterProfile,
+  Gender,
+  Profile,
+  RequestRecord,
+  VoiceType,
+} from "@/types";
 import { AGES, NARRATOR } from "@/lib/cast";
 import { tokenEstimate } from "@/lib/scripting";
 import { DELIVERIES, PITCHES, TEXTURES } from "@/lib/voiceProfile";
@@ -14,6 +23,7 @@ import { badRequest, notFound } from "~/lib/errors";
 import { ageOf, voiceTypeOf } from "~/providers/chatScripting";
 import { ProviderError } from "~/providers/http";
 import type { ScriptingProvider } from "~/providers/scripting";
+import type { SentScript } from "~/providers/sent";
 import { scriptTarget } from "~/providers/target";
 import { assertWithinBudget } from "~/usage/budget";
 import { dispatch } from "~/usage/dispatch";
@@ -170,6 +180,23 @@ function asks<T extends { text: string }>(items: readonly T[], most: number): T[
   return out;
 }
 
+export const noUsage = (): CastUsage => ({
+  requests: 0,
+  inputTokens: 0,
+  outputTokens: 0,
+  cachedInput: 0,
+  cost: 0,
+});
+
+/** One settled request added to a cast job's usage. */
+export function tally(usage: CastUsage, sent: SentScript, charged: RequestRecord | null): void {
+  usage.requests += 1;
+  usage.inputTokens += sent.usage?.inputTokens ?? 0;
+  usage.outputTokens += sent.usage?.outputTokens ?? 0;
+  usage.cachedInput += sent.usage?.cachedInput ?? 0;
+  usage.cost += charged?.cost ?? 0;
+}
+
 export interface Rewritten {
   rewritten: string[];
   /** whose answer was missing or whose request failed; their profile is as it was */
@@ -191,7 +218,8 @@ export function staleProfiles(db: Db, bookId: string): string[] {
 /**
  * Rewrite the stale profiles among `names` with this scripting profile's model. Narrator and
  * disguises never get one. A speaker is saved only once every batch of theirs is folded, so a
- * failure part way leaves their profile stale, not half-built. A budget refusal throws.
+ * failure part way leaves their profile stale, not half-built. A budget refusal throws. Each
+ * settled request is added to `usage`.
  */
 export async function rewriteProfiles(
   db: Db,
@@ -201,6 +229,7 @@ export async function rewriteProfiles(
   names: readonly string[],
   signal: AbortSignal,
   progress?: (done: number, total: number) => void,
+  usage?: CastUsage,
 ): Promise<Rewritten> {
   const stale = new Set(staleProfiles(db, bookId));
   const wanted = names.filter((n) => stale.has(n));
@@ -254,7 +283,10 @@ export async function rewriteProfiles(
         schema: SCHEMA,
         target: scriptTarget(db, p),
         signal,
-        sent: (report) => void money.sent(report),
+        sent: (report) => {
+          const charged = money.sent(report);
+          if (usage) tally(usage, report, charged);
+        },
         simulated: simulated(batch),
       });
     } catch (e) {

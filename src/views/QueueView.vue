@@ -27,6 +27,7 @@ import {
   RotateCcw as RetryIcon,
   X as CloseIcon,
 } from "@lucide/vue";
+import { plural } from "@/lib/contents";
 import { pricingLabel, unifyEndpoint } from "@/lib/endpoints";
 import { useBookJobs, useBooks, useEndpointLive } from "@/queries";
 import { hhmm } from "@/lib/format";
@@ -91,6 +92,7 @@ const book = (j: Job) => libraryStore.bookById(j.bookId);
 // by reading number only: a later title would give the plot away
 const chapterRef = (j: Job) =>
   j.chapterId == null ? undefined : libraryStore.chapterRef(j.bookId, j.chapterId);
+const castUsage = (j: Job) => j.factsRun?.usage ?? j.profilesRun?.usage;
 const elapsed = (j: Job) =>
   fmtDur(((j.finishedAt ?? now.value) - (j.startedAt ?? now.value)) / 1000);
 const fmtDur = (s: number) =>
@@ -283,6 +285,19 @@ async function toggleNotify() {
                   failed</span
                 >
                 <span>of {{ segStatsOf[j.id].total }} segments</span>
+              </div>
+              <div v-else-if="castUsage(j)" class="mt-2 flex gap-3 pl-11 text-xs text-zinc-500">
+                <span v-if="j.profilesRun"
+                  ><b class="text-emerald-500">{{ j.profilesRun.rewritten ?? 0 }}</b
+                  >/{{ j.profilesRun.speakers }} profiles</span
+                >
+                <span>{{ plural(castUsage(j)!.requests, "request") }}</span>
+                <span
+                  >{{
+                    (castUsage(j)!.inputTokens + castUsage(j)!.outputTokens).toLocaleString()
+                  }}
+                  tokens</span
+                >
               </div>
               <div v-else-if="j.transcribeRun" class="mt-2 flex gap-3 pl-11 text-xs text-zinc-500">
                 <span

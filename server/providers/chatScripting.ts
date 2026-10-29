@@ -8,6 +8,7 @@ import * as v from "valibot";
 import type {
   Age,
   EndpointProbe,
+  FactKind,
   Gender,
   MendKind,
   PromptTemplate,
@@ -25,7 +26,7 @@ import {
   shiftTags,
   type PromptCastMember,
 } from "@/lib/prompt";
-import { NARRATOR } from "@/lib/cast";
+import { FACT_KINDS, NARRATOR } from "@/lib/cast";
 import { wordsOf } from "@/lib/gaps";
 import { normalizeUsage } from "@/lib/pricing";
 import { DELIVERIES, PITCHES, TEXTURES } from "@/lib/voiceProfile";
@@ -546,9 +547,10 @@ const CastNote = v.object({
   gender: v.optional(v.nullable(v.string())),
   age: v.optional(v.nullable(v.string())),
   aliases: v.optional(v.nullable(v.array(v.string()))),
-  description: v.optional(v.nullable(v.string())),
   personaOf: v.optional(v.unknown()),
   voiceType: v.optional(v.unknown()),
+  // read apart, item by item: one odd fact must not cost the note
+  facts: v.optional(v.unknown()),
 });
 
 const EFFECT_NAME_MAX = 80;
@@ -561,8 +563,6 @@ function effectsOf(said: unknown): string[] {
     .filter((e) => e && e.length <= EFFECT_NAME_MAX);
   return [...new Set(names)];
 }
-
-const DESCRIPTION_MAX = 300;
 
 const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
 
@@ -608,6 +608,26 @@ export function voiceTypeOf(said: unknown): VoiceType | undefined {
   return Object.keys(out).length ? out : undefined;
 }
 
+const Fact = v.object({ kind: v.string(), text: v.string() });
+export const FACT_MAX = 200;
+const FACTS_MAX = 8;
+
+/** The readable facts: a known kind and some text, once each, at most `FACTS_MAX`. */
+/** A note's readable facts: a known kind, some text, once each, at most `FACTS_MAX`. */
+export function factsOf(said: unknown): NonNullable<PromptCastMember["facts"]> {
+  if (!Array.isArray(said)) return [];
+  const out = new Map<string, { kind: FactKind; text: string }>();
+  for (const item of said) {
+    const read = v.safeParse(Fact, item);
+    if (!read.success) continue;
+    const kind = listed(FACT_KINDS, read.output.kind);
+    const text = oneLine(read.output.text).slice(0, FACT_MAX);
+    const key = `${kind}\n${text.toLowerCase()}`;
+    if (kind && text && !out.has(key)) out.set(key, { kind, text });
+  }
+  return [...out.values()].slice(0, FACTS_MAX);
+}
+
 /** The readable cast notes, skipping the Narrator, "Unknown" and aliases equal to the name. */
 function castOf(said: unknown): PromptCastMember[] {
   if (!Array.isArray(said)) return [];
@@ -625,13 +645,14 @@ function castOf(said: unknown): PromptCastMember[] {
     const unknown = /^(?:unknown|someone unknown|\?)$/i.test(of);
     const age = ageOf(read.output.age);
     const voiceType = voiceTypeOf(read.output.voiceType);
+    const facts = factsOf(read.output.facts);
     out.push({
       name,
       gender: genderOf(read.output.gender),
       ...(age ? { age } : {}),
       ...(voiceType ? { voiceType } : {}),
       aliases,
-      description: oneLine(read.output.description ?? "").slice(0, DESCRIPTION_MAX),
+      ...(facts.length ? { facts } : {}),
       ...(unknown ? { masked: true } : of && of !== name ? { personaOf: of } : {}),
     });
   }

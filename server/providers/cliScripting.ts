@@ -10,6 +10,7 @@ import { join } from "node:path";
 import * as v from "valibot";
 
 import type { RenderedPrompt, TokenUsage } from "@/types";
+import { FACT_KINDS } from "@/lib/cast";
 import { normalizeUsage } from "@/lib/pricing";
 import { cliOf, type CliShape } from "@/lib/providers/cli";
 import { DELIVERIES, PITCHES, TEXTURES } from "@/lib/voiceProfile";
@@ -81,7 +82,7 @@ const ANSWER_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["name", "gender", "age", "aliases", "description", "personaOf", "voiceType"],
+        required: ["name", "gender", "age", "aliases", "facts", "personaOf", "voiceType"],
         properties: {
           name: { type: "string" },
           gender: { type: "string", enum: ["male", "female", "non-binary", "unknown"] },
@@ -90,7 +91,18 @@ const ANSWER_SCHEMA = {
             enum: ["child", "teen", "young adult", "middle-aged", "elderly", "unknown"],
           },
           aliases: { type: "array", items: { type: "string" } },
-          description: { type: "string" },
+          facts: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "text"],
+              properties: {
+                kind: { type: "string", enum: [...FACT_KINDS] },
+                text: { type: "string" },
+              },
+            },
+          },
           personaOf: { type: ["string", "null"] },
           voiceType: {
             type: ["object", "null"],

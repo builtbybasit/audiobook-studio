@@ -20,14 +20,17 @@ import { BUILT_IN_PROMPT, outputFormat, SCRIPT_MARKERS, type PromptCastMember } 
 import { scriptTelemetry } from "@/lib/scriptActivity";
 import {
   chapters,
+  characterFacts,
   characters,
   effects,
   endpoints,
+  jobs,
   lexiconEntries,
   requests,
   segments as lines,
 } from "~/db/schema";
 import { SUGGESTED } from "~/db/cast";
+import { readFacts } from "~/db/facts";
 import { profileKey } from "~/db/rows/endpoints";
 import { fakeScriptingProvider } from "~/providers/fake";
 import type { ScriptInput, ScriptingProvider } from "~/providers/scripting";
@@ -290,7 +293,8 @@ describe("a run's prompt", () => {
         name: "Mara",
         aliases: ["M"],
         gender: "f",
-        description: "Keeps the ledger.",
+        // with no description of her own, who the profile says she is; the rest is not sent
+        profile: { who: "Keeps the ledger.", personality: "Never late.", voice: "Dry." },
         color: "#c33",
       })
       .run();
@@ -413,7 +417,7 @@ describe("what a model says beside its lines", () => {
               age: "elderly",
               voiceType: { pitch: "low", delivery: ["weary"] },
               aliases: ["the old man", "m"],
-              description: "An innkeeper.",
+              facts: [{ kind: "role", text: "Keeps the inn." }],
             },
             {
               name: "Mara",
@@ -421,9 +425,14 @@ describe("what a model says beside its lines", () => {
               age: "young adult",
               voiceType: { pitch: "high", texture: "clear", delivery: ["cold"] },
               aliases: ["the clerk"],
-              description: "Someone else.",
+              facts: [{ kind: "relationship", text: "Tobiah's niece." }],
             },
-            { name: "Ghost", gender: "f", aliases: [], description: "Mentioned, never heard." },
+            {
+              name: "Ghost",
+              gender: "f",
+              aliases: [],
+              facts: [{ kind: "background", text: "Mentioned, never heard." }],
+            },
           ],
           recap: `Tobiah spoke last, in ${input.title}.`,
           pronounce: [
@@ -436,7 +445,7 @@ describe("what a model says beside its lines", () => {
     return { provider, inputs };
   }
 
-  test("fills in the cast without overwriting it, and carries the recap to the next chapter", async () => {
+  test("fills in the cast without overwriting it, keeps each chapter's facts, and carries the recap", async () => {
     const rec = telling();
     const api = testApi({ scripting: rec.provider });
     const id = await shelved(api, ["One", "Two"], 6);
@@ -507,7 +516,8 @@ describe("what a model says beside its lines", () => {
       voiceType: { pitch: "low", delivery: ["weary"] },
       // "m" is Mara's already, whatever its case
       aliases: ["the old man"],
-      description: "An innkeeper.",
+      // facts go to the profile rewrite, never into the user's description
+      description: "",
     });
     expect(named("Mara")).toMatchObject({
       gender: "f",
@@ -518,6 +528,23 @@ describe("what a model says beside its lines", () => {
       description: "Keeps the ledger.",
     });
     expect(named("Ghost")).toBeUndefined();
+    // every chunk said the same: once per chapter, and nothing for a speaker not in the cast
+    const factsOf = (speaker: string) =>
+      api.db
+        .select({ chapterId: characterFacts.chapterId, text: characterFacts.text })
+        .from(characterFacts)
+        .where(eq(characterFacts.speaker, speaker))
+        .orderBy(characterFacts.chapterId)
+        .all();
+    expect(factsOf("Tobiah")).toEqual([
+      { chapterId: 1, text: "Keeps the inn." },
+      { chapterId: 2, text: "Keeps the inn." },
+    ]);
+    expect(factsOf("Mara").map((f) => f.text)).toEqual(["Tobiah's niece.", "Tobiah's niece."]);
+    expect(factsOf("Ghost")).toEqual([]);
+    // both chapters landed facts; the book's profiles are rewritten once, by the run's endpoint
+    const queued = api.db.select({ run: jobs.run }).from(jobs).where(eq(jobs.kind, "profiles"));
+    expect(queued.all().map((j) => j.run?.profilesRun?.profile)).toEqual(["openai"]);
     const recap = api.db
       .select({ id: chapters.id, recap: chapters.recap })
       .from(chapters)
@@ -718,7 +745,8 @@ describe("a disguise the model finds", () => {
 });
 
 describe("a speaker the model names by another of their names", () => {
-  test("is the cast member it meant, and what it said of them fills in that member", async () => {
+  test("is the cast member it meant, whose facts a re-script replaces", async () => {
+    let said = "Steady under fire.";
     const provider: ScriptingProvider = {
       name: "Other names (test)",
       async script(input) {
@@ -727,7 +755,7 @@ describe("a speaker the model names by another of their names", () => {
             { type: "dialogue", speaker: "Hero", text: input.text.slice(0, 20) },
             { type: "dialogue", speaker: "Young Soldier", text: input.text.slice(20) },
           ],
-          cast: [{ name: "Hero", description: "A young soldier, steady under fire." }],
+          cast: [{ name: "Hero", facts: [{ kind: "personality", text: said }] }],
         };
       },
     };
@@ -746,7 +774,15 @@ describe("a speaker the model names by another of their names", () => {
 
     const { characters: cast } = (await api.request<Cast>(`/api/books/${id}/cast`)).body;
     expect(cast.map((c) => c.name)).toEqual(["Young Soldier"]);
-    expect(cast[0].description).toBe("A young soldier, steady under fire.");
+    const facts = () => readFacts(api.db, id, "Young Soldier").map((f) => f.text);
+    expect(facts()).toEqual(["Steady under fire."]);
+    said = "Quick to laugh.";
+    await api.request(
+      `/api/books/${id}/chapters/script`,
+      jsonBody({ ids: [1], profile: "openai" }),
+    );
+    await api.runner.idle();
+    expect(facts()).toEqual(["Quick to laugh."]);
     const { segments } = (
       await api.request<{ segments: Segment[] }>(`/api/books/${id}/chapters/1/script`)
     ).body;

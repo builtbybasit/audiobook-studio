@@ -32,6 +32,7 @@ import {
   newSpeaker,
   personaOwner,
   personaRefusal,
+  whoOf,
 } from "@/lib/cast";
 import type { PromptCastMember } from "@/lib/prompt";
 import type { Db, Tx } from "~/db/client";
@@ -60,6 +61,7 @@ export function readSpeakers(db: Db | Tx, bookId: string): PromptCastMember[] {
       gender: characters.gender,
       age: characters.age,
       description: characters.description,
+      profile: characters.profile,
       personaOf: characters.personaOf,
       masked: characters.masked,
     })
@@ -67,8 +69,9 @@ export function readSpeakers(db: Db | Tx, bookId: string): PromptCastMember[] {
     .where(eq(characters.bookId, bookId))
     .all();
   const byName = new Map(rows.map((r) => [r.name, r]));
-  return rows.map(({ personaOf, masked, age, ...c }) => ({
+  return rows.map(({ personaOf, masked, age, description, profile, ...c }) => ({
     ...c,
+    description: whoOf({ description, profile: profile ?? undefined }),
     ...(age ? { age } : {}),
     ...(personaOwner({ name: c.name, personaOf: personaOf ?? undefined }, byName)
       ? { personaOf: personaOf! }
@@ -284,10 +287,6 @@ export function learnCast(
     }
     if (voiceTypeGaps(c.voiceType, note.voiceType)) {
       c.voiceType = withVoiceType(c.voiceType, note.voiceType);
-      touched = true;
-    }
-    if (!c.description.trim() && note.description?.trim()) {
-      c.description = note.description.trim();
       touched = true;
     }
     for (const alias of note.aliases ?? []) {

@@ -3,6 +3,7 @@
 import { describe, expect, test } from "bun:test";
 
 import type { SegmentType, VoiceType } from "@/types";
+import { OUTPUT_FORMAT } from "@/lib/prompt";
 import {
   ChunkMisfit,
   chatScriptingProvider,
@@ -411,9 +412,20 @@ describe("a request", () => {
               gender: "Female",
               age: "Young adult",
               aliases: ["the lamplighter", "Mara", "the lamplighter"],
-              description: "A young  lamplighter.",
+              facts: [
+                { kind: "Role", text: "The town's  lamplighter." },
+                { kind: "role", text: "the town's lamplighter." },
+                { kind: "hobby", text: "Collects lamps." },
+                { kind: "voice", text: "  " },
+                { kind: "personality", text: "x".repeat(500) },
+                "She is wary",
+                ...Array.from({ length: 10 }, (_, i) => ({
+                  kind: "background",
+                  text: `Fact ${i}.`,
+                })),
+              ],
             },
-            { name: "Tobiah", gender: "man", age: "adult" },
+            { name: "Tobiah", gender: "man", age: "adult", facts: "an innkeeper" },
             { name: "Kit", gender: "non-binary", age: "Middle aged", aliases: null },
             { name: "Narrator", gender: "male" },
             { name: "Unknown" },
@@ -439,14 +451,29 @@ describe("a request", () => {
         gender: "f",
         age: "young adult",
         aliases: ["the lamplighter"],
-        description: "A young lamplighter.",
+        // a known kind and some text, once each, capped in length and number
+        facts: [
+          { kind: "role" as const, text: "The town's lamplighter." },
+          { kind: "personality" as const, text: "x".repeat(200) },
+          ...Array.from({ length: 6 }, (_, i) => ({
+            kind: "background" as const,
+            text: `Fact ${i}.`,
+          })),
+        ],
       },
-      { name: "Tobiah", gender: "m", aliases: [], description: "" },
-      { name: "Kit", gender: "n", age: "middle-aged", aliases: [], description: "" },
+      { name: "Tobiah", gender: "m", aliases: [] },
+      { name: "Kit", gender: "n", age: "middle-aged", aliases: [] },
     ]);
     expect(answer.recap).toBe("Mara let a stranger in; she spoke last.");
     // one per term, whatever its case; none said as written
     expect(answer.pronounce).toEqual([{ term: "Lan'er", say: "Lahn-ur" }]);
+  });
+
+  test("reads the output format's own example back whole, its facts included", async () => {
+    const example = OUTPUT_FORMAT.slice(OUTPUT_FORMAT.lastIndexOf("\n") + 1);
+    const { provider } = gateway(() => completion(example));
+    const [mara] = (await provider.script(input())).cast!;
+    expect(mara.facts).toEqual(JSON.parse(example).cast[0].facts);
   });
 
   test("reads a disguise: whose it is, that nobody knows yet, or nothing", async () => {

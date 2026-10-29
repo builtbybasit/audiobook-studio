@@ -26,9 +26,18 @@ const AVG_JOB: Record<JobKind, number> = {
   export: 120,
   transcribe: 15,
   effects: 120,
+  facts: 20,
+  profiles: 60,
 };
 
 const NO_JOBS: readonly Job[] = [];
+
+/**
+ * Whether a Retry can run this job again: a build from its row, a chapter's job as a new run.
+ * Facts are read again over a range, by the Cast page's Refresh profiles.
+ */
+export const retriable = (j: Job): boolean =>
+  j.kind === "export" ? !!j.exportRun : j.chapterId != null && j.kind !== "facts";
 
 export const useJobsStore = defineStore("jobs", {
   state: () => ({}),
@@ -157,7 +166,7 @@ export const useJobsStore = defineStore("jobs", {
      */
     retryRunFailures(runId: number): number {
       const failed = this.runJobs(runId).filter(
-        (j) => j.status === "failed" && j.chapterId !== null,
+        (j) => j.status === "failed" && j.chapterId !== null && retriable(j),
       );
       this._retry(failed);
       return failed.length;
@@ -398,6 +407,9 @@ export const useJobsStore = defineStore("jobs", {
           export: () => false,
           // a Re-apply is the whole book's, with no chapter
           effects: () => false,
+          // run again by the Cast page's Refresh profiles, which also queues the rewrite
+          facts: () => false,
+          profiles: () => false,
         };
         if (still[j.kind]()) out.push(j);
       }

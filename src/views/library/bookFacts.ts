@@ -63,6 +63,8 @@ export function bookFacts(id: string): BookFacts {
     transcribe: (n) => `Transcribing ${plural(n, "chapter")}`,
     export: () => "Building the audiobook",
     effects: () => "Re-applying effects",
+    facts: (n) => `Reading cast facts in ${plural(n, "chapter")}`,
+    profiles: () => "Writing cast profiles",
   };
   const activity = [...byKind].map(([k, n]) => doing[k](n)).join(" · ");
   return {

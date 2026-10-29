@@ -12,9 +12,10 @@ import { GENDER } from "@/lib/scriptReview";
 import { UiHint, UiSelect, UiSwitch } from "@/ui";
 import SpoilerText from "@/components/SpoilerText.vue";
 import PersonaSection from "@/views/cast/persona/PersonaSection.vue";
+import SpeakerProfile from "@/views/cast/SpeakerProfile.vue";
 import { BookOpenText as WikiIcon, Plus as AddIcon, X as CloseIcon } from "@lucide/vue";
 import { fillChips, webAddress } from "@/views/cast/wiki";
-import { AGES } from "@/lib/cast";
+import { AGES, describe } from "@/lib/cast";
 import { nameSaid } from "@/lib/speech";
 import { DELIVERIES, PITCHES, TEXTURES } from "@/lib/voiceProfile";
 import type {
@@ -77,9 +78,9 @@ const voiceStyle = computed(() => {
   return style && style !== props.c.style.trim() ? style : undefined;
 });
 
-// The description is written from the whole book, so it hides behind a button (no spoilers);
-// one empty when the record opened stays shown while typed in.
-const startsEmpty = !props.c.description;
+// The profile and facts are written from the whole book, so they hide behind a button (no
+// spoilers); a speaker with nothing to tell when the record opened stays shown while typed in.
+const hides = props.c.name !== "Narrator" && !!describe(props.c);
 // the labels sit beside a "?" rather than around the field, so they point at it by id
 const nameId = useId();
 const styleId = useId();
@@ -356,19 +357,8 @@ function addAlias(c: Character) {
     <div class="space-y-2.5">
       <div class="space-y-1 text-xs font-medium">
         <div>Description</div>
-        <SpoilerText :text="c.description" :hidden="c.name !== 'Narrator' && !startsEmpty">
-          <textarea
-            :value="c.description"
-            rows="4"
-            class="input w-full resize-y leading-relaxed"
-            placeholder="Who they are"
-            :aria-label="`Description of ${c.name}`"
-            @input="
-              castStore.updateCharacter(bookId, c.name, {
-                description: ($event.target as HTMLTextAreaElement).value,
-              })
-            "
-          ></textarea>
+        <SpoilerText :text="describe(c)" :hidden="hides">
+          <SpeakerProfile :book-id="bookId" :c="c" :facts="hides" />
         </SpoilerText>
       </div>
       <div class="space-y-1 text-xs font-medium">

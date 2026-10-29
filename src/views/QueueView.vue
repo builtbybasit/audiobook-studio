@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useEndpointsStore } from "@/stores/endpoints";
-import { useJobsStore } from "@/stores/jobs";
+import { retriable, useJobsStore } from "@/stores/jobs";
 import { useLibraryStore } from "@/stores/library";
 import { useScriptsStore } from "@/stores/scripts";
 import { useUiStore } from "@/stores/ui";
@@ -22,6 +22,8 @@ import {
   PencilLine as ScriptingIcon,
   Captions as TranscribeIcon,
   AudioWaveform as EffectsIcon,
+  NotebookPen as FactsIcon,
+  IdCard as ProfilesIcon,
   RotateCcw as RetryIcon,
   X as CloseIcon,
 } from "@lucide/vue";
@@ -52,6 +54,8 @@ const icon: Record<JobKind, Component> = {
   export: ExportIcon,
   transcribe: TranscribeIcon,
   effects: EffectsIcon,
+  facts: FactsIcon,
+  profiles: ProfilesIcon,
 };
 const running = computed(() => jobsStore.jobs.filter((j) => j.status === "running"));
 const queued = computed(() => jobsStore.jobs.filter((j) => j.status === "queued"));
@@ -385,10 +389,7 @@ async function toggleNotify() {
                   </td>
                   <td class="w-28 pr-4 text-right">
                     <button
-                      v-if="
-                        j.status !== 'done' &&
-                        (j.kind === 'export' ? !!j.exportRun : j.chapterId != null)
-                      "
+                      v-if="j.status !== 'done' && retriable(j)"
                       class="btn-ghost btn-xs"
                       @click="jobsStore.retryJob(j.id)"
                     >

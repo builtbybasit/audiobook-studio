@@ -1,7 +1,7 @@
 // The queue, read into the jobs store and polled while anything is live. One shared query for
 // every reader. The server pushes nothing, so the poll is where a moved job is noticed: it
-// invalidates whatever that job wrote (scripts, cast, history, exports, spending, endpoint live
-// counts). It only says what to ask for again.
+// invalidates whatever that job wrote (scripts, cast and facts, history, exports, spending,
+// endpoint live counts). It only says what to ask for again.
 import { computed, ref, toValue, watch, type MaybeRefOrGetter } from "vue";
 import { defineQuery, useQuery } from "@pinia/colada";
 
@@ -92,6 +92,11 @@ const useJobsQuery = defineQuery(() => {
         // a Re-apply swaps clips' files anywhere in the book, so every chapter's script is read again
         case "effects":
           void invalidate({ key: keys.scripts(j.bookId) }, "all");
+          break;
+        // facts and profiles live under the cast's key; a failed rewrite may have written some
+        case "facts":
+        case "profiles":
+          if (!live(j) && (!was || live(was))) void invalidate({ key: keys.cast(j.bookId) }, "all");
       }
       // a finished narration or Re-apply changes the book's old-sound count, and which of its
       // audiobooks are behind (the server's `changed`)

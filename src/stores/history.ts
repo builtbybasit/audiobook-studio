@@ -34,6 +34,9 @@ const LANDS_ON_SCRIPT: Record<JobKind, boolean> = {
   transcribe: true,
   export: false,
   effects: true,
+  // facts and profiles write the cast, not the chapter
+  facts: false,
+  profiles: false,
 };
 
 const nameOf = (bookId: string, chId: number) =>

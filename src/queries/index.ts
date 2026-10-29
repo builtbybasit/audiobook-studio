@@ -17,7 +17,7 @@ export {
   useChapterScripts,
 } from "@/queries/chapterScript";
 export { fetchHistory, useChapterHistory } from "@/queries/history";
-export { fetchCast, useCast } from "@/queries/cast";
+export { deleteFact, fetchCast, useCast, useFacts } from "@/queries/cast";
 export { countsMoved, countsSettled, useSpeakerCounts } from "@/queries/speakerCounts";
 export { useBookExports, useShelfExports } from "@/queries/exports";
 export { useBookJobs, POLL_MS } from "@/queries/jobs";

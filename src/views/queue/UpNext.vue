@@ -11,6 +11,8 @@ import {
   PencilLine as ScriptingIcon,
   Captions as TranscribeIcon,
   AudioWaveform as EffectsIcon,
+  NotebookPen as FactsIcon,
+  IdCard as ProfilesIcon,
   X as CancelIcon,
 } from "@lucide/vue";
 
@@ -32,6 +34,8 @@ const icon: Record<JobKind, Component> = {
   export: ExportIcon,
   transcribe: TranscribeIcon,
   effects: EffectsIcon,
+  facts: FactsIcon,
+  profiles: ProfilesIcon,
 };
 // by book, volume and reading number only: titles of chapters still to come would spoil the plot
 const bookTitle = (j: Job) => libraryStore.bookById(j.bookId)?.title;

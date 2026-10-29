@@ -1,12 +1,14 @@
-// A book's cast and dictionary, read into the cast store. A scripting job landing invalidates it,
-// since the run adds speakers on the server.
+// A book's cast and dictionary, read into the cast store, and a speaker's facts. A scripting,
+// facts or profiles job landing invalidates both, since the run changes them on the server.
 import { computed, toValue, type MaybeRefOrGetter } from "vue";
-import { useQuery } from "@pinia/colada";
+import { useQuery, useQueryCache } from "@pinia/colada";
 
 import { fetchQuery } from "@/queries/fetch";
 import { keys } from "@/queries/keys";
 import { libraryService, type Cast } from "@/services/library";
 import { useCastStore } from "@/stores/cast";
+import { toastFailure } from "@/stores/toastFailure";
+import type { CastFact } from "@/types";
 
 async function readCast(bookId: string, signal: AbortSignal): Promise<Cast> {
   const castStore = useCastStore();
@@ -37,4 +39,27 @@ export function useCast(bookId: MaybeRefOrGetter<string>) {
     characters: computed(() => castStore.charactersOf(toValue(bookId))),
     lexicon: computed(() => castStore.lexiconOf(toValue(bookId))),
   };
+}
+
+/** A speaker's facts, read only while `enabled` (behind the record's spoiler button). */
+export function useFacts(
+  bookId: MaybeRefOrGetter<string>,
+  name: MaybeRefOrGetter<string>,
+  enabled: MaybeRefOrGetter<boolean> = true,
+) {
+  return useQuery(() => ({
+    key: keys.facts(toValue(bookId), toValue(name)),
+    query: () => libraryService().facts(toValue(bookId), toValue(name)),
+    enabled: toValue(enabled),
+  }));
+}
+
+/** Take a fact off a speaker; the list shown becomes what the server kept. */
+export async function deleteFact(bookId: string, name: string, id: number): Promise<void> {
+  try {
+    const facts = await libraryService().deleteFact(bookId, id);
+    useQueryCache().setQueryData<CastFact[]>(keys.facts(bookId, name), facts);
+  } catch (cause) {
+    toastFailure("remove this fact", cause);
+  }
 }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useJobsStore } from "@/stores/jobs";
+import { retriable, useJobsStore } from "@/stores/jobs";
 import { plural } from "@/lib/contents";
 import { useLibraryStore } from "@/stores/library";
 
@@ -46,7 +46,9 @@ const siblings = computed(() => (props.job?.bulk ? jobsStore.runJobs(props.job.b
 const runDone = computed(() => siblings.value.filter((j) => j.status === "done").length);
 // the same clause `retryRunFailures` applies, so "Retry N failed" offers exactly what it re-runs
 const runFailed = computed(
-  () => siblings.value.filter((j) => j.status === "failed" && j.chapterId !== null).length,
+  () =>
+    siblings.value.filter((j) => j.status === "failed" && j.chapterId !== null && retriable(j))
+      .length,
 );
 const runLeft = computed(() => siblings.value.filter((j) => !j.finishedAt).length);
 const runRunning = computed(() => siblings.value.filter((j) => j.status === "running").length);

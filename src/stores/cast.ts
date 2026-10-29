@@ -6,6 +6,7 @@ import { toRaw } from "vue";
 // change waits (`_answered`), so an older answer never puts back an older speaker.
 import { useQueryCache } from "@pinia/colada";
 import { fetchCast } from "@/queries/cast";
+import { invalidate } from "@/queries/invalidate";
 import { keys } from "@/queries/keys";
 import { countsMoved } from "@/queries/speakerCounts";
 import { staleMoved } from "@/queries/effects";
@@ -1498,6 +1499,42 @@ export const useCastStore = defineStore("cast", {
         undo: () => void this._patchMany(bookId, undo),
       });
       return n;
+    },
+    /**
+     * Read this book's scripted chapters `from`–`to` (reading numbers; none = all) again for facts,
+     * by the scripting endpoint, then rewrite the profiles. True when it was asked.
+     */
+    async refreshProfiles(
+      bookId: string,
+      ask: { from?: number; to?: number; major: boolean },
+    ): Promise<boolean> {
+      const uiStore = useUiStore();
+      const profile = useScriptingStore().runProfile;
+      if (!profile || this.aiBlocker) {
+        uiStore.toast("Can’t refresh profiles", { kind: "error", description: this.aiBlocker });
+        return false;
+      }
+      let queued: number;
+      try {
+        ({ queued } = await this._service().refreshProfiles(bookId, {
+          profile: profile.id,
+          ...ask,
+        }));
+      } catch (cause) {
+        toastFailure("queue the profile refresh", cause);
+        return false;
+      }
+      void invalidate({ key: keys.jobs });
+      uiStore.toast(
+        queued
+          ? `Reading ${queued} chapter${queued === 1 ? "" : "s"} for cast facts`
+          : "No scripted chapters in that range",
+        {
+          kind: queued ? "success" : "info",
+          description: queued ? "Profiles are rewritten once they’re read." : undefined,
+        },
+      );
+      return true;
     },
     /**
      * A plan with its main speakers' rows (up to 30, most lines first) swapped for the model's first

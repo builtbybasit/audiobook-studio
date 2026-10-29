@@ -22,6 +22,7 @@ import { isSpoken } from "@/lib/siteText";
 import type { AudioFiles } from "~/audio/files";
 import * as cast from "~/db/cast";
 import type { Db } from "~/db/client";
+import { clearBookFacts } from "~/db/facts";
 import * as history from "~/db/history";
 import * as queue from "~/db/jobs";
 import * as library from "~/db/library";
@@ -237,8 +238,8 @@ export function dropVersion(
 const STARTED_OVER: VersionOrigin = { kind: "bulk", label: "Started over", lines: 0 };
 
 /**
- * Drop every script and clip in the book (and with `cast`, every speaker but the Narrator); text,
- * settings and built audiobooks stay. Scripts are kept in history first (text only). Refused while
+ * Drop every script and clip in the book, and the facts read from them (and with `cast`, every
+ * speaker but the Narrator); text, settings, profiles and built audiobooks stay. Scripts are kept in history first (text only). Refused while
  * any job of the book is queued or running.
  */
 export function startOver(
@@ -265,6 +266,7 @@ export function startOver(
       scripts++;
     }
     const gone = dropBookScripts(tx, bookId);
+    clearBookFacts(tx, bookId);
     let speakers = 0;
     if (clearCast) {
       // the Narrator inherits the removed speakers' lines

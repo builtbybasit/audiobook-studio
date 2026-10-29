@@ -2,6 +2,9 @@
 // leaves out: each chapter's prose as an import would store it; clip urls with no file behind them
 // (`audio/demoClips.ts` makes a tone on first read); and endpoint urls rewritten to `simulated://`,
 // so the demo never reaches the network or bills anything.
+import { and, eq, isNotNull, sql } from "drizzle-orm";
+
+import { seedFacts } from "~/demo/seed/world/cast";
 import { chapterParts, partsText } from "~/demo/seed/world/text";
 import { makeCredentials } from "~/demo/seed/fixtures/credentials";
 import type {
@@ -26,6 +29,7 @@ import type { EndpointConfig } from "~/db/endpoints";
 import { insertBook } from "~/db/library";
 import * as rows from "~/db/rows";
 import {
+  characterFacts,
   characters,
   exportChapters,
   exportFiles,
@@ -62,8 +66,29 @@ export function writeCast(db: Db | Tx, bookId: string, cast: readonly Character[
   insertRows(
     db,
     characters,
-    cast.map((c, i) => rows.characterValues(bookId, c, i)),
+    cast.map((c, i) => ({ ...rows.characterValues(bookId, c, i), profile: c.profile ?? null })),
   );
+}
+
+/** The seeded facts, and each profile marked as written from all of its speaker's. */
+function writeFacts(
+  db: Db | Tx,
+  bookId: string,
+  cast: readonly Character[],
+  chs: readonly Chapter[],
+): void {
+  const facts = seedFacts(bookId, new Set(cast.map((c) => c.name)), new Set(chs.map((c) => c.id)));
+  insertRows(
+    db,
+    characterFacts,
+    facts.map((f) => ({ bookId, ...f })),
+  );
+  db.update(characters)
+    .set({
+      profileUpTo: sql`coalesce((select max(${characterFacts.id}) from ${characterFacts} where ${characterFacts.bookId} = ${characters.bookId} and ${characterFacts.speaker} = ${characters.name}), 0)`,
+    })
+    .where(and(eq(characters.bookId, bookId), isNotNull(characters.profile)))
+    .run();
 }
 
 // read as UTC, so the day it reads back is the world's wherever the server is
@@ -170,6 +195,7 @@ export function writeWorld(tx: Tx, demo: DemoWorld, { base, now }: WorldOptions)
   for (const book of world.books) {
     writeBook(tx, book, world.chapters[book.id] ?? [], addedAtOf(book, now));
     writeCast(tx, book.id, world.characters[book.id] ?? []);
+    writeFacts(tx, book.id, world.characters[book.id] ?? [], world.chapters[book.id] ?? []);
     replaceLexicon(tx, book.id, world.lexicon[book.id] ?? []);
   }
 

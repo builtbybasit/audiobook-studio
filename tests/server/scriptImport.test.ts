@@ -14,6 +14,7 @@ import type {
   ScriptFileLine,
   ScriptFileSpeaker,
   ScriptFileTerm,
+  ScriptImportPlan,
   ScriptManifest,
   VoiceMatch,
   VoiceRef,
@@ -404,20 +405,21 @@ describe("the cast and the dictionary", () => {
   });
 
   const wiki = { url: "https://w.test/wiki/Mara", at: 1 };
+  const profile = { who: "A clerk.", personality: "Counts twice.", voice: "Dry." };
+  // the file's hand-set mark comes with the age it fills
+  const filled: Omit<ScriptImportPlan["cast"]["fill"][number], "name"> = {
+    age: "teen",
+    voiceType: { texture: "clear" },
+    wiki,
+    profile,
+    edited: ["age"],
+  };
   test.each([
-    [
-      "the same link",
-      "Tobin",
-      [{ name: "Mara", age: "teen", voiceType: { texture: "clear" }, wiki, masked: true }],
-    ],
+    ["the same link", "Tobin", [{ name: "Mara", ...filled, masked: true }]],
     // linked by hand: the reader's choice, not a spoiler to hide
-    [
-      "a link made by hand",
-      "Doran",
-      [{ name: "Mara", age: "teen", voiceType: { texture: "clear" }, wiki }],
-    ],
+    ["a link made by hand", "Doran", [{ name: "Mara", ...filled }]],
   ] as const)(
-    "a speaker the book has gets the file's age, voice type, wiki page blanks and hiding over %s",
+    "a speaker the book has gets the file's age, voice type, wiki page, profile blanks and hiding over %s",
     async (_, of, fill) => {
       // the pitch set by hand stays
       have({ personaOf: of, voiceType: { pitch: "low" } });
@@ -430,6 +432,8 @@ describe("the cast and the dictionary", () => {
               age: "teen",
               voiceType: { pitch: "high", texture: "clear" },
               wiki,
+              profile,
+              edited: ["age"],
             }),
           ],
         }),

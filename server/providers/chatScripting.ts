@@ -730,7 +730,9 @@ const NOTE_SPELLING =
 function typeOf(said: string, speaker: string): SegmentType {
   const t = said.trim().toLowerCase();
   if (t.startsWith("narrat")) return "narration";
-  if (t.startsWith("thought") || t.startsWith("think") || t === "internal") return "thought";
+  // the Narrator is nobody: what it "thinks" is the telling itself
+  if (t.startsWith("thought") || t.startsWith("think") || t === "internal")
+    return speaker === NARRATOR ? "narration" : "thought";
   if (t.startsWith("dialog") || t === "speech" || t === "spoken") return "dialogue";
   if (WATERMARK_SPELLING.test(t)) return "watermark";
   if (NOTE_SPELLING.test(t)) return "note";

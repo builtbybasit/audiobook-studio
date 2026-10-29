@@ -383,7 +383,7 @@ describe("a request", () => {
     expect(sent[0].body.max_tokens).toBeUndefined();
   });
 
-  test("tidies a loosely-shaped answer: quotes, odd types and empty lines", async () => {
+  test("tidies a loosely-shaped answer: quotes, odd types, empty lines, the Narrator's thoughts", async () => {
     const { provider } = gateway(() =>
       completion(
         fenced([
@@ -391,13 +391,15 @@ describe("a request", () => {
           { type: "speech", speaker: "Mara", text: "“Come in,”" },
           { type: "narration", speaker: "Narrator", text: "  " },
           { type: "whatever", speaker: "Narrator", text: "said Mara softly." },
+          { type: "thought", speaker: "Narrator", text: "Late again." },
         ]),
       ),
     );
-    expect((await provider.script(input())).lines).toEqual([
+    expect((await provider.script(input({ text: `${TEXT} Late again.` }))).lines).toEqual([
       { type: "narration", speaker: "Narrator", text: "The door opened." },
       { type: "dialogue", speaker: "Mara", text: "Come in," },
       { type: "narration", speaker: "Narrator", text: "said Mara softly." },
+      { type: "narration", speaker: "Narrator", text: "Late again." },
     ]);
   });
 

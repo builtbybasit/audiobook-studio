@@ -51,7 +51,16 @@ export const jobs = sqliteTable(
 
     /** the Queue page's detail, and everything a retry needs */
     run: text("run", { mode: "json" }).$type<
-      Pick<Job, "scriptRun" | "narrationRun" | "exportRun" | "transcribeRun" | "effectsRun">
+      Pick<
+        Job,
+        | "scriptRun"
+        | "narrationRun"
+        | "exportRun"
+        | "transcribeRun"
+        | "effectsRun"
+        | "factsRun"
+        | "profilesRun"
+      >
     >(),
 
     droppedEvents: integer("dropped_events").notNull().default(0),

@@ -6,6 +6,7 @@ import * as v from "valibot";
 import type { FetchLike } from "@/services/http";
 import type {
   Cast,
+  CastFact,
   LexiconSaved,
   MovedLines,
   MovedSpeakers,
@@ -19,8 +20,12 @@ import { oldVoice, revoice } from "~/cast/oldVoice";
 import * as ops from "~/cast/ops";
 import { suggestVoicesFor } from "~/cast/suggest";
 import { fillFromWiki } from "~/cast/wiki";
+import { getCharacter } from "~/db/cast";
+import { deleteFact, readFacts } from "~/db/facts";
+import { enqueueFacts } from "~/jobs/profiles";
 import type { Runner } from "~/jobs/runner";
-import { BookParam } from "~/lib/http";
+import { notFound } from "~/lib/errors";
+import { BookParam, IdParam } from "~/lib/http";
 import { CharacterSchema, ChapterLinesSchema, LexEntrySchema } from "~/lib/schemas";
 import { validate } from "~/lib/validate";
 import { endpointScriptingProvider } from "~/providers/endpointScripting";
@@ -58,6 +63,19 @@ const WikiFill = v.object({
   name: Name,
   profile: v.pipe(v.string(), v.nonEmpty()),
   url: v.optional(v.pipe(v.string(), v.trim(), v.url(), v.maxLength(500))),
+});
+const FactParam = v.object({
+  id: v.string(),
+  factId: IdParam,
+});
+const ReadingNumber = v.pipe(v.number(), v.integer(), v.minValue(1));
+const Refresh = v.object({
+  profile: v.pipe(v.string(), v.nonEmpty()),
+  from: v.optional(ReadingNumber),
+  to: v.optional(ReadingNumber),
+  /** a Retry's chapters, by id, instead of a range */
+  chapters: v.optional(v.array(v.pipe(v.number(), v.integer()))),
+  major: v.optional(v.boolean()),
 });
 const Lexicon = v.object({
   entries: v.array(LexEntrySchema),
@@ -115,6 +133,33 @@ export function castRoutes(
           fetch,
         )) satisfies SpeakerWikiFill,
       ),
+  );
+
+  /** One speaker's facts in reading order; shown only behind a spoiler guard. */
+  app.get("/:id/characters/:name/facts", validate("param", NameParam), (c) => {
+    const { id, name } = c.req.valid("param");
+    if (!getCharacter(db, id, name)) throw notFound(`“${name}” is not in this book’s cast`);
+    return c.json({ facts: readFacts(db, id, name) satisfies CastFact[] });
+  });
+
+  /** Their profile is rebuilt without it at the next rewrite; returns the speaker's facts left. */
+  app.delete("/:id/characters/facts/:factId", validate("param", FactParam), (c) => {
+    const { id, factId } = c.req.valid("param");
+    const speaker = deleteFact(db, id, factId);
+    if (speaker == null) throw notFound("No such fact");
+    return c.json({ facts: readFacts(db, id, speaker) satisfies CastFact[] });
+  });
+
+  /** Read scripted chapters again for facts (reading numbers `from`..`to`); profiles follow. */
+  app.post(
+    "/:id/characters/refresh",
+    validate("param", BookParam),
+    validate("json", Refresh),
+    (c) => {
+      const queued = enqueueFacts(db, runner, c.req.valid("param").id, c.req.valid("json"));
+      c.var.logger.info({ chapters: queued }, "cast facts queued");
+      return c.json({ queued }, 202);
+    },
   );
 
   /** Several speakers new or replaced, all or nothing. */

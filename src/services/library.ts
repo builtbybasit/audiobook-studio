@@ -5,6 +5,7 @@ import type {
   Book,
   BookUpdated,
   BookPrompt,
+  CastFact,
   CharacterVoice,
   Cast,
   CastStat,
@@ -32,6 +33,7 @@ import type {
   PromptTrialResult,
   ScriptExportSamples,
   ScriptImportPlan,
+  ImportCastCarry,
   ScriptVersion,
   Segment,
   SegmentFlag,
@@ -212,6 +214,15 @@ export interface LibraryService {
     ask: { name: string; profile: string; url?: string },
     signal?: AbortSignal,
   ): Promise<SpeakerWikiFill>;
+  /** A speaker's facts in reading order, with no chapter: where they came from is a spoiler. */
+  facts(bookId: string, name: string): Promise<CastFact[]>;
+  /** The speaker's facts left; their profile is rewritten from all of them at the next rewrite. */
+  deleteFact(bookId: string, factId: number): Promise<CastFact[]>;
+  /** Read scripted chapters again for facts (`from`/`to` reading numbers), then rewrite profiles. */
+  refreshProfiles(
+    bookId: string,
+    ask: { profile: string; from?: number; to?: number; chapters?: number[]; major?: boolean },
+  ): Promise<{ queued: number }>;
   /** Each speaker's spoken lines across the book; a speaker with none is absent. */
   speakerCounts(bookId: string): Promise<Record<string, CastStat>>;
   /** New or replaced. Returns the cast as it now stands. */
@@ -262,6 +273,8 @@ export interface LibraryService {
   // ---------- the script as a file ----------
   /** What importing a script file would do. Nothing is written; the store applies the plan. */
   planScriptImport(bookId: string, file: File): Promise<ScriptImportPlan>;
+  /** An applied import's profiles, hand-set marks and facts; answers the facts saved. */
+  carryImport(bookId: string, carry: ImportCastCarry): Promise<{ facts: number }>;
   /** What ticking "Include voice samples" would add to this book's export: one entry per speaker. */
   scriptExportSamples(bookId: string): Promise<ScriptExportSamples>;
 
@@ -496,6 +509,29 @@ export class HttpLibraryService implements LibraryService {
     });
   }
 
+  async facts(bookId: string, name: string): Promise<CastFact[]> {
+    return (
+      await this.http.get<{ facts: CastFact[] }>(
+        `/books/${seg(bookId)}/characters/${seg(name)}/facts`,
+      )
+    ).facts;
+  }
+
+  async deleteFact(bookId: string, factId: number): Promise<CastFact[]> {
+    return (
+      await this.http.delete<{ facts: CastFact[] }>(
+        `/books/${seg(bookId)}/characters/facts/${factId}`,
+      )
+    ).facts;
+  }
+
+  refreshProfiles(
+    bookId: string,
+    ask: { profile: string; from?: number; to?: number; chapters?: number[]; major?: boolean },
+  ): Promise<{ queued: number }> {
+    return this.http.post<{ queued: number }>(`/books/${seg(bookId)}/characters/refresh`, ask);
+  }
+
   async speakerCounts(bookId: string): Promise<Record<string, CastStat>> {
     return (
       await this.http.get<{ counts: Record<string, CastStat> }>(
@@ -603,6 +639,10 @@ export class HttpLibraryService implements LibraryService {
 
   planScriptImport(bookId: string, file: File): Promise<ScriptImportPlan> {
     return this.http.postForm<ScriptImportPlan>(`/books/${seg(bookId)}/script-import`, file, {});
+  }
+
+  carryImport(bookId: string, carry: ImportCastCarry): Promise<{ facts: number }> {
+    return this.http.post<{ facts: number }>(`/books/${seg(bookId)}/script-import/cast`, carry);
   }
 
   scriptExportSamples(bookId: string): Promise<ScriptExportSamples> {

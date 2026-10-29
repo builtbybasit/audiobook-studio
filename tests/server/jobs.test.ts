@@ -838,6 +838,37 @@ describe("what runs side by side", () => {
     finish(build);
     expect(claimAll()).toEqual([check3]);
   });
+  test("a profile rewrite waits for the book's scripting and fact reading, queued or running, and holds nothing back", () => {
+    const db = testDb();
+    db.run(
+      "insert into books (id, title, author, cover_from, cover_to, added_at) values ('b','B','A','#000','#111',0)",
+    );
+    for (const n of [1, 2, 3, 4])
+      db.run(
+        `insert into chapters (book_id, id, uid, volume_id, volume_index, title, words) values ('b',${n},'u${n}',1,${n},'C${n}',3)`,
+      );
+    const add = (kind: Job["kind"], chapterId: number | null) =>
+      queue.enqueueJob(db, { kind, bookId: "b", chapterId, label: kind }).job.id;
+    const script1 = add("scripting", 1);
+    const profiles = add("profiles", null);
+    const narrate2 = add("narration", 2);
+    const facts3 = add("facts", 3);
+    const script4 = add("scripting", 4);
+    const claimAll = () => {
+      const ids: number[] = [];
+      for (let j = queue.claimNext(db); j; j = queue.claimNext(db)) ids.push(j.id);
+      return ids;
+    };
+    const finish = (...ids: number[]) => ids.forEach((id) => queue.finishJob(db, id, "done"));
+
+    expect(claimAll()).toEqual([script1, narrate2, facts3]);
+    finish(script1, facts3);
+    // the scripting still queued behind it holds it back
+    expect(claimAll()).toEqual([script4]);
+    finish(script4);
+    // narration still running does not
+    expect(claimAll()).toEqual([profiles]);
+  });
 });
 
 describe("run next", () => {

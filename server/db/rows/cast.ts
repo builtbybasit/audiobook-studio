@@ -26,9 +26,11 @@ export function toCharacter(row: CharacterRow): Character {
   if (row.voiceType != null) c.voiceType = row.voiceType;
   if (row.masked) c.masked = true;
   if (row.wiki != null) c.wiki = row.wiki;
+  if (row.profile != null) c.profile = row.profile;
   return c;
 }
 
+/** Leaves out the profile and `edited`: only their own writers set them, never a client PUT. */
 export function characterValues(
   bookId: string,
   c: Character,

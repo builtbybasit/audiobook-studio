@@ -28,6 +28,8 @@ import { useCastStore } from "@/stores/cast";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useLibraryStore } from "@/stores/library";
 import { UiCombobox, UiSelect } from "@/ui";
+import SpoilerText from "@/components/SpoilerText.vue";
+import { plural } from "@/lib/contents";
 import { money } from "@/lib/pricing";
 import { numberCell } from "@/lib/chapterNumber";
 import type { PromptTrialResult } from "@/types";
@@ -199,6 +201,7 @@ const inputs = computed(() =>
 const running = ref(false);
 let controller: AbortController | null = null;
 const result = ref<{ of: string; bookId: string; answer: PromptTrialResult } | null>(null);
+const notes = computed(() => result.value?.answer.cast ?? []);
 /** a refusal, a failure, or Cancel */
 const failure = ref<{ text: string; cancelled: boolean } | null>(null);
 const status = ref("");
@@ -446,7 +449,17 @@ const colorOf = (name: string): string =>
           <dt class="label" data-tip="A run fills in only what the cast leaves blank">
             What it said of the cast
           </dt>
-          <dd v-for="c in result.answer.cast" :key="c.name">{{ speakerLine(c) }}</dd>
+          <dd v-for="c in notes" :key="c.name">
+            {{ speakerLine(c)
+            }}<template v-if="c.facts?.length">
+              ·
+              <SpoilerText text="facts" :label="`${plural(c.facts.length, 'fact')} · show`" small
+                ><span v-for="(f, i) in c.facts" :key="i" class="block pl-3"
+                  ><span class="text-zinc-400">{{ f.kind }} ·</span> {{ f.text }}</span
+                ></SpoilerText
+              ></template
+            >
+          </dd>
         </div>
         <div v-if="result.answer.recap">
           <dt class="label" data-tip="A run sends it with the next chapter">Where it leaves off</dt>

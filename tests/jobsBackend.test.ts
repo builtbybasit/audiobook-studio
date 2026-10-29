@@ -10,9 +10,11 @@ import { key } from "@/lib/scriptReview";
 import { clone } from "@/lib/utils";
 import { DEFAULT_PACING, silenceOf } from "@/lib/speech";
 import {
+  deleteFact,
   useBookExports,
   useBookJobs,
   useCast,
+  useFacts,
   useChapterHistory,
   useBookSpend,
   useChapterScript,
@@ -287,6 +289,44 @@ describe("the queue with a server answering", () => {
     expect(history.versions.value.map((v) => v.origin.kind)).toEqual(["edited", "scripted"]);
     expect(history.versions.value[0].segments[0].text).toBe("By hand.");
     expect(historyStore.headOf(id, 1).origin).toMatchObject({ kind: "scripted", again: true });
+  });
+
+  test("a chapter's facts reach the speaker's open record, and a removed one leaves it", async () => {
+    const { id } = await scriptedAndOpen();
+    const facts = pinia.run(() => useFacts(id, "Mara"));
+    await settle();
+    // Mara is in the cast now, so the next chapter's notes carry facts about her
+    await scriptingStore.runScripting(id, [2], { quiet: true });
+    await api.runner.idle();
+    await poll();
+    const [gone, ...rest] = facts.data.value ?? [];
+    expect(gone).toMatchObject({ speaker: "Mara" });
+    await deleteFact(id, "Mara", gone.id);
+    expect(facts.data.value).toEqual(rest);
+    expect(await libraryService().facts(id, "Mara")).toEqual(rest);
+  });
+
+  test("Retry reads a facts job's chapter again on its endpoint, for the same speakers", async () => {
+    const { id } = await scriptedAndOpen();
+    const { id: profile } = openaiProfile();
+    await api.request("/api/endpoints", {
+      ...jsonBody({ endpoints: [], profiles: [openaiProfile()], credentials: makeCredentials() }),
+      method: "PUT",
+    });
+    await libraryService().refreshProfiles(id, { profile, major: true });
+    await api.runner.idle();
+    await poll();
+    const [read] = jobsStore.jobs.filter((j) => j.kind === "facts");
+    jobsStore.retryJob(read.id);
+    await settle();
+    await api.runner.idle();
+    await poll();
+    expect(jobsStore.jobs.filter((j) => j.kind === "facts" && j.id !== read.id)).toEqual([
+      expect.objectContaining({
+        chapterId: read.chapterId,
+        factsRun: expect.objectContaining({ profile, major: true }),
+      }),
+    ]);
   });
 
   test("opening a scripted chapter reads its script once", async () => {

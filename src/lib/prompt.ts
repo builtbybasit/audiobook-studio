@@ -6,6 +6,7 @@ import type {
   Age,
   BookPrompt,
   Effect,
+  FactKind,
   ScriptedTag,
   Gender,
   ProfilePrompt,
@@ -163,19 +164,19 @@ Text that is not the story still goes in the script, word for word, on lines of 
 When unsure whether something is the story, it is the story.
 
 Besides the lines, the answer has:
-- "cast": notes on the characters who speak or think in the excerpt — only what the known cast is missing; [] when there is nothing new. Each note has:
+- "cast": notes on the characters who speak or think in the excerpt — what the known cast is missing, and every fact the excerpt gives; [] when there is nothing new. Each note has:
   - "name": as written in "speaker".
   - "gender": "male", "female", "non-binary" or "unknown".
   - "age": "child", "teen", "young adult", "middle-aged", "elderly" or "unknown".
   - "aliases": other names they are called by, such as "Mar" or "the Captain". A description is not a name: never "the old man" or "the beautiful woman". [] when they have none.
-  - "description": one short sentence on who they are, and how they sound if the text says.
+  - "facts": lasting things the excerpt states or clearly shows about them, each {"kind": "role", "background", "relationship", "personality" or "voice", "text": one short sentence}. How they act in one scene, such as whispering while hiding, is a direction, not a fact. Never guess. [] when there are none.
   - "voiceType": how they sound, from what the text says or clearly implies: "pitch" ("low", "mid" or "high" for their gender), "texture" ("husky" or "clear") and "delivery" (up to three of ${DELIVERIES.join(", ")}); null for what it does not tell.
   - "personaOf": only for a disguise (rule 5): who wears it, or "unknown". For an entry marked "masked, identity unknown", the wearer once the text reveals them. Otherwise null.
 - "recap": one to three sentences on where the excerpt leaves off, for whoever scripts the text that follows it: who is present, including anyone who has not spoken; where they are; who spoke last and to whom; any question left unanswered; and what the text is calling each of them. Use the names from "speaker".
 %PRONOUNCE%
 
 Answer with JSON only, in this shape:
-{"lines":[{"type":"narration","speaker":"${NARRATOR}","text":"The door opened."},{"type":"dialogue","speaker":"Mara","text":"Come in,","direction":"soft, wary"},{"type":"narration","speaker":"${NARRATOR}","text":"said Mara softly."}],"cast":[{"name":"Mara","gender":"female","age":"young adult","aliases":["Mar"],"description":"A young lamplighter, quick and wary.","voiceType":{"pitch":"mid","texture":null,"delivery":["energetic","shy"]}}],"recap":"Mara has let a stranger in out of the cold, at her door; she spoke last, to him, and he has not answered."%PRONOUNCE_SAMPLE%}`;
+{"lines":[{"type":"narration","speaker":"${NARRATOR}","text":"The door opened."},{"type":"dialogue","speaker":"Mara","text":"Come in,","direction":"soft, wary"},{"type":"narration","speaker":"${NARRATOR}","text":"said Mara softly."}],"cast":[{"name":"Mara","gender":"female","age":"young adult","aliases":["Mar"],"facts":[{"kind":"role","text":"The town's lamplighter."},{"kind":"personality","text":"Quick and wary of strangers."}],"voiceType":{"pitch":"mid","texture":null,"delivery":["energetic","shy"]}}],"recap":"Mara has let a stranger in out of the cold, at her door; she spoke last, to him, and he has not answered."%PRONOUNCE_SAMPLE%}`;
 
 /** With no line effects offered. */
 export const OUTPUT_FORMAT = outputFormat(SCRIPT_MARKERS[0]);
@@ -246,7 +247,7 @@ export const PROMPT_TAGS: readonly PromptTag[] = [
   },
   {
     name: "cast.details",
-    about: "One line per speaker {{cast}} lists: name, gender, age, other names, description",
+    about: "One line per speaker {{cast}} lists: name, gender, age, other names, who they are",
     scope: "chapter",
   },
   {
@@ -292,10 +293,13 @@ export interface PromptCastMember {
   gender?: Gender;
   age?: Age;
   voiceType?: VoiceType;
+  /** who they are (`whoOf`); cast notes carry `facts` instead */
   description?: string;
   personaOf?: string;
   /** `Character.masked`; with no `personaOf`, the wearer is unknown */
   masked?: boolean;
+  /** in a cast note only: lasting traits the excerpt states */
+  facts?: { kind: FactKind; text: string }[];
 }
 
 export interface PromptVars {
@@ -576,7 +580,8 @@ export function promptOverhead(t: PromptTemplate): number {
     name: `Speaker ${i + 1}`,
     gender: "?" as const,
     aliases: [],
-    description: "A typical one-sentence description of a speaker in the book.",
+    description:
+      "A typical few sentences on who a speaker is. Where they come from, and who they answer to.",
   }));
   const vars: PromptVars = {
     book: { title: "A Typical Book Title", author: "A. Author", notes: "x".repeat(300) },

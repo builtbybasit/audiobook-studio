@@ -20,6 +20,8 @@ import type {
   ScriptFileVoice,
   ScriptManifest,
 } from "@/types";
+import { setOwn } from "~/db/castOwn";
+import { replaceChapterFacts } from "~/db/facts";
 import { previousRecap } from "~/db/library";
 import { clonedVoices } from "~/db/schema";
 import { NEW_EFFECT } from "@/lib/scriptFile";
@@ -384,7 +386,7 @@ describe("voice samples", () => {
   });
 });
 
-test("a round trip carries line effects, speakers' effects, recaps and the book's own settings", async () => {
+test("a round trip carries line effects, speakers' effects and profiles, recaps, facts and the book's own settings", async () => {
   const api = testApi();
   const paragraphs = ["“We are short again,” said Mara.", ...story(2)];
   const withBea = speechEndpoint({
@@ -427,9 +429,13 @@ test("a round trip carries line effects, speakers' effects, recaps and the book'
   const cast = (await api.request<{ characters: Character[] }>(`/api/books/${id}/cast`)).body;
   const mara = cast.characters.find((c) => c.name !== "Narrator")!;
   await api.request(`/api/books/${id}/characters/${encodeURIComponent(mara.name)}`, {
-    ...jsonBody({ ...mara, effect: phone.id, thoughts: "none" }),
+    ...jsonBody({ ...mara, effect: phone.id, thoughts: "none", age: "teen" }),
     method: "PUT",
   });
+  const profile = { who: "A clerk.", personality: "Counts twice.", voice: "Dry." };
+  setOwn(api.db, id, mara.name, { profile });
+  const facts = [{ speaker: mara.name, kind: "role", text: "Keeps the ledger." }] as const;
+  api.db.transaction((tx) => replaceChapterFacts(tx, id, 1, facts));
   const pacing = { line: 0.4, turn: 0.9, inlineShort: 0.3, inlineLong: 1 };
   await api.request(`/api/books/${id}`, {
     ...jsonBody({
@@ -468,7 +474,11 @@ test("a round trip carries line effects, speakers' effects, recaps and the book'
   expect(plan.cast.add.find((s) => s.name === mara.name)).toMatchObject({
     effect: "Phone",
     thoughts: "none",
+    profile,
+    edited: ["age"],
   });
+  // facts ride with their chapter, to whichever one it pairs with
+  expect(plan.chapters[0].facts).toEqual([...facts]);
   expect(plan.book?.file).toEqual({
     pacing,
     readNotes: true,

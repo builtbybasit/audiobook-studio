@@ -2,8 +2,9 @@
 // character on the paused Azure proxy (a routing blocker). Entries are built fresh, `aliases` too.
 import { voiceRef } from "~/demo/seed/fixtures/voices";
 import { PALETTE } from "~/demo/seed/fixtures/style";
-import type { BookSeed } from "~/demo/seed/fixtures/books";
+import { BOOK_SEEDS, type BookSeed } from "~/demo/seed/fixtures/books";
 import type { Character, Gender, VoiceRef } from "@/types";
+import type { NewFact } from "~/db/facts";
 
 const oa = (v: string): VoiceRef => voiceRef("openai", v);
 const kk = (v: string): VoiceRef => voiceRef("local", v);
@@ -37,9 +38,10 @@ const NARRATOR_VOICE: Record<string, VoiceRef> = {
 
 export function makeCharacters(b: BookSeed): Character[] {
   return [
-    ...b.cast.map((c, i) => ({
+    ...b.cast.map(({ facts: _facts, profile, ...c }, i) => ({
       ...c,
       aliases: [...c.aliases],
+      ...(profile ? { profile: { ...profile } } : {}),
       voice:
         c.name === "Narrator"
           ? NARRATOR_VOICE[b.id]
@@ -60,6 +62,21 @@ export function makeCharacters(b: BookSeed): Character[] {
       major: false,
     })),
   ];
+}
+
+/** A book's seeded facts, by chapter, on the speakers and chapters it still has. */
+export function seedFacts(
+  bookId: string,
+  names: ReadonlySet<string>,
+  chapters: ReadonlySet<number>,
+): (NewFact & { chapterId: number })[] {
+  return (BOOK_SEEDS.find((b) => b.id === bookId)?.cast ?? []).flatMap((c) =>
+    names.has(c.name)
+      ? (c.facts ?? []).flatMap(([chapterId, kind, text]) =>
+          chapters.has(chapterId) ? [{ speaker: c.name, chapterId, kind, text }] : [],
+        )
+      : [],
+  );
 }
 
 export { newSpeaker } from "@/lib/cast";

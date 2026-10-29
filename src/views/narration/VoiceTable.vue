@@ -27,7 +27,7 @@ import { CollapsibleContent, CollapsibleRoot, CollapsibleTrigger } from "reka-ui
 import { DialogDescription, DialogTitle } from "reka-ui";
 import { GENDER } from "@/lib/scriptReview";
 import { plural } from "@/lib/contents";
-import { voiced } from "@/lib/cast";
+import { describe, voiced } from "@/lib/cast";
 import { FIT_MIN } from "@/lib/voiceMatch";
 import type { AutoVoiceAssignment, MatchBy } from "@/stores/cast";
 import type { Character, Gender } from "@/types";
@@ -178,7 +178,7 @@ function applyAssignments() {
         </div>
         <div class="mt-2 min-h-8 text-xs leading-snug text-zinc-600 dark:text-zinc-400">
           <SpoilerText
-            :text="c.description"
+            :text="describe(c)"
             :hidden="c.name !== 'Narrator'"
             empty="No description."
           />

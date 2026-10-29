@@ -11,10 +11,14 @@ import { newSpeaker, personaRefusal } from "@/lib/cast";
 import { clone } from "@/lib/utils";
 import { fetchScript } from "@/queries/chapterScript";
 import { staleMoved } from "@/queries/effects";
+import { invalidate } from "@/queries/invalidate";
+import { keys } from "@/queries/keys";
 import { libraryService, type BookSettings } from "@/services/library";
 import type {
   Book,
   Character,
+  HandSet,
+  ImportCastCarry,
   ImportChapter,
   RestorePlan,
   ScriptImportPlan,
@@ -458,7 +462,14 @@ export const useTransferStore = defineStore("transfer", {
       // what a speaker the book has gains: aliases only add ways to recognise them, so a union
       // loses nothing; age, voice type, wiki page and the spoiler mark only fill blanks
       const patched: string[] = [];
-      for (const { name, aliases = [], voiceType, ...rest } of plan.cast.fill) {
+      for (const {
+        name,
+        aliases = [],
+        voiceType,
+        profile: _profile,
+        edited: _edited,
+        ...rest
+      } of plan.cast.fill) {
         const c = cast().find((x) => x.name === name);
         if (!c) continue;
         const fresh = aliases.filter(
@@ -568,6 +579,50 @@ export const useTransferStore = defineStore("transfer", {
       const voicedNow = voiced.filter((_, i) => voicesLanded[i]);
       report.voices = voicedNow.length;
 
+      // ---- what a cast PUT never writes, once the speakers and scripts are in: a profile where
+      // there is none, the file's hand-set marks on the fields it filled, and the chapters' facts
+      const filledBy = (f: (typeof plan.cast.fill)[number]): HandSet =>
+        patchedNow.includes(f.name)
+          ? (["age", "voiceType"] as const).filter((k) => f[k] !== undefined)
+          : [];
+      const carried: ImportCastCarry = {
+        speakers: [
+          ...plan.cast.add
+            .filter((s) => added.includes(s.name) && onServer.has(s.name))
+            .map((s) => ({
+              name: s.name,
+              profile: s.profile,
+              edited: s.edited ?? [],
+              fields: ["age", "voiceType"] satisfies HandSet,
+            })),
+          ...plan.cast.fill
+            .filter((f) => f.profile || filledBy(f).length)
+            .map((f) => ({
+              name: f.name,
+              profile: f.profile,
+              edited: f.edited ?? [],
+              fields: filledBy(f),
+            })),
+        ],
+        chapters: landed.flatMap(({ chapter: { chapterId, facts } }) =>
+          facts ? [{ chapterId, facts }] : [],
+        ),
+      };
+      let carryLanded: boolean | null = null;
+      if (carried.speakers.length || carried.chapters.length) {
+        carryLanded = await libraryService()
+          .carryImport(bookId, carried)
+          .then(
+            () => true,
+            (cause) => {
+              toastFailure("keep the file's profiles and facts", cause);
+              return false;
+            },
+          );
+        // the profiles filled and the facts are the server's to show
+        if (carryLanded) void invalidate({ key: keys.cast(bookId) }, "all");
+      }
+
       // ---- the book's settings, once the scripts are in: a pacing change moves their revisions
       const settings = carry.book && plan.book ? bookSettings(plan.book, idOf) : {};
       const bookBefore = settingsNow(libraryStore.bookById(bookId), settings);
@@ -584,6 +639,7 @@ export const useTransferStore = defineStore("transfer", {
         ...voicesLanded,
         ...(terms ? [staled != null] : []),
         ...(wantBook ? [report.book] : []),
+        ...(carryLanded == null ? [] : [carryLanded]),
       ];
       report.outcome = outcomes.every(Boolean)
         ? "committed"

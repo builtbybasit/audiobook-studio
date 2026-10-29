@@ -13,6 +13,8 @@ import type {
   Segment,
   SegmentType,
 } from "@/types";
+import { editedOf, setOwn } from "~/db/castOwn";
+import { readFacts, replaceChapterFacts } from "~/db/facts";
 import { readScript, scriptRevision, writeScript } from "~/db/script";
 import { epubFile, line, story } from "../support/epub";
 import {
@@ -64,6 +66,11 @@ const castOf = async (api: TestApi, id: string) =>
 const names = (cs: Character[]) => cs.map((c) => c.name);
 const speakersOf = (segs: Segment[]) => [...new Set(segs.map((s) => s.speaker))];
 const put = (body: unknown): RequestInit => ({ ...jsonBody(body), method: "PUT" });
+const told = (api: TestApi, id: string, name: string) =>
+  readFacts(api.db, id, name).map((f) => f.text);
+/** A fact in chapter 3, which nothing scripts. */
+const tell = (api: TestApi, id: string, speaker: string, text: string) =>
+  api.db.transaction((tx) => replaceChapterFacts(tx, id, 3, [{ speaker, kind: "role", text }]));
 const merge = (api: TestApi, id: string, merges: { from: string; into: string }[]) =>
   api.request<MovedSpeakers>(`/api/books/${id}/characters/merge`, jsonBody({ merges }));
 const remove = (api: TestApi, id: string, ...names: string[]) =>
@@ -150,6 +157,20 @@ describe("writing a speaker", () => {
     expect(body.characters[1].keep).toBe(true);
   });
 
+  test("an age or voice type changed by hand is marked for good; a profile sent is not written", async () => {
+    const { api, id } = await scripted();
+    const mara = (await castOf(api, id)).characters[1];
+    const profile = { who: "A forger.", personality: "", voice: "" };
+    await api.request(`/api/books/${id}/characters/Mara`, put({ ...mara, age: "teen", profile }));
+    await api.request(
+      `/api/books/${id}/characters/Mara`,
+      put({ ...mara, age: "teen", voiceType: { pitch: "low" } }),
+    );
+    await api.request(`/api/books/${id}/characters/Mara`, put({ ...mara, gender: "f" }));
+    expect(editedOf(api.db, id).get("Mara")).toEqual(["age", "voiceType"]);
+    expect((await castOf(api, id)).characters[1].profile).toBeUndefined();
+  });
+
   test("adds a speaker typed in by hand on the end of the cast", async () => {
     const { api, id } = await scripted();
     const { body } = await api.request<{ characters: Character[] }>(
@@ -186,12 +207,14 @@ describe("renaming and merging", () => {
   test("a rename moves every line in every chapter, and moves each chapter's revision on", async () => {
     const { api, id } = await scripted();
     const before = [scriptRevision(api.db, id, 1), scriptRevision(api.db, id, 2)];
+    tell(api, id, "Mara", "Keeps the books.");
     const { status, body } = await api.request<MovedLines>(
       `/api/books/${id}/characters/Mara/rename`,
       jsonBody({ to: "Mara Voss" }),
     );
     expect(status).toBe(200);
     expect(names(body.characters)).toEqual(["Narrator", "Mara Voss", "Tobin"]);
+    expect(told(api, id, "Mara Voss")).toContain("Keeps the books.");
     // the old name stays on, so a re-script that meets it still means them
     expect(body.characters[1].aliases).toEqual(["Mara"]);
     expect(body.moved.map((m) => [m.chapterId, m.revision])).toEqual([
@@ -240,6 +263,7 @@ describe("renaming and merging", () => {
         ...tobin,
         voice: "studio/ash",
         description: "A clerk.",
+        age: "elderly",
         voiceType: { pitch: "high", texture: "husky" },
         wiki: { url: "https://w.test/wiki/Tobin", at: 1 },
       }),
@@ -248,6 +272,10 @@ describe("renaming and merging", () => {
       `/api/books/${id}/characters/Mara`,
       put({ ...mara, voiceType: { pitch: "low" } }),
     );
+    const profile = { who: "A clerk.", personality: "Counts twice.", voice: "Dry." };
+    setOwn(api.db, id, "Tobin", { profile });
+    tell(api, id, "Tobin", "Clerk to the ledger house.");
+    const facts = [...told(api, id, "Mara"), ...told(api, id, "Tobin")];
     const { body } = await merge(api, id, [{ from: "Tobin", into: "Mara" }]);
     expect(names(body.characters)).toEqual(["Narrator", "Mara"]);
     expect(body.characters[1].aliases).toEqual(["Tobin"]);
@@ -258,6 +286,10 @@ describe("renaming and merging", () => {
       wiki: { url: "https://w.test/wiki/Tobin", at: 1 },
     });
     expect(body.characters[1].voiceType).toEqual({ pitch: "low", texture: "husky" });
+    // and with what she took, Tobin's profile, his facts and his hand-set age
+    expect(body.characters[1].profile).toEqual(profile);
+    expect(told(api, id, "Mara").sort()).toEqual(facts.sort());
+    expect(editedOf(api.db, id).get("Mara")).toEqual(["age", "voiceType"]);
     expect(speakersOf(readScript(api.db, id, 1))).toEqual(["Narrator", "Mara"]);
     expect(body.speakers.map((s) => [s.name, s.moved.length])).toEqual([["Tobin", 2]]);
   });

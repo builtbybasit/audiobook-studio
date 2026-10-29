@@ -1,6 +1,6 @@
 // Hand-authored source for every demo book: cast, chapter titles, and the line pools the script
 // generator draws from. Read-only: everything built from them copies what it takes.
-import type { Gender } from "@/types";
+import type { CharacterProfile, FactKind, Gender } from "@/types";
 
 /** Before voices and colours are assigned. */
 export interface CastSeed {
@@ -8,6 +8,9 @@ export interface CastSeed {
   aliases: string[];
   gender: Gender;
   description: string;
+  profile?: CharacterProfile;
+  /** [chapter, kind, text]: what the profile was written from */
+  facts?: [number, FactKind, string][];
 }
 
 export interface BookSeed {
@@ -50,22 +53,47 @@ export const BOOK_SEEDS: BookSeed[] = [
         name: "Ji Ning",
         aliases: ["Ning", "Junior Brother Ji"],
         gender: "m",
-        description:
-          "Outer-sect disciple who has read too many cultivation novels and knows exactly which cliché he is living through. Dry, self-aware, secretly earnest.",
+        description: "",
+        profile: {
+          who: "Outer-sect disciple who has read too many cultivation novels and knows exactly which cliché he is living through.",
+          personality: "Dry and self-aware, with an earnest streak he hides behind jokes.",
+          voice: "Young man, light and quick, deadpan asides under his breath.",
+        },
+        facts: [
+          [1, "role", "An outer-sect disciple of the mountain sect."],
+          [1, "personality", "Comments on his own life as if it were a cliché novel."],
+          [2, "relationship", "Grew up in the valley village with Xiao Lan."],
+        ],
       },
       {
         name: "Elder Mo",
         aliases: ["the Elder"],
         gender: "m",
-        description:
-          "Ancient sect elder with a scroll in one hand and a grudge in the other. Speaks in proverbs; means every one of them.",
+        description: "",
+        profile: {
+          who: "Ancient sect elder who tests the outer disciples.",
+          personality: "Holds a grudge as carefully as his scrolls; means every proverb he speaks.",
+          voice: "Old man, slow and gravelly, speaks in measured proverbs.",
+        },
+        facts: [
+          [1, "role", "A sect elder who sets the outer disciples' tests."],
+          [2, "voice", "Speaks almost entirely in proverbs."],
+        ],
       },
       {
         name: "Xiao Lan",
         aliases: ["Lan'er"],
         gender: "f",
-        description:
-          "Childhood friend from the valley village, sharper than anyone in the sect gives her credit for. Loyal, blunt, tired of waiting.",
+        description: "",
+        profile: {
+          who: "Childhood friend from the valley village, sharper than the sect gives her credit for.",
+          personality: "Loyal and blunt, and tired of waiting for anyone to notice.",
+          voice: "Young woman, clear and direct, quick to cut a speech short.",
+        },
+        facts: [
+          [1, "background", "Comes from the valley village below the mountain."],
+          [2, "personality", "Says what she thinks, even to elders."],
+        ],
       },
       {
         name: "Bai Feng",
@@ -73,6 +101,15 @@ export const BOOK_SEEDS: BookSeed[] = [
         gender: "m",
         description:
           "Senior brother and designated rival. Loud, handsome, and honestly not that bad once the plot stops making him a villain.",
+        profile: {
+          who: "Senior brother and Ji Ning's designated rival.",
+          personality: "Loud and proud, but fair once the plot stops casting him as a villain.",
+          voice: "Young man, big and ringing, a showman's swagger.",
+        },
+        facts: [
+          [1, "relationship", "Ji Ning's senior brother and rival in the sect."],
+          [2, "personality", "Boasts loudly, but keeps his word."],
+        ],
       },
     ],
     minor: [
@@ -178,28 +215,61 @@ export const BOOK_SEEDS: BookSeed[] = [
         name: "Shen Yue",
         aliases: ["Yue", "the Gatewalker"],
         gender: "f",
-        description:
-          "Walked into the first gate on a dare and has been walking ever since. Patient, literal, and very hard to lie to.",
+        description: "",
+        profile: {
+          who: "Walked into the first gate on a dare and has been walking ever since.",
+          personality: "Patient and literal, and very hard to lie to.",
+          voice: "Young woman, level and unhurried, plain words.",
+        },
+        facts: [
+          [1, "background", "Entered the first gate on a dare."],
+          [2, "personality", "Takes everything said to her literally."],
+        ],
       },
       {
         name: "Fifth Uncle",
         aliases: ["the Uncle"],
         gender: "m",
-        description:
-          "Claims to be a retired gatekeeper. Carries too many keys for a retired anything.",
+        description: "",
+        profile: {
+          who: "Claims to be a retired gatekeeper.",
+          personality: "Evasive and fond of a story; carries too many keys for a retired anything.",
+          voice: "Older man, chuckling and rambling, keys jingling in every pause.",
+        },
+        facts: [
+          [1, "background", "Says he was once a gatekeeper."],
+          [2, "personality", "Changes the subject when asked about his keys."],
+        ],
       },
       {
         name: "The Cartographer",
         aliases: ["Mapmaker"],
         gender: "n",
-        description:
-          "Draws the gates nobody has walked yet, and is correct often enough to be frightening.",
+        description: "",
+        profile: {
+          who: "Draws the gates nobody has walked yet.",
+          personality: "Correct often enough to be frightening, and knows it.",
+          voice: "Dry, papery and precise.",
+        },
+        facts: [
+          [1, "role", "Maps gates that no one has walked."],
+          [2, "personality", "Is rarely wrong about where a gate leads."],
+        ],
       },
       {
         name: "Ren Baoyu",
         aliases: ["Baoyu"],
         gender: "m",
-        description: "Sect prodigy, three gates behind and furious about it.",
+        description: "",
+        profile: {
+          who: "Sect prodigy, three gates behind.",
+          personality: "Furious about being behind, and proud with it.",
+          voice: "Young man, hot and fast, words tumbling out.",
+        },
+        facts: [
+          [1, "role", "A prodigy of his sect."],
+          [2, "relationship", "Resents being behind Shen Yue."],
+        ],
       },
     ],
     minor: [
@@ -294,29 +364,63 @@ export const BOOK_SEEDS: BookSeed[] = [
         name: "Captain Idris Vale",
         aliases: ["Vale", "the Captain"],
         gender: "m",
-        description:
-          "Salvage captain running on debt and stubbornness. Clipped, decisive, allergic to being told the odds.",
+        description: "",
+        profile: {
+          who: "Salvage captain of the ship, running on debt and stubbornness.",
+          personality: "Decisive and impatient with odds; trusts his crew more than any number.",
+          voice: "Middle-aged man, clipped and low, orders without preamble.",
+        },
+        facts: [
+          [1, "role", "Captains a salvage ship deep in debt."],
+          [1, "relationship", "Commands Ocho, Dr. Sato and the crew."],
+          [2, "personality", "Refuses to be told the odds."],
+        ],
       },
       {
         name: "Ocho",
         aliases: ["the ship"],
         gender: "n",
-        description:
-          "The ship’s mind. Polite, precise, and increasingly worried about its crew. Never raises its voice; never needs to.",
+        description: "",
+        profile: {
+          who: "The ship's mind.",
+          personality: "Polite and precise, and more and more worried about its crew.",
+          voice: "Calm, even and synthetic, never raised.",
+        },
+        facts: [
+          [1, "role", "The mind that runs the ship."],
+          [2, "voice", "Never raises its voice."],
+        ],
       },
       {
         name: "Dr. Maren Sato",
         aliases: ["Sato", "Doc"],
         gender: "f",
-        description:
-          "Ship’s physician and reluctant engineer. Runs the numbers three times and argues with all of them.",
+        description: "",
+        profile: {
+          who: "Ship's physician and reluctant engineer.",
+          personality: "Runs every number three times and argues with all of them.",
+          voice: "Woman, brisk and dry, thinking aloud.",
+        },
+        facts: [
+          [1, "role", "The ship's physician, who also keeps the engines running."],
+          [2, "personality", "Double-checks every calculation."],
+        ],
       },
       {
         name: "Envoy Tal",
         aliases: ["the Envoy"],
         gender: "f",
-        description:
-          "Concord envoy with a diplomat’s smile and a warship’s patience. Every sentence is a negotiation.",
+        description: "",
+        profile: {
+          who: "Envoy of the Concord.",
+          personality:
+            "Smiles like a diplomat and waits like a warship; every sentence is a negotiation.",
+          voice: "Woman, smooth and warm, every word weighed.",
+        },
+        facts: [
+          [1, "role", "An envoy sent by the Concord."],
+          [2, "personality", "Treats every exchange as a negotiation."],
+        ],
       },
     ],
     minor: [
@@ -401,22 +505,46 @@ export const BOOK_SEEDS: BookSeed[] = [
         name: "Wren",
         aliases: [],
         gender: "f",
-        description:
-          "Nineteen, stubborn, still writing letters to someone who left when the water was at the first step. Quiet until she is not.",
+        description: "",
+        profile: {
+          who: "Nineteen, and still writing letters to someone who left when the water was at the first step.",
+          personality: "Stubborn and quiet, until she is not.",
+          voice: "Young woman, soft and steady, sharpening when crossed.",
+        },
+        facts: [
+          [1, "background", "Writes letters to someone who left the city."],
+          [2, "personality", "Quiet, but will not be talked out of anything."],
+        ],
       },
       {
         name: "Old Tobiah",
         aliases: ["Tobiah", "the lamplighter"],
         gender: "m",
-        description:
-          "Lamplighter of the drowned avenue. Rows the last boat. Grumbles like a man who has already said goodbye to the city.",
+        description: "",
+        profile: {
+          who: "Lamplighter of the drowned avenue, who rows the last boat.",
+          personality: "Grumbles like a man who has already said goodbye to the city.",
+          voice: "Old man, rough and grumbling, rowing-rhythm pauses.",
+        },
+        facts: [
+          [1, "role", "Lights the lamps of the drowned avenue."],
+          [2, "background", "Rows the last boat still running in the city."],
+        ],
       },
       {
         name: "The Tidewarden",
         aliases: ["Warden"],
         gender: "f",
-        description:
-          "Whatever keeps the drowned city’s bargains. Speaks slowly, in terms. Do not agree to anything.",
+        description: "",
+        profile: {
+          who: "Whatever keeps the drowned city's bargains.",
+          personality: "Speaks in terms; never gives without taking.",
+          voice: "Slow and deep, every word placed like a stone.",
+        },
+        facts: [
+          [1, "role", "Keeps the drowned city's bargains."],
+          [2, "voice", "Speaks slowly and only in terms."],
+        ],
       },
     ],
     minor: [

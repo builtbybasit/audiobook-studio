@@ -20,7 +20,7 @@ import {
 import { droppedNotes, withNotesLine, type NotesOwner } from "@/lib/promptNotes";
 import { expressionNames } from "@/lib/expressions";
 import { scriptParts } from "@/lib/scripting";
-import { personaOwner } from "@/lib/cast";
+import { personaOwner, whoOf } from "@/lib/cast";
 import PromptEditor from "@/components/PromptEditor.vue";
 import PromptTrial from "@/components/PromptTrial.vue";
 import { UiSwitch } from "@/ui";
@@ -151,7 +151,7 @@ const preview = computed<RenderedPrompt | null>(() => {
       name: c.name,
       aliases: c.aliases,
       gender: c.gender,
-      description: c.description,
+      description: whoOf(c),
       ...(personaOwner(c, byName.value) ? { personaOf: c.personaOf } : {}),
     })),
     excerpt: parts.value[0] ?? "",

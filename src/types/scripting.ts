@@ -1,5 +1,6 @@
 // Scripting, the LLM side: a profile is one chat endpoint; its telemetry comes from the server's
 // ledger; the estimate and diff are what the Scripting page shows before and after a run.
+import type { FactKind } from "@/types/book";
 import type { Age, Gender, SplitMode, VoiceType } from "@/types/common";
 import type { PricingConfig, RateEstimate } from "@/types/pricing";
 import type { LocalServer } from "@/types/endpoint";
@@ -209,7 +210,7 @@ export interface PromptTrialResult {
     age?: Age;
     voiceType?: VoiceType;
     aliases?: readonly string[];
-    description?: string;
+    facts?: { kind: FactKind; text: string }[];
   }[];
   /** where the model said the excerpt leaves off; a run keeps it for the next chapter */
   recap?: string;

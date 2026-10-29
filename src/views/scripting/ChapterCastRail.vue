@@ -2,6 +2,7 @@
 // The reader's right rail: the cast in this chapter, then the rest collapsed. A name filters the
 // reader to that speaker.
 import { computed, ref } from "vue";
+import { whoOf } from "@/lib/cast";
 import { plural } from "@/lib/contents";
 import { GENDER } from "@/lib/scriptReview";
 import { useCastStore } from "@/stores/cast";
@@ -112,7 +113,7 @@ function commitRename() {
         >
       </div>
       <div class="mt-2 pl-4 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
-        <SpoilerText :text="c.description" :hidden="c.name !== 'Narrator'" />
+        <SpoilerText :text="whoOf(c)" :hidden="c.name !== 'Narrator'" />
       </div>
       <div class="mt-2 flex items-center gap-1 pl-4 text-[11px]">
         <VoicePicker

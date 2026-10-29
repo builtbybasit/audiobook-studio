@@ -31,7 +31,16 @@ export interface EnqueueInput {
   chapterId: number | null;
   label: string;
   bulk?: Job["bulk"];
-  run?: Pick<Job, "scriptRun" | "narrationRun" | "exportRun" | "transcribeRun" | "effectsRun">;
+  run?: Pick<
+    Job,
+    | "scriptRun"
+    | "narrationRun"
+    | "exportRun"
+    | "transcribeRun"
+    | "effectsRun"
+    | "factsRun"
+    | "profilesRun"
+  >;
   /**
    * Runs in the same transaction, only when the job is created, so a change like a chapter marked
    * `queued` cannot land after the worker has picked the job up.
@@ -216,16 +225,27 @@ type Lane = Pick<Job, "id" | "kind" | "bookId" | "chapterId">;
  * its own keys, so nothing behind it on the same key overtakes it.
  */
 export function firstReady(running: readonly Lane[], queued: readonly Lane[]): Lane | undefined {
-  // `some:` = a job of the book is out; `all:` = a whole-book one is
+  // `some:` = a job of the book is out; `all:` = a whole-book one is; `reading:` = the book has
+  // scripting or fact reading running or queued anywhere. A profile rewrite waits only for that,
+  // and holds nothing else back.
   const holds = (j: Lane): string[] =>
-    j.chapterId == null
-      ? [`some:${j.bookId}`, `all:${j.bookId}`]
-      : [`some:${j.bookId}`, `${j.kind}:${j.bookId}`, `chapter:${j.bookId}:${j.chapterId}`];
+    j.kind === "profiles"
+      ? [`profiles:${j.bookId}`]
+      : j.chapterId == null
+        ? [`some:${j.bookId}`, `all:${j.bookId}`]
+        : [`some:${j.bookId}`, `${j.kind}:${j.bookId}`, `chapter:${j.bookId}:${j.chapterId}`];
   const needs = (j: Lane): string[] =>
-    j.chapterId == null
-      ? [`some:${j.bookId}`]
-      : [`all:${j.bookId}`, `${j.kind}:${j.bookId}`, `chapter:${j.bookId}:${j.chapterId}`];
-  const held = new Set(running.flatMap(holds));
+    j.kind === "profiles"
+      ? [`profiles:${j.bookId}`, `reading:${j.bookId}`]
+      : j.chapterId == null
+        ? [`some:${j.bookId}`]
+        : [`all:${j.bookId}`, `${j.kind}:${j.bookId}`, `chapter:${j.bookId}:${j.chapterId}`];
+  const held = new Set([
+    ...running.flatMap(holds),
+    ...[...running, ...queued]
+      .filter((j) => j.kind === "scripting" || j.kind === "facts")
+      .map((j) => `reading:${j.bookId}`),
+  ]);
   for (const j of queued) {
     if (!needs(j).some((k) => held.has(k))) return j;
     for (const k of holds(j)) held.add(k);
@@ -309,6 +329,15 @@ export function setRun(db: Db | Tx, id: number, run: NonNullable<Job["exportRun"
     .set({ run: { exportRun: run } })
     .where(eq(jobs.id, id))
     .run();
+}
+
+/** Replace a facts or profiles job's detail. */
+export function setCastRun(
+  db: Db | Tx,
+  id: number,
+  run: Pick<Job, "factsRun"> | Pick<Job, "profilesRun">,
+): void {
+  db.update(jobs).set({ run }).where(eq(jobs.id, id)).run();
 }
 
 /** Replace a scripting job's request counts, and its reservation with them. */

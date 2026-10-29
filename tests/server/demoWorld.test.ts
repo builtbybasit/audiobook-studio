@@ -36,6 +36,7 @@ import type {
   Take,
 } from "@/types";
 import { readEndpoints, readProfiles } from "~/db/endpoints";
+import { readFacts, staleSpeakers } from "~/db/facts";
 import { SIMULATED_ID } from "~/demo/seed";
 import { DEMO_BASE, openLibrary, type Library } from "~/libraries";
 import { endpointScriptingProvider } from "~/providers/endpointScripting";
@@ -126,6 +127,10 @@ describe("the demo's library is the browser's world", () => {
       );
       expect(cast.characters).toEqual(world.characters[book.id] ?? []);
       expect(cast.lexicon).toEqual(world.lexicon[book.id] ?? []);
+      // each profile was written from its speaker's facts, with none left to fold in
+      for (const c of cast.characters.filter((c) => c.profile))
+        expect(readFacts(demo.db, book.id, c.name)).not.toEqual([]);
+      expect(staleSpeakers(demo.db, book.id)).toEqual([]);
     }
   });
 

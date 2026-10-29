@@ -11,6 +11,8 @@ export const KIND_LABEL: Record<JobKind, string> = {
   export: "Export",
   transcribe: "Transcribe",
   effects: "Re-apply effects",
+  facts: "Cast facts",
+  profiles: "Cast profiles",
 };
 
 /** the filter the Narration page opens on for this job, if any */
@@ -31,6 +33,8 @@ export const PAGE: Record<JobKind, string> = {
   export: "export",
   transcribe: "narration",
   effects: "narration",
+  facts: "cast",
+  profiles: "cast",
 };
 
 /** at its chapter when it has one */

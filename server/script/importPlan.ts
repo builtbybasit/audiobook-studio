@@ -293,6 +293,7 @@ function matchChapters(
       pairedBy: text ? "text" : "source",
       ...text,
       ...(chapter.recap ? { recap: chapter.recap } : {}),
+      ...(chapter.facts?.length ? { facts: chapter.facts } : {}),
     });
   };
   const segmentsOf = (lines: ScriptFileLine[]): Segment[] => {
@@ -402,7 +403,11 @@ function castDiff(
     // only over the same link: one made by hand is the reader's, not a spoiler
     if (!have.masked && speaker.masked && (have.personaOf ?? "") === (speaker.personaOf ?? ""))
       fill.masked = true;
-    if (fill.aliases || fill.age || fill.voiceType || fill.wiki || fill.masked) out.fill.push(fill);
+    if (!have.profile && speaker.profile) fill.profile = speaker.profile;
+    const edited = (speaker.edited ?? []).filter((f) => fill[f]);
+    if (edited.length) fill.edited = edited;
+    if (fill.aliases || fill.age || fill.voiceType || fill.wiki || fill.masked || fill.profile)
+      out.fill.push(fill);
   }
   return out;
 }

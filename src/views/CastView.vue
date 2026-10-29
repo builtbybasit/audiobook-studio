@@ -22,6 +22,7 @@ import ReadFailure from "@/components/ReadFailure.vue";
 import {
   BookOpenText as WikiIcon,
   Cloud as ThoughtIcon,
+  IdCard as ProfilesIcon,
   Plus as AddIcon,
   VenetianMask as MaskIcon,
 } from "@lucide/vue";
@@ -30,6 +31,7 @@ import CastSelectionBar from "@/views/cast/CastSelectionBar.vue";
 import BookDefaults from "@/views/cast/BookDefaults.vue";
 import VoiceGaps from "@/views/cast/VoiceGaps.vue";
 import WikiFillDialog from "@/views/cast/WikiFillDialog.vue";
+import RefreshProfilesDialog from "@/views/cast/RefreshProfilesDialog.vue";
 import type { WikiScope } from "@/stores/cast";
 import EffectsSheet from "@/views/cast/effects/EffectsSheet.vue";
 import ReapplyBar from "@/views/cast/effects/ReapplyBar.vue";
@@ -261,6 +263,7 @@ async function commitAdd() {
   // a hand-added speaker has no lines, so "most lines" files them at the bottom
   await reveal(name);
 }
+const refreshOpen = ref(false);
 const wikiOpen = ref(false);
 const wikiStart = ref<WikiScope>("main");
 function fillFromWiki(scope: WikiScope) {
@@ -316,6 +319,9 @@ const duplicate = computed(
         </button>
         <button class="btn-ghost btn-xs" @click="fillFromWiki('main')">
           <WikiIcon class="icon-sm" /> Fill from wiki…
+        </button>
+        <button class="btn-ghost btn-xs" @click="refreshOpen = true">
+          <ProfilesIcon class="icon-sm" /> Refresh profiles…
         </button>
         <input v-model="q" class="input w-48" placeholder="Find a speaker…" />
         <label class="flex items-center gap-1.5 text-xs"
@@ -698,5 +704,6 @@ const duplicate = computed(
       @wiki="fillFromWiki('selected')"
     />
     <WikiFillDialog v-model:open="wikiOpen" :book-id="bookId" :selected="sel" :start="wikiStart" />
+    <RefreshProfilesDialog v-model:open="refreshOpen" :book-id="bookId" />
   </div>
 </template>

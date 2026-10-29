@@ -1,8 +1,34 @@
 // Cast rules shared by the seeded world, the cast store and the server's scripting job: new
 // speakers, the voice rule (`speakerVoice`), personas, and matching the model's names to the cast.
-import type { Age, Character, CharacterVoice, Gender, GenderSlot, Voice, VoiceRef } from "@/types";
+import type {
+  Age,
+  Character,
+  CharacterVoice,
+  FactKind,
+  Gender,
+  GenderSlot,
+  Voice,
+  VoiceRef,
+} from "@/types";
 import { writtenWordsOf } from "@/lib/gaps";
 import type { PromptCastMember } from "@/lib/prompt";
+
+export const FACT_KINDS: readonly FactKind[] = [
+  "role",
+  "background",
+  "relationship",
+  "personality",
+  "voice",
+];
+
+/** Who they are: the user's description, else the profile's first part. For the scripting prompt. */
+export const whoOf = (c: Pick<Character, "description" | "profile">): string =>
+  c.description.trim() || (c.profile?.who ?? "");
+
+/** All we know of them: the user's description, else the whole profile. For voice picks. */
+export const describe = (c: Pick<Character, "description" | "profile">): string =>
+  c.description.trim() ||
+  [c.profile?.who, c.profile?.personality, c.profile?.voice].filter(Boolean).join(" ");
 
 /** Assigned in the order speakers arrive. */
 export const PALETTE: string[] = [

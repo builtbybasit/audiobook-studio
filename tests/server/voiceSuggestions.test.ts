@@ -5,6 +5,10 @@ import { describe, expect, test } from "bun:test";
 import type { Character, Gender, Profile, VoiceSuggestions } from "@/types";
 import { SIMULATED_BASE_URL, SIMULATED_SCRIPTING_MODEL } from "@/lib/providers";
 import { checkedPicks } from "~/cast/suggest";
+import { clearBookFacts, replaceChapterFacts } from "~/db/facts";
+import { chapterIds } from "~/db/library";
+import { fakeScriptingProvider } from "~/providers/fake";
+import type { AskInput } from "~/providers/scripting";
 import { endpointRequests } from "~/usage/ledger";
 import { line } from "../support/epub";
 import { jsonBody, speechEndpoint, testApi, voicedBook, type TestApi } from "../support/server";
@@ -42,8 +46,7 @@ const paused = speechEndpoint({
 });
 
 /** Mara (f) and Tom (m), every speaker on studio/ash, and the simulated scripting profile. */
-async function setup(): Promise<{ api: TestApi; id: string }> {
-  const api = testApi();
+async function setup(api: TestApi = testApi()): Promise<{ api: TestApi; id: string }> {
   const id = await voicedBook(api, {
     endpoints: [studio, paused],
     paragraphs: [line("One"), line("Two", "Tom")],
@@ -84,6 +87,27 @@ describe("voice suggestions", () => {
     expect(endpointRequests(api.db, "scripting", "sim", 0)).toEqual([
       expect.objectContaining({ bookId: id, label: "Voice suggestions" }),
     ]);
+  });
+
+  test("first rewrite a stale profile, and read it", async () => {
+    const fake = fakeScriptingProvider();
+    const asked: AskInput[] = [];
+    const scripting = { ...fake, ask: (input: AskInput) => (asked.push(input), fake.ask!(input)) };
+    const { api, id } = await setup(testApi({ scripting }));
+    api.db.transaction((tx) => {
+      clearBookFacts(tx, id);
+      replaceChapterFacts(tx, id, chapterIds(api.db, id)[0], [
+        { speaker: "Mara", kind: "role", text: "The town's lamplighter." },
+      ]);
+    });
+    expect((await ask(api, id, { profile: "sim", speakers: ["Mara"] })).status).toBe(200);
+    expect(asked.map((a) => a.user.includes("Speakers:\n- Mara"))).toEqual([false, true]);
+    expect(asked[1].user).toContain("The town's lamplighter.");
+    expect(
+      endpointRequests(api.db, "scripting", "sim", 0)
+        .map((r) => r.label)
+        .sort(),
+    ).toEqual(["Cast profiles", "Voice suggestions"]);
   });
 
   test.each([

@@ -38,11 +38,13 @@ import type { Db, Tx } from "~/db/client";
 import { listEffects } from "~/db/effects";
 import { capture, keepVersion } from "~/db/history";
 import { readEndpoints, readProfiles } from "~/db/endpoints";
+import { replaceChapterFacts, staleSpeakers } from "~/db/facts";
 import { activeJob, getJob, nextRunId, setScriptRun } from "~/db/jobs";
 import * as library from "~/db/library";
 import { readLibraryPrompt } from "~/db/settings";
 import { ScriptConflict, lineCount, readScript, replaceScript, scriptRevision } from "~/db/script";
 import { plainText } from "~/epub/markdown";
+import { enqueueProfiles } from "~/jobs/profiles";
 import type { JobContext, JobHandler, Runner } from "~/jobs/runner";
 import { conflict, notFound } from "~/lib/errors";
 import { narrationInProgress, settleChapter } from "~/narration/chapter";
@@ -496,8 +498,8 @@ export function scriptingHandler(provider: ScriptingProvider, gate: SpeechGate):
         return { meant, lines: scripted.map((l) => ({ ...l, speaker: meant(l.speaker) })) };
       };
 
-      // One transaction: script, history version, new speakers. A failed or refused run never
-      // gets here, so a good script is never pushed into history by an empty attempt.
+      // One transaction: script, history version, new speakers, facts. A failed or refused run
+      // never gets here, so a good script is never pushed into history by an empty attempt.
       try {
         db.transaction((tx) => {
           const at = library.locateChapter(tx, chapter.uid);
@@ -548,6 +550,14 @@ export function scriptingHandler(provider: ScriptingProvider, gate: SpeechGate):
             })),
             new Set(added),
           );
+          const facts = replaceChapterFacts(
+            tx,
+            at.bookId,
+            at.id,
+            notes.flatMap((n) =>
+              (n.facts ?? []).map((f) => ({ speaker: meant(n.name), kind: f.kind, text: f.text })),
+            ),
+          );
           const suggested = book?.pronounceOff
             ? []
             : suggestTerms(
@@ -567,6 +577,7 @@ export function scriptingHandler(provider: ScriptingProvider, gate: SpeechGate):
             revision,
             ...(added.length ? { speakersAdded: added.join(", ") } : {}),
             ...(learnt.length ? { speakersFilledIn: learnt.join(", ") } : {}),
+            ...(facts ? { facts } : {}),
             ...(suggested.length ? { termsSuggested: suggested.join(", ") } : {}),
             ...(leftOff ? { recap: leftOff } : {}),
             ...(version != null ? { preserved: `v${version}` } : {}),
@@ -589,6 +600,9 @@ export function scriptingHandler(provider: ScriptingProvider, gate: SpeechGate):
             : `The chapter's script changed while this ran, so the result was kept in its history as v${kept}`,
         );
       }
+      // new facts, or facts gone (a rebuild); a run with no endpoint has nothing to rewrite with
+      if (queued && staleSpeakers(db, job.bookId).length)
+        enqueueProfiles(db, job.bookId, queued.profile.id);
     },
 
     onSettled(ctx, status) {

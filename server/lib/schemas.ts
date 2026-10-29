@@ -10,6 +10,7 @@ import type {
   Character,
   Credential,
   ExportSettings,
+  ImportCastCarry,
   LexEntry,
   Profile,
   ProfilePrompt,
@@ -26,7 +27,7 @@ import type {
   Transcriber,
   VersionOrigin,
 } from "@/types";
-import { AGES } from "@/lib/cast";
+import { AGES, FACT_KINDS } from "@/lib/cast";
 import { DELIVERIES, PITCHES, TEXTURES } from "@/lib/voiceProfile";
 import { REASONING_EFFORTS } from "@/lib/prompt";
 import { SAMPLE_RATES } from "@/lib/speech";
@@ -330,6 +331,18 @@ export const ScriptManifestSchema = v.looseObject({
   ),
 }) satisfies v.GenericSchema<unknown, ScriptManifest>;
 
+const CharacterProfileSchema = v.object({
+  who: Short(1000),
+  personality: Short(1000),
+  voice: Short(1000),
+});
+const FactSchema = v.object({
+  speaker: v.pipe(v.string(), v.trim(), v.nonEmpty("must name a speaker")),
+  kind: v.picklist(FACT_KINDS),
+  text: v.pipe(v.string(), v.trim(), v.nonEmpty("must not be empty"), v.maxLength(300)),
+});
+const HandSetSchema = v.array(v.picklist(["age", "voiceType"]));
+
 export const ScriptChapterSchema = v.looseObject({
   format: v.literal("audiobook-studio/script-chapter"),
   version: v.literal(2),
@@ -352,6 +365,7 @@ export const ScriptChapterSchema = v.looseObject({
     }),
   ),
   recap: v.optional(v.string()),
+  facts: v.optional(v.array(FactSchema)),
 }) satisfies v.GenericSchema<unknown, ScriptFileChapter>;
 
 export const CastFileSchema = v.array(
@@ -369,11 +383,30 @@ export const CastFileSchema = v.array(
     age: v.optional(v.picklist(AGES)),
     voiceType: v.optional(VoiceTypeSchema),
     wiki: v.optional(WikiSource),
+    profile: v.optional(CharacterProfileSchema),
+    edited: v.optional(HandSetSchema),
     voice: v.optional(VoiceHintSchema),
     effect: v.optional(EffectName),
     thoughts: v.optional(EffectName),
   }),
 ) satisfies v.GenericSchema<unknown, ScriptFileSpeaker[]>;
+
+export const ImportCastCarrySchema = v.object({
+  speakers: v.array(
+    v.object({
+      name: v.pipe(v.string(), v.trim(), v.nonEmpty("must not be empty")),
+      profile: v.optional(CharacterProfileSchema),
+      edited: HandSetSchema,
+      fields: HandSetSchema,
+    }),
+  ),
+  chapters: v.array(
+    v.object({
+      chapterId: v.pipe(v.number(), v.integer(), v.minValue(1)),
+      facts: v.array(FactSchema),
+    }),
+  ),
+}) satisfies v.GenericSchema<unknown, ImportCastCarry>;
 
 export const EffectsFileSchema = v.array(
   v.looseObject({

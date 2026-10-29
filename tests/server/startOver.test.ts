@@ -3,6 +3,8 @@
 import { describe, expect, test } from "bun:test";
 
 import type { Chapter, ChapterHistory, ChapterScript, Character, StartedOver } from "@/types";
+import { setOwn } from "~/db/castOwn";
+import { readFacts, replaceChapterFacts } from "~/db/facts";
 import { epubFile, line } from "../support/epub";
 import {
   gatedProvider,
@@ -54,6 +56,11 @@ describe("starting a book over", () => {
     const { id } = await narratedBook(api, { chapters: TWO });
     const files = await clipFiles(api, id, [1, 2]);
     expect(files.length).toBeGreaterThan(0);
+    const profile = { who: "Keeps the ledger.", personality: "", voice: "" };
+    setOwn(api.db, id, "Mara", { profile });
+    api.db.transaction((tx) =>
+      replaceChapterFacts(tx, id, 1, [{ speaker: "Mara", kind: "role", text: "A clerk." }]),
+    );
 
     const { status, body } = await startOver(api, id);
     expect(status).toBe(200);
@@ -66,8 +73,11 @@ describe("starting a book over", () => {
     ]);
     expect((await script(api, id, 1)).segments).toEqual([]);
     expect(await gone(api, id, files)).toBe(true);
-    // the speakers stay unless asked to go
+    // the speakers stay unless asked to go, with their profiles; the facts went with the scripts
     expect(await castOf(api, id)).toContain("Mara");
+    expect(readFacts(api.db, id, "Mara")).toEqual([]);
+    const cast = await api.request<{ characters: Character[] }>(`/api/books/${id}/cast`);
+    expect(cast.body.characters.find((c) => c.name === "Mara")?.profile).toEqual(profile);
   });
 
   test("keeps each script in its chapter's history, where a run after it finds it", async () => {

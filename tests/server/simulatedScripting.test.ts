@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { Book, Job, Profile, Segment } from "@/types";
 import { SIMULATED_BASE_URL, SIMULATED_SCRIPTING_MODEL } from "@/lib/providers";
+import { readFacts } from "~/db/facts";
 import { endpointScriptingProvider } from "~/providers/endpointScripting";
 import { fakeScriptingProvider } from "~/providers/fake";
 import { ProviderError } from "~/providers/http";
@@ -87,6 +88,12 @@ describe("a simulated scripting profile", () => {
     const [row] = endpointRequests(api.db, "scripting", "sim", 0);
     expect(row.status).toBe("done");
     expect(row.simulated).toBe(true);
+
+    // once Mara is known, a re-script says something of her, so the facts path runs offline too
+    expect(readFacts(api.db, id, "Mara")).toEqual([]);
+    await api.request(`/api/books/${id}/chapters/script`, jsonBody({ ids: [1], profile: "sim" }));
+    await api.runner.idle();
+    expect(readFacts(api.db, id, "Mara")).toHaveLength(1);
   });
 
   test("answers the Test button without a request", async () => {

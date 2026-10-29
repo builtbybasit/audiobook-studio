@@ -17,6 +17,7 @@ import { transcribeHandler } from "~/jobs/transcribe";
 import { effectsHandler } from "~/jobs/effects";
 import { exportHandler } from "~/jobs/export";
 import { narrationHandler } from "~/jobs/narration";
+import { factsHandler, profilesHandler } from "~/jobs/profiles";
 import { createRunner, type JobContext, type JobHandlers, type Runner } from "~/jobs/runner";
 import { scriptingHandler } from "~/jobs/scripting";
 import { createLogger, type Logger } from "~/log";
@@ -191,6 +192,8 @@ export function testRunner(db: Db, log: Logger, options: TestApiOptions = {}): R
       export: exportHandler(testExports(options), files),
       transcribe: transcribeHandler(options.transcription ?? noTranscription, files, gate),
       effects: effectsHandler(options.effects, files),
+      facts: factsHandler(options.scripting ?? fakeScriptingProvider()),
+      profiles: profilesHandler(options.scripting ?? fakeScriptingProvider()),
       ...options.handlers,
     },
     { log, pollMs: 60_000 },

@@ -1,9 +1,17 @@
 // A book's cast and pronunciation dictionary. Both belong to the book, so restoring a script
 // version never rolls them back.
-import { index, integer, primaryKey, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import {
+  foreignKey,
+  index,
+  integer,
+  primaryKey,
+  real,
+  sqliteTable,
+  text,
+} from "drizzle-orm/sqlite-core";
 
-import type { Age, Gender, VoiceRef, VoiceType } from "@/types";
-import { books } from "~/db/schema/library";
+import type { Age, CharacterProfile, FactKind, Gender, VoiceRef, VoiceType } from "@/types";
+import { books, chapters } from "~/db/schema/library";
 
 /** One speaker, keyed by name as `Segment.speaker` is; a rename must move the lines with it. */
 export const characters = sqliteTable(
@@ -20,7 +28,16 @@ export const characters = sqliteTable(
     age: text("age").$type<Age>(),
     /** null = unknown */
     voiceType: text("voice_type", { mode: "json" }).$type<VoiceType>(),
+    /** the user's own; blank = the profile stands in */
     description: text("description").notNull().default(""),
+    /** the model's, from `character_facts`; never written by the client */
+    profile: text("profile", { mode: "json" }).$type<CharacterProfile>(),
+    /** the highest `character_facts.id` the profile was written from */
+    profileUpTo: integer("profile_up_to").notNull().default(0),
+    /** facts were removed or moved in: rewrite from all of them, not just the newer ones */
+    profileRebuild: integer("profile_rebuild", { mode: "boolean" }).notNull().default(false),
+    /** fields the user set by hand, which a profile rewrite leaves alone */
+    edited: text("edited", { mode: "json" }).$type<("age" | "voiceType")[]>().notNull().default([]),
     /** `<endpointId>/<voiceId>`; null = borrows the Narrator's voice */
     voice: text("voice").$type<VoiceRef>(),
     /** delivery note for every line of this speaker */
@@ -46,6 +63,37 @@ export const characters = sqliteTable(
     position: integer("position").notNull().default(0),
   },
   (t) => [primaryKey({ columns: [t.bookId, t.name] })],
+);
+
+/** What one chapter's script says of a speaker; a re-script replaces that chapter's rows. */
+export const characterFacts = sqliteTable(
+  "character_facts",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    bookId: text("book_id").notNull(),
+    speaker: text("speaker").notNull(),
+    chapterId: integer("chapter_id").notNull(),
+    kind: text("kind").$type<FactKind>().notNull(),
+    text: text("text").notNull(),
+  },
+  (t) => [
+    foreignKey({
+      columns: [t.bookId, t.speaker],
+      foreignColumns: [characters.bookId, characters.name],
+      name: "character_facts_speaker_fk",
+    })
+      .onDelete("cascade")
+      .onUpdate("cascade"),
+    foreignKey({
+      columns: [t.bookId, t.chapterId],
+      foreignColumns: [chapters.bookId, chapters.id],
+      name: "character_facts_chapter_fk",
+    })
+      .onDelete("cascade")
+      .onUpdate("cascade"),
+    index("character_facts_speaker").on(t.bookId, t.speaker),
+    index("character_facts_chapter").on(t.bookId, t.chapterId),
+  ],
 );
 
 /** A pronunciation entry: `term` is swapped for `say` when sent; the text is never rewritten. */

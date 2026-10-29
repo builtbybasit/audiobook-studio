@@ -19,6 +19,8 @@ import { unspokenTypes } from "@/lib/siteText";
 import { lexMatcher } from "@/lib/speech";
 import type { Db, Tx } from "~/db/client";
 import * as cast from "~/db/cast";
+import { editedOne, handChanged, setOwn } from "~/db/castOwn";
+import { moveFacts } from "~/db/facts";
 import * as library from "~/db/library";
 import { discardSpeakerSamples, giveBackSamples, moveSpeakerSamples } from "~/db/speakerSamples";
 import {
@@ -80,12 +82,17 @@ function putOne(tx: Db | Tx, bookId: string, c: Character): void {
   // a human changed the persona link, so the model's `masked` finding no longer applies
   if (was && (c.personaOf ?? null) !== (was.personaOf ?? null)) delete c.masked;
   cast.upsertCharacter(tx, bookId, c);
+  // a field changed here was set by hand from now on; a new speaker has nothing to change from
+  const changed = was ? handChanged(was, c) : [];
+  const edited = editedOne(tx, bookId, c.name);
+  if (changed.some((f) => !edited.includes(f)))
+    setOwn(tx, bookId, c.name, { edited: [...edited, ...changed] });
 }
 
 export function putCharacter(db: Db, bookId: string, name: string, c: Character): Character[] {
   requireBook(db, bookId);
   if (c.name !== name) throw badRequest("The speaker in the body is not the one in the path");
-  putOne(db, bookId, c);
+  db.transaction((tx) => putOne(tx, bookId, c));
   return cast.readCast(db, bookId);
 }
 
@@ -127,7 +134,8 @@ export function renameCharacter(db: Db, bookId: string, from: string, to: string
  * Fold each `from` into its `into`, in order and all or nothing: lines and waiting voice samples
  * move, `from` with its aliases becomes aliases, and what `into` left blank `from` fills (not for
  * the Narrator, whose voice is every narration line's). Personas of `from` move to `into`, or are
- * unlinked when `into` is a persona or the Narrator (no chains).
+ * unlinked when `into` is a persona or the Narrator (no chains). Facts and a missing profile move
+ * too, but not onto the Narrator, who has no character's profile.
  */
 export function mergeCharacters(
   db: Db,
@@ -179,6 +187,20 @@ function mergeOne(
     aliases: [...new Set([...dst.aliases, from, ...src.aliases])],
     personaOf,
   });
+  if (into !== NARRATOR) {
+    // a field `into` took from `from` keeps `from`'s hand-set mark; the profile fills a blank too
+    const took = {
+      age: !dst.age && !!src.age,
+      voiceType: !!cast.voiceTypeGaps(dst.voiceType, src.voiceType),
+    };
+    const marks = editedOne(tx, bookId, from).filter((f) => took[f]);
+    if (marks.length || (!dst.profile && src.profile))
+      setOwn(tx, bookId, into, {
+        edited: [...editedOne(tx, bookId, into), ...marks],
+        profile: dst.profile ?? src.profile,
+      });
+    moveFacts(tx, bookId, from, into);
+  }
   const samples = moveSpeakerSamples(tx, bookId, from, into);
   cast.deleteCharacterRow(tx, bookId, from);
   cast.relinkPersonas(tx, bookId, from, personaOf || into === NARRATOR ? null : into);

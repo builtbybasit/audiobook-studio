@@ -1,5 +1,6 @@
 // A book's script written out as a file to keep, send, edit or carry to a newer EPUB of the same
-// book. Reading one back is `importPlan.ts`.
+// book. Reading one back is `importPlan.ts`; what an applied import writes past the cast PUTs is
+// `carryImport`.
 import { existsSync } from "node:fs";
 
 import JSZip from "jszip";
@@ -9,6 +10,8 @@ import type {
   Character,
   Effect,
   Endpoint,
+  HandSet,
+  ImportCastCarry,
   KeptSample,
   LexEntry,
   ScriptExportSamples,
@@ -32,11 +35,13 @@ import {
   toFileLine,
 } from "@/lib/scriptFile";
 import { readCast, readLexicon } from "~/db/cast";
+import { editedOf, factsByChapter, setOwn } from "~/db/castOwn";
 import type { Db } from "~/db/client";
+import { replaceChapterFacts } from "~/db/facts";
 import { listEffects } from "~/db/effects";
 import { readEndpoints } from "~/db/endpoints";
 import { readCarried } from "~/db/voiceSamples";
-import { chapterRecap, getBook, getChapterBody, listChapters } from "~/db/library";
+import { chapterIds, chapterRecap, getBook, getChapterBody, listChapters } from "~/db/library";
 import { readScript } from "~/db/script";
 import { plainText } from "~/epub/markdown";
 import { notFound } from "~/lib/errors";
@@ -184,6 +189,7 @@ type EffectNames = (id: string) => string | undefined;
 
 function speakerOf(
   c: Character,
+  edited: HandSet,
   endpoints: readonly Endpoint[],
   effectName: EffectNames,
 ): ScriptFileSpeaker {
@@ -201,6 +207,8 @@ function speakerOf(
   if (c.age) out.age = c.age;
   if (c.voiceType) out.voiceType = c.voiceType;
   if (c.wiki) out.wiki = c.wiki;
+  if (c.profile) out.profile = c.profile;
+  if (edited.length) out.edited = edited;
   if (c.speed != null) out.speed = c.speed;
   const voice = voiceHint(c.voice, endpoints);
   if (voice) out.voice = voice;
@@ -275,6 +283,7 @@ export async function buildScriptExport(
     author: book.author,
     chapters: [],
   };
+  const facts = factsByChapter(db, bookId);
   let position = 0;
   for (const chapter of listChapters(db, bookId)) {
     const segments = readScript(db, bookId, chapter.index);
@@ -291,6 +300,8 @@ export async function buildScriptExport(
     };
     const recap = chapterRecap(db, bookId, chapter.id);
     if (recap) doc.recap = recap;
+    const told = facts.get(chapter.id);
+    if (told) doc.facts = told;
     zip.file(file, json(doc));
     manifest.chapters.push({ file, title: chapter.title, sourceHash: hash, words });
   }
@@ -318,11 +329,12 @@ export async function buildScriptExport(
   }
 
   zip.file("manifest.json", json(manifest));
+  const edited = editedOf(db, bookId);
   zip.file(
     "cast.json",
     json(
       readCast(db, bookId).map((c) => {
-        const speaker = speakerOf(c, endpoints, effectName);
+        const speaker = speakerOf(c, edited.get(c.name) ?? [], endpoints, effectName);
         const folder = folders.get(c.name);
         if (folder) speaker.samples = folder;
         return speaker;
@@ -345,4 +357,34 @@ export async function buildScriptExport(
 
   const buffer = await zip.generateAsync({ type: "arraybuffer", compression: "DEFLATE" });
   return { name: `${book.title}.script.zip`, bytes: new Uint8Array(buffer) };
+}
+
+// ---------- an applied import ----------
+
+/**
+ * What an import writes once its speakers and chapters landed, past what a cast PUT may: a profile
+ * where the speaker has none, the file's hand-set marks on the fields it filled, and each chapter's
+ * facts. Profiles are left stale for the next profiles job. Returns the facts saved.
+ */
+export function carryImport(db: Db, bookId: string, carry: ImportCastCarry): { facts: number } {
+  if (!getBook(db, bookId)) throw notFound("There is no book by that id");
+  return db.transaction((tx) => {
+    const cast = new Map(readCast(tx, bookId).map((c) => [c.name, c]));
+    const marks = editedOf(tx, bookId);
+    for (const s of carry.speakers) {
+      const c = cast.get(s.name);
+      if (!c) continue;
+      const kept = (marks.get(s.name) ?? []).filter((f) => !s.fields.includes(f));
+      const taken = s.edited.filter((f) => s.fields.includes(f));
+      setOwn(tx, bookId, s.name, {
+        edited: [...kept, ...taken],
+        profile: c.profile ? undefined : s.profile,
+      });
+    }
+    const ids = new Set(chapterIds(tx, bookId));
+    let facts = 0;
+    for (const ch of carry.chapters)
+      if (ids.has(ch.chapterId)) facts += replaceChapterFacts(tx, bookId, ch.chapterId, ch.facts);
+    return { facts };
+  });
 }

@@ -10,10 +10,11 @@ import type { Db } from "~/db/client";
 import { env } from "~/env";
 import { fail } from "~/lib/errors";
 import { BookParam, uploadLimit } from "~/lib/http";
+import { ImportCastCarrySchema } from "~/lib/schemas";
 import { validate } from "~/lib/validate";
 import type { Providers } from "~/providers/target";
 import { planScriptImport } from "~/script/importPlan";
-import { buildScriptExport, exportSamples } from "~/script/transfer";
+import { buildScriptExport, carryImport, exportSamples } from "~/script/transfer";
 import type { VoiceFiles } from "~/voices/files";
 
 /** Only `?samples=1` asks for the voice samples too. */
@@ -88,6 +89,14 @@ export function transferRoutes(
         )) satisfies ScriptImportPlan,
       );
     },
+  );
+
+  /** An applied import's profiles, hand-set marks and facts, which the cast PUTs never write. */
+  app.post(
+    "/:id/script-import/cast",
+    validate("param", BookParam),
+    validate("json", ImportCastCarrySchema),
+    (c) => c.json(carryImport(db, c.req.valid("param").id, c.req.valid("json"))),
   );
 
   return app;

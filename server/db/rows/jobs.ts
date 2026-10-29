@@ -34,6 +34,8 @@ export function toJob(row: JobRow, events: readonly EventRow[] = []): Job {
   if (row.run?.exportRun) j.exportRun = row.run.exportRun;
   if (row.run?.transcribeRun) j.transcribeRun = row.run.transcribeRun;
   if (row.run?.effectsRun) j.effectsRun = row.run.effectsRun;
+  if (row.run?.factsRun) j.factsRun = row.run.factsRun;
+  if (row.run?.profilesRun) j.profilesRun = row.run.profilesRun;
   if (events.length)
     j.activity = [...events]
       .sort((a, b) => a.id - b.id)
@@ -82,6 +84,8 @@ export function jobValues(j: Job): typeof jobs.$inferInsert {
       ...(j.exportRun ? { exportRun: j.exportRun } : {}),
       ...(j.transcribeRun ? { transcribeRun: j.transcribeRun } : {}),
       ...(j.effectsRun ? { effectsRun: j.effectsRun } : {}),
+      ...(j.factsRun ? { factsRun: j.factsRun } : {}),
+      ...(j.profilesRun ? { profilesRun: j.profilesRun } : {}),
     },
     droppedEvents: j.droppedEvents ?? 0,
   };

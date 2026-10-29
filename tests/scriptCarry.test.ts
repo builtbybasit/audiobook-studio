@@ -1,6 +1,6 @@
 // What a script file carries beyond its lines, as the import applies it against the real API: each
-// chapter's recap, the file's new effects (made in the library when ticked, dropped when not), and
-// the book's own settings only when switched on.
+// chapter's recap and facts, speakers' profiles and hand-set marks, the file's new effects (made in
+// the library when ticked, dropped when not), and the book's own settings only when switched on.
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { NEW_EFFECT } from "@/lib/scriptFile";
@@ -14,6 +14,8 @@ import { useScriptsStore } from "@/stores/scripts";
 import { useTransferStore } from "@/stores/transfer";
 import { useUiStore } from "@/stores/ui";
 import type { ScriptImportPlan, Segment } from "@/types";
+import { editedOf } from "~/db/castOwn";
+import { readFacts } from "~/db/facts";
 import { previousRecap } from "~/db/library";
 import { readScript } from "~/db/script";
 import { backendServer, pointServicesAt } from "./support/backendServer";
@@ -96,6 +98,36 @@ describe("what a script file carries", () => {
     await undos.at(-1)!();
     await useScriptsStore()._settled(id, 1);
     expect(previousRecap(api.db, id, 2)).toBe("Before the import.");
+  });
+
+  test("facts land with their chapter, profiles where none, and only the file's hand-set marks", async () => {
+    const { api, id } = await opened();
+    const clerk = { name: "Clerk", aliases: [], gender: "m" as const, description: "", style: "" };
+    await api.fetch(`/api/books/${id}/characters/Clerk`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...clerk, voice: null, color: "#000", major: false }),
+    });
+    await fetchCast(id);
+    const profile = { who: "Works the switchboard.", personality: "", voice: "Nasal." };
+    const plan = planOf(id, (s) => (s.speaker = "Operator"), {
+      cast: {
+        add: [{ ...clerk, name: "Operator", age: "teen", profile, edited: ["age"] }],
+        differ: [],
+        // the file's age for the Clerk was the model's, so not marked as set by hand here
+        fill: [{ name: "Clerk", age: "elderly", profile }],
+      },
+    });
+    plan.chapters[0].facts = [{ speaker: "Operator", kind: "role", text: "Runs the exchange." }];
+    useTransferStore().plans[id] = plan;
+    await useTransferStore().apply(id, [1]);
+
+    const cast = (await libraryService().cast(id)).characters;
+    expect(cast.find((c) => c.name === "Operator")?.profile).toEqual(profile);
+    expect(cast.find((c) => c.name === "Clerk")).toMatchObject({ age: "elderly", profile });
+    expect(editedOf(api.db, id).get("Operator")).toEqual(["age"]);
+    expect(editedOf(api.db, id).get("Clerk")).toEqual([]);
+    expect(readFacts(api.db, id, "Operator").map((f) => f.text)).toEqual(["Runs the exchange."]);
   });
 
   test("a ticked new effect is made and worn; an unticked one is left off everywhere", async () => {

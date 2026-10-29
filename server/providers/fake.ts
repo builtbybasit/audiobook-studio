@@ -1,8 +1,9 @@
 // A deterministic scripting provider that never touches the network, for tests and simulated
 // profiles. Quotes become dialogue, attributed to a name beside a speech verb or `Unknown`. Site
 // text is marked by `siteTextSignals`, a sentence at a time. Token counts are text length / 4.
-// A simulated target's `simulation` sets its latency and failure rate.
+// Known speakers get a fact each. A simulated target's `simulation` sets its latency and failures.
 import { normalizeUsage } from "@/lib/pricing";
+import type { PromptCastMember } from "@/lib/prompt";
 import { siteTextSignals } from "@/lib/siteText";
 import { ProviderError } from "~/providers/http";
 import type {
@@ -127,11 +128,31 @@ export function sleep(ms: number, signal: AbortSignal): Promise<void> {
 
 const tokensIn = (text: string): number => Math.ceil(text.length / 4);
 
+/** Each known speaker's first narration naming them, as a fact, so facts land offline too. */
+function castNotes(lines: readonly ScriptedLine[], cast: readonly string[]): PromptCastMember[] {
+  const speaking = new Set(lines.filter((l) => l.type === "dialogue").map((l) => l.speaker));
+  return cast.flatMap((name) => {
+    const said = speaking.has(name)
+      ? lines.find((l) => l.type === "narration" && l.text.includes(name))
+      : undefined;
+    return said
+      ? [{ name, facts: [{ kind: "role" as const, text: said.text.slice(0, 200) }] }]
+      : [];
+  });
+}
+
 export function fakeScriptingProvider(options: FakeScriptingOptions = {}): ScriptingProvider {
   const random = options.random ?? Math.random;
   return {
     name: "Simulated scripting",
-    async script({ text, signal, progress, sent, target }: ScriptInput): Promise<ScriptAnswer> {
+    async script({
+      text,
+      signal,
+      progress,
+      sent,
+      target,
+      cast,
+    }: ScriptInput): Promise<ScriptAnswer> {
       const startedAt = Date.now();
       const simulation = target?.simulation;
       if (simulation?.latencyMs) await sleep(simulation.latencyMs, signal);
@@ -182,7 +203,8 @@ export function fakeScriptingProvider(options: FakeScriptingOptions = {}): Scrip
           "internal",
         ),
       });
-      return { lines: out };
+      const notes = castNotes(out, cast);
+      return { lines: out, ...(notes.length ? { cast: notes } : {}) };
     },
     async ask({ system, user, signal, sent, target, simulated }) {
       const startedAt = Date.now();

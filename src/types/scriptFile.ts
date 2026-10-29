@@ -2,7 +2,7 @@
 // Nothing here is local to one install: no segment or annotation ids, no `VoiceRef`. A voice
 // travels as a hint the importer judges; expression tags travel in `text` as `{tag}` markers.
 import type { BookPrompt } from "@/types/scripting";
-import type { CharacterVoice, GenderSlot, Pacing } from "@/types/book";
+import type { CharacterProfile, CharacterVoice, FactKind, GenderSlot, Pacing } from "@/types/book";
 import type { Age, Gender, VoiceRef, VoiceType } from "@/types/common";
 import type { Step } from "@/types/effect";
 import type { Segment, SegmentType } from "@/types/segment";
@@ -27,6 +27,16 @@ export interface ScriptFileLine {
   effects?: string[];
 }
 
+/** A lasting trait this chapter's script states of a speaker (`CastFact` without its id). */
+export interface ScriptFileFact {
+  speaker: string;
+  kind: FactKind;
+  text: string;
+}
+
+/** A speaker's fields set by hand, which a profile rewrite leaves alone. */
+export type HandSet = ("age" | "voiceType")[];
+
 /** `chapters/NNNN-slug.json` — complete on its own, so it can be imported without the zip. */
 export interface ScriptFileChapter {
   format: "audiobook-studio/script-chapter";
@@ -38,6 +48,8 @@ export interface ScriptFileChapter {
   lines: ScriptFileLine[];
   /** where the chapter leaves off, as the scripting model summed it up; the next one's context */
   recap?: string;
+  /** they follow the chapter the file pairs with on import */
+  facts?: ScriptFileFact[];
 }
 
 /** The manifest's table of contents; where it and a chapter file disagree, the chapter file wins. */
@@ -88,6 +100,9 @@ export interface ScriptFileSpeaker {
   voiceType?: VoiceType;
   /** `Character.wiki` */
   wiki?: { url: string; at: number };
+  /** `Character.profile` */
+  profile?: CharacterProfile;
+  edited?: HandSet;
   /** `voices/<slug>/`: the zip folder with this speaker's recordings and `samples.json` */
   samples?: string;
   /** the effect they wear, by name */
@@ -173,6 +188,8 @@ export interface ImportChapter {
   recap?: string;
   /** with `recap`: the chapter's own now ("" for none), which an Undo writes back */
   recapBefore?: string;
+  /** the file's facts for the chapter, which replace this one's once its script lands */
+  facts?: ScriptFileFact[];
 }
 
 export type RefusalReason =
@@ -290,6 +307,10 @@ export interface ScriptImportPlan {
       voiceType?: VoiceType;
       wiki?: { url: string; at: number };
       masked?: true;
+      /** only when the book's speaker has none */
+      profile?: CharacterProfile;
+      /** the file's hand-set marks on the fields this fills */
+      edited?: HandSet;
     }[];
   };
   lexicon: {
@@ -325,6 +346,15 @@ export interface ImportBookSettings {
   characterVoice?: CharacterVoice;
   /** slots whose voice is not on this install; `age` for a gender's voice for one age */
   unmatchedVoices?: { slot: "one" | GenderSlot; age?: Age }[];
+}
+
+/**
+ * `POST …/script-import/cast`, once an import's speakers and chapters landed: what `Character`
+ * does not carry. Each `fields` entry takes the file's hand-set mark; facts replace a chapter's.
+ */
+export interface ImportCastCarry {
+  speakers: { name: string; profile?: CharacterProfile; edited: HandSet; fields: HandSet }[];
+  chapters: { chapterId: number; facts: ScriptFileFact[] }[];
 }
 
 // ---------- voice samples waiting with a speaker ----------

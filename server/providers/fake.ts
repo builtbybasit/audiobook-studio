@@ -128,15 +128,36 @@ export function sleep(ms: number, signal: AbortSignal): Promise<void> {
 
 const tokensIn = (text: string): number => Math.ceil(text.length / 4);
 
-/** Each known speaker's first narration naming them, as a fact, so facts land offline too. */
-function castNotes(lines: readonly ScriptedLine[], cast: readonly string[]): PromptCastMember[] {
+const flat = (s: string): string => s.replace(/\s+/g, " ").trim();
+
+/** The [P#] number of the prompt's paragraph holding `text`. */
+function paragraphOf(user: string, text: string): number | undefined {
+  for (const m of user.matchAll(/\[P(\d+)\]\n([\s\S]*?)(?=\n\n\[P\d+\]\n|$)/g))
+    if (flat(m[2]).includes(flat(text))) return Number(m[1]);
+}
+
+/**
+ * Each known speaker's first narration naming them, as a fact citing its paragraph, so facts land
+ * offline too; none when the prompt numbers no paragraphs.
+ */
+function castNotes(
+  lines: readonly ScriptedLine[],
+  cast: readonly string[],
+  user: string,
+): PromptCastMember[] {
   const speaking = new Set(lines.filter((l) => l.type === "dialogue").map((l) => l.speaker));
   return cast.flatMap((name) => {
     const said = speaking.has(name)
       ? lines.find((l) => l.type === "narration" && l.text.includes(name))
       : undefined;
-    return said
-      ? [{ name, facts: [{ kind: "role" as const, text: said.text.slice(0, 200) }] }]
+    const at = said && paragraphOf(user, said.text);
+    return said && at
+      ? [
+          {
+            name,
+            facts: [{ kind: "role" as const, text: said.text.slice(0, 200), sourceIds: [at] }],
+          },
+        ]
       : [];
   });
 }
@@ -152,6 +173,7 @@ export function fakeScriptingProvider(options: FakeScriptingOptions = {}): Scrip
       sent,
       target,
       cast,
+      prompt,
     }: ScriptInput): Promise<ScriptAnswer> {
       const startedAt = Date.now();
       const simulation = target?.simulation;
@@ -203,7 +225,7 @@ export function fakeScriptingProvider(options: FakeScriptingOptions = {}): Scrip
           "internal",
         ),
       });
-      const notes = castNotes(out, cast);
+      const notes = castNotes(out, cast, prompt?.user ?? "");
       return { lines: out, ...(notes.length ? { cast: notes } : {}) };
     },
     async ask({ system, user, signal, sent, target, simulated }) {

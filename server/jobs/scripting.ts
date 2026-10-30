@@ -12,6 +12,8 @@ import type {
   Segment,
   VersionOrigin,
 } from "@/types";
+import { groundedFacts } from "~/cast/facts";
+import { paragraphsIn } from "@/lib/sourceParagraphs";
 import { castNameFor } from "@/lib/cast";
 import { expressionNames, scriptedAnnotation } from "@/lib/expressions";
 import {
@@ -223,6 +225,7 @@ export function scriptingHandler(provider: ScriptingProvider, gate: SpeechGate):
         parts: chunks.length,
         cast: listed,
         excerpt: chunks[i],
+        source: { text: chapter.text, offset: chunks.slice(0, i).join("").length },
         before: beforeOf(chunks, i),
         recap,
         endpoint: {
@@ -450,7 +453,19 @@ export function scriptingHandler(provider: ScriptingProvider, gate: SpeechGate):
       if (signal.aborted) throw signal.reason;
       if (refused != null) throw new Error(refused);
 
-      const notes = answers.flatMap((a) => a.cast ?? []);
+      const notes = answers.flatMap((a, i) => {
+        const allowed = new Set(
+          paragraphsIn(chapter.text, chunks.slice(0, i).join("").length, chunks[i].length).map(
+            (p) => p.id,
+          ),
+        );
+        return (a.cast ?? []).map((n) => ({
+          ...n,
+          facts: n.facts?.map((f) =>
+            f.sourceIds?.some((id) => !allowed.has(id)) ? { ...f, sourceIds: [] } : f,
+          ),
+        }));
+      });
       // line and tag ids are renumbered 1..n across chunks; speakers as the model wrote them
       let annotation = 0;
       const scripted: Segment[] = answers
@@ -550,14 +565,20 @@ export function scriptingHandler(provider: ScriptingProvider, gate: SpeechGate):
             })),
             new Set(added),
           );
-          const facts = replaceChapterFacts(
-            tx,
-            at.bookId,
-            at.id,
-            notes.flatMap((n) =>
-              (n.facts ?? []).map((f) => ({ speaker: meant(n.name), kind: f.kind, text: f.text })),
-            ),
-          );
+          const known = new Set(readSpeakers(tx, at.bookId).map((c) => c.name));
+          const claimed = notes
+            .filter((n) => known.has(meant(n.name)))
+            .flatMap((n) => (n.facts ?? []).map((f) => ({ ...f, speaker: meant(n.name) })));
+          const supported = groundedFacts(claimed, chapter.text);
+          // a fact citing no paragraph of its part is dropped; when none cite one (a custom
+          // prompt that doesn't ask), the chapter keeps the facts it had
+          const keep = claimed.length > 0 && !supported.length;
+          const facts = keep ? 0 : replaceChapterFacts(tx, at.bookId, at.id, supported);
+          if (keep) ctx.note("Existing cast facts kept: new facts cited no paragraphs", "warning");
+          else if (supported.length < claimed.length)
+            ctx.note("Facts without a paragraph of their part dropped", "warning", {
+              dropped: claimed.length - supported.length,
+            });
           const suggested = book?.pronounceOff
             ? []
             : suggestTerms(

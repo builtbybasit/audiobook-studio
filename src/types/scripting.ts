@@ -210,7 +210,7 @@ export interface PromptTrialResult {
     age?: Age;
     voiceType?: VoiceType;
     aliases?: readonly string[];
-    facts?: { kind: FactKind; text: string }[];
+    facts?: { kind: FactKind; text: string; sourceIds?: number[]; evidence?: string }[];
   }[];
   /** where the model said the excerpt leaves off; a run keeps it for the next chapter */
   recap?: string;

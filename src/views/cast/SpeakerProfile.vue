@@ -73,15 +73,29 @@ const parts = computed(() =>
         Facts
         <UiHint
           label="facts"
-          text="Lasting traits the book states, in reading order. Removing a wrong one rewrites the profile from the rest the next time profiles are written."
+          text="Lasting traits the book states, in reading order, each once: ×3 means three chapters said it. Removing a wrong one removes its repeats too and rebuilds the profile from the rest at the next rewrite; removing the last fact clears it now."
         />
       </div>
       <ul class="space-y-0.5 font-normal" :aria-label="`Facts about ${c.name}`">
         <li v-for="f in facts" :key="f.id" class="flex items-start gap-1.5">
           <span class="chip chip-off shrink-0">{{ f.kind }}</span>
-          <span class="min-w-0 flex-1 leading-relaxed text-zinc-600 dark:text-zinc-300">{{
-            f.text
-          }}</span>
+          <div class="min-w-0 flex-1 leading-relaxed text-zinc-600 dark:text-zinc-300">
+            <p>
+              {{ f.text
+              }}<span v-if="f.copies" class="ml-1 text-xs text-zinc-400">×{{ f.copies }}</span>
+            </p>
+            <details v-if="f.evidence" class="mt-1 text-xs">
+              <summary class="cursor-pointer text-zinc-500">View source</summary>
+              <blockquote
+                class="mt-1 whitespace-pre-wrap border-l-2 border-zinc-300 pl-2 dark:border-zinc-600"
+              >
+                {{ f.evidence }}
+              </blockquote>
+            </details>
+            <p v-else class="mt-1 text-xs text-zinc-400">
+              No saved passage. Refresh profiles to collect one.
+            </p>
+          </div>
           <button
             type="button"
             class="shrink-0 rounded p-0.5 text-zinc-400 hover:text-red-500"

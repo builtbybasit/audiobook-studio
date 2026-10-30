@@ -341,12 +341,29 @@ export function setChapterDuration(
   db.update(chapters).set({ duration }).where(chapterAt(bookId, chapterId)).run();
 }
 
-export function getChapterBody(db: Db, bookId: string, chapterId: number): string | undefined {
+export function getChapterBody(db: Db | Tx, bookId: string, chapterId: number): string | undefined {
   return db
     .select({ body: chapterTexts.body })
     .from(chapterTexts)
     .where(and(eq(chapterTexts.bookId, bookId), eq(chapterTexts.chapterId, chapterId)))
     .get()?.body;
+}
+
+/** Original text of the nearest earlier kept chapter, for resolving continuing references. */
+export function previousChapterBody(db: Db | Tx, bookId: string, chapterId: number): string {
+  const previous = db
+    .select({ id: chapters.id })
+    .from(chapters)
+    .where(
+      and(
+        eq(chapters.bookId, bookId),
+        lt(chapters.id, chapterId),
+        sql`coalesce(${chapters.excluded}, 0) = 0`,
+      ),
+    )
+    .orderBy(desc(chapters.id))
+    .get();
+  return previous ? (getChapterBody(db, bookId, previous.id) ?? "") : "";
 }
 
 /**

@@ -21,6 +21,7 @@ import { openDemoBook } from "./support/demoBook";
 import { epubFile, story } from "./support/epub";
 import { flush, testPinia, type TestPinia } from "./support/pinia";
 import type { TestApi } from "./support/server";
+import { liveScriptingConcurrency } from "./support/liveScripting";
 
 let endpointsStore: ReturnType<typeof useEndpointsStore>;
 let libraryStore: ReturnType<typeof useLibraryStore>;
@@ -105,6 +106,25 @@ test("with no maximum, a chapter goes as one chunk", () => {
 test.each([-1, 0, 0.5, Infinity, NaN])("a concurrency of %p is refused", (concurrency) => {
   expect(profileErrors(newProfile({ model: "m", concurrency })).length).toBeGreaterThan(0);
 });
+
+test.each([
+  [undefined, 4],
+  ["", 4],
+  ["  ", 4],
+  ["1", 1],
+  [" 16 ", 16],
+  ["2500", 2500],
+] as const)("live scripting concurrency %p resolves to %i", (value, expected) =>
+  expect(liveScriptingConcurrency({ SCRIPTING_PROVIDER_CONCURRENCY: value })).toBe(expected),
+);
+
+test.each(["0", "-1", "1.5", "NaN", "Infinity", "many", "9007199254740992"])(
+  "invalid live scripting concurrency %s fails explicitly",
+  (value) =>
+    expect(() => liveScriptingConcurrency({ SCRIPTING_PROVIDER_CONCURRENCY: value })).toThrow(
+      "SCRIPTING_PROVIDER_CONCURRENCY",
+    ),
+);
 
 test("a concurrency may be any positive whole number, however large, and the URL a base URL", () => {
   // not a slider artefact: a local server may take thousands at once

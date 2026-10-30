@@ -96,10 +96,16 @@ const ANSWER_SCHEMA = {
             items: {
               type: "object",
               additionalProperties: false,
-              required: ["kind", "text"],
+              required: ["kind", "text", "sourceIds"],
               properties: {
                 kind: { type: "string", enum: [...FACT_KINDS] },
                 text: { type: "string" },
+                sourceIds: {
+                  type: "array",
+                  items: { type: "integer", minimum: 1 },
+                  minItems: 1,
+                  maxItems: 5,
+                },
               },
             },
           },

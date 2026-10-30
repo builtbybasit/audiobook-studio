@@ -337,6 +337,14 @@ const CharacterProfileSchema = v.object({
   voice: Short(1000),
 });
 const FactSchema = v.object({
+  evidence: v.optional(v.string()),
+  sourceIds: v.optional(
+    v.pipe(
+      v.array(v.pipe(v.number(), v.safeInteger(), v.minValue(1))),
+      v.minLength(1),
+      v.maxLength(5),
+    ),
+  ),
   speaker: v.pipe(v.string(), v.trim(), v.nonEmpty("must name a speaker")),
   kind: v.picklist(FACT_KINDS),
   text: v.pipe(v.string(), v.trim(), v.nonEmpty("must not be empty"), v.maxLength(300)),

@@ -1,0 +1,1 @@
+ALTER TABLE `character_facts` ADD `source_ids` text;

@@ -281,12 +281,17 @@ export interface CharacterProfile {
 /** `FACT_KINDS` in src/lib/cast.ts lists them */
 export type FactKind = "role" | "background" | "relationship" | "personality" | "voice";
 
-/** A lasting trait the text states, from one chapter's script; the chapter is never shown. */
+/** A lasting trait with its source chapter and, for new facts, supporting paragraph snapshots. */
 export interface CastFact {
   id: number;
+  chapterId: number;
+  evidence?: string;
+  sourceIds?: number[];
   speaker: string;
   kind: FactKind;
   text: string;
+  /** chapters that said the same; only on a list shown once each (`uniqueFacts`) */
+  copies?: number;
 }
 
 /**

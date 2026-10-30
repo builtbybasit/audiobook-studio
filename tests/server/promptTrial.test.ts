@@ -89,7 +89,7 @@ async function setup(
     const body = JSON.parse(init.body as string) as { messages: { content: string }[] };
     const [system, user] = body.messages.map((m) => m.content);
     sent.push({ system, user });
-    return answer(excerptOf(user));
+    return answer(excerptOf(user).replace(/^\[P\d+\]\n/gm, ""));
   }) as unknown as typeof globalThis.fetch;
   const api = testApi({ scripting: endpointScriptingProvider({ fetch, backoffMs: () => 0 }) });
   const { body } = await api.import<{ book: Book }>(
@@ -197,7 +197,8 @@ describe("a prompt trial", () => {
     expect(second.body).toMatchObject({ part: 2, parts: 3 });
     expect(second.body.excerpt).not.toBe(first.body.excerpt);
     // sent as the prompt sends it, the chunk's trailing blank line trimmed
-    expect(excerptOf(sent[1].user)).toBe(second.body.excerpt.trim());
+    expect(excerptOf(sent[1].user)).toStartWith("[P4]\n");
+    expect(excerptOf(sent[1].user).replace(/^\[P\d+\]\n/gm, "")).toBe(second.body.excerpt.trim());
     expect(second.body.fidelity).toMatchObject({ ok: true, missing: 0, added: 0 });
     expect(second.body.lines).toEqual([
       {

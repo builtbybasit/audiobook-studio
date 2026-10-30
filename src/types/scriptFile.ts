@@ -29,6 +29,8 @@ export interface ScriptFileLine {
 
 /** A lasting trait this chapter's script states of a speaker (`CastFact` without its id). */
 export interface ScriptFileFact {
+  evidence?: string;
+  sourceIds?: number[];
   speaker: string;
   kind: FactKind;
   text: string;

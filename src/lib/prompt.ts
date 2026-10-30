@@ -18,6 +18,7 @@ import type {
   VoiceType,
 } from "@/types";
 import { NARRATOR } from "@/lib/cast";
+import { numberedParagraphs } from "@/lib/sourceParagraphs";
 import { DELIVERIES } from "@/lib/voiceProfile";
 
 export const REASONING_EFFORTS: readonly ReasoningEffort[] = ["off", "low", "medium", "high"];
@@ -164,19 +165,19 @@ Text that is not the story still goes in the script, word for word, on lines of 
 When unsure whether something is the story, it is the story.
 
 Besides the lines, the answer has:
-- "cast": notes on the characters who speak or think in the excerpt — what the known cast is missing, and every fact the excerpt gives; [] when there is nothing new. Each note has:
-  - "name": as written in "speaker".
+- "cast": notes on characters who speak, think, or are described or discussed in the excerpt — what the known cast is missing, and every fact the excerpt gives; [] when there is nothing new. Each note has:
+  - "name": the known cast name, or the name used in "speaker" for a new character.
   - "gender": "male", "female", "non-binary" or "unknown".
   - "age": "child", "teen", "young adult", "middle-aged", "elderly" or "unknown".
   - "aliases": other names they are called by, such as "Mar" or "the Captain". A description is not a name: never "the old man" or "the beautiful woman". [] when they have none.
-  - "facts": lasting things the excerpt states or clearly shows about them, each {"kind": "role", "background", "relationship", "personality" or "voice", "text": one short sentence}. How they act in one scene, such as whispering while hiding, is a direction, not a fact. Never guess. [] when there are none.
+  - "facts": lasting things the excerpt states or clearly shows about them, one trait each: {"kind": "role", "background", "relationship", "personality" or "voice", "text": one short sentence, "sourceIds": the [P#] numbers of the 1–5 paragraphs that show it}. How they act in one scene, such as whispering while hiding, is a direction, not a fact. Never guess. [] when there are none. The [P#] labels are not part of the text: never put them in a line.
   - "voiceType": how they sound, from what the text says or clearly implies: "pitch" ("low", "mid" or "high" for their gender), "texture" ("husky" or "clear") and "delivery" (up to three of ${DELIVERIES.join(", ")}); null for what it does not tell.
   - "personaOf": only for a disguise (rule 5): who wears it, or "unknown". For an entry marked "masked, identity unknown", the wearer once the text reveals them. Otherwise null.
 - "recap": one to three sentences on where the excerpt leaves off, for whoever scripts the text that follows it: who is present, including anyone who has not spoken; where they are; who spoke last and to whom; any question left unanswered; and what the text is calling each of them. Use the names from "speaker".
 %PRONOUNCE%
 
 Answer with JSON only, in this shape:
-{"lines":[{"type":"narration","speaker":"${NARRATOR}","text":"The door opened."},{"type":"dialogue","speaker":"Mara","text":"Come in,","direction":"soft, wary"},{"type":"narration","speaker":"${NARRATOR}","text":"said Mara softly."}],"cast":[{"name":"Mara","gender":"female","age":"young adult","aliases":["Mar"],"facts":[{"kind":"role","text":"The town's lamplighter."},{"kind":"personality","text":"Quick and wary of strangers."}],"voiceType":{"pitch":"mid","texture":null,"delivery":["energetic","shy"]}}],"recap":"Mara has let a stranger in out of the cold, at her door; she spoke last, to him, and he has not answered."%PRONOUNCE_SAMPLE%}`;
+{"lines":[{"type":"narration","speaker":"${NARRATOR}","text":"The door opened."},{"type":"dialogue","speaker":"Mara","text":"Come in,","direction":"soft, wary"},{"type":"narration","speaker":"${NARRATOR}","text":"said Mara softly."}],"cast":[{"name":"Mara","gender":"female","age":"young adult","aliases":["Mar"],"facts":[{"kind":"role","text":"The town's lamplighter.","sourceIds":[2]}],"voiceType":{"pitch":"mid","texture":null,"delivery":["energetic","shy"]}}],"recap":"Mara has let a stranger in out of the cold, at her door; she spoke last, to him, and he has not answered."%PRONOUNCE_SAMPLE%}`;
 
 /** With no line effects offered. */
 export const OUTPUT_FORMAT = outputFormat(SCRIPT_MARKERS[0]);
@@ -299,7 +300,7 @@ export interface PromptCastMember {
   /** `Character.masked`; with no `personaOf`, the wearer is unknown */
   masked?: boolean;
   /** in a cast note only: lasting traits the excerpt states */
-  facts?: { kind: FactKind; text: string }[];
+  facts?: { kind: FactKind; text: string; sourceIds?: number[]; evidence?: string }[];
 }
 
 export interface PromptVars {
@@ -311,6 +312,8 @@ export interface PromptVars {
   /** `chapterCast`; the Narrator and "Unknown" are left out of both cast tags */
   cast: readonly PromptCastMember[];
   excerpt: string;
+  /** Full chapter and this chunk's character offset, for stable paragraph citations. */
+  source?: { text: string; offset: number };
   /** the end of the text before the excerpt */
   before?: string;
   /** the previous chapter's recap */
@@ -421,7 +424,15 @@ export function renderPrompt(template: PromptTemplate, vars: PromptVars): Render
     system: [system, outputFormat(scriptMarkerFor(vars.excerpt), vars.lineEffects, vars.pronounce)]
       .filter(Boolean)
       .join("\n\n"),
-    user: fill(template.user, vars),
+    user: fill(
+      template.user,
+      vars.source
+        ? {
+            ...vars,
+            excerpt: numberedParagraphs(vars.source.text, vars.source.offset, vars.excerpt.length),
+          }
+        : vars,
+    ),
   };
 }
 

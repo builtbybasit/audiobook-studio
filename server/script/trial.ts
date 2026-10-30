@@ -97,6 +97,7 @@ export async function tryPrompt(
     parts: chunks.length,
     cast: listed,
     excerpt,
+    source: { text, offset: chunks.slice(0, part - 1).join("").length },
     before: beforeOf(chunks, part - 1),
     recap: library.previousRecap(db, bookId, request.chapterId),
     endpoint: { name: profile.name, model: profile.model, notes: layers.profile?.notes ?? "" },

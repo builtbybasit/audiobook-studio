@@ -31,6 +31,7 @@ import {
 } from "~/db/schema";
 import { SUGGESTED } from "~/db/cast";
 import { readFacts } from "~/db/facts";
+import { numberedParagraphs } from "@/lib/sourceParagraphs";
 import { profileKey } from "~/db/rows/endpoints";
 import { fakeScriptingProvider } from "~/providers/fake";
 import type { ScriptInput, ScriptingProvider } from "~/providers/scripting";
@@ -337,7 +338,11 @@ describe("a run's prompt", () => {
         `Book rules for Moonlight Ledger by A. Ledger.\nNotes: Mara never shouts.\nFor OpenAI (${profile.model}): Sent to {{endpoint.name}}, kept as typed.\n\n${outputFormat(SCRIPT_MARKERS[0], [], { known: [] })}`,
       );
       expect(input.prompt!.user).toBe(
-        `Part ${i + 1} of ${parts}, chapter 1: One\n- Mara (female; also called M): Keeps the ledger.\n${input.text}`.trim(),
+        `Part ${i + 1} of ${parts}, chapter 1: One\n- Mara (female; also called M): Keeps the ledger.\n${numberedParagraphs(
+          rec.inputs.map((r) => r.text).join(""),
+          rec.inputs.slice(0, i).reduce((n, r) => n + r.text.length, 0),
+          input.text.length,
+        )}`.trim(),
       );
     }
 
@@ -417,7 +422,7 @@ describe("what a model says beside its lines", () => {
               age: "elderly",
               voiceType: { pitch: "low", delivery: ["weary"] },
               aliases: ["the old man", "m"],
-              facts: [{ kind: "role", text: "Keeps the inn." }],
+              facts: [{ kind: "role", text: "Keeps the inn.", sourceIds: [1] }],
             },
             {
               name: "Mara",
@@ -425,7 +430,13 @@ describe("what a model says beside its lines", () => {
               age: "young adult",
               voiceType: { pitch: "high", texture: "clear", delivery: ["cold"] },
               aliases: ["the clerk"],
-              facts: [{ kind: "relationship", text: "Tobiah's niece." }],
+              facts: [
+                {
+                  kind: "relationship",
+                  text: "Tobiah's niece.",
+                  sourceIds: [1],
+                },
+              ],
             },
             {
               name: "Ghost",
@@ -747,6 +758,7 @@ describe("a disguise the model finds", () => {
 describe("a speaker the model names by another of their names", () => {
   test("is the cast member it meant, whose facts a re-script replaces", async () => {
     let said = "Steady under fire.";
+    let cited = 1;
     const provider: ScriptingProvider = {
       name: "Other names (test)",
       async script(input) {
@@ -755,7 +767,12 @@ describe("a speaker the model names by another of their names", () => {
             { type: "dialogue", speaker: "Hero", text: input.text.slice(0, 20) },
             { type: "dialogue", speaker: "Young Soldier", text: input.text.slice(20) },
           ],
-          cast: [{ name: "Hero", facts: [{ kind: "personality", text: said }] }],
+          cast: [
+            {
+              name: "Hero",
+              facts: [{ kind: "personality", text: said, sourceIds: [cited] }],
+            },
+          ],
         };
       },
     };
@@ -777,6 +794,14 @@ describe("a speaker the model names by another of their names", () => {
     const facts = () => readFacts(api.db, id, "Young Soldier").map((f) => f.text);
     expect(facts()).toEqual(["Steady under fire."]);
     said = "Quick to laugh.";
+    await api.request(
+      `/api/books/${id}/chapters/script`,
+      jsonBody({ ids: [1], profile: "openai" }),
+    );
+    await api.runner.idle();
+    expect(facts()).toEqual(["Quick to laugh."]);
+    said = "An unsupported replacement.";
+    cited = 999;
     await api.request(
       `/api/books/${id}/chapters/script`,
       jsonBody({ ids: [1], profile: "openai" }),

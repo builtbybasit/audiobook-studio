@@ -21,7 +21,7 @@ import type {
   ScriptManifest,
 } from "@/types";
 import { setOwn } from "~/db/castOwn";
-import { replaceChapterFacts } from "~/db/facts";
+import { replaceChapterFacts, type NewFact } from "~/db/facts";
 import { previousRecap } from "~/db/library";
 import { clonedVoices } from "~/db/schema";
 import { NEW_EFFECT } from "@/lib/scriptFile";
@@ -434,7 +434,15 @@ test("a round trip carries line effects, speakers' effects and profiles, recaps,
   });
   const profile = { who: "A clerk.", personality: "Counts twice.", voice: "Dry." };
   setOwn(api.db, id, mara.name, { profile });
-  const facts = [{ speaker: mara.name, kind: "role", text: "Keeps the ledger." }] as const;
+  const facts: NewFact[] = [
+    {
+      speaker: mara.name,
+      kind: "role",
+      text: "Keeps the ledger.",
+      evidence: "Mara kept the ledger.",
+      sourceIds: [2],
+    },
+  ];
   api.db.transaction((tx) => replaceChapterFacts(tx, id, 1, facts));
   const pacing = { line: 0.4, turn: 0.9, inlineShort: 0.3, inlineLong: 1 };
   await api.request(`/api/books/${id}`, {

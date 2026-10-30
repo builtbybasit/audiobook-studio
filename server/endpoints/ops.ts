@@ -139,8 +139,10 @@ export function saveEndpoints(
   });
   removeDropped(voiceFiles, gone);
   inBackground(
-    voiceFiles.heard.keepOnly(config.endpoints.map((e) => e.id)),
-    "voice samples of removed endpoints left on disk",
+    voiceFiles.heard.keepOnly(
+      new Map(config.endpoints.map((e) => [e.id, e.voices.map((v) => v.id)])),
+    ),
+    "voice samples of removed endpoints and voices left on disk",
   );
   return endpointSettings(db);
 }

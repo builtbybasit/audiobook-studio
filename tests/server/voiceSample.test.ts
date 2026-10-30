@@ -225,6 +225,23 @@ describe("a voice heard before", () => {
     expect(asked).toHaveLength(2);
   });
 
+  test("goes with its voice when the voice is removed, so one added again is heard anew", async () => {
+    const { provider, asked } = recording();
+    const api = testApi({ samples: provider });
+    await saved(api, speech());
+    await sample(api, "studio", "ash");
+    const kept = () => voiceFiles(api.voiceDir).heard.read("studio", "ash", [ASH_RENDERED]);
+
+    await saved(api, speech({ voices: [] }));
+    // removed in the background, after the save has answered
+    for (let i = 0; i < 50 && (await kept()); i++) await Bun.sleep(10);
+
+    await saved(api, speech());
+    const res = await sample(api, "studio", "ash");
+    expect(res.headers.get("x-sample-kept")).toBe("0");
+    expect(asked).toHaveLength(2);
+  });
+
   test("goes with its endpoint when the endpoint is removed", async () => {
     const api = testApi({ samples: fakeSpeechProvider() });
     await saved(api, speech());

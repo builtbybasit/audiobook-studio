@@ -39,8 +39,8 @@ export interface HeardFiles {
     format: SampleFormat,
     alsoKept?: readonly string[],
   ): Promise<void>;
-  /** Forget every endpoint but these. */
-  keepOnly(endpointIds: readonly string[]): Promise<void>;
+  /** Forget every endpoint and voice but these, so a voice added again under an old id is heard anew. */
+  keepOnly(voices: ReadonlyMap<string, readonly string[]>): Promise<void>;
 }
 
 export interface VoiceFiles {
@@ -117,9 +117,14 @@ function heardFiles(dir: string): HeardFiles {
       );
       await Promise.all(stale.map((n) => rm(join(at, n), { force: true })));
     },
-    async keepOnly(endpointIds) {
-      const kept = new Set(endpointIds.map((id) => hash(id)));
-      const gone = (await listed(dir)).filter((n) => !kept.has(n));
+    async keepOnly(voices) {
+      const byEndpoint = new Map([...voices].map(([id, v]) => [hash(id), new Set(v.map(hash))]));
+      const gone: string[] = [];
+      for (const n of await listed(dir)) {
+        const keep = byEndpoint.get(n);
+        if (!keep) gone.push(n);
+        else for (const v of await listed(join(dir, n))) if (!keep.has(v)) gone.push(join(n, v));
+      }
       await Promise.all(gone.map((n) => rm(join(dir, n), { recursive: true, force: true })));
     },
   };

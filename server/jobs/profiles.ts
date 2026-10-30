@@ -98,12 +98,11 @@ export function profilesHandler(provider: ScriptingProvider, gate: SpeechGate): 
 
 // the rules the scripting prompt gives its cast notes' facts, in the same words
 const SYSTEM = [
-  "Read the original prose for lasting character facts, including non-speaking characters. Never invent.",
-  "Resolve dialogue ownership, pronouns and titles from narration and previous context. A nearby name need not be the speaker. Attribute reported facts to their subject, not the reporter; preserve genuine uncertainty.",
-  "A reaction like 'X looked puzzled' is not a speech tag. Follow the ongoing question and answer; omit uncertain attribution.",
-  "Facts: {kind, text, sourceIds}. Kinds: role, background, relationship, personality, voice. Text: one short sentence. sourceIds: 1–5 integer IDs from [P#] labels supporting the claim and its subject. Cite the claim's paragraph, plus context if needed. Do not quote text; previous prose is context only.",
-  "Include defining abilities and limitations. Distinguish past roles from current ones. Personality needs habits or repeated behavior; voice needs lasting sound or habitual speech. Omit isolated reactions and one-off whispers.",
-  "Return the schema's JSON only, every supplied speaker named exactly, facts: [] when none.",
+  "You read one chapter of a novel, its paragraphs labelled [P#], and note what it tells about some of its characters, speaking or not.",
+  'For each character named, "facts": lasting things the chapter states or clearly shows about them, one trait each: {"kind": "role", "background", "relationship", "personality" or "voice", "text": one short sentence, "sourceIds": the [P#] numbers of the 1–5 paragraphs that show it}.',
+  "How they act in one scene, such as whispering while hiding, is a direction, not a fact. A fact someone tells about another belongs to that other. Never guess. [] when there are none.",
+  "Previous prose is context only: cite the chapter's paragraphs.",
+  "Answer only with the JSON object, one entry per character, named as given.",
 ].join("\n");
 
 const SCHEMA = {
@@ -147,43 +146,46 @@ const Said = v.looseObject({ speaker: v.string(), facts: v.array(v.unknown()) })
 
 class InvalidFacts extends Error {}
 
-/** A malformed or ungrounded reply must not erase the chapter's existing evidence. */
+/**
+ * The asked-about speakers' facts that cite paragraphs of this part, and how many were dropped for
+ * not doing so. A reply without the list, a speaker or any cited fact throws: the facts stay.
+ */
 function factsIn(
   said: unknown,
   speakers: ReadonlySet<string>,
   source: string,
   allowedIds: ReadonlySet<number>,
-): NewFact[] {
+): { facts: NewFact[]; dropped: number } {
   const list = (said as { speakers?: unknown } | null)?.speakers;
   if (!Array.isArray(list)) throw new InvalidFacts("The model did not return character facts");
   const answered = new Set<string>();
-  const out: NewFact[] = [];
+  const facts: NewFact[] = [];
+  let dropped = 0;
   for (const item of list) {
     const read = v.safeParse(Said, item);
-    if (!read.success) throw new InvalidFacts("The model returned an invalid character fact");
+    if (!read.success) continue;
     const speaker = castNameFor(
       read.output.speaker.trim(),
       [...speakers].map((name) => ({ name })),
     );
     if (!speakers.has(speaker)) continue;
-    if (read.output.facts.some((f) => factsOf([f]).length !== 1))
-      throw new InvalidFacts(`The model returned an invalid fact for ${speaker}`);
-    const facts = factsOf(read.output.facts);
-    if (facts.some((f) => !f.sourceIds?.length))
-      throw new InvalidFacts(`Missing sourceIds for ${speaker}`);
-    const grounded = groundedFacts(facts, source, allowedIds);
-    if (grounded.length !== facts.length || (read.output.facts.length && !facts.length)) {
-      const bad = facts.find((f) => !groundedFacts([f], source, allowedIds).length);
-      throw new InvalidFacts(
-        `Invalid sourceIds for ${speaker}: ${JSON.stringify(bad?.sourceIds ?? [])}. Cite only [P#] labels shown in Original prose`,
-      );
-    }
     answered.add(speaker);
-    out.push(...grounded.map((f) => ({ speaker, ...f })));
+    const all = factsOf(read.output.facts);
+    const grounded = groundedFacts(
+      all.filter((f) => f.sourceIds?.length),
+      source,
+      allowedIds,
+    );
+    dropped += all.length - grounded.length;
+    facts.push(...grounded.map((f) => ({ speaker, ...f })));
   }
   if ([...speakers].some((s) => !answered.has(s)))
     throw new InvalidFacts("The model left out a requested character; existing facts were kept");
-  return out;
+  if (dropped && !facts.length)
+    throw new InvalidFacts(
+      "No fact cited a paragraph of this chapter. Cite only the [P#] numbers under Original prose",
+    );
+  return { facts, dropped };
 }
 
 /** Deterministic, source-backed sample for offline runs. */
@@ -308,12 +310,17 @@ export function factsHandler(provider: ScriptingProvider): JobHandler {
               sent: (report) => tally(usage, report, money.sent(report)),
               simulated: simulatedFacts(source, speakers, allowedIds),
             });
-            facts.push(...factsIn(said, new Set(speakers), source, allowedIds));
+            const read = factsIn(said, new Set(speakers), source, allowedIds);
+            facts.push(...read.facts);
+            if (read.dropped)
+              ctx.note("Facts without a paragraph of this chapter dropped", "warning", {
+                dropped: read.dropped,
+              });
             break;
           } catch (e) {
             if (signal.aborted) throw signal.reason;
             if (e instanceof InvalidFacts && attempt === 0) {
-              correction = `\n\nYour last reply failed validation: ${e.message}. Return complete JSON for every speaker; facts: [] when none. Use integer sourceIds, not quotations.`;
+              correction = `\n\nYour last reply failed validation: ${e.message}. Return every speaker; facts: [] when none.`;
               ctx.note("Retrying invalid character facts", "warning", { reason: e.message });
               continue;
             }

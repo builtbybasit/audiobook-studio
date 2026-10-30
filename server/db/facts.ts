@@ -24,6 +24,36 @@ const toFact = (r: typeof characterFacts.$inferSelect): CastFact => ({
   ...(r.sourceIds ? { sourceIds: r.sourceIds } : {}),
 });
 
+/**
+ * What makes two of a speaker's facts the same: kind and text, ignoring case, the final stop and a
+ * leading name, alias or pronoun ("Cassia is blind." = "She is blind"). Exact otherwise.
+ */
+export function factKey(f: Pick<CastFact, "kind" | "text">, names: readonly string[]): string {
+  let text = f.text
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[.!]+$/, "");
+  const name = [...names]
+    .map((n) => n.toLowerCase())
+    .sort((a, b) => b.length - a.length)
+    .find((n) => text.startsWith(`${n} `));
+  if (name) text = text.slice(name.length + 1);
+  return `${f.kind}\n${text.replace(/^(he|she|they|it) /, "")}`;
+}
+
+/** Each fact once, in reading order: the first of its repeats, with `copies` when it has some. */
+export function uniqueFacts(facts: readonly CastFact[], names: readonly string[]): CastFact[] {
+  const first = new Map<string, CastFact>();
+  for (const f of facts) {
+    const k = factKey(f, names);
+    const had = first.get(k);
+    if (had) had.copies = (had.copies ?? 1) + 1;
+    else first.set(k, { ...f });
+  }
+  return [...first.values()];
+}
+
 const markRebuild = (db: Db | Tx, bookId: string, names: readonly string[]): void => {
   if (!names.length) return;
   db.update(characters)
@@ -123,6 +153,7 @@ export function staleSpeakers(db: Db | Tx, bookId: string): string[] {
 export type ProfileRow = Pick<
   typeof characters.$inferSelect,
   | "name"
+  | "aliases"
   | "gender"
   | "age"
   | "voiceType"
@@ -140,6 +171,7 @@ export function profileRows(db: Db | Tx, bookId: string, names: readonly string[
   return db
     .select({
       name: characters.name,
+      aliases: characters.aliases,
       gender: characters.gender,
       age: characters.age,
       voiceType: characters.voiceType,
@@ -163,7 +195,8 @@ export function setProfile(
   facts: readonly CastFact[],
   profile: CharacterProfile | null,
   upTo: number,
-  tags: { age?: Age | null; voiceType?: VoiceType | null } = {},
+  /** left out: kept as they are */
+  tags: { age?: Age; voiceType?: VoiceType } = {},
 ): boolean {
   return db.transaction((tx) => {
     const current = profileRows(tx, bookId, [expected.name])[0];
@@ -179,8 +212,10 @@ export function setProfile(
         profile,
         profileUpTo: upTo,
         profileRebuild: false,
-        ...(!current.edited.includes("age") ? { age: tags.age } : {}),
-        ...(!current.edited.includes("voiceType") ? { voiceType: tags.voiceType } : {}),
+        ...(tags.age && !current.edited.includes("age") ? { age: tags.age } : {}),
+        ...(tags.voiceType && !current.edited.includes("voiceType")
+          ? { voiceType: tags.voiceType }
+          : {}),
       })
       .where(and(eq(characters.bookId, bookId), eq(characters.name, expected.name)))
       .run();
@@ -188,31 +223,30 @@ export function setProfile(
   });
 }
 
-/** Whose fact it was; undefined when there was no such fact. */
+/** Whose fact it was, with its repeats in other chapters gone too; undefined when there was none. */
 export function deleteFact(db: Db, bookId: string, id: number): string | undefined {
   return db.transaction((tx) => {
-    const row = tx
-      .delete(characterFacts)
+    const fact = tx
+      .select()
+      .from(characterFacts)
       .where(and(eq(characterFacts.bookId, bookId), eq(characterFacts.id, id)))
-      .returning({ speaker: characterFacts.speaker })
       .get();
-    if (row) {
-      markRebuild(tx, bookId, [row.speaker]);
-      if (!readFacts(tx, bookId, row.speaker).length) {
-        const c = profileRows(tx, bookId, [row.speaker])[0];
-        tx.update(characters)
-          .set({
-            profile: null,
-            profileUpTo: 0,
-            profileRebuild: false,
-            ...(!c.edited.includes("age") ? { age: null } : {}),
-            ...(!c.edited.includes("voiceType") ? { voiceType: null } : {}),
-          })
-          .where(and(eq(characters.bookId, bookId), eq(characters.name, row.speaker)))
-          .run();
-      }
-    }
-    return row?.speaker;
+    if (!fact) return undefined;
+    const { speaker } = fact;
+    const c = profileRows(tx, bookId, [speaker])[0];
+    const names = [speaker, ...(c?.aliases ?? [])];
+    const copies = readFacts(tx, bookId, speaker)
+      .filter((f) => factKey(f, names) === factKey(fact, names))
+      .map((f) => f.id);
+    tx.delete(characterFacts).where(inArray(characterFacts.id, copies)).run();
+    markRebuild(tx, bookId, [speaker]);
+    // the tags stay: the scripting notes may have given them
+    if (c && !readFacts(tx, bookId, speaker).length)
+      tx.update(characters)
+        .set({ profile: null, profileUpTo: 0, profileRebuild: false })
+        .where(and(eq(characters.bookId, bookId), eq(characters.name, speaker)))
+        .run();
+    return speaker;
   });
 }
 

@@ -21,7 +21,7 @@ import * as ops from "~/cast/ops";
 import { suggestVoicesFor } from "~/cast/suggest";
 import { fillFromWiki } from "~/cast/wiki";
 import { getCharacter } from "~/db/cast";
-import { deleteFact, readFacts } from "~/db/facts";
+import { deleteFact, readFacts, uniqueFacts } from "~/db/facts";
 import { enqueueFacts } from "~/jobs/profiles";
 import type { Runner } from "~/jobs/runner";
 import { notFound } from "~/lib/errors";
@@ -138,19 +138,26 @@ export function castRoutes(
       ),
   );
 
+  /** A speaker's facts once each, in reading order, repeats counted. */
+  const shown = (id: string, name: string): CastFact[] =>
+    uniqueFacts(readFacts(db, id, name), [name, ...(getCharacter(db, id, name)?.aliases ?? [])]);
+
   /** One speaker's facts in reading order; shown only behind a spoiler guard. */
   app.get("/:id/characters/:name/facts", validate("param", NameParam), (c) => {
     const { id, name } = c.req.valid("param");
     if (!getCharacter(db, id, name)) throw notFound(`“${name}” is not in this book’s cast`);
-    return c.json({ facts: readFacts(db, id, name) satisfies CastFact[] });
+    return c.json({ facts: shown(id, name) });
   });
 
-  /** Their profile is rebuilt without it at the next rewrite; returns the speaker's facts left. */
+  /**
+   * Gone with its repeats; their profile is rebuilt without it at the next rewrite. Returns the
+   * speaker's facts left.
+   */
   app.delete("/:id/characters/facts/:factId", validate("param", FactParam), (c) => {
     const { id, factId } = c.req.valid("param");
     const speaker = deleteFact(db, id, factId);
     if (speaker == null) throw notFound("No such fact");
-    return c.json({ facts: readFacts(db, id, speaker) satisfies CastFact[] });
+    return c.json({ facts: shown(id, speaker) });
   });
 
   /** Read scripted chapters again for facts (reading numbers `from`..`to`); profiles follow. */

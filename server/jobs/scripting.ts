@@ -570,12 +570,15 @@ export function scriptingHandler(provider: ScriptingProvider, gate: SpeechGate):
             .filter((n) => known.has(meant(n.name)))
             .flatMap((n) => (n.facts ?? []).map((f) => ({ ...f, speaker: meant(n.name) })));
           const supported = groundedFacts(claimed, chapter.text);
-          // Optional cast metadata must not erase good evidence when a custom prompt or an
-          // older model omits quotations. The word-checked script itself is still usable.
-          const validFacts = supported.length === claimed.length;
-          const facts = validFacts ? replaceChapterFacts(tx, at.bookId, at.id, supported) : 0;
-          if (!validFacts)
-            ctx.note("Existing cast facts kept: new facts lacked source evidence", "warning");
+          // a fact citing no paragraph of its part is dropped; when none cite one (a custom
+          // prompt that doesn't ask), the chapter keeps the facts it had
+          const keep = claimed.length > 0 && !supported.length;
+          const facts = keep ? 0 : replaceChapterFacts(tx, at.bookId, at.id, supported);
+          if (keep) ctx.note("Existing cast facts kept: new facts cited no paragraphs", "warning");
+          else if (supported.length < claimed.length)
+            ctx.note("Facts without a paragraph of their part dropped", "warning", {
+              dropped: claimed.length - supported.length,
+            });
           const suggested = book?.pronounceOff
             ? []
             : suggestTerms(

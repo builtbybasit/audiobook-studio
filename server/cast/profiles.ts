@@ -1,6 +1,7 @@
-// A speaker's profile rewritten from all their facts in reading order, so early chapters
-// reprocessed later cannot overwrite later revelations and earlier omissions can be recovered. Several speakers share a request; a long
-// list is folded in batches, each carrying the profile on. Disguises are skipped (spoilers).
+// A speaker's profile rewritten from their facts in reading order, each repeat once: the profile
+// so far plus newer facts, or every fact from scratch after a rebuild mark or when a newer fact
+// comes from an earlier chapter. Several speakers share a request; a long list is folded in
+// batches, each carrying the profile on. Disguises are skipped (spoilers).
 import * as v from "valibot";
 
 import type {
@@ -18,7 +19,15 @@ import { tokenEstimate } from "@/lib/scripting";
 import { DELIVERIES, PITCHES, TEXTURES } from "@/lib/voiceProfile";
 import type { Db } from "~/db/client";
 import { readProfiles } from "~/db/endpoints";
-import { profileRows, readFacts, setProfile, staleSpeakers, type ProfileRow } from "~/db/facts";
+import {
+  factKey,
+  profileRows,
+  readFacts,
+  setProfile,
+  staleSpeakers,
+  uniqueFacts,
+  type ProfileRow,
+} from "~/db/facts";
 import { badRequest, notFound } from "~/lib/errors";
 import { ageOf, voiceTypeOf } from "~/providers/chatScripting";
 import { ProviderError } from "~/providers/http";
@@ -31,22 +40,25 @@ import { dispatch } from "~/usage/dispatch";
 
 const SPEAKERS_PER_ASK = 20;
 /** an answer's share of the output tokens per speaker, so a batch is never cut off */
-const TOKENS_PER_SPEAKER = 2400;
+const TOKENS_PER_SPEAKER = 350;
 // ponytail: characters stand in for input tokens; count tokens if batches overrun a model's window
 const CHARS_PER_ASK = 24_000;
 const FACTS_PER_FOLD = 150;
-/** A generous validation ceiling; oversize answers fail rather than losing facts silently. */
-const PART_MAX = 2400;
+/** each of the three parts; together about the 1000 characters a profile keeps to */
+const PART_MAX = 330;
 
 const GENDER: Record<Gender, string> = { m: "male", f: "female", n: "non-binary", "?": "" };
 
 const SYSTEM = [
-  "Write concise audiobook cast profiles from the supplied facts and any prior fold. Never invent.",
-  '"who": identity, roles, background, relationships, abilities and limitations. "personality": explicit habits or repeated behavior. "voice": lasting vocal qualities, not scene delivery. Use 1–3 sentences per section; "" if unknown; under 2400 characters each.',
-  "Keep defining traits, especially speech constraints such as inability to lie. Follow chapter order; distinguish revelations from real changes, and preserve genuine uncertainty. Keep claims with their subject, not their reporter.",
-  "Ignore isolated reactions and one-off whispers, even in old facts. Do not infer personality or voice from appearance, morality or mood.",
-  `"age": ${AGES.join(", ")} or unknown. "voiceType": pitch (${PITCHES.join(", ")}), texture (${TEXTURES.join(", ")}), up to 3 delivery words (${DELIVERIES.join(", ")}); null where unsupported. Preserve user-selected tags.`,
-  "Return the schema's JSON only, one profile per speaker, using the exact supplied names.",
+  "You keep short profiles of the speakers in a novel, used to cast their audiobook voices.",
+  "Each speaker comes with their profile so far (or none) and facts from the book in reading order. Write each profile again with the facts folded in.",
+  '- "who": who they are: role, background, ties to others. "personality": how they think and behave. "voice": how they speak and sound. Each one to three plain sentences; "" when nothing is known.',
+  "- Only what the profile and the facts say. Never invent or guess.",
+  "- Later facts correct earlier impressions: where they disagree, the later one stands.",
+  "- Who they are, not what happens to them: no events, deaths or reveals, and nothing they do in only one scene. Keep defining limits, such as being unable to lie.",
+  `- "age": ${AGES.join(", ")} or unknown.`,
+  `- "voiceType": pitch (${PITCHES.join(", ")}) within their gender, texture (${TEXTURES.join(", ")}), up to 3 delivery words from: ${DELIVERIES.join(", ")}. Null for anything the facts do not suggest.`,
+  "Answer only with the JSON object, one entry per speaker, named as given.",
 ].join("\n");
 
 const nullable = (list: readonly string[]) => ({ type: ["string", "null"], enum: [...list, null] });
@@ -108,7 +120,7 @@ interface Todo {
   left: CastFact[];
   facts: CastFact[];
   upTo: number;
-  tags: { age?: Age | null; voiceType?: VoiceType | null };
+  tags: { age?: Age; voiceType?: VoiceType };
 }
 
 /** The speaker as the model reads them: what is known, the profile so far, these facts. */
@@ -131,7 +143,7 @@ function block(t: Todo, facts: readonly CastFact[]): string {
     "Facts:",
     ...facts.map(
       (f) =>
-        `- ${f.kind}: ${f.text} (chapter ${f.chapterId})${f.evidence && !f.sourceIds?.length ? `\n  Evidence: ${JSON.stringify(f.evidence)}` : ""}`,
+        `- ${f.kind}: ${f.text}${f.evidence && !f.sourceIds?.length ? `\n  Evidence: ${JSON.stringify(f.evidence)}` : ""}`,
     ),
   ].join("\n");
 }
@@ -247,25 +259,30 @@ export async function rewriteProfiles(
   if (!provider.ask) throw badRequest(`${provider.name} cannot write cast profiles`);
 
   const rows = profileRows(db, bookId, wanted);
-  const todo: Todo[] = rows.map((c) => {
+  const rewritten = new Set<string>();
+  const todo: Todo[] = rows.flatMap((c) => {
     const facts = readFacts(db, bookId, c.name);
-    const left = facts;
-    return {
-      c,
-      profile: null,
-      facts,
-      left,
-      upTo: Math.max(c.profileUpTo, ...left.map((f) => f.id)),
-      tags: {},
-    };
+    const names = [c.name, ...c.aliases];
+    const upTo = Math.max(c.profileUpTo, ...facts.map((f) => f.id));
+    const folded = facts.filter((f) => f.id <= c.profileUpTo);
+    const known = new Set(folded.map((f) => factKey(f, names)));
+    // a repeat of a fact the profile was written from changes nothing
+    const fresh = facts.filter((f) => f.id > c.profileUpTo && !known.has(factKey(f, names)));
+    // one from an earlier chapter would read as the latest word, so that starts over
+    const lastRead = Math.max(0, ...folded.map((f) => f.chapterId));
+    const over = !c.profile || c.profileRebuild || fresh.some((f) => f.chapterId < lastRead);
+    if (!over && !fresh.length) {
+      if (setProfile(db, bookId, c, facts, c.profile, upTo)) rewritten.add(c.name);
+      return [];
+    }
+    const left = uniqueFacts(over ? facts : fresh, names);
+    return [{ c, profile: over ? null : c.profile, facts, left, upTo, tags: {} }];
   });
   const total = todo.reduce((n, t) => n + t.left.length, 0);
   let done = 0;
   const failed = new Set<string>();
-  const rewritten = new Set<string>();
   for (const t of todo.filter((t) => !t.left.length)) {
-    if (setProfile(db, bookId, t.c, t.facts, null, t.upTo, { age: null, voiceType: null }))
-      rewritten.add(t.c.name);
+    if (setProfile(db, bookId, t.c, t.facts, null, t.upTo)) rewritten.add(t.c.name);
   }
   const most = Math.max(
     1,
@@ -337,20 +354,12 @@ export async function rewriteProfiles(
           failed.add(t.c.name);
           continue;
         }
-        // Do not silently discard the end of a profile and mark its facts consumed.
-        if ([a.who, a.personality, a.voice].some((s) => oneLine(s).length > PART_MAX)) {
-          failed.add(t.c.name);
-          continue;
-        }
-        t.profile = {
-          who: oneLine(a.who),
-          personality: oneLine(a.personality),
-          voice: oneLine(a.voice),
-        };
+        t.profile = { who: part(a.who), personality: part(a.personality), voice: part(a.voice) };
+        // what the model doesn't know keeps the tag the scripting notes gave, part by part
         const age = ageOf(a.age);
         const voiceType = voiceTypeOf(a.voiceType);
-        t.tags.age = age ?? null;
-        t.tags.voiceType = voiceType ?? null;
+        if (age) t.tags.age = age;
+        if (voiceType) t.tags.voiceType = { ...t.c.voiceType, ...voiceType };
         t.left = t.left.slice(facts.length);
         if (!t.left.length && setProfile(db, bookId, t.c, t.facts, t.profile, t.upTo, t.tags))
           rewritten.add(t.c.name);

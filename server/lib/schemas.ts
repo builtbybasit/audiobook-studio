@@ -332,9 +332,9 @@ export const ScriptManifestSchema = v.looseObject({
 }) satisfies v.GenericSchema<unknown, ScriptManifest>;
 
 const CharacterProfileSchema = v.object({
-  who: Short(2400),
-  personality: Short(2400),
-  voice: Short(2400),
+  who: Short(1000),
+  personality: Short(1000),
+  voice: Short(1000),
 });
 const FactSchema = v.object({
   evidence: v.optional(v.string()),

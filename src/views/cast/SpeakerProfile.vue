@@ -6,7 +6,6 @@ import { computed } from "vue";
 import { Trash2 as RemoveIcon } from "@lucide/vue";
 
 import { deleteFact, useFacts } from "@/queries";
-import { useLibraryStore } from "@/stores/library";
 import { useCastStore } from "@/stores/cast";
 import { UiHint } from "@/ui";
 import type { Character } from "@/types";
@@ -19,9 +18,6 @@ const props = defineProps<{
 }>();
 
 const castStore = useCastStore();
-const libraryStore = useLibraryStore();
-const chapterTitle = (id: number) =>
-  libraryStore.chaptersOf(props.bookId).find((c) => c.id === id)?.title ?? `Chapter ${id}`;
 const { data } = useFacts(
   () => props.bookId,
   () => props.c.name,
@@ -77,19 +73,19 @@ const parts = computed(() =>
         Facts
         <UiHint
           label="facts"
-          text="Lasting traits the book states, in reading order. Removing a wrong one rebuilds the profile from the rest at the next rewrite; removing the last fact clears it now."
+          text="Lasting traits the book states, in reading order, each once: ×3 means three chapters said it. Removing a wrong one removes its repeats too and rebuilds the profile from the rest at the next rewrite; removing the last fact clears it now."
         />
       </div>
       <ul class="space-y-0.5 font-normal" :aria-label="`Facts about ${c.name}`">
         <li v-for="f in facts" :key="f.id" class="flex items-start gap-1.5">
           <span class="chip chip-off shrink-0">{{ f.kind }}</span>
           <div class="min-w-0 flex-1 leading-relaxed text-zinc-600 dark:text-zinc-300">
-            <p>{{ f.text }}</p>
+            <p>
+              {{ f.text
+              }}<span v-if="f.copies" class="ml-1 text-xs text-zinc-400">×{{ f.copies }}</span>
+            </p>
             <details v-if="f.evidence" class="mt-1 text-xs">
-              <summary class="cursor-pointer text-zinc-500">
-                View source · {{ chapterTitle(f.chapterId) }}
-                <span v-if="f.sourceIds?.length"> · Paragraphs {{ f.sourceIds.join(", ") }}</span>
-              </summary>
+              <summary class="cursor-pointer text-zinc-500">View source</summary>
               <blockquote
                 class="mt-1 whitespace-pre-wrap border-l-2 border-zinc-300 pl-2 dark:border-zinc-600"
               >
@@ -97,8 +93,7 @@ const parts = computed(() =>
               </blockquote>
             </details>
             <p v-else class="mt-1 text-xs text-zinc-400">
-              {{ chapterTitle(f.chapterId) }} · No saved excerpt. Refresh profiles to collect source
-              evidence.
+              No saved passage. Refresh profiles to collect one.
             </p>
           </div>
           <button

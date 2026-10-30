@@ -197,7 +197,7 @@ describe("rewriting profiles", () => {
     },
   );
 
-  test("rebuilds from all evidence so omitted facts can return; a removed fact is left out", async () => {
+  test("folds in only facts newer than the profile; a removed fact rebuilds from the rest", async () => {
     const { api, id, ids, add } = await setup(testApi(), ["One", "Two"]);
     add(ids[0], "Mara", "role", "A lamplighter.");
     const { provider, asked } = asking();
@@ -205,7 +205,7 @@ describe("rewriting profiles", () => {
     add(ids[1], "Mara", "personality", "Wary of strangers.");
     await rewrite(api, id, provider, ["Mara"]);
     expect(asked[1].user).toContain("- personality: Wary of strangers.");
-    expect(asked[1].user).toContain("- role: A lamplighter.");
+    expect(asked[1].user).not.toContain("- role: A lamplighter.");
     expect(getCharacter(api.db, id, "Mara")?.profile).toMatchObject({
       who: "A lamplighter.",
       personality: "Wary of strangers.",
@@ -220,7 +220,22 @@ describe("rewriting profiles", () => {
     expect(asked).toHaveLength(3);
   });
 
-  test("corrects age only where the user did not set it, and skips disguises", async () => {
+  test("folds a repeat once; new facts that only repeat old ones ask nothing", async () => {
+    const { api, id, ids, add } = await setup(testApi(), ["One", "Two", "Three"]);
+    add(ids[0], "Mara", "role", "Mara is blind.");
+    add(ids[1], "Mara", "role", "She is blind");
+    const { provider, asked } = asking();
+    await rewrite(api, id, provider, ["Mara"]);
+    expect(asked[0].user.match(/- role:/g)).toHaveLength(1);
+    const before = getCharacter(api.db, id, "Mara")?.profile;
+    add(ids[2], "Mara", "role", "Is blind.");
+    await rewrite(api, id, provider, ["Mara"]);
+    expect(asked).toHaveLength(1);
+    expect(staleProfiles(api.db, id)).not.toContain("Mara");
+    expect(getCharacter(api.db, id, "Mara")?.profile).toEqual(before);
+  });
+
+  test("corrects age only where the user did not set it, keeps what the model doesn't know, and skips disguises", async () => {
     const { api, id, ids, add, set } = await setup();
     for (const name of ["Mara", "Tom"]) add(ids[0], name, "role", `${name} is here.`);
     add(ids[0], "Narrator", "role", "Tells the story.");
@@ -233,7 +248,7 @@ describe("rewriting profiles", () => {
         personality: "p",
         voice: "v",
         age: "elderly",
-        voiceType: null,
+        voiceType: { pitch: "low", texture: null, delivery: [] },
       })),
     }));
     expect((await rewrite(api, id, provider, ["Mara", "Tom", "Narrator"])).rewritten).toEqual([
@@ -242,6 +257,7 @@ describe("rewriting profiles", () => {
     ]);
     expect(getCharacter(api.db, id, "Mara")?.age).toBe("teen");
     expect(getCharacter(api.db, id, "Tom")?.age).toBe("elderly");
+    expect(getCharacter(api.db, id, "Tom")?.voiceType).toEqual({ pitch: "low", texture: "husky" });
 
     set(`persona_of = 'Mara' where name = 'Tom'`);
     add(ids[0], "Tom", "role", "Mara in a mask.");
@@ -299,13 +315,17 @@ describe("refreshing facts", () => {
 });
 
 describe("the facts routes", () => {
-  test("list a speaker's facts in reading order; deleting one returns the rest", async () => {
-    const { api, id, ids, add } = await setup(testApi(), ["One", "Two"]);
-    add(ids[1], "Mara", "voice", "Hoarse.");
-    add(ids[0], "Mara", "role", "A lamplighter.");
+  test("list a speaker's facts once each in reading order; deleting one takes its repeats", async () => {
+    const { api, id, ids, add } = await setup(testApi(), ["One", "Two", "Three"]);
+    add(ids[2], "Mara", "voice", "Hoarse.");
+    add(ids[1], "Mara", "role", "She is a lamplighter");
+    add(ids[0], "Mara", "role", "Mara is a lamplighter.");
     const url = `/api/books/${id}/characters`;
     const listed = await api.request<{ facts: CastFact[] }>(`${url}/Mara/facts`);
-    expect(listed.body.facts.map((f) => f.text)).toEqual(["A lamplighter.", "Hoarse."]);
+    expect(listed.body.facts.map((f) => [f.text, f.copies])).toEqual([
+      ["Mara is a lamplighter.", 2],
+      ["Hoarse.", undefined],
+    ]);
     const left = await api.request<{ facts: CastFact[] }>(
       `${url}/facts/${listed.body.facts[0].id}`,
       { method: "DELETE" },
@@ -388,7 +408,7 @@ test("deleting evidence during a rewrite keeps it marked for rebuild", async () 
 test("refresh reads original prose and includes a character mentioned only in narration", async () => {
   const quote = "Lena’s gift was called “Sight”… she could see the future.";
   const rec = asking((input) =>
-    input.system.startsWith("Read the original prose")
+    input.system.startsWith("You read one chapter")
       ? {
           speakers: [
             { speaker: "mara", facts: [] },
@@ -459,7 +479,7 @@ test.each([
   { wrong: [] },
 ])("a bad extraction keeps the chapter's existing facts (%j)", async (answer) => {
   const rec = asking((input) =>
-    input.system.startsWith("Read the original prose") ? answer : input.simulated,
+    input.system.startsWith("You read one chapter") ? answer : input.simulated,
   );
   const { api, id, ids, add } = await setup(testApi({ scripting: rec.provider }));
   add(ids[0], "Mara", "role", "A physician.");
@@ -475,7 +495,7 @@ test.each([
 test("an invalid extraction is corrected once before replacing existing facts", async () => {
   const quote = "Mara is a physician.";
   const rec = asking((input) =>
-    !input.system.startsWith("Read the original prose")
+    !input.system.startsWith("You read one chapter")
       ? input.simulated
       : !input.user.includes("Your last reply failed validation")
         ? {
@@ -507,26 +527,54 @@ test("an invalid extraction is corrected once before replacing existing facts", 
   ]);
   const { body } = await api.request<{ jobs: Job[] }>("/api/jobs");
   expect(body.jobs.find((j) => j.kind === "facts")?.status).toBe("done");
-  expect(rec.asked.filter((a) => a.system.startsWith("Read the original prose"))).toHaveLength(2);
-  expect(rec.asked[1].user).toContain("999");
+  expect(rec.asked.filter((a) => a.system.startsWith("You read one chapter"))).toHaveLength(2);
+  expect(rec.asked[1].user).toContain("Cite only the [P#] numbers");
 });
 
-test.each([500, 2600])(
-  "profile length %i is preserved whole or refused, never silently cut",
-  async (length) => {
-    const { api, id, ids, add } = await setup();
-    add(ids[0], "Mara", "role", "A physician who cannot lie.");
-    const who = "A".repeat(length) + " Cannot lie.";
-    const { provider } = asking(() => ({
-      profiles: [
-        { speaker: "Mara", who, personality: "", voice: "", age: "unknown", voiceType: null },
-      ],
-    }));
-    const out = await rewrite(api, id, provider, ["Mara"]);
-    expect(out.failed).toEqual(length > 2400 ? ["Mara"] : []);
-    expect(getCharacter(api.db, id, "Mara")?.profile?.who).toBe(length > 2400 ? undefined : who);
-  },
-);
+test("a fact citing no paragraph of the chapter is dropped and the rest are saved", async () => {
+  const quote = "Mara is a physician.";
+  const rec = asking((input) =>
+    input.system.startsWith("You read one chapter")
+      ? {
+          speakers: [
+            {
+              speaker: "Mara",
+              facts: [
+                { kind: "role", text: quote, sourceIds: [4] },
+                { kind: "voice", text: "Hoarse.", sourceIds: [999] },
+              ],
+            },
+            { speaker: "Tom", facts: [] },
+          ],
+        }
+      : input.simulated,
+  );
+  const { api, id } = await setup(
+    testApi({ scripting: rec.provider }),
+    ["One"],
+    [line("One"), line("Two", "Tom"), quote],
+  );
+  await api.request(`/api/books/${id}/characters/refresh`, jsonBody({ profile: "sim" }));
+  await api.runner.idle();
+  expect(readFacts(api.db, id, "Mara").map((f) => f.text)).toEqual([quote]);
+  expect(rec.asked.filter((a) => a.system.startsWith("You read one chapter"))).toHaveLength(1);
+});
+
+test("a long profile part is cut at its last whole sentence", async () => {
+  const { api, id, ids, add } = await setup();
+  add(ids[0], "Mara", "role", "A physician who cannot lie.");
+  const who = Array.from({ length: 40 }, (_, i) => `Sentence ${i}.`).join(" ");
+  const { provider } = asking(() => ({
+    profiles: [
+      { speaker: "Mara", who, personality: "", voice: "", age: "unknown", voiceType: null },
+    ],
+  }));
+  await rewrite(api, id, provider, ["Mara"]);
+  const saved = getCharacter(api.db, id, "Mara")?.profile?.who ?? "";
+  expect(saved.length).toBeLessThanOrEqual(330);
+  expect(who.startsWith(saved)).toBe(true);
+  expect(saved.endsWith(".")).toBe(true);
+});
 
 test("an earlier chapter added later is summarized before later revelations", async () => {
   const { api, id, ids, add } = await setup(testApi(), ["One", "Two"]);

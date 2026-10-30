@@ -290,6 +290,8 @@ export interface CastFact {
   speaker: string;
   kind: FactKind;
   text: string;
+  /** chapters that said the same; only on a list shown once each (`uniqueFacts`) */
+  copies?: number;
 }
 
 /**

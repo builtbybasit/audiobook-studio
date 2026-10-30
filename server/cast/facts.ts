@@ -1,50 +1,27 @@
-// Resolve paragraph IDs to original prose, or check legacy quotes. This validates the source,
-// not the model's interpretation; the saved snapshot lets a reader inspect that interpretation.
+// Resolve a fact's paragraph numbers to the chapter's own text, saved as its evidence. This checks
+// the source, not the model's reading of it; the saved passage lets a reader judge that.
 import type { PromptCastMember } from "@/lib/prompt";
 import { sourceParagraphs } from "@/lib/sourceParagraphs";
 
-const normalized = (s: string): string => s.replace(/\s+/g, " ").trim();
-
+/** The facts citing 1–5 paragraphs that exist (and are in `allowedIds`), with their text. */
 export function groundedFacts<T extends NonNullable<PromptCastMember["facts"]>[number]>(
   facts: readonly T[],
   source: string,
   allowedIds?: ReadonlySet<number>,
-): (T & { evidence: string })[] {
+): (T & { sourceIds: number[]; evidence: string })[] {
   const paragraphs = new Map(sourceParagraphs(source).map((p) => [p.id, p.text]));
   return facts.flatMap((f) => {
-    if (f.sourceIds !== undefined) {
-      const ids = f.sourceIds;
-      if (
-        !ids.length ||
-        ids.length > 5 ||
-        ids.some(
-          (id) =>
-            !Number.isSafeInteger(id) || !paragraphs.has(id) || (allowedIds && !allowedIds.has(id)),
-        )
+    const ids = f.sourceIds ?? [];
+    if (
+      !ids.length ||
+      ids.length > 5 ||
+      ids.some(
+        (id) =>
+          !Number.isSafeInteger(id) || !paragraphs.has(id) || (allowedIds && !allowedIds.has(id)),
       )
-        return [];
-      const sourceIds = [...new Set(ids)].sort((a, b) => a - b);
-      return [
-        { ...f, sourceIds, evidence: sourceIds.map((id) => paragraphs.get(id)!).join("\n\n") },
-      ];
-    }
-    const quote = normalized(f.evidence ?? "");
-    if (!quote || quote.length > 1000) return [];
-    // Match typography only, never changed words; save the original source substring.
-    const pattern = (quote.match(/\.\.\.|[\s\S]/gu) ?? [])
-      .map((c) =>
-        c === " "
-          ? "\\s+"
-          : /['‘’]/u.test(c)
-            ? "['‘’]"
-            : /["“”]/u.test(c)
-              ? '["“”]'
-              : c === "…" || c === "..."
-                ? "(?:\\.\\.\\.|…)"
-                : c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
-      )
-      .join("");
-    const evidence = source.match(new RegExp(pattern, "u"))?.[0];
-    return evidence && evidence.length <= 1000 ? [{ ...f, evidence }] : [];
+    )
+      return [];
+    const sourceIds = [...new Set(ids)].sort((a, b) => a - b);
+    return [{ ...f, sourceIds, evidence: sourceIds.map((id) => paragraphs.get(id)!).join("\n\n") }];
   });
 }

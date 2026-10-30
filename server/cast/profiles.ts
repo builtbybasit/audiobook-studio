@@ -141,10 +141,7 @@ function block(t: Todo, facts: readonly CastFact[]): string {
       ? `Profile so far:\nWho: ${p.who}\nPersonality: ${p.personality}\nVoice: ${p.voice}`
       : "Profile so far: none",
     "Facts:",
-    ...facts.map(
-      (f) =>
-        `- ${f.kind}: ${f.text}${f.evidence && !f.sourceIds?.length ? `\n  Evidence: ${JSON.stringify(f.evidence)}` : ""}`,
-    ),
+    ...facts.map((f) => `- ${f.kind}: ${f.text}`),
   ].join("\n");
 }
 
@@ -379,8 +376,7 @@ export async function rewriteProfiles(
         let size = block(t, []).length;
         const facts: CastFact[] = [];
         for (const f of t.left.slice(0, FACTS_PER_FOLD)) {
-          const length =
-            f.text.length + (f.sourceIds?.length ? 0 : (f.evidence?.length ?? 0)) + 100;
+          const length = f.text.length + 100;
           if (facts.length && size + length > CHARS_PER_ASK) break;
           facts.push(f);
           size += length;

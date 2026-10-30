@@ -416,7 +416,6 @@ describe("a request", () => {
                 {
                   kind: "Role",
                   text: "The town's  lamplighter.",
-                  evidence: "Mara keeps  the lamps.",
                   sourceIds: [12, 14],
                 },
                 ...[[], [0], [1.5], ["2"], [1, 2, 3, 4, 5, 6]].map((sourceIds) => ({
@@ -466,7 +465,6 @@ describe("a request", () => {
           {
             kind: "role" as const,
             text: "The town's lamplighter.",
-            evidence: "Mara keeps the lamps.",
             sourceIds: [12, 14],
           },
           { kind: "personality" as const, text: "x".repeat(200) },

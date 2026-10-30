@@ -422,7 +422,7 @@ describe("what a model says beside its lines", () => {
               age: "elderly",
               voiceType: { pitch: "low", delivery: ["weary"] },
               aliases: ["the old man", "m"],
-              facts: [{ kind: "role", text: "Keeps the inn.", evidence: input.text.slice(0, 200) }],
+              facts: [{ kind: "role", text: "Keeps the inn.", sourceIds: [1] }],
             },
             {
               name: "Mara",
@@ -434,7 +434,7 @@ describe("what a model says beside its lines", () => {
                 {
                   kind: "relationship",
                   text: "Tobiah's niece.",
-                  evidence: input.text.slice(0, 200),
+                  sourceIds: [1],
                 },
               ],
             },
@@ -758,7 +758,7 @@ describe("a disguise the model finds", () => {
 describe("a speaker the model names by another of their names", () => {
   test("is the cast member it meant, whose facts a re-script replaces", async () => {
     let said = "Steady under fire.";
-    let evidence: string | undefined;
+    let cited = 1;
     const provider: ScriptingProvider = {
       name: "Other names (test)",
       async script(input) {
@@ -770,9 +770,7 @@ describe("a speaker the model names by another of their names", () => {
           cast: [
             {
               name: "Hero",
-              facts: [
-                { kind: "personality", text: said, evidence: evidence ?? input.text.slice(0, 200) },
-              ],
+              facts: [{ kind: "personality", text: said, sourceIds: [cited] }],
             },
           ],
         };
@@ -803,7 +801,7 @@ describe("a speaker the model names by another of their names", () => {
     await api.runner.idle();
     expect(facts()).toEqual(["Quick to laugh."]);
     said = "An unsupported replacement.";
-    evidence = "Not in the original prose.";
+    cited = 999;
     await api.request(
       `/api/books/${id}/chapters/script`,
       jsonBody({ ids: [1], profile: "openai" }),

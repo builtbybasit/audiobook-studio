@@ -136,7 +136,18 @@ function castNotes(lines: readonly ScriptedLine[], cast: readonly string[]): Pro
       ? lines.find((l) => l.type === "narration" && l.text.includes(name))
       : undefined;
     return said
-      ? [{ name, facts: [{ kind: "role" as const, text: said.text.slice(0, 200) }] }]
+      ? [
+          {
+            name,
+            facts: [
+              {
+                kind: "role" as const,
+                text: said.text.slice(0, 200),
+                evidence: said.text.slice(0, 1000),
+              },
+            ],
+          },
+        ]
       : [];
   });
 }

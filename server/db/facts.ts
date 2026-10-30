@@ -1,6 +1,6 @@
 // Speakers' facts and the profiles written from them. A profile is stale when facts newer than
-// `profile_up_to` exist (fold them in) or `profile_rebuild` is set (facts went away: start over).
-import { and, asc, eq, gt, inArray, isNotNull, max, or } from "drizzle-orm";
+// `profile_up_to` exist or `profile_rebuild` is set (facts went away: start over).
+import { and, asc, eq, gt, inArray, max, or } from "drizzle-orm";
 
 import type { Age, CastFact, CharacterProfile, FactKind, VoiceType } from "@/types";
 import type { Db, Tx } from "~/db/client";
@@ -10,6 +10,8 @@ export interface NewFact {
   speaker: string;
   kind: FactKind;
   text: string;
+  evidence?: string;
+  sourceIds?: number[];
 }
 
 const toFact = (r: typeof characterFacts.$inferSelect): CastFact => ({
@@ -17,6 +19,9 @@ const toFact = (r: typeof characterFacts.$inferSelect): CastFact => ({
   speaker: r.speaker,
   kind: r.kind,
   text: r.text,
+  chapterId: r.chapterId,
+  ...(r.evidence ? { evidence: r.evidence } : {}),
+  ...(r.sourceIds ? { sourceIds: r.sourceIds } : {}),
 });
 
 const markRebuild = (db: Db | Tx, bookId: string, names: readonly string[]): void => {
@@ -61,7 +66,15 @@ export function replaceChapterFacts(
       .map((c) => c.name),
   );
   const rows = [...new Map(facts.filter((f) => cast.has(f.speaker)).map((f) => [key(f), f]))].map(
-    ([, f]) => ({ bookId, chapterId, speaker: f.speaker, kind: f.kind, text: f.text }),
+    ([, f]) => ({
+      bookId,
+      chapterId,
+      speaker: f.speaker,
+      kind: f.kind,
+      text: f.text,
+      evidence: f.evidence ?? null,
+      sourceIds: f.sourceIds ?? null,
+    }),
   );
   if (rows.length) tx.insert(characterFacts).values(rows).run();
   return rows.length;
@@ -84,7 +97,7 @@ export function readFacts(db: Db | Tx, bookId: string, speaker: string, after = 
     .map(toFact);
 }
 
-/** Speakers whose profile is behind their facts, in cast order; with no facts, a profile stands. */
+/** Changed facts, including removal of every fact, need a rebuild. Legacy profiles otherwise stand. */
 export function staleSpeakers(db: Db | Tx, bookId: string): string[] {
   const newest = db
     .select({ speaker: characterFacts.speaker, top: max(characterFacts.id).as("top") })
@@ -99,7 +112,6 @@ export function staleSpeakers(db: Db | Tx, bookId: string): string[] {
     .where(
       and(
         eq(characters.bookId, bookId),
-        isNotNull(newest.top),
         or(eq(characters.profileRebuild, true), gt(newest.top, characters.profileUpTo)),
       ),
     )
@@ -143,22 +155,37 @@ export function profileRows(db: Db | Tx, bookId: string, names: readonly string[
     .all();
 }
 
-/**
- * A rewrite's result; `upTo` is the newest fact id it read. Clears the rebuild mark. `tags` are
- * written as given: the caller leaves out what the user set by hand.
- */
+/** Save only against the evidence and profile read before the model request. */
 export function setProfile(
-  db: Db | Tx,
+  db: Db,
   bookId: string,
-  name: string,
-  profile: CharacterProfile,
+  expected: ProfileRow,
+  facts: readonly CastFact[],
+  profile: CharacterProfile | null,
   upTo: number,
-  tags: { age?: Age; voiceType?: VoiceType } = {},
-): void {
-  db.update(characters)
-    .set({ profile, profileUpTo: upTo, profileRebuild: false, ...tags })
-    .where(and(eq(characters.bookId, bookId), eq(characters.name, name)))
-    .run();
+  tags: { age?: Age | null; voiceType?: VoiceType | null } = {},
+): boolean {
+  return db.transaction((tx) => {
+    const current = profileRows(tx, bookId, [expected.name])[0];
+    // This also catches deletion, renaming, a new persona link, and a competing rewrite.
+    if (
+      !current ||
+      !Bun.deepEquals(current, expected) ||
+      !Bun.deepEquals(readFacts(tx, bookId, expected.name), facts)
+    )
+      return false;
+    tx.update(characters)
+      .set({
+        profile,
+        profileUpTo: upTo,
+        profileRebuild: false,
+        ...(!current.edited.includes("age") ? { age: tags.age } : {}),
+        ...(!current.edited.includes("voiceType") ? { voiceType: tags.voiceType } : {}),
+      })
+      .where(and(eq(characters.bookId, bookId), eq(characters.name, expected.name)))
+      .run();
+    return true;
+  });
 }
 
 /** Whose fact it was; undefined when there was no such fact. */
@@ -169,7 +196,22 @@ export function deleteFact(db: Db, bookId: string, id: number): string | undefin
       .where(and(eq(characterFacts.bookId, bookId), eq(characterFacts.id, id)))
       .returning({ speaker: characterFacts.speaker })
       .get();
-    if (row) markRebuild(tx, bookId, [row.speaker]);
+    if (row) {
+      markRebuild(tx, bookId, [row.speaker]);
+      if (!readFacts(tx, bookId, row.speaker).length) {
+        const c = profileRows(tx, bookId, [row.speaker])[0];
+        tx.update(characters)
+          .set({
+            profile: null,
+            profileUpTo: 0,
+            profileRebuild: false,
+            ...(!c.edited.includes("age") ? { age: null } : {}),
+            ...(!c.edited.includes("voiceType") ? { voiceType: null } : {}),
+          })
+          .where(and(eq(characters.bookId, bookId), eq(characters.name, row.speaker)))
+          .run();
+      }
+    }
     return row?.speaker;
   });
 }

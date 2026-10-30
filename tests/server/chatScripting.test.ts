@@ -413,7 +413,17 @@ describe("a request", () => {
               age: "Young adult",
               aliases: ["the lamplighter", "Mara", "the lamplighter"],
               facts: [
-                { kind: "Role", text: "The town's  lamplighter." },
+                {
+                  kind: "Role",
+                  text: "The town's  lamplighter.",
+                  evidence: "Mara keeps  the lamps.",
+                  sourceIds: [12, 14],
+                },
+                ...[[], [0], [1.5], ["2"], [1, 2, 3, 4, 5, 6]].map((sourceIds) => ({
+                  kind: "role",
+                  text: "Invalid citation.",
+                  sourceIds,
+                })),
                 { kind: "role", text: "the town's lamplighter." },
                 { kind: "hobby", text: "Collects lamps." },
                 { kind: "voice", text: "  " },
@@ -453,7 +463,12 @@ describe("a request", () => {
         aliases: ["the lamplighter"],
         // a known kind and some text, once each, capped in length and number
         facts: [
-          { kind: "role" as const, text: "The town's lamplighter." },
+          {
+            kind: "role" as const,
+            text: "The town's lamplighter.",
+            evidence: "Mara keeps the lamps.",
+            sourceIds: [12, 14],
+          },
           { kind: "personality" as const, text: "x".repeat(200) },
           ...Array.from({ length: 6 }, (_, i) => ({
             kind: "background" as const,
@@ -473,7 +488,7 @@ describe("a request", () => {
     const example = OUTPUT_FORMAT.slice(OUTPUT_FORMAT.lastIndexOf("\n") + 1);
     const { provider } = gateway(() => completion(example));
     const [mara] = (await provider.script(input())).cast!;
-    expect(mara.facts).toEqual(JSON.parse(example).cast[0].facts);
+    expect(mara.facts ?? []).toEqual(JSON.parse(example).cast[0].facts);
   });
 
   test("reads a disguise: whose it is, that nobody knows yet, or nothing", async () => {

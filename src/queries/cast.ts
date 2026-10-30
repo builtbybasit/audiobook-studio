@@ -59,6 +59,7 @@ export async function deleteFact(bookId: string, name: string, id: number): Prom
   try {
     const facts = await libraryService().deleteFact(bookId, id);
     useQueryCache().setQueryData<CastFact[]>(keys.facts(bookId, name), facts);
+    await fetchCast(bookId);
   } catch (cause) {
     toastFailure("remove this fact", cause);
   }

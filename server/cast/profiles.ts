@@ -1,5 +1,5 @@
-// A speaker's profile rewritten from their facts in reading order: the profile so far plus newer
-// facts, or every fact from scratch after a rebuild mark. Several speakers share a request; a long
+// A speaker's profile rewritten from all their facts in reading order, so early chapters
+// reprocessed later cannot overwrite later revelations and earlier omissions can be recovered. Several speakers share a request; a long
 // list is folded in batches, each carrying the profile on. Disguises are skipped (spoilers).
 import * as v from "valibot";
 
@@ -13,7 +13,7 @@ import type {
   RequestRecord,
   VoiceType,
 } from "@/types";
-import { AGES, NARRATOR } from "@/lib/cast";
+import { AGES, NARRATOR, castNameFor } from "@/lib/cast";
 import { tokenEstimate } from "@/lib/scripting";
 import { DELIVERIES, PITCHES, TEXTURES } from "@/lib/voiceProfile";
 import type { Db } from "~/db/client";
@@ -22,6 +22,7 @@ import { profileRows, readFacts, setProfile, staleSpeakers, type ProfileRow } fr
 import { badRequest, notFound } from "~/lib/errors";
 import { ageOf, voiceTypeOf } from "~/providers/chatScripting";
 import { ProviderError } from "~/providers/http";
+import { createSpeechGate, type SpeechGate } from "~/providers/gate";
 import type { ScriptingProvider } from "~/providers/scripting";
 import type { SentScript } from "~/providers/sent";
 import { scriptTarget } from "~/providers/target";
@@ -30,25 +31,22 @@ import { dispatch } from "~/usage/dispatch";
 
 const SPEAKERS_PER_ASK = 20;
 /** an answer's share of the output tokens per speaker, so a batch is never cut off */
-const TOKENS_PER_SPEAKER = 350;
+const TOKENS_PER_SPEAKER = 2400;
 // ponytail: characters stand in for input tokens; count tokens if batches overrun a model's window
 const CHARS_PER_ASK = 24_000;
 const FACTS_PER_FOLD = 150;
-/** each of the three parts; together about the 1000 characters a profile keeps to */
-const PART_MAX = 330;
+/** A generous validation ceiling; oversize answers fail rather than losing facts silently. */
+const PART_MAX = 2400;
 
 const GENDER: Record<Gender, string> = { m: "male", f: "female", n: "non-binary", "?": "" };
 
 const SYSTEM = [
-  "You keep short profiles of the speakers in a novel, used to cast their audiobook voices.",
-  "Each speaker comes with their profile so far (or none) and facts from the book in reading order. Write each profile again with the facts folded in.",
-  '- "who": who they are: role, background, ties to others. "personality": how they think and behave. "voice": how they speak and sound. Each one to three plain sentences; "" when nothing is known.',
-  "- Only what the profile and the facts say. Never invent or guess.",
-  "- Later facts correct earlier impressions: where they disagree, the later one stands.",
-  "- Lasting traits only: what they do in one scene is not part of who they are.",
-  `- "age": ${AGES.join(", ")} or unknown.`,
-  `- "voiceType": pitch (${PITCHES.join(", ")}) within their gender, texture (${TEXTURES.join(", ")}), up to 3 delivery words from: ${DELIVERIES.join(", ")}. Null for anything the facts do not suggest.`,
-  "Answer only with the JSON object, one entry per speaker, named as given.",
+  "Write concise audiobook cast profiles from the supplied facts and any prior fold. Never invent.",
+  '"who": identity, roles, background, relationships, abilities and limitations. "personality": explicit habits or repeated behavior. "voice": lasting vocal qualities, not scene delivery. Use 1–3 sentences per section; "" if unknown; under 2400 characters each.',
+  "Keep defining traits, especially speech constraints such as inability to lie. Follow chapter order; distinguish revelations from real changes, and preserve genuine uncertainty. Keep claims with their subject, not their reporter.",
+  "Ignore isolated reactions and one-off whispers, even in old facts. Do not infer personality or voice from appearance, morality or mood.",
+  `"age": ${AGES.join(", ")} or unknown. "voiceType": pitch (${PITCHES.join(", ")}), texture (${TEXTURES.join(", ")}), up to 3 delivery words (${DELIVERIES.join(", ")}); null where unsupported. Preserve user-selected tags.`,
+  "Return the schema's JSON only, one profile per speaker, using the exact supplied names.",
 ].join("\n");
 
 const nullable = (list: readonly string[]) => ({ type: ["string", "null"], enum: [...list, null] });
@@ -108,15 +106,20 @@ interface Todo {
   c: ProfileRow;
   profile: CharacterProfile | null;
   left: CastFact[];
+  facts: CastFact[];
   upTo: number;
-  tags: { age?: Age; voiceType?: VoiceType };
+  tags: { age?: Age | null; voiceType?: VoiceType | null };
 }
 
 /** The speaker as the model reads them: what is known, the profile so far, these facts. */
 function block(t: Todo, facts: readonly CastFact[]): string {
-  const vt = t.c.voiceType;
+  const vt = t.c.edited.includes("voiceType") ? t.c.voiceType : null;
   const sound = [vt?.pitch, vt?.texture, ...(vt?.delivery ?? [])].filter(Boolean).join(", ");
-  const known = [GENDER[t.c.gender], t.c.age ?? "", sound ? `sounds ${sound}` : ""]
+  const known = [
+    GENDER[t.c.gender],
+    t.c.edited.includes("age") ? t.c.age : "",
+    sound ? `user-selected voice: ${sound}` : "",
+  ]
     .filter(Boolean)
     .join("; ");
   const p = t.profile;
@@ -126,7 +129,10 @@ function block(t: Todo, facts: readonly CastFact[]): string {
       ? `Profile so far:\nWho: ${p.who}\nPersonality: ${p.personality}\nVoice: ${p.voice}`
       : "Profile so far: none",
     "Facts:",
-    ...facts.map((f) => `- ${f.kind}: ${f.text}`),
+    ...facts.map(
+      (f) =>
+        `- ${f.kind}: ${f.text} (chapter ${f.chapterId})${f.evidence && !f.sourceIds?.length ? `\n  Evidence: ${JSON.stringify(f.evidence)}` : ""}`,
+    ),
   ].join("\n");
 }
 
@@ -218,7 +224,8 @@ export function staleProfiles(db: Db, bookId: string): string[] {
 /**
  * Rewrite the stale profiles among `names` with this scripting profile's model. Narrator and
  * disguises never get one. A speaker is saved only once every batch of theirs is folded, so a
- * failure part way leaves their profile stale, not half-built. A budget refusal throws. Each
+ * failure part way leaves their profile stale, not half-built. Changed evidence or edits discard
+ * the reply for a later retry. A budget refusal throws. Each
  * settled request is added to `usage`.
  */
 export async function rewriteProfiles(
@@ -230,6 +237,7 @@ export async function rewriteProfiles(
   signal: AbortSignal,
   progress?: (done: number, total: number) => void,
   usage?: CastUsage,
+  gate: SpeechGate = createSpeechGate(),
 ): Promise<Rewritten> {
   const stale = new Set(staleProfiles(db, bookId));
   const wanted = names.filter((n) => stale.has(n));
@@ -239,21 +247,26 @@ export async function rewriteProfiles(
   if (!provider.ask) throw badRequest(`${provider.name} cannot write cast profiles`);
 
   const rows = profileRows(db, bookId, wanted);
-  const todo: Todo[] = rows
-    .map((c) => {
-      const left = readFacts(db, bookId, c.name, c.profileRebuild ? 0 : c.profileUpTo);
-      return {
-        c,
-        profile: c.profileRebuild ? null : c.profile,
-        left,
-        upTo: Math.max(c.profileUpTo, ...left.map((f) => f.id)),
-        tags: {},
-      };
-    })
-    .filter((t) => t.left.length);
-  const total = todo.reduce((n, t) => n + Math.ceil(t.left.length / FACTS_PER_FOLD), 0);
+  const todo: Todo[] = rows.map((c) => {
+    const facts = readFacts(db, bookId, c.name);
+    const left = facts;
+    return {
+      c,
+      profile: null,
+      facts,
+      left,
+      upTo: Math.max(c.profileUpTo, ...left.map((f) => f.id)),
+      tags: {},
+    };
+  });
+  const total = todo.reduce((n, t) => n + t.left.length, 0);
   let done = 0;
   const failed = new Set<string>();
+  const rewritten = new Set<string>();
+  for (const t of todo.filter((t) => !t.left.length)) {
+    if (setProfile(db, bookId, t.c, t.facts, null, t.upTo, { age: null, voiceType: null }))
+      rewritten.add(t.c.name);
+  }
   const most = Math.max(
     1,
     Math.min(SPEAKERS_PER_ASK, Math.floor(p.maxOutputTokens / TOKENS_PER_SPEAKER)),
@@ -261,63 +274,92 @@ export async function rewriteProfiles(
 
   /** One request; folds each answered speaker's batch in, and marks the rest failed. */
   const ask = async (batch: { t: Todo; facts: CastFact[]; text: string }[]): Promise<void> => {
-    const user = batch.map((b) => b.text).join("\n\n");
-    const reserve = tokenEstimate(SYSTEM + user, p).reserve;
-    assertWithinBudget(db, bookId, {
-      kind: "scripting",
-      cost: reserve,
-      what: "the next profile rewrite",
-      requests: [{ endpoint: p.id, cost: reserve }],
-    });
-    const money = dispatch(db, {
-      kind: "scripting",
-      endpoint: p,
-      work: { bookId, chapterUid: null, label: "Cast profiles" },
-      hold: reserve,
-    });
-    let said: unknown;
+    const leave = await gate.acquire(
+      p.id,
+      () => ({
+        concurrency: (readProfiles(db).find((current) => current.id === p.id) ?? p).concurrency,
+        enabled: true,
+      }),
+      { signal },
+    );
     try {
-      said = await provider.ask!({
-        system: SYSTEM,
-        user,
-        schema: SCHEMA,
-        target: scriptTarget(db, p),
-        signal,
-        sent: (report) => {
-          const charged = money.sent(report);
-          if (usage) tally(usage, report, charged);
-        },
-        simulated: simulated(batch),
+      const user = batch.map((b) => b.text).join("\n\n");
+      const reserve = tokenEstimate(SYSTEM + user, p).reserve;
+      assertWithinBudget(db, bookId, {
+        kind: "scripting",
+        cost: reserve,
+        what: "the next profile rewrite",
+        requests: [{ endpoint: p.id, cost: reserve }],
       });
-    } catch (e) {
-      if (signal.aborted) throw signal.reason;
-      if (!(e instanceof ProviderError)) throw e;
-      said = null;
-    } finally {
-      money.release();
-    }
-    const list = (said as { profiles?: unknown } | null)?.profiles;
-    const answers = new Map<string, v.InferOutput<typeof Said>>();
-    for (const item of Array.isArray(list) ? list : []) {
-      const read = v.safeParse(Said, item);
-      if (read.success) answers.set(read.output.speaker.trim(), read.output);
-    }
-    for (const { t, facts } of batch) {
-      const a = answers.get(t.c.name);
-      if (!a) {
-        failed.add(t.c.name);
-        continue;
+      const money = dispatch(db, {
+        kind: "scripting",
+        endpoint: p,
+        work: { bookId, chapterUid: null, label: "Cast profiles" },
+        hold: reserve,
+      });
+      let said: unknown;
+      try {
+        said = await provider.ask!({
+          system: SYSTEM,
+          user,
+          schema: SCHEMA,
+          target: scriptTarget(db, p),
+          signal,
+          sent: (report) => {
+            const charged = money.sent(report);
+            if (usage) tally(usage, report, charged);
+          },
+          simulated: simulated(batch),
+        });
+      } catch (e) {
+        if (signal.aborted) throw signal.reason;
+        if (!(e instanceof ProviderError)) throw e;
+        said = null;
+      } finally {
+        money.release();
       }
-      t.profile = { who: part(a.who), personality: part(a.personality), voice: part(a.voice) };
-      const age = ageOf(a.age);
-      const voiceType = voiceTypeOf(a.voiceType);
-      if (age && !t.c.edited.includes("age")) t.tags.age = age;
-      if (voiceType && !t.c.edited.includes("voiceType")) t.tags.voiceType = voiceType;
-      t.left = t.left.slice(facts.length);
-      if (!t.left.length) setProfile(db, bookId, t.c.name, t.profile, t.upTo, t.tags);
+      const list = (said as { profiles?: unknown } | null)?.profiles;
+      const answers = new Map<string, v.InferOutput<typeof Said>>();
+      for (const item of Array.isArray(list) ? list : []) {
+        const read = v.safeParse(Said, item);
+        if (read.success)
+          answers.set(
+            castNameFor(
+              read.output.speaker.trim(),
+              batch.map(({ t }) => t.c),
+            ),
+            read.output,
+          );
+      }
+      for (const { t, facts } of batch) {
+        const a = answers.get(t.c.name);
+        if (!a) {
+          failed.add(t.c.name);
+          continue;
+        }
+        // Do not silently discard the end of a profile and mark its facts consumed.
+        if ([a.who, a.personality, a.voice].some((s) => oneLine(s).length > PART_MAX)) {
+          failed.add(t.c.name);
+          continue;
+        }
+        t.profile = {
+          who: oneLine(a.who),
+          personality: oneLine(a.personality),
+          voice: oneLine(a.voice),
+        };
+        const age = ageOf(a.age);
+        const voiceType = voiceTypeOf(a.voiceType);
+        t.tags.age = age ?? null;
+        t.tags.voiceType = voiceType ?? null;
+        t.left = t.left.slice(facts.length);
+        if (!t.left.length && setProfile(db, bookId, t.c, t.facts, t.profile, t.upTo, t.tags))
+          rewritten.add(t.c.name);
+      }
+      done += batch.reduce((n, b) => n + b.facts.length, 0);
+      progress?.(done, total);
+    } finally {
+      leave();
     }
-    done += batch.length;
-    progress?.(done, total);
   };
 
   // round by round, so a speaker's next batch reads the profile the last one wrote
@@ -325,15 +367,41 @@ export async function rewriteProfiles(
     const round = todo
       .filter((t) => t.left.length && !failed.has(t.c.name))
       .map((t) => {
-        const facts = t.left.slice(0, FACTS_PER_FOLD);
+        let size = block(t, []).length;
+        const facts: CastFact[] = [];
+        for (const f of t.left.slice(0, FACTS_PER_FOLD)) {
+          const length =
+            f.text.length + (f.sourceIds?.length ? 0 : (f.evidence?.length ?? 0)) + 100;
+          if (facts.length && size + length > CHARS_PER_ASK) break;
+          facts.push(f);
+          size += length;
+        }
         return { t, facts, text: block(t, facts) };
       });
     if (!round.length) break;
-    // ponytail: one request at a time; share the speech gate if rewrites hold up big books
-    for (const batch of asks(round, most)) await ask(batch);
+    // Different speakers are independent; a speaker's next fold waits for this round.
+    // Stop taking work on a fatal error, but settle every in-flight request before returning.
+    const batches = asks(round, most);
+    let next = 0;
+    let stopped = false;
+    const outcomes = await Promise.allSettled(
+      Array.from({ length: Math.min(p.concurrency, batches.length) }, async () => {
+        while (!stopped && next < batches.length) {
+          try {
+            signal.throwIfAborted();
+            await ask(batches[next++]);
+          } catch (e) {
+            stopped = true;
+            throw e;
+          }
+        }
+      }),
+    );
+    const rejected = outcomes.find((outcome) => outcome.status === "rejected");
+    if (rejected) throw rejected.reason;
   }
   return {
-    rewritten: todo.filter((t) => !failed.has(t.c.name)).map((t) => t.c.name),
+    rewritten: [...rewritten],
     failed: [...failed],
   };
 }

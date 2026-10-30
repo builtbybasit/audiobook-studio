@@ -70,6 +70,7 @@ export function builtInPrompt(
     parts: 1,
     cast: cast.map((name) => ({ name })),
     excerpt: text,
+    source: { text, offset: 0 },
     endpoint: { name: "", model: "" },
   });
 }
@@ -608,22 +609,42 @@ export function voiceTypeOf(said: unknown): VoiceType | undefined {
   return Object.keys(out).length ? out : undefined;
 }
 
-const Fact = v.object({ kind: v.string(), text: v.string() });
+const Fact = v.object({
+  kind: v.string(),
+  text: v.string(),
+  evidence: v.optional(v.string()),
+  sourceIds: v.optional(
+    v.pipe(
+      v.array(v.pipe(v.number(), v.safeInteger(), v.minValue(1))),
+      v.minLength(1),
+      v.maxLength(5),
+    ),
+  ),
+});
 export const FACT_MAX = 200;
 const FACTS_MAX = 8;
 
-/** The readable facts: a known kind and some text, once each, at most `FACTS_MAX`. */
 /** A note's readable facts: a known kind, some text, once each, at most `FACTS_MAX`. */
 export function factsOf(said: unknown): NonNullable<PromptCastMember["facts"]> {
   if (!Array.isArray(said)) return [];
-  const out = new Map<string, { kind: FactKind; text: string }>();
+  const out = new Map<
+    string,
+    { kind: FactKind; text: string; sourceIds?: number[]; evidence?: string }
+  >();
   for (const item of said) {
     const read = v.safeParse(Fact, item);
     if (!read.success) continue;
     const kind = listed(FACT_KINDS, read.output.kind);
     const text = oneLine(read.output.text).slice(0, FACT_MAX);
     const key = `${kind}\n${text.toLowerCase()}`;
-    if (kind && text && !out.has(key)) out.set(key, { kind, text });
+    const evidence = read.output.evidence && oneLine(read.output.evidence);
+    if (kind && text && !out.has(key))
+      out.set(key, {
+        kind,
+        text,
+        ...(read.output.sourceIds ? { sourceIds: read.output.sourceIds } : {}),
+        ...(evidence && evidence.length <= 1000 ? { evidence } : {}),
+      });
   }
   return [...out.values()].slice(0, FACTS_MAX);
 }

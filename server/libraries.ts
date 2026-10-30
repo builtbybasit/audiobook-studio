@@ -142,7 +142,7 @@ export function openLibrary(options: LibraryOptions): Library {
       transcribe: transcribeHandler(given.transcription, files, gate),
       effects: effectsHandler(options.effects, files),
       facts: factsHandler(providers.scripting),
-      profiles: profilesHandler(providers.scripting),
+      profiles: profilesHandler(providers.scripting, gate),
     },
     { log },
   );

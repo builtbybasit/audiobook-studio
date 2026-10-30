@@ -75,6 +75,9 @@ export const characterFacts = sqliteTable(
     chapterId: integer("chapter_id").notNull(),
     kind: text("kind").$type<FactKind>().notNull(),
     text: text("text").notNull(),
+    /** Original paragraph snapshots or a checked legacy excerpt; null for older facts. */
+    evidence: text("evidence"),
+    sourceIds: text("source_ids", { mode: "json" }).$type<number[]>(),
   },
   (t) => [
     foreignKey({

@@ -17,6 +17,7 @@ import { readEndpoints, readProfiles } from "~/db/endpoints";
 import * as library from "~/db/library";
 import { badRequest, fail, notFound } from "~/lib/errors";
 import { ProviderError } from "~/providers/http";
+import type { SpeechGate } from "~/providers/gate";
 import type { ScriptingProvider } from "~/providers/scripting";
 import { scriptTarget } from "~/providers/target";
 import { assertWithinBudget } from "~/usage/budget";
@@ -117,6 +118,7 @@ export async function suggestVoicesFor(
   bookId: string,
   request: { profile: string; speakers: string[] },
   signal: AbortSignal,
+  gate?: SpeechGate,
 ): Promise<VoiceSuggestions> {
   const book = library.getBook(db, bookId);
   if (!book) throw notFound("No such book");
@@ -132,7 +134,17 @@ export async function suggestVoicesFor(
   if (!provider.ask) throw badRequest(`${provider.name} cannot suggest voices`);
   // the picks go ahead on the profiles as they stand if this fails
   try {
-    await rewriteProfiles(db, provider, bookId, profile.id, names, signal);
+    await rewriteProfiles(
+      db,
+      provider,
+      bookId,
+      profile.id,
+      names,
+      signal,
+      undefined,
+      undefined,
+      gate,
+    );
   } catch {
     if (signal.aborted) throw signal.reason;
   }

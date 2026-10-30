@@ -59,11 +59,12 @@ async function start() {
       Refresh profiles for this book
       <UiHint
         label="refreshing profiles"
-        text="Each scripted chapter in the range is read again for lasting facts about its speakers, then the profiles of speakers with new facts are rewritten. Scripts and voices don’t change."
+        text="The original prose of each scripted chapter in the range is read for lasting, quoted facts about characters who speak or are mentioned, then their profiles are rewritten. Scripts and voices don’t change."
       />
     </DialogTitle>
     <DialogDescription class="sr-only">
-      Read scripted chapters again for cast facts, then rewrite the speakers’ profiles.
+      Read the original prose for cast facts and supporting excerpts, then rewrite the character
+      profiles.
     </DialogDescription>
 
     <div class="flex items-center gap-2 text-xs">

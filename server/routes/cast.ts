@@ -29,6 +29,7 @@ import { BookParam, IdParam } from "~/lib/http";
 import { CharacterSchema, ChapterLinesSchema, LexEntrySchema } from "~/lib/schemas";
 import { validate } from "~/lib/validate";
 import { endpointScriptingProvider } from "~/providers/endpointScripting";
+import type { SpeechGate } from "~/providers/gate";
 import type { ScriptingProvider } from "~/providers/scripting";
 
 const NameParam = v.object({ id: v.string(), name: v.pipe(v.string(), v.nonEmpty()) });
@@ -89,6 +90,7 @@ export function castRoutes(
   scripting: ScriptingProvider = endpointScriptingProvider(),
   /** reads wiki pages; the network by default */
   fetch?: FetchLike,
+  gate?: SpeechGate,
 ): Hono<PinoEnv> {
   const app = new Hono<PinoEnv>();
 
@@ -113,6 +115,7 @@ export function castRoutes(
           c.req.valid("param").id,
           c.req.valid("json"),
           c.req.raw.signal,
+          gate,
         )) satisfies VoiceSuggestions,
       ),
   );

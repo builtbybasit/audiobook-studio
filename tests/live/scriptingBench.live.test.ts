@@ -5,6 +5,7 @@
 // An entry is `base URL|model|reasoning`; chat-completions takes `SCRIPTING_PROVIDER_KEY`.
 // `BENCH_CASES` picks excerpts by id (`inn,letter`); `BENCH_PROMPT` names a `{"system","user"}`
 // JSON file to send instead of the built-in prompt.
+// Pool: BENCH_POOL, else SCRIPTING_PROVIDER_CONCURRENCY, else 24.
 import { expect, test } from "bun:test";
 
 import type { PromptTemplate, ReasoningEffort } from "@/types";
@@ -12,10 +13,11 @@ import { BUILT_IN_PROMPT, renderPrompt } from "@/lib/prompt";
 import { endpointScriptingProvider } from "~/providers/endpointScripting";
 import type { ScriptTarget } from "~/providers/scripting";
 import { LIVE_CASES, problemsOf, type LiveCase } from "../support/liveExcerpt";
+import { liveScriptingConcurrency } from "../support/liveScripting";
 
 const env = process.env;
 const RUNS = Number(env.BENCH_RUNS) || 10;
-const POOL = Number(env.BENCH_POOL) || 24;
+const POOL = Number(env.BENCH_POOL) || (env.LIVE ? liveScriptingConcurrency(env, 24) : 24);
 const picked = env.BENCH_CASES?.split(",").map((s) => s.trim());
 const cases = LIVE_CASES.filter((c) => !picked || picked.includes(c.id));
 const template: PromptTemplate = env.BENCH_PROMPT

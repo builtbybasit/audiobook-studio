@@ -1,12 +1,16 @@
-// Cast profiles: `facts` jobs read a scripted chapter again for its speakers' facts, and the
+// Cast profiles: `facts` jobs read the original prose for character facts and evidence; the
 // book's `profiles` job rewrites every stale profile once its scripting and fact reading are done.
 import * as v from "valibot";
 
-import type { Job, Segment } from "@/types";
-import { FACT_KINDS, NARRATOR } from "@/lib/cast";
+import type { Job } from "@/types";
+import { chapterCast, castNameFor, FACT_KINDS, NARRATOR } from "@/lib/cast";
 import { chapterNumbers } from "@/lib/chapterNumber";
 import { tokenEstimate } from "@/lib/scripting";
 import { noUsage, rewriteProfiles, staleProfiles, tally } from "~/cast/profiles";
+import { groundedFacts } from "~/cast/facts";
+import { numberedParagraphs, paragraphsIn, sourceParagraphs } from "@/lib/sourceParagraphs";
+import { plainText } from "~/epub/markdown";
+import { chunksOf, beforeOf } from "~/script/chunks";
 import { readCast } from "~/db/cast";
 import type { Db } from "~/db/client";
 import { readProfiles } from "~/db/endpoints";
@@ -18,6 +22,7 @@ import type { JobContext, JobHandler, Runner } from "~/jobs/runner";
 import { notFound } from "~/lib/errors";
 import { FACT_MAX, factsOf } from "~/providers/chatScripting";
 import { ProviderError } from "~/providers/http";
+import type { SpeechGate } from "~/providers/gate";
 import type { ScriptingProvider } from "~/providers/scripting";
 import { scriptTarget } from "~/providers/target";
 import { assertWithinBudget } from "~/usage/budget";
@@ -34,7 +39,7 @@ export function enqueueProfiles(db: Db, bookId: string, profile: string): void {
   });
 }
 
-export function profilesHandler(provider: ScriptingProvider): JobHandler {
+export function profilesHandler(provider: ScriptingProvider, gate: SpeechGate): JobHandler {
   return {
     async run(ctx: JobContext): Promise<void> {
       const { job, db, signal } = ctx;
@@ -63,6 +68,7 @@ export function profilesHandler(provider: ScriptingProvider): JobHandler {
           queue.setCastRun(db, job.id, { profilesRun: run });
         },
         run.usage,
+        gate,
       );
       queue.setCastRun(db, job.id, {
         profilesRun: {
@@ -92,10 +98,12 @@ export function profilesHandler(provider: ScriptingProvider): JobHandler {
 
 // the rules the scripting prompt gives its cast notes' facts, in the same words
 const SYSTEM = [
-  "You read one chapter of a novel, already split into lines by speaker, and note what it tells about some of its speakers.",
-  'For each speaker named, "facts": lasting things the chapter states or clearly shows about them, each {"kind": "role", "background", "relationship", "personality" or "voice", "text": one short sentence}.',
-  "How they act in one scene, such as whispering while hiding, is a direction, not a fact. Never guess. [] when there are none.",
-  "Answer only with the JSON object, one entry per speaker, named as given.",
+  "Read the original prose for lasting character facts, including non-speaking characters. Never invent.",
+  "Resolve dialogue ownership, pronouns and titles from narration and previous context. A nearby name need not be the speaker. Attribute reported facts to their subject, not the reporter; preserve genuine uncertainty.",
+  "A reaction like 'X looked puzzled' is not a speech tag. Follow the ongoing question and answer; omit uncertain attribution.",
+  "Facts: {kind, text, sourceIds}. Kinds: role, background, relationship, personality, voice. Text: one short sentence. sourceIds: 1–5 integer IDs from [P#] labels supporting the claim and its subject. Cite the claim's paragraph, plus context if needed. Do not quote text; previous prose is context only.",
+  "Include defining abilities and limitations. Distinguish past roles from current ones. Personality needs habits or repeated behavior; voice needs lasting sound or habitual speech. Omit isolated reactions and one-off whispers.",
+  "Return the schema's JSON only, every supplied speaker named exactly, facts: [] when none.",
 ].join("\n");
 
 const SCHEMA = {
@@ -116,10 +124,16 @@ const SCHEMA = {
             items: {
               type: "object",
               additionalProperties: false,
-              required: ["kind", "text"],
+              required: ["kind", "text", "sourceIds"],
               properties: {
                 kind: { type: "string", enum: [...FACT_KINDS] },
                 text: { type: "string" },
+                sourceIds: {
+                  type: "array",
+                  items: { type: "integer", minimum: 1 },
+                  minItems: 1,
+                  maxItems: 5,
+                },
               },
             },
           },
@@ -129,43 +143,112 @@ const SCHEMA = {
   },
 };
 
-const Said = v.looseObject({ speaker: v.string(), facts: v.unknown() });
+const Said = v.looseObject({ speaker: v.string(), facts: v.array(v.unknown()) });
 
-/** The asked-about speakers' readable facts, by the scripting notes' rules (`factsOf`). */
-function factsIn(said: unknown, speakers: ReadonlySet<string>): NewFact[] {
+class InvalidFacts extends Error {}
+
+/** A malformed or ungrounded reply must not erase the chapter's existing evidence. */
+function factsIn(
+  said: unknown,
+  speakers: ReadonlySet<string>,
+  source: string,
+  allowedIds: ReadonlySet<number>,
+): NewFact[] {
   const list = (said as { speakers?: unknown } | null)?.speakers;
-  return (Array.isArray(list) ? list : []).flatMap((item) => {
+  if (!Array.isArray(list)) throw new InvalidFacts("The model did not return character facts");
+  const answered = new Set<string>();
+  const out: NewFact[] = [];
+  for (const item of list) {
     const read = v.safeParse(Said, item);
-    const speaker = read.success ? read.output.speaker.trim() : "";
-    return read.success && speakers.has(speaker)
-      ? factsOf(read.output.facts).map((f) => ({ speaker, ...f }))
-      : [];
-  });
+    if (!read.success) throw new InvalidFacts("The model returned an invalid character fact");
+    const speaker = castNameFor(
+      read.output.speaker.trim(),
+      [...speakers].map((name) => ({ name })),
+    );
+    if (!speakers.has(speaker)) continue;
+    if (read.output.facts.some((f) => factsOf([f]).length !== 1))
+      throw new InvalidFacts(`The model returned an invalid fact for ${speaker}`);
+    const facts = factsOf(read.output.facts);
+    if (facts.some((f) => !f.sourceIds?.length))
+      throw new InvalidFacts(`Missing sourceIds for ${speaker}`);
+    const grounded = groundedFacts(facts, source, allowedIds);
+    if (grounded.length !== facts.length || (read.output.facts.length && !facts.length)) {
+      const bad = facts.find((f) => !groundedFacts([f], source, allowedIds).length);
+      throw new InvalidFacts(
+        `Invalid sourceIds for ${speaker}: ${JSON.stringify(bad?.sourceIds ?? [])}. Cite only [P#] labels shown in Original prose`,
+      );
+    }
+    answered.add(speaker);
+    out.push(...grounded.map((f) => ({ speaker, ...f })));
+  }
+  if ([...speakers].some((s) => !answered.has(s)))
+    throw new InvalidFacts("The model left out a requested character; existing facts were kept");
+  return out;
 }
 
-/** What a simulated profile answers: each speaker's first narration naming them, as their role. */
-function simulatedFacts(segs: readonly Segment[], speakers: readonly string[]) {
+/** Deterministic, source-backed sample for offline runs. */
+function simulatedFacts(
+  source: string,
+  speakers: readonly string[],
+  allowedIds: ReadonlySet<number>,
+) {
   return {
     speakers: speakers.map((speaker) => {
-      const said = segs.find((s) => s.type === "narration" && s.text.includes(speaker));
-      return { speaker, facts: said ? [{ kind: "role", text: said.text.slice(0, FACT_MAX) }] : [] };
+      const paragraph = sourceParagraphs(source).find(
+        (p) => allowedIds.has(p.id) && p.text.includes(speaker),
+      );
+      return {
+        speaker,
+        facts: paragraph
+          ? [{ kind: "role", text: paragraph.text.slice(0, FACT_MAX), sourceIds: [paragraph.id] }]
+          : [],
+      };
     }),
   };
 }
 
-/** The chapter's script as the model reads it; site text and notes are not the story. */
-const scriptText = (segs: readonly Segment[]): string =>
-  segs
-    .filter((s) => s.type !== "watermark" && s.type !== "note")
-    .map((s) => `${s.speaker}${s.type === "thought" ? " (thinks)" : ""}: ${s.text}`)
-    .join("\n");
+function sourceOf(db: Db, bookId: string, chapterId: number): string {
+  const body = library.getChapterBody(db, bookId, chapterId);
+  if (body == null) throw notFound("The chapter has no original prose");
+  return plainText(body);
+}
 
-/** Who a facts job asks about: the chapter's speakers but the Narrator, majors only if asked. */
-function speakersOf(db: Db, bookId: string, segs: readonly Segment[], major: boolean): string[] {
-  const here = new Set(segs.map((s) => s.speaker));
-  return readCast(db, bookId)
-    .filter((c) => c.name !== NARRATOR && here.has(c.name) && (!major || c.major))
-    .map((c) => c.name);
+/** Names/aliases mentioned in prose plus existing speakers for implicit references. */
+function speakersOf(db: Db, bookId: string, chapterId: number, source: string, major: boolean) {
+  const recent = new Set(readScript(db, bookId, chapterId).map((s) => s.speaker));
+  return chapterCast(readCast(db, bookId), source, recent).filter(
+    (c) => c.name !== NARRATOR && c.name !== "Unknown" && (!major || c.major),
+  );
+}
+
+/** The same bounded source context is used for execution and the budget estimate. */
+function factRequests(
+  db: Db,
+  bookId: string,
+  chapterId: number,
+  source: string,
+  p: Parameters<typeof chunksOf>[1],
+  major: boolean,
+) {
+  const previous = plainText(library.previousChapterBody(db, bookId, chapterId)).slice(-6000);
+  const cast = speakersOf(db, bookId, chapterId, `${previous}\n${source}`, major);
+  const speakers = cast.map((c) => c.name);
+  const names = cast
+    .map((c) => c.name + (c.aliases.length ? ` (also called ${c.aliases.join(", ")})` : ""))
+    .join(", ");
+  const chunks = chunksOf(source, p);
+  return {
+    speakers,
+    requests: (speakers.length ? chunks : []).map((chunk, index) => {
+      const before = [previous, beforeOf(chunks, index)].filter(Boolean).join("\n\n");
+      const offset = chunks.slice(0, index).join("").length;
+      return {
+        chunk,
+        allowedIds: new Set(paragraphsIn(source, offset, chunk.length).map((p) => p.id)),
+        user: `Characters: ${names}\n\n${before ? `Previous prose (context only):\n${before}\n\n` : ""}Original prose:\n${numberedParagraphs(source, offset, chunk.length)}`,
+      };
+    }),
+  };
 }
 
 export function factsHandler(provider: ScriptingProvider): JobHandler {
@@ -181,58 +264,75 @@ export function factsHandler(provider: ScriptingProvider): JobHandler {
         throw new Error(`There is no scripting endpoint “${queued?.profile ?? ""}”`);
       if (!provider.ask) throw new Error(`${provider.name} cannot read cast facts`);
 
-      const segs = readScript(db, job.bookId, job.chapterId);
-      const speakers = speakersOf(db, job.bookId, segs, queued.major);
+      const source = sourceOf(db, job.bookId, job.chapterId);
+      const { speakers, requests } = factRequests(
+        db,
+        job.bookId,
+        job.chapterId,
+        source,
+        p,
+        queued.major,
+      );
       let facts: NewFact[] = [];
       const usage = noUsage();
-      if (speakers.length) {
-        const user = `Speakers: ${speakers.join(", ")}\n\nThe chapter:\n${scriptText(segs)}`;
-        // ponytail: one request per chapter; split with `chunksOf` if chapters outgrow a model
-        const reserve = tokenEstimate(SYSTEM + user, p).reserve;
-        assertWithinBudget(db, job.bookId, {
-          kind: "scripting",
-          cost: reserve,
-          jobId: job.id,
-          what: "reading this chapter's facts",
-          requests: [{ endpoint: p.id, cost: reserve }],
-        });
-        const money = dispatch(db, {
-          kind: "scripting",
-          endpoint: p,
-          work: {
-            bookId: job.bookId,
-            chapterUid: uid,
-            label: "Cast facts",
-            queuedAt: job.queuedAt,
-          },
-          hold: reserve,
-        });
-        try {
-          const said = await provider.ask({
-            system: SYSTEM,
-            user,
-            schema: SCHEMA,
-            target: scriptTarget(db, p),
-            signal,
-            sent: (report) => tally(usage, report, money.sent(report)),
-            simulated: simulatedFacts(segs, speakers),
+      for (const { allowedIds, user } of requests) {
+        let correction = "";
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const prompt = user + correction;
+          const reserve = tokenEstimate(SYSTEM + prompt, p).reserve;
+          assertWithinBudget(db, job.bookId, {
+            kind: "scripting",
+            cost: reserve,
+            jobId: job.id,
+            what: "reading this chapter's facts",
+            requests: [{ endpoint: p.id, cost: reserve }],
           });
-          facts = factsIn(said, new Set(speakers));
-        } catch (e) {
-          if (signal.aborted) throw signal.reason;
-          if (e instanceof ProviderError) throw new Error(e.message, { cause: e });
-          throw e;
-        } finally {
-          money.release();
-          // kept when the request failed, too
-          queue.setCastRun(db, job.id, {
-            factsRun: { ...queued, speakers: speakers.length, usage },
+          const money = dispatch(db, {
+            kind: "scripting",
+            endpoint: p,
+            work: {
+              bookId: job.bookId,
+              chapterUid: uid,
+              label: "Cast facts",
+              queuedAt: job.queuedAt,
+            },
+            hold: reserve,
           });
+          try {
+            const said = await provider.ask({
+              system: SYSTEM,
+              user: prompt,
+              schema: SCHEMA,
+              target: scriptTarget(db, p),
+              signal,
+              sent: (report) => tally(usage, report, money.sent(report)),
+              simulated: simulatedFacts(source, speakers, allowedIds),
+            });
+            facts.push(...factsIn(said, new Set(speakers), source, allowedIds));
+            break;
+          } catch (e) {
+            if (signal.aborted) throw signal.reason;
+            if (e instanceof InvalidFacts && attempt === 0) {
+              correction = `\n\nYour last reply failed validation: ${e.message}. Return complete JSON for every speaker; facts: [] when none. Use integer sourceIds, not quotations.`;
+              ctx.note("Retrying invalid character facts", "warning", { reason: e.message });
+              continue;
+            }
+            if (e instanceof ProviderError) throw new Error(e.message, { cause: e });
+            throw e;
+          } finally {
+            money.release();
+            // kept when the request failed, too
+            queue.setCastRun(db, job.id, {
+              factsRun: { ...queued, speakers: speakers.length, usage },
+            });
+          }
         }
       }
       // the chapter's lane keeps a re-script out while this runs; major only keeps the others'
       const saved = db.transaction((tx) => {
         const at = library.locateChapter(tx, uid);
+        if (at && plainText(library.getChapterBody(tx, at.bookId, at.id) ?? "") !== source)
+          throw new Error("The chapter source changed while facts were read; refresh again");
         return at
           ? replaceChapterFacts(tx, at.bookId, at.id, facts, queued.major ? speakers : undefined)
           : 0;
@@ -248,8 +348,8 @@ export function factsHandler(provider: ScriptingProvider): JobHandler {
 
 /**
  * One facts job per scripted kept chapter whose reading number is in `from`..`to` (all when not
- * given), as one run; a chapter already being read is skipped. The whole run's worst case must fit
- * the budget or nothing is queued. Returns how many were queued.
+ * given), as one run; a chapter already being read is skipped. The initial requests must fit
+ * the budget or nothing is queued; any correction is checked again before sending. Returns how many were queued.
  */
 export function enqueueFacts(
   db: Db,
@@ -275,9 +375,11 @@ export function enqueueFacts(
       !queue.activeJob(db, "facts", bookId, c.id)
     );
   });
-  const holds = targets.map(
-    (c) => tokenEstimate(SYSTEM + scriptText(readScript(db, bookId, c.id)), p).reserve,
-  );
+  const holds = targets.map((c) => {
+    const source = sourceOf(db, bookId, c.id);
+    const { requests } = factRequests(db, bookId, c.id, source, p, major);
+    return requests.reduce((sum, { user }) => sum + tokenEstimate(SYSTEM + user, p).reserve, 0);
+  });
   if (targets.length)
     assertWithinBudget(db, bookId, {
       kind: "scripting",

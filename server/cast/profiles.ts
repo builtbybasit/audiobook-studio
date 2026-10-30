@@ -56,6 +56,7 @@ const SYSTEM = [
   "- Only what the profile and the facts say. Never invent or guess.",
   "- Later facts correct earlier impressions: where they disagree, the later one stands.",
   "- Who they are, not what happens to them: no events, deaths or reveals, and nothing they do in only one scene. Keep defining limits, such as being unable to lie.",
+  "- A temporary state in a fact (ill, drugged, afraid, under a spell, acting a part) is not their personality: leave it out.",
   `- "age": ${AGES.join(", ")} or unknown.`,
   `- "voiceType": pitch (${PITCHES.join(", ")}) within their gender, texture (${TEXTURES.join(", ")}), up to 3 delivery words from: ${DELIVERIES.join(", ")}. Null for anything the facts do not suggest.`,
   "Answer only with the JSON object, one entry per speaker, named as given.",

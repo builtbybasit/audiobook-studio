@@ -100,7 +100,7 @@ export function profilesHandler(provider: ScriptingProvider, gate: SpeechGate): 
 const SYSTEM = [
   "You read one chapter of a novel, its paragraphs labelled [P#], and note what it tells about some of its characters, speaking or not.",
   'For each character named, "facts": lasting things the chapter states or clearly shows about them, one trait each: {"kind": "role", "background", "relationship", "personality" or "voice", "text": one short sentence, "sourceIds": the [P#] numbers of the 1–5 paragraphs that show it}.',
-  "How they act in one scene, such as whispering while hiding, is a direction, not a fact. A fact someone tells about another belongs to that other. Never guess. [] when there are none.",
+  "How they act in one scene, such as whispering while hiding, is a direction, not a fact. A state of the moment, such as illness, drugs, fear, injury, a spell or an act, is not a trait: a trait is what holds when they are well and themselves. A fact someone tells about another belongs to that other. Never guess. [] when there are none.",
   "Previous prose is context only: cite the chapter's paragraphs.",
   "Answer only with the JSON object, one entry per character, named as given.",
 ].join("\n");

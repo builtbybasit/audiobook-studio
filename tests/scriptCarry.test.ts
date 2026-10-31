@@ -118,7 +118,10 @@ describe("what a script file carries", () => {
         fill: [{ name: "Clerk", age: "elderly", profile }],
       },
     });
-    plan.chapters[0].facts = [{ speaker: "Operator", kind: "role", text: "Runs the exchange." }];
+    plan.chapters[0].facts = [
+      { speaker: "Operator", kind: "role", text: "Runs the exchange." },
+      { speaker: "Operator", kind: "background", text: "Wears a headset.", known: true },
+    ];
     useTransferStore().plans[id] = plan;
     await useTransferStore().apply(id, [1]);
 
@@ -127,7 +130,9 @@ describe("what a script file carries", () => {
     expect(cast.find((c) => c.name === "Clerk")).toMatchObject({ age: "elderly", profile });
     expect(editedOf(api.db, id).get("Operator")).toEqual(["age"]);
     expect(editedOf(api.db, id).get("Clerk")).toEqual([]);
-    expect(readFacts(api.db, id, "Operator").map((f) => f.text)).toEqual(["Runs the exchange."]);
+    expect(readFacts(api.db, id, "Operator", { live: true }).map((f) => f.text)).toEqual([
+      "Runs the exchange.",
+    ]);
   });
 
   test("a ticked new effect is made and worn; an unticked one is left off everywhere", async () => {

@@ -78,6 +78,10 @@ export const characterFacts = sqliteTable(
     /** the cited paragraphs' text, kept with the fact; null for older facts */
     evidence: text("evidence"),
     sourceIds: text("source_ids", { mode: "json" }).$type<number[]>(),
+    /** judged to add nothing a profile needs (a repeat or a passing detail): hidden, never folded */
+    known: integer("known", { mode: "boolean" }).notNull().default(false),
+    /** the live fact this one says again, when it is a repeat */
+    repeatOf: integer("repeat_of"),
   },
   (t) => [
     foreignKey({

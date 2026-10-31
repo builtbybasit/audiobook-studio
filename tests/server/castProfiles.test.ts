@@ -1,5 +1,6 @@
-// Cast profiles are rebuilt from source evidence, keep the user's hand-set tags, and skip disguises; facts jobs re-read scripted chapters;
-// the facts routes and the refresh run, whose jobs count their requests' tokens.
+// Cast profiles are rebuilt from source evidence, keep the user's hand-set tags, and give personas
+// their own; facts that add nothing are marked known and left out; facts jobs re-read scripted
+// chapters; the facts routes and the refresh run, whose jobs count their requests' tokens.
 import { describe, expect, test } from "bun:test";
 
 import type { CastFact, Character, FactKind, Job } from "@/types";
@@ -7,7 +8,14 @@ import { SIMULATED_BASE_URL, SIMULATED_SCRIPTING_MODEL } from "@/lib/providers";
 import { newProfile } from "@/lib/scripting";
 import { rewriteProfiles, staleProfiles } from "~/cast/profiles";
 import { getCharacter } from "~/db/cast";
-import { clearBookFacts, deleteFact, readFacts, replaceChapterFacts } from "~/db/facts";
+import {
+  clearBookFacts,
+  deleteFact,
+  profileRows,
+  readFacts,
+  replaceChapterFacts,
+} from "~/db/facts";
+import { enqueueProfiles } from "~/jobs/profiles";
 import { chapterIds } from "~/db/library";
 import { fakeScriptingProvider } from "~/providers/fake";
 import type { AskInput, ScriptingProvider } from "~/providers/scripting";
@@ -204,8 +212,8 @@ describe("rewriting profiles", () => {
     await rewrite(api, id, provider, ["Mara"]);
     add(ids[1], "Mara", "personality", "Wary of strangers.");
     await rewrite(api, id, provider, ["Mara"]);
-    expect(asked[1].user).toContain("- personality: Wary of strangers.");
-    expect(asked[1].user).not.toContain("- role: A lamplighter.");
+    expect(asked[1].user).toContain("personality: Wary of strangers.");
+    expect(asked[1].user).not.toContain("role: A lamplighter.");
     expect(getCharacter(api.db, id, "Mara")?.profile).toMatchObject({
       who: "A lamplighter.",
       personality: "Wary of strangers.",
@@ -226,7 +234,7 @@ describe("rewriting profiles", () => {
     add(ids[1], "Mara", "role", "She is blind");
     const { provider, asked } = asking();
     await rewrite(api, id, provider, ["Mara"]);
-    expect(asked[0].user.match(/- role:/g)).toHaveLength(1);
+    expect(asked[0].user.match(/ role:/g)).toHaveLength(1);
     const before = getCharacter(api.db, id, "Mara")?.profile;
     add(ids[2], "Mara", "role", "Is blind.");
     await rewrite(api, id, provider, ["Mara"]);
@@ -235,7 +243,7 @@ describe("rewriting profiles", () => {
     expect(getCharacter(api.db, id, "Mara")?.profile).toEqual(before);
   });
 
-  test("corrects age only where the user did not set it, keeps what the model doesn't know, and skips disguises", async () => {
+  test("corrects age only where the user did not set it, keeps what the model doesn't know, and profiles a persona", async () => {
     const { api, id, ids, add, set } = await setup();
     for (const name of ["Mara", "Tom"]) add(ids[0], name, "role", `${name} is here.`);
     add(ids[0], "Narrator", "role", "Tells the story.");
@@ -261,12 +269,92 @@ describe("rewriting profiles", () => {
 
     set(`persona_of = 'Mara' where name = 'Tom'`);
     add(ids[0], "Tom", "role", "Mara in a mask.");
-    expect((await rewrite(api, id, provider, ["Tom"])).rewritten).toEqual([]);
-    expect(asked).toHaveLength(1);
+    expect((await rewrite(api, id, provider, ["Tom"])).rewritten).toEqual(["Tom"]);
+    expect(asked[1].user).toContain("Mara in a mask.");
     expect(asked[0].user).not.toContain("## Narrator");
     expect(asked[0].user).toContain("teen");
     expect(asked[0].user).not.toContain("elderly");
     expect(asked[0].user).not.toContain("husky");
+  });
+
+  test("a passing detail the fold finds is marked known and left out of the rebuild; a fact others repeat stays", async () => {
+    const { api, id, ids, add, set } = await setup(testApi(), ["One", "Two"]);
+    add(ids[0], "Mara", "role", "A lamplighter.");
+    add(ids[1], "Mara", "background", "Carries a lantern.");
+    add(ids[1], "Mara", "role", "Lights the lamps.");
+    api.db.run(
+      `update character_facts set known = 1, repeat_of = (select min(id) from character_facts) where text = 'Lights the lamps.'`,
+    );
+    const { provider, asked } = asking((input) => ({
+      profiles: (input.simulated as { profiles: object[] }).profiles.map((p) => ({
+        ...p,
+        known: ["F1", "F2", "F9", "lantern"],
+      })),
+    }));
+    await rewrite(api, id, provider, ["Mara"]);
+    const [lamplighter, lantern] = readFacts(api.db, id, "Mara");
+    expect(lamplighter.known).toBeUndefined();
+    expect(lantern.known).toBe(true);
+    set(`profile_rebuild = 1 where name = 'Mara'`);
+    await rewrite(api, id, provider, ["Mara"]);
+    expect(asked[1].user).toContain("A lamplighter.");
+    expect(asked[1].user).not.toContain("Carries a lantern.");
+  });
+});
+
+describe("compacting facts", () => {
+  test("a long list's repeats and passing details are marked; what is repeated stays live", async () => {
+    const answer = {
+      speakers: [
+        {
+          speaker: "Mara",
+          repeats: [
+            { fact: "F2", of: "F1" },
+            { fact: "F1", of: "F3" },
+            { fact: "F5", of: "F0" },
+          ],
+          known: ["F3", "F4", "F999", 7],
+        },
+      ],
+    };
+    const rec = asking((input) => (input.system.startsWith("You tidy") ? answer : input.simulated));
+    const { api, id, ids } = await setup(testApi({ scripting: rec.provider }));
+    api.db.transaction((tx) =>
+      replaceChapterFacts(
+        tx,
+        id,
+        ids[0],
+        Array.from({ length: 101 }, (_, i) => ({
+          speaker: "Mara",
+          kind: "background" as const,
+          text: `Detail ${i + 1}.`,
+        })),
+      ),
+    );
+    enqueueProfiles(api.db, id, "sim");
+    api.runner.kick();
+    await api.runner.idle();
+    const [f1, f2, f3, f4, f5] = readFacts(api.db, id, "Mara");
+    expect([f1, f3, f5].map((f) => f.known)).toEqual([undefined, undefined, undefined]);
+    expect(f2).toMatchObject({ known: true, repeatOf: f1.id });
+    expect(f4.known).toBe(true);
+    expect(f4.repeatOf).toBeUndefined();
+    expect(rec.asked.filter((a) => a.system.startsWith("You tidy"))).toHaveLength(1);
+  });
+
+  test("a repeat comes back live when what it repeats is scripted again", async () => {
+    const { api, id, ids, add } = await setup(testApi(), ["One", "Two"]);
+    add(ids[0], "Mara", "role", "Cannot lie.");
+    add(ids[1], "Mara", "role", "Never tells a lie.");
+    const [said, again] = readFacts(api.db, id, "Mara");
+    await rewrite(api, id, asking().provider, ["Mara"]);
+    api.db.run(
+      `update character_facts set known = 1, repeat_of = ${said.id} where id = ${again.id}`,
+    );
+    // the same words with a new id: only the repeat's return calls for a rebuild
+    add(ids[0], "Mara", "role", "Cannot lie.");
+    expect(readFacts(api.db, id, "Mara").find((f) => f.id === again.id)).toEqual(again);
+    expect(profileRows(api.db, id, ["Mara"])[0].profileRebuild).toBe(true);
   });
 });
 
@@ -315,16 +403,22 @@ describe("refreshing facts", () => {
 });
 
 describe("the facts routes", () => {
-  test("list a speaker's facts once each in reading order; deleting one takes its repeats", async () => {
-    const { api, id, ids, add } = await setup(testApi(), ["One", "Two", "Three"]);
+  test("list a speaker's facts once each in reading order, marks shown; deleting one takes its repeats", async () => {
+    const { api, id, ids, add } = await setup(testApi(), ["One", "Two", "Three", "Four"]);
     add(ids[2], "Mara", "voice", "Hoarse.");
     add(ids[1], "Mara", "role", "She is a lamplighter");
     add(ids[0], "Mara", "role", "Mara is a lamplighter.");
+    add(ids[3], "Mara", "role", "Lights the lamps.");
+    const first = readFacts(api.db, id, "Mara")[0];
+    api.db.run(
+      `update character_facts set known = 1, repeat_of = ${first.id} where text = 'Lights the lamps.'`,
+    );
     const url = `/api/books/${id}/characters`;
     const listed = await api.request<{ facts: CastFact[] }>(`${url}/Mara/facts`);
-    expect(listed.body.facts.map((f) => [f.text, f.copies])).toEqual([
-      ["Mara is a lamplighter.", 2],
-      ["Hoarse.", undefined],
+    expect(listed.body.facts.map((f) => [f.text, f.copies, f.known, f.repeatOf])).toEqual([
+      ["Mara is a lamplighter.", 2, undefined, undefined],
+      ["Hoarse.", undefined, undefined, undefined],
+      ["Lights the lamps.", undefined, true, first.id],
     ]);
     const left = await api.request<{ facts: CastFact[] }>(
       `${url}/facts/${listed.body.facts[0].id}`,

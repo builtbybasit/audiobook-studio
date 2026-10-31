@@ -2,7 +2,7 @@
 // What the record shows behind its spoiler button: the model's profile (read-only), the user's own
 // description that overrides it, and the facts the profile is written from. Mounted only once
 // shown, so the facts are read then.
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { Trash2 as RemoveIcon } from "@lucide/vue";
 
 import { deleteFact, useFacts } from "@/queries";
@@ -24,6 +24,20 @@ const { data } = useFacts(
   () => props.facts,
 );
 const facts = computed(() => (props.facts ? (data.value ?? []) : []));
+const showHidden = ref(false);
+const hidden = computed(() => facts.value.filter((f) => f.known).length);
+const shown = computed(() =>
+  showHidden.value ? facts.value : facts.value.filter((f) => !f.known),
+);
+// A live fact counts its own copies plus every hidden repeat of it.
+const counts = computed(() => {
+  const n = new Map<number, number>();
+  for (const f of facts.value) n.set(f.id, f.copies ?? 1);
+  for (const f of facts.value)
+    if (f.repeatOf !== undefined && n.has(f.repeatOf))
+      n.set(f.repeatOf, n.get(f.repeatOf)! + (f.copies ?? 1));
+  return n;
+});
 const parts = computed(() =>
   (
     [
@@ -77,12 +91,19 @@ const parts = computed(() =>
         />
       </div>
       <ul class="space-y-0.5 font-normal" :aria-label="`Facts about ${c.name}`">
-        <li v-for="f in facts" :key="f.id" class="flex items-start gap-1.5">
+        <li
+          v-for="f in shown"
+          :key="f.id"
+          class="flex items-start gap-1.5"
+          :class="{ 'opacity-50': f.known }"
+        >
           <span class="chip chip-off shrink-0">{{ f.kind }}</span>
           <div class="min-w-0 flex-1 leading-relaxed text-zinc-600 dark:text-zinc-300">
             <p>
               {{ f.text
-              }}<span v-if="f.copies" class="ml-1 text-xs text-zinc-400">×{{ f.copies }}</span>
+              }}<span v-if="counts.get(f.id)! > 1" class="ml-1 text-xs text-zinc-400"
+                >×{{ counts.get(f.id) }}</span
+              >
             </p>
             <details v-if="f.evidence" class="mt-1 text-xs">
               <summary class="cursor-pointer text-zinc-500">View source</summary>
@@ -107,6 +128,19 @@ const parts = computed(() =>
           </button>
         </li>
       </ul>
+      <div v-if="hidden" class="flex items-center gap-1 text-xs text-zinc-500">
+        <button
+          type="button"
+          class="hover:text-zinc-700 dark:hover:text-zinc-300"
+          @click="showHidden = !showHidden"
+        >
+          {{ showHidden ? "Hide" : "Show" }} {{ hidden }} hidden
+        </button>
+        <UiHint
+          label="hidden facts"
+          text="Judged a repeat or a passing detail, so the profile doesn’t use them."
+        />
+      </div>
     </div>
   </div>
 </template>

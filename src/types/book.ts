@@ -292,6 +292,10 @@ export interface CastFact {
   text: string;
   /** chapters that said the same; only on a list shown once each (`uniqueFacts`) */
   copies?: number;
+  /** judged to add nothing a profile needs: hidden by default, never folded again */
+  known?: true;
+  /** the live fact this one repeats */
+  repeatOf?: number;
 }
 
 /**

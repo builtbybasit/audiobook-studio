@@ -54,7 +54,7 @@ export function factsByChapter(db: Db | Tx, bookId: string): Map<number, ScriptF
     .where(eq(characterFacts.bookId, bookId))
     .orderBy(asc(characterFacts.id))
     .all();
-  for (const { chapterId, speaker, kind, text, evidence, sourceIds } of rows)
+  for (const { chapterId, speaker, kind, text, evidence, sourceIds, known, repeatOf } of rows)
     out.set(chapterId, [
       ...(out.get(chapterId) ?? []),
       {
@@ -63,6 +63,7 @@ export function factsByChapter(db: Db | Tx, bookId: string): Map<number, ScriptF
         text,
         ...(evidence ? { evidence } : {}),
         ...(sourceIds ? { sourceIds } : {}),
+        ...(known && repeatOf == null ? { known: true as const } : {}),
       },
     ]);
   return out;

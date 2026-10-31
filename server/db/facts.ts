@@ -1,5 +1,6 @@
 // Speakers' facts and the profiles written from them. A profile is stale when facts newer than
-// `profile_up_to` exist or `profile_rebuild` is set (facts went away: start over).
+// `profile_up_to` exist or `profile_rebuild` is set (facts went away: start over). A `known` fact
+// adds nothing a profile needs and is never folded; a repeat stands only while what it repeats does.
 import { and, asc, eq, gt, inArray, max, or } from "drizzle-orm";
 
 import type { Age, CastFact, CharacterProfile, FactKind, VoiceType } from "@/types";
@@ -12,6 +13,7 @@ export interface NewFact {
   text: string;
   evidence?: string;
   sourceIds?: number[];
+  known?: true;
 }
 
 const toFact = (r: typeof characterFacts.$inferSelect): CastFact => ({
@@ -22,6 +24,8 @@ const toFact = (r: typeof characterFacts.$inferSelect): CastFact => ({
   chapterId: r.chapterId,
   ...(r.evidence ? { evidence: r.evidence } : {}),
   ...(r.sourceIds ? { sourceIds: r.sourceIds } : {}),
+  ...(r.known ? { known: true as const } : {}),
+  ...(r.repeatOf != null ? { repeatOf: r.repeatOf } : {}),
 });
 
 /**
@@ -64,8 +68,8 @@ const markRebuild = (db: Db | Tx, bookId: string, names: readonly string[]): voi
 
 /**
  * One chapter's facts replaced by these (only `only`'s, when given); facts on names not in the cast
- * are dropped. Speakers who lost a fact the new set doesn't repeat get a rebuild. Returns how many
- * were saved.
+ * are dropped. Speakers who lost a fact the new set doesn't repeat get a rebuild, and so do those
+ * whose repeats of a removed fact come back. Returns how many were saved.
  */
 export function replaceChapterFacts(
   tx: Tx,
@@ -85,8 +89,29 @@ export function replaceChapterFacts(
   const key = (f: { speaker: string; kind: string; text: string }) =>
     `${f.speaker}\n${f.kind}\n${f.text.toLowerCase()}`;
   const kept = new Set(facts.map(key));
-  markRebuild(tx, bookId, [...new Set(old.filter((f) => !kept.has(key(f))).map((f) => f.speaker))]);
   tx.delete(characterFacts).where(where).run();
+  const revived = old.length
+    ? tx
+        .update(characterFacts)
+        .set({ known: false, repeatOf: null })
+        .where(
+          and(
+            eq(characterFacts.bookId, bookId),
+            inArray(
+              characterFacts.repeatOf,
+              old.map((f) => f.id),
+            ),
+          ),
+        )
+        .returning({ speaker: characterFacts.speaker })
+        .all()
+    : [];
+  markRebuild(tx, bookId, [
+    ...new Set([
+      ...old.filter((f) => !kept.has(key(f))).map((f) => f.speaker),
+      ...revived.map((f) => f.speaker),
+    ]),
+  ]);
   const cast = new Set(
     tx
       .select({ name: characters.name })
@@ -104,14 +129,20 @@ export function replaceChapterFacts(
       text: f.text,
       evidence: f.evidence ?? null,
       sourceIds: f.sourceIds ?? null,
+      known: f.known ?? false,
     }),
   );
   if (rows.length) tx.insert(characterFacts).values(rows).run();
   return rows.length;
 }
 
-/** In reading order; `after` = only facts with a higher id. */
-export function readFacts(db: Db | Tx, bookId: string, speaker: string, after = 0): CastFact[] {
+/** In reading order; `live`: only those not `known`. */
+export function readFacts(
+  db: Db | Tx,
+  bookId: string,
+  speaker: string,
+  { live = false } = {},
+): CastFact[] {
   return db
     .select()
     .from(characterFacts)
@@ -119,7 +150,7 @@ export function readFacts(db: Db | Tx, bookId: string, speaker: string, after = 
       and(
         eq(characterFacts.bookId, bookId),
         eq(characterFacts.speaker, speaker),
-        gt(characterFacts.id, after),
+        live ? eq(characterFacts.known, false) : undefined,
       ),
     )
     .orderBy(asc(characterFacts.chapterId), asc(characterFacts.id))
@@ -187,7 +218,37 @@ export function profileRows(db: Db | Tx, bookId: string, names: readonly string[
     .all();
 }
 
-/** Save only against the evidence and profile read before the model request. */
+/**
+ * These facts marked as adding nothing, each `repeatOf` the fact it says again. A fact others
+ * repeat stays live, or what they say would reach no rebuild.
+ */
+function markKnown(tx: Tx, marks: readonly { id: number; repeatOf?: number }[]): void {
+  if (!marks.length) return;
+  const repeated = new Set([
+    ...marks.flatMap((m) => (m.repeatOf ? [m.repeatOf] : [])),
+    ...tx
+      .select({ of: characterFacts.repeatOf })
+      .from(characterFacts)
+      .where(
+        inArray(
+          characterFacts.repeatOf,
+          marks.map((m) => m.id),
+        ),
+      )
+      .all()
+      .map((r) => r.of),
+  ]);
+  for (const { id, repeatOf } of marks.filter((m) => !repeated.has(m.id)))
+    tx.update(characterFacts)
+      .set({ known: true, ...(repeatOf ? { repeatOf } : {}) })
+      .where(eq(characterFacts.id, id))
+      .run();
+}
+
+/**
+ * Save only against the live facts and profile read before the model request, marking `known`
+ * among those facts.
+ */
 export function setProfile(
   db: Db,
   bookId: string,
@@ -197,6 +258,7 @@ export function setProfile(
   upTo: number,
   /** left out: kept as they are */
   tags: { age?: Age; voiceType?: VoiceType } = {},
+  known: readonly number[] = [],
 ): boolean {
   return db.transaction((tx) => {
     const current = profileRows(tx, bookId, [expected.name])[0];
@@ -204,9 +266,13 @@ export function setProfile(
     if (
       !current ||
       !Bun.deepEquals(current, expected) ||
-      !Bun.deepEquals(readFacts(tx, bookId, expected.name), facts)
+      !Bun.deepEquals(readFacts(tx, bookId, expected.name, { live: true }), facts)
     )
       return false;
+    markKnown(
+      tx,
+      known.map((id) => ({ id })),
+    );
     tx.update(characters)
       .set({
         profile,
@@ -223,7 +289,25 @@ export function setProfile(
   });
 }
 
-/** Whose fact it was, with its repeats in other chapters gone too; undefined when there was none. */
+/** Marks a compaction found, kept only if the speaker's live facts are still those it read. */
+export function markCompacted(
+  db: Db,
+  bookId: string,
+  speaker: string,
+  facts: readonly CastFact[],
+  marks: readonly { id: number; repeatOf?: number }[],
+): boolean {
+  return db.transaction((tx) => {
+    if (!Bun.deepEquals(readFacts(tx, bookId, speaker, { live: true }), facts)) return false;
+    markKnown(tx, marks);
+    return true;
+  });
+}
+
+/**
+ * Whose fact it was, with its copies in other chapters and what repeats them gone too; undefined
+ * when there was none.
+ */
 export function deleteFact(db: Db, bookId: string, id: number): string | undefined {
   return db.transaction((tx) => {
     const fact = tx
@@ -235,10 +319,22 @@ export function deleteFact(db: Db, bookId: string, id: number): string | undefin
     const { speaker } = fact;
     const c = profileRows(tx, bookId, [speaker])[0];
     const names = [speaker, ...(c?.aliases ?? [])];
-    const copies = readFacts(tx, bookId, speaker)
-      .filter((f) => factKey(f, names) === factKey(fact, names))
-      .map((f) => f.id);
-    tx.delete(characterFacts).where(inArray(characterFacts.id, copies)).run();
+    const all = readFacts(tx, bookId, speaker);
+    const gone = new Set(
+      all.filter((f) => factKey(f, names) === factKey(fact, names)).map((f) => f.id),
+    );
+    // a repeat may be repeated in turn
+    for (let more = true; more;) {
+      more = false;
+      for (const f of all)
+        if (f.repeatOf && gone.has(f.repeatOf) && !gone.has(f.id)) {
+          gone.add(f.id);
+          more = true;
+        }
+    }
+    tx.delete(characterFacts)
+      .where(inArray(characterFacts.id, [...gone]))
+      .run();
     markRebuild(tx, bookId, [speaker]);
     // the tags stay: the scripting notes may have given them
     if (c && !readFacts(tx, bookId, speaker).length)

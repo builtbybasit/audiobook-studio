@@ -442,6 +442,7 @@ test("a round trip carries line effects, speakers' effects and profiles, recaps,
       evidence: "Mara kept the ledger.",
       sourceIds: [2],
     },
+    { speaker: mara.name, kind: "background", text: "Owns a grey coat.", known: true },
   ];
   api.db.transaction((tx) => replaceChapterFacts(tx, id, 1, facts));
   const pacing = { line: 0.4, turn: 0.9, inlineShort: 0.3, inlineLong: 1 };

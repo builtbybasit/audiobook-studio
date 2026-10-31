@@ -348,6 +348,7 @@ const FactSchema = v.object({
   speaker: v.pipe(v.string(), v.trim(), v.nonEmpty("must name a speaker")),
   kind: v.picklist(FACT_KINDS),
   text: v.pipe(v.string(), v.trim(), v.nonEmpty("must not be empty"), v.maxLength(300)),
+  known: v.optional(v.literal(true)),
 });
 const HandSetSchema = v.array(v.picklist(["age", "voiceType"]));
 

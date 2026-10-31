@@ -34,6 +34,8 @@ export interface ScriptFileFact {
   speaker: string;
   kind: FactKind;
   text: string;
+  /** adds nothing a profile needs; a repeat goes out live, as what it repeats has no id in a file */
+  known?: true;
 }
 
 /** A speaker's fields set by hand, which a profile rewrite leaves alone. */

@@ -6,7 +6,7 @@ import { describe, expect, test } from "bun:test";
 import type { CastFact, Character, FactKind, Job } from "@/types";
 import { SIMULATED_BASE_URL, SIMULATED_SCRIPTING_MODEL } from "@/lib/providers";
 import { newProfile } from "@/lib/scripting";
-import { rewriteProfiles, staleProfiles } from "~/cast/profiles";
+import { compactFacts, rewriteProfiles, staleProfiles } from "~/cast/profiles";
 import { getCharacter } from "~/db/cast";
 import {
   clearBookFacts,
@@ -340,6 +340,41 @@ describe("compacting facts", () => {
     expect(f4.known).toBe(true);
     expect(f4.repeatOf).toBeUndefined();
     expect(rec.asked.filter((a) => a.system.startsWith("You tidy"))).toHaveLength(1);
+  });
+
+  test("asks past the book's count, not when off, and again only once the list grew by a quarter", async () => {
+    const rec = asking(() => ({ speakers: [{ speaker: "Mara", repeats: [], known: ["F1"] }] }));
+    const { api, id, ids } = await setup();
+    const facts = (n: number) =>
+      api.db.transaction((tx) =>
+        replaceChapterFacts(
+          tx,
+          id,
+          ids[0],
+          Array.from({ length: n }, (_, i) => ({
+            speaker: "Mara",
+            kind: "background" as const,
+            text: `Detail ${i + 1}.`,
+          })),
+        ),
+      );
+    const compact = () =>
+      compactFacts(api.db, rec.provider, id, "sim", ["Mara"], new AbortController().signal);
+    const tidies = () => rec.asked.filter((a) => a.system.startsWith("You tidy")).length;
+    api.db.run(`update books set compact_at = 40, compact_off = 1 where id = '${id}'`);
+    facts(41);
+    await compact();
+    expect(tidies()).toBe(0);
+    api.db.run(`update books set compact_off = null where id = '${id}'`);
+    await compact();
+    expect(tidies()).toBe(1);
+    // 40 left live, so it waits for 50
+    facts(49);
+    await compact();
+    expect(tidies()).toBe(1);
+    facts(51);
+    await compact();
+    expect(tidies()).toBe(2);
   });
 
   test("a repeat comes back live when what it repeats is scripted again", async () => {

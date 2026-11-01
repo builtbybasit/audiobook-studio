@@ -194,6 +194,7 @@ export type ProfileRow = Pick<
   | "edited"
   | "personaOf"
   | "masked"
+  | "compactedAt"
 >;
 
 /** What a profile rewrite reads of these speakers. */
@@ -212,6 +213,7 @@ export function profileRows(db: Db | Tx, bookId: string, names: readonly string[
       edited: characters.edited,
       personaOf: characters.personaOf,
       masked: characters.masked,
+      compactedAt: characters.compactedAt,
     })
     .from(characters)
     .where(and(eq(characters.bookId, bookId), inArray(characters.name, [...names])))
@@ -289,17 +291,25 @@ export function setProfile(
   });
 }
 
-/** Marks a compaction found, kept only if the speaker's live facts are still those it read. */
+/**
+ * Marks a compaction found and the `left` live facts it leaves, kept only if the speaker's live
+ * facts are still those it read.
+ */
 export function markCompacted(
   db: Db,
   bookId: string,
   speaker: string,
   facts: readonly CastFact[],
   marks: readonly { id: number; repeatOf?: number }[],
+  left: number,
 ): boolean {
   return db.transaction((tx) => {
     if (!Bun.deepEquals(readFacts(tx, bookId, speaker, { live: true }), facts)) return false;
     markKnown(tx, marks);
+    tx.update(characters)
+      .set({ compactedAt: left })
+      .where(and(eq(characters.bookId, bookId), eq(characters.name, speaker)))
+      .run();
     return true;
   });
 }

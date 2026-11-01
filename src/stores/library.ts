@@ -3,6 +3,7 @@
 // A removal has no Undo (nothing puts a book back), so its control asks first. Undoing a skip or
 // keep restores the recorded decisions via `setDecisions` rather than running the inverse rule.
 import { useQueryCache } from "@pinia/colada";
+import { COMPACT_AT } from "@/lib/cast";
 import { chapterNumbers, chapterRef } from "@/lib/chapterNumber";
 import { noticeGroups, plural, summarize } from "@/lib/contents";
 import { coverRefusal } from "@/lib/exports";
@@ -537,6 +538,21 @@ export const useLibraryStore = defineStore("library", {
         bookId,
         { exactCounts: on ? true : null },
         on ? "show exact counts" : "show rough counts",
+      );
+    },
+    /** Whether long fact lists are compacted, and past how many live facts per speaker. */
+    async setCompaction(bookId: string, on: boolean, at: number): Promise<void> {
+      const b = this.bookById(bookId);
+      const atOrNull = at === COMPACT_AT.default ? null : at;
+      if (!b || (!b.compactOff === on && (b.compactAt ?? null) === atOrNull)) return;
+      if (on) delete b.compactOff;
+      else b.compactOff = true;
+      if (atOrNull == null) delete b.compactAt;
+      else b.compactAt = atOrNull;
+      await this._writeSettings(
+        bookId,
+        { compactOff: on ? null : true, compactAt: atOrNull },
+        on ? "tidy long fact lists" : "stop tidying fact lists",
       );
     },
     /** The book's fan wiki, where "Fill from wiki" looks speakers up; null forgets it. */

@@ -715,6 +715,10 @@ export interface BookSettings {
   pronounceOff?: boolean | null;
   /** show exact line counts on the Cast page; `null` goes back to rough ones */
   exactCounts?: boolean | null;
+  /** stop compacting long fact lists; `null` compacts them again */
+  compactOff?: boolean | null;
+  /** live facts per speaker before compaction; `null` goes back to the default */
+  compactAt?: number | null;
   /** the book's fan wiki; `null` forgets it */
   wiki?: string | null;
   /** an effect's id or "none"; `null` follows the library's */
@@ -745,6 +749,8 @@ export function setBookSettings(db: Db | Tx, bookId: string, s: BookSettings): v
   if (s.autoTranscribe !== undefined) set.autoTranscribe = s.autoTranscribe;
   if (s.pronounceOff !== undefined) set.pronounceOff = s.pronounceOff;
   if (s.exactCounts !== undefined) set.exactCounts = s.exactCounts;
+  if (s.compactOff !== undefined) set.compactOff = s.compactOff;
+  if (s.compactAt !== undefined) set.compactAt = s.compactAt;
   if (s.wiki !== undefined) set.wiki = s.wiki;
   if (s.thoughts !== undefined) set.thoughts = s.thoughts;
   if (s.characterVoice !== undefined) set.characterVoice = s.characterVoice;

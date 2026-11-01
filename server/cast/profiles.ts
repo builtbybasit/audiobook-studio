@@ -14,11 +14,12 @@ import type {
   RequestRecord,
   VoiceType,
 } from "@/types";
-import { AGES, NARRATOR, castNameFor } from "@/lib/cast";
+import { AGES, COMPACT_AT, NARRATOR, castNameFor } from "@/lib/cast";
 import { tokenEstimate } from "@/lib/scripting";
 import { DELIVERIES, PITCHES, TEXTURES } from "@/lib/voiceProfile";
 import type { Db } from "~/db/client";
 import { readProfiles } from "~/db/endpoints";
+import { getBook } from "~/db/library";
 import {
   factKey,
   markCompacted,
@@ -45,8 +46,6 @@ const TOKENS_PER_SPEAKER = 350;
 // ponytail: characters stand in for input tokens; count tokens if batches overrun a model's window
 const CHARS_PER_ASK = 24_000;
 const FACTS_PER_FOLD = 150;
-/** more live facts than this and a speaker's list is compacted after the fold */
-const COMPACT_OVER = 100;
 /** each of the three parts; together about the 1000 characters a profile keeps to */
 const PART_MAX = 330;
 
@@ -565,9 +564,10 @@ export interface Compacted {
 }
 
 /**
- * Mark repeats and passing details among the live facts of those of `names` with more than
- * `COMPACT_OVER`, one request per batch of speakers. What a repeat says again stays live. Marks
- * land only on facts unchanged since the read; profiles are left as they are.
+ * Mark repeats and passing details among the live facts of those of `names` past the book's
+ * `compactAt`, unless it is off, one request per batch of speakers. A list is asked again only once
+ * it grew by a quarter of that since. What a repeat says again stays live. Marks land only on facts
+ * unchanged since the read; profiles are left as they are.
  */
 export async function compactFacts(
   db: Db,
@@ -579,11 +579,15 @@ export async function compactFacts(
   usage?: CastUsage,
   gate: SpeechGate = createSpeechGate(),
 ): Promise<Compacted> {
+  const book = getBook(db, bookId);
+  if (!book || book.compactOff) return { marked: 0, failed: [] };
+  const over = book.compactAt ?? COMPACT_AT.default;
+  const grown = Math.ceil(over / 4);
   const todo = profileRows(db, bookId, names).flatMap((c) => {
     const facts = readFacts(db, bookId, c.name, { live: true });
     const names = [c.name, ...c.aliases];
     const shown = uniqueFacts(facts, names);
-    if (shown.length <= COMPACT_OVER) return [];
+    if (shown.length <= over || shown.length < c.compactedAt + grown) return [];
     const text = [`## ${c.name}`, "Facts:", ...labelled(shown)].join("\n");
     return [{ c, facts, shown, copies: copiesOf(facts, names), text }];
   });
@@ -592,8 +596,6 @@ export async function compactFacts(
   let marked = 0;
   const failed: string[] = [];
 
-  // ponytail: a speaker still over the line is compacted again by every profiles job, all live facts
-  // in one block; remember the count at the last compaction if that costs too much
   await each(a, asks(todo, a.most), async (batch) => {
     const said = await request(a, "the next fact compaction", {
       system: COMPACT_SYSTEM,
@@ -632,7 +634,8 @@ export async function compactFacts(
         if (f) mark(f);
       }
       const list = [...marks].map(([id, repeatOf]) => ({ id, repeatOf }));
-      if (list.length && markCompacted(db, bookId, c.name, facts, list)) marked += list.length;
+      const left = shown.filter((f) => !marks.has(f.id)).length;
+      if (markCompacted(db, bookId, c.name, facts, list, left)) marked += list.length;
     }
   });
   return { marked, failed };

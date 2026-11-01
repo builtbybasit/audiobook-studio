@@ -196,6 +196,10 @@ export interface Book {
   pronounceOff?: boolean;
   /** the Cast page shows exact line counts, not rough bands (spoilers); absent = bands */
   exactCounts?: boolean;
+  /** long fact lists are not compacted; absent = they are */
+  compactOff?: boolean;
+  /** live facts per speaker past which their list is compacted; absent = `COMPACT_AT.default` */
+  compactAt?: number;
   /** the book's fan wiki, where speakers' pages are looked up (`fillFromWiki`); absent = none */
   wiki?: string;
   /** Effect for `thought` lines: an id or "none". Absent = the library's (`src/lib/effects.ts`). */

@@ -56,6 +56,8 @@ export function toBook(row: BookRow, vols: readonly VolumeRow[], counts?: Chapte
   if (row.autoTranscribe != null) book.autoTranscribe = row.autoTranscribe;
   if (row.pronounceOff) book.pronounceOff = true;
   if (row.exactCounts) book.exactCounts = true;
+  if (row.compactOff) book.compactOff = true;
+  if (row.compactAt != null) book.compactAt = row.compactAt;
   if (row.wiki != null) book.wiki = row.wiki;
   if (row.thoughts != null) book.thoughts = row.thoughts;
   if (row.characterVoice != null) book.characterVoice = row.characterVoice;
@@ -142,6 +144,8 @@ export function bookValues(book: Book, addedAt: number): typeof books.$inferInse
     autoTranscribe: book.autoTranscribe ?? null,
     pronounceOff: book.pronounceOff ?? null,
     exactCounts: book.exactCounts ?? null,
+    compactOff: book.compactOff ?? null,
+    compactAt: book.compactAt ?? null,
     wiki: book.wiki ?? null,
     thoughts: book.thoughts ?? null,
     characterVoice: book.characterVoice ?? null,

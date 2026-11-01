@@ -1,7 +1,7 @@
-// A speaker's profile rewritten from their facts in reading order, each repeat once: the profile
-// so far plus newer facts, or every fact from scratch after a rebuild mark or when a newer fact
+// A speaker's profile rewritten from their live facts in reading order, each repeat once: the
+// profile so far plus newer facts, or all from scratch after a rebuild mark or when a newer fact
 // comes from an earlier chapter. Several speakers share a request; a long list is folded in
-// batches, each carrying the profile on. Disguises are skipped (spoilers).
+// batches. Passing details are marked known; a long list is compacted, repeats marked known.
 import * as v from "valibot";
 
 import type {
@@ -14,13 +14,15 @@ import type {
   RequestRecord,
   VoiceType,
 } from "@/types";
-import { AGES, NARRATOR, castNameFor } from "@/lib/cast";
+import { AGES, COMPACT_AT, NARRATOR, castNameFor } from "@/lib/cast";
 import { tokenEstimate } from "@/lib/scripting";
 import { DELIVERIES, PITCHES, TEXTURES } from "@/lib/voiceProfile";
 import type { Db } from "~/db/client";
 import { readProfiles } from "~/db/endpoints";
+import { getBook } from "~/db/library";
 import {
   factKey,
+  markCompacted,
   profileRows,
   readFacts,
   setProfile,
@@ -32,7 +34,7 @@ import { badRequest, notFound } from "~/lib/errors";
 import { ageOf, voiceTypeOf } from "~/providers/chatScripting";
 import { ProviderError } from "~/providers/http";
 import { createSpeechGate, type SpeechGate } from "~/providers/gate";
-import type { ScriptingProvider } from "~/providers/scripting";
+import type { AskInput, ScriptingProvider } from "~/providers/scripting";
 import type { SentScript } from "~/providers/sent";
 import { scriptTarget } from "~/providers/target";
 import { assertWithinBudget } from "~/usage/budget";
@@ -51,7 +53,7 @@ const GENDER: Record<Gender, string> = { m: "male", f: "female", n: "non-binary"
 
 const SYSTEM = [
   "You keep short profiles of the speakers in a novel, used to cast their audiobook voices.",
-  "Each speaker comes with their profile so far (or none) and facts from the book in reading order. Write each profile again with the facts folded in.",
+  "Each speaker comes with their profile so far (or none) and facts from the book in reading order, labelled F1, F2…. Write each profile again with the facts folded in.",
   '- "who": who they are: role, background, ties to others. "personality": how they think and behave. "voice": how they speak and sound. Each one to three plain sentences; "" when nothing is known.',
   "- Only what the profile and the facts say. Never invent or guess.",
   "- Later facts correct earlier impressions: where they disagree, the later one stands.",
@@ -59,9 +61,11 @@ const SYSTEM = [
   "- A temporary state in a fact (ill, drugged, afraid, under a spell, acting a part) is not their personality: leave it out.",
   `- "age": ${AGES.join(", ")} or unknown.`,
   `- "voiceType": pitch (${PITCHES.join(", ")}) within their gender, texture (${TEXTURES.join(", ")}), up to 3 delivery words from: ${DELIVERIES.join(", ")}. Null for anything the facts do not suggest.`,
+  '- "known": the labels of passing details that say nothing of who they are, how they behave or how they sound. A repeat is not one.',
   "Answer only with the JSON object, one entry per speaker, named as given.",
 ].join("\n");
 
+const LABELS = { type: "array", items: { type: "string" } };
 const nullable = (list: readonly string[]) => ({ type: ["string", "null"], enum: [...list, null] });
 const SCHEMA = {
   type: "object",
@@ -73,7 +77,7 @@ const SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["speaker", "who", "personality", "voice", "age", "voiceType"],
+        required: ["speaker", "who", "personality", "voice", "age", "voiceType", "known"],
         properties: {
           speaker: { type: "string" },
           who: { type: "string" },
@@ -90,6 +94,7 @@ const SCHEMA = {
               delivery: { type: "array", items: { type: "string", enum: [...DELIVERIES] } },
             },
           },
+          known: LABELS,
         },
       },
     },
@@ -103,7 +108,30 @@ const Said = v.looseObject({
   voice: v.string(),
   age: v.optional(v.nullable(v.string())),
   voiceType: v.optional(v.unknown()),
+  known: v.optional(v.unknown()),
 });
+
+// the facts a request reads are labelled F1, F2… within their speaker's block
+const labelled = (facts: readonly CastFact[]): string[] =>
+  facts.map((f, i) => `- F${i + 1} ${f.kind}: ${f.text}`);
+
+/** The fact behind an `F#` label; undefined for anything else. */
+function factAt(label: unknown, facts: readonly CastFact[]): CastFact | undefined {
+  const n = typeof label === "string" ? /^F(\d+)$/i.exec(label.trim())?.[1] : undefined;
+  return n ? facts[Number(n) - 1] : undefined;
+}
+
+const listed = (said: unknown): unknown[] => (Array.isArray(said) ? said : []);
+
+/** Each live fact's id under its `factKey`, so a mark on the one shown reaches its copies. */
+function copiesOf(facts: readonly CastFact[], names: readonly string[]) {
+  const ids = new Map<string, number[]>();
+  for (const f of facts) {
+    const k = factKey(f, names);
+    ids.set(k, [...(ids.get(k) ?? []), f.id]);
+  }
+  return (f: CastFact): number[] => ids.get(factKey(f, names)) ?? [f.id];
+}
 
 const oneLine = (s: string): string => s.replace(/\s+/g, " ").trim();
 
@@ -119,9 +147,12 @@ interface Todo {
   c: ProfileRow;
   profile: CharacterProfile | null;
   left: CastFact[];
+  /** the live facts read, which the save checks against */
   facts: CastFact[];
   upTo: number;
   tags: { age?: Age; voiceType?: VoiceType };
+  copies: (f: CastFact) => number[];
+  known: number[];
 }
 
 /** The speaker as the model reads them: what is known, the profile so far, these facts. */
@@ -142,7 +173,7 @@ function block(t: Todo, facts: readonly CastFact[]): string {
       ? `Profile so far:\nWho: ${p.who}\nPersonality: ${p.personality}\nVoice: ${p.voice}`
       : "Profile so far: none",
     "Facts:",
-    ...facts.map((f) => `- ${f.kind}: ${f.text}`),
+    ...labelled(facts),
   ].join("\n");
 }
 
@@ -175,6 +206,7 @@ function simulated(batch: readonly { t: Todo; facts: readonly CastFact[] }[]) {
       ),
       age: t.c.age ?? "unknown",
       voiceType: null,
+      known: [],
     })),
   };
 }
@@ -219,24 +251,141 @@ export interface Rewritten {
   failed: string[];
 }
 
-/** The stale speakers a rewrite would touch, in cast order: never the Narrator or a disguise. */
+/** The stale speakers a rewrite would touch, in cast order: never the Narrator. */
 export function staleProfiles(db: Db, bookId: string): string[] {
-  const stale = staleSpeakers(db, bookId).filter((n) => n !== NARRATOR);
-  if (!stale.length) return [];
-  const disguised = new Set(
-    profileRows(db, bookId, stale)
-      .filter((c) => c.personaOf || c.masked)
-      .map((c) => c.name),
+  return staleSpeakers(db, bookId).filter((n) => n !== NARRATOR);
+}
+
+/** What every cast request of one run goes through. */
+interface Asking {
+  db: Db;
+  provider: ScriptingProvider;
+  bookId: string;
+  p: Profile;
+  signal: AbortSignal;
+  usage?: CastUsage;
+  gate: SpeechGate;
+  /** speakers per request, so each answer fits the output tokens */
+  most: number;
+}
+
+function asking(
+  db: Db,
+  provider: ScriptingProvider,
+  bookId: string,
+  profileId: string,
+  signal: AbortSignal,
+  usage: CastUsage | undefined,
+  gate: SpeechGate,
+): Asking {
+  const p: Profile | undefined = readProfiles(db).find((x) => x.id === profileId);
+  if (!p) throw notFound(`There is no scripting endpoint “${profileId}”`);
+  if (!provider.ask) throw badRequest(`${provider.name} cannot write cast profiles`);
+  const most = Math.max(
+    1,
+    Math.min(SPEAKERS_PER_ASK, Math.floor(p.maxOutputTokens / TOKENS_PER_SPEAKER)),
   );
-  return stale.filter((n) => !disguised.has(n));
+  return { db, provider, bookId, p, signal, usage, gate, most };
 }
 
 /**
- * Rewrite the stale profiles among `names` with this scripting profile's model. Narrator and
- * disguises never get one. A speaker is saved only once every batch of theirs is folded, so a
- * failure part way leaves their profile stale, not half-built. Changed evidence or edits discard
- * the reply for a later retry. A budget refusal throws. Each
- * settled request is added to `usage`.
+ * One request through the endpoint's gate, the budget and the ledger. A budget refusal or a fatal
+ * error throws; a provider's failure answers null.
+ */
+async function request(
+  a: Asking,
+  what: string,
+  ask: Pick<AskInput, "system" | "user" | "schema" | "simulated">,
+): Promise<unknown> {
+  const { db, bookId, p, signal } = a;
+  const leave = await a.gate.acquire(
+    p.id,
+    () => ({
+      concurrency: (readProfiles(db).find((current) => current.id === p.id) ?? p).concurrency,
+      enabled: true,
+    }),
+    { signal },
+  );
+  try {
+    const reserve = tokenEstimate(ask.system + ask.user, p).reserve;
+    assertWithinBudget(db, bookId, {
+      kind: "scripting",
+      cost: reserve,
+      what,
+      requests: [{ endpoint: p.id, cost: reserve }],
+    });
+    const money = dispatch(db, {
+      kind: "scripting",
+      endpoint: p,
+      work: { bookId, chapterUid: null, label: "Cast profiles" },
+      hold: reserve,
+    });
+    try {
+      return await a.provider.ask!({
+        ...ask,
+        target: scriptTarget(db, p),
+        signal,
+        sent: (report) => {
+          const charged = money.sent(report);
+          if (a.usage) tally(a.usage, report, charged);
+        },
+      });
+    } catch (e) {
+      if (signal.aborted) throw signal.reason;
+      if (!(e instanceof ProviderError)) throw e;
+      return null;
+    } finally {
+      money.release();
+    }
+  } finally {
+    leave();
+  }
+}
+
+/**
+ * Each batch through `work`, the endpoint's concurrency at a time. A fatal error stops new work,
+ * but every in-flight request settles before it is thrown.
+ */
+async function each<T>(a: Asking, batches: readonly T[], work: (b: T) => Promise<void>) {
+  let next = 0;
+  let stopped = false;
+  const outcomes = await Promise.allSettled(
+    Array.from({ length: Math.min(a.p.concurrency, batches.length) }, async () => {
+      while (!stopped && next < batches.length) {
+        try {
+          a.signal.throwIfAborted();
+          await work(batches[next++]);
+        } catch (e) {
+          stopped = true;
+          throw e;
+        }
+      }
+    }),
+  );
+  const rejected = outcomes.find((outcome) => outcome.status === "rejected");
+  if (rejected) throw rejected.reason;
+}
+
+/** An answer's entries by the speaker they name, each read by `schema`. */
+function answered<S extends v.GenericSchema<unknown, { speaker: string }>>(
+  said: unknown,
+  key: string,
+  schema: S,
+  cast: readonly ProfileRow[],
+): Map<string, v.InferOutput<S>> {
+  const out = new Map<string, v.InferOutput<S>>();
+  for (const item of listed((said as Record<string, unknown> | null)?.[key])) {
+    const read = v.safeParse(schema, item);
+    if (read.success) out.set(castNameFor(read.output.speaker.trim(), cast), read.output);
+  }
+  return out;
+}
+
+/**
+ * Rewrite the stale profiles among `names` with this scripting profile's model; the Narrator never
+ * gets one. A speaker is saved only once every batch of theirs is folded, so a failure part way
+ * leaves their profile stale, not half-built. Changed evidence or edits discard the reply for a
+ * later retry. A budget refusal throws. Each settled request is added to `usage`.
  */
 export async function rewriteProfiles(
   db: Db,
@@ -252,20 +401,20 @@ export async function rewriteProfiles(
   const stale = new Set(staleProfiles(db, bookId));
   const wanted = names.filter((n) => stale.has(n));
   if (!wanted.length) return { rewritten: [], failed: [] };
-  const p: Profile | undefined = readProfiles(db).find((x) => x.id === profileId);
-  if (!p) throw notFound(`There is no scripting endpoint “${profileId}”`);
-  if (!provider.ask) throw badRequest(`${provider.name} cannot write cast profiles`);
+  const a = asking(db, provider, bookId, profileId, signal, usage, gate);
 
   const rows = profileRows(db, bookId, wanted);
   const rewritten = new Set<string>();
   const todo: Todo[] = rows.flatMap((c) => {
-    const facts = readFacts(db, bookId, c.name);
+    const all = readFacts(db, bookId, c.name);
+    const facts = all.filter((f) => !f.known);
     const names = [c.name, ...c.aliases];
-    const upTo = Math.max(c.profileUpTo, ...facts.map((f) => f.id));
-    const folded = facts.filter((f) => f.id <= c.profileUpTo);
-    const known = new Set(folded.map((f) => factKey(f, names)));
+    // the newest fact, live or not, is what the profile is now up to
+    const upTo = Math.max(c.profileUpTo, ...all.map((f) => f.id));
+    const folded = all.filter((f) => f.id <= c.profileUpTo);
+    const said = new Set(folded.map((f) => factKey(f, names)));
     // a repeat of a fact the profile was written from changes nothing
-    const fresh = facts.filter((f) => f.id > c.profileUpTo && !known.has(factKey(f, names)));
+    const fresh = facts.filter((f) => f.id > c.profileUpTo && !said.has(factKey(f, names)));
     // one from an earlier chapter would read as the latest word, so that starts over
     const lastRead = Math.max(0, ...folded.map((f) => f.chapterId));
     const over = !c.profile || c.profileRebuild || fresh.some((f) => f.chapterId < lastRead);
@@ -274,7 +423,18 @@ export async function rewriteProfiles(
       return [];
     }
     const left = uniqueFacts(over ? facts : fresh, names);
-    return [{ c, profile: over ? null : c.profile, facts, left, upTo, tags: {} }];
+    return [
+      {
+        c,
+        profile: over ? null : c.profile,
+        facts,
+        left,
+        upTo,
+        tags: {},
+        copies: copiesOf(facts, names),
+        known: [],
+      },
+    ];
   });
   const total = todo.reduce((n, t) => n + t.left.length, 0);
   let done = 0;
@@ -282,94 +442,54 @@ export async function rewriteProfiles(
   for (const t of todo.filter((t) => !t.left.length)) {
     if (setProfile(db, bookId, t.c, t.facts, null, t.upTo)) rewritten.add(t.c.name);
   }
-  const most = Math.max(
-    1,
-    Math.min(SPEAKERS_PER_ASK, Math.floor(p.maxOutputTokens / TOKENS_PER_SPEAKER)),
-  );
 
   /** One request; folds each answered speaker's batch in, and marks the rest failed. */
-  const ask = async (batch: { t: Todo; facts: CastFact[]; text: string }[]): Promise<void> => {
-    const leave = await gate.acquire(
-      p.id,
-      () => ({
-        concurrency: (readProfiles(db).find((current) => current.id === p.id) ?? p).concurrency,
-        enabled: true,
-      }),
-      { signal },
+  const fold = async (batch: { t: Todo; facts: CastFact[]; text: string }[]): Promise<void> => {
+    const said = await request(a, "the next profile rewrite", {
+      system: SYSTEM,
+      schema: SCHEMA,
+      user: batch.map((b) => b.text).join("\n\n"),
+      simulated: simulated(batch),
+    });
+    const answers = answered(
+      said,
+      "profiles",
+      Said,
+      batch.map(({ t }) => t.c),
     );
-    try {
-      const user = batch.map((b) => b.text).join("\n\n");
-      const reserve = tokenEstimate(SYSTEM + user, p).reserve;
-      assertWithinBudget(db, bookId, {
-        kind: "scripting",
-        cost: reserve,
-        what: "the next profile rewrite",
-        requests: [{ endpoint: p.id, cost: reserve }],
-      });
-      const money = dispatch(db, {
-        kind: "scripting",
-        endpoint: p,
-        work: { bookId, chapterUid: null, label: "Cast profiles" },
-        hold: reserve,
-      });
-      let said: unknown;
-      try {
-        said = await provider.ask!({
-          system: SYSTEM,
-          user,
-          schema: SCHEMA,
-          target: scriptTarget(db, p),
-          signal,
-          sent: (report) => {
-            const charged = money.sent(report);
-            if (usage) tally(usage, report, charged);
-          },
-          simulated: simulated(batch),
-        });
-      } catch (e) {
-        if (signal.aborted) throw signal.reason;
-        if (!(e instanceof ProviderError)) throw e;
-        said = null;
-      } finally {
-        money.release();
+    for (const { t, facts } of batch) {
+      const ans = answers.get(t.c.name);
+      if (!ans) {
+        failed.add(t.c.name);
+        continue;
       }
-      const list = (said as { profiles?: unknown } | null)?.profiles;
-      const answers = new Map<string, v.InferOutput<typeof Said>>();
-      for (const item of Array.isArray(list) ? list : []) {
-        const read = v.safeParse(Said, item);
-        if (read.success)
-          answers.set(
-            castNameFor(
-              read.output.speaker.trim(),
-              batch.map(({ t }) => t.c),
-            ),
-            read.output,
-          );
+      t.profile = {
+        who: part(ans.who),
+        personality: part(ans.personality),
+        voice: part(ans.voice),
+      };
+      // what the model doesn't know keeps the tag the scripting notes gave, part by part
+      const age = ageOf(ans.age);
+      const voiceType = voiceTypeOf(ans.voiceType);
+      if (age) t.tags.age = age;
+      if (voiceType) t.tags.voiceType = { ...t.c.voiceType, ...voiceType };
+      for (const label of listed(ans.known)) {
+        const f = factAt(label, facts);
+        if (f) t.known.push(...t.copies(f));
       }
-      for (const { t, facts } of batch) {
-        const a = answers.get(t.c.name);
-        if (!a) {
-          failed.add(t.c.name);
-          continue;
-        }
-        t.profile = { who: part(a.who), personality: part(a.personality), voice: part(a.voice) };
-        // what the model doesn't know keeps the tag the scripting notes gave, part by part
-        const age = ageOf(a.age);
-        const voiceType = voiceTypeOf(a.voiceType);
-        if (age) t.tags.age = age;
-        if (voiceType) t.tags.voiceType = { ...t.c.voiceType, ...voiceType };
-        t.left = t.left.slice(facts.length);
-        if (!t.left.length && setProfile(db, bookId, t.c, t.facts, t.profile, t.upTo, t.tags))
-          rewritten.add(t.c.name);
-      }
-      done += batch.reduce((n, b) => n + b.facts.length, 0);
-      progress?.(done, total);
-    } finally {
-      leave();
+      t.left = t.left.slice(facts.length);
+      if (
+        !t.left.length &&
+        setProfile(db, bookId, t.c, t.facts, t.profile, t.upTo, t.tags, t.known)
+      )
+        rewritten.add(t.c.name);
     }
+    done += batch.reduce((n, b) => n + b.facts.length, 0);
+    progress?.(done, total);
   };
 
-  // round by round, so a speaker's next batch reads the profile the last one wrote
+  // round by round, so a speaker's next batch reads the profile the last one wrote;
+  // different speakers are independent, a speaker's next fold waits for this round
   for (;;) {
     const round = todo
       .filter((t) => t.left.length && !failed.has(t.c.name))
@@ -385,29 +505,138 @@ export async function rewriteProfiles(
         return { t, facts, text: block(t, facts) };
       });
     if (!round.length) break;
-    // Different speakers are independent; a speaker's next fold waits for this round.
-    // Stop taking work on a fatal error, but settle every in-flight request before returning.
-    const batches = asks(round, most);
-    let next = 0;
-    let stopped = false;
-    const outcomes = await Promise.allSettled(
-      Array.from({ length: Math.min(p.concurrency, batches.length) }, async () => {
-        while (!stopped && next < batches.length) {
-          try {
-            signal.throwIfAborted();
-            await ask(batches[next++]);
-          } catch (e) {
-            stopped = true;
-            throw e;
-          }
-        }
-      }),
-    );
-    const rejected = outcomes.find((outcome) => outcome.status === "rejected");
-    if (rejected) throw rejected.reason;
+    await each(a, asks(round, a.most), fold);
   }
   return {
     rewritten: [...rewritten],
     failed: [...failed],
   };
+}
+
+const COMPACT_SYSTEM = [
+  "You tidy the facts kept about speakers in a novel, used to cast their audiobook voices.",
+  "Each speaker comes with their facts from the book in reading order, labelled F1, F2….",
+  '- "repeats": each fact that says again what another says, in other words or not, as {"fact": its label, "of": the label of the one it repeats}.',
+  '- "known": the labels of passing details that say nothing of who they are, how they behave or how they sound.',
+  "Answer only with the JSON object, one entry per speaker, named as given.",
+].join("\n");
+
+const COMPACT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["speakers"],
+  properties: {
+    speakers: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["speaker", "repeats", "known"],
+        properties: {
+          speaker: { type: "string" },
+          repeats: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["fact", "of"],
+              properties: { fact: { type: "string" }, of: { type: "string" } },
+            },
+          },
+          known: LABELS,
+        },
+      },
+    },
+  },
+};
+
+const Compacted = v.looseObject({
+  speaker: v.string(),
+  repeats: v.optional(v.unknown()),
+  known: v.optional(v.unknown()),
+});
+
+export interface Compacted {
+  /** facts marked known */
+  marked: number;
+  /** whose answer was missing or whose request failed; their facts are as they were */
+  failed: string[];
+}
+
+/**
+ * Mark repeats and passing details among the live facts of those of `names` past the book's
+ * `compactAt`, unless it is off, one request per batch of speakers. A list is asked again only once
+ * it grew by a quarter of that since. What a repeat says again stays live. Marks land only on facts
+ * unchanged since the read; profiles are left as they are.
+ */
+export async function compactFacts(
+  db: Db,
+  provider: ScriptingProvider,
+  bookId: string,
+  profileId: string,
+  names: readonly string[],
+  signal: AbortSignal,
+  usage?: CastUsage,
+  gate: SpeechGate = createSpeechGate(),
+): Promise<Compacted> {
+  const book = getBook(db, bookId);
+  if (!book || book.compactOff) return { marked: 0, failed: [] };
+  const over = book.compactAt ?? COMPACT_AT.default;
+  const grown = Math.ceil(over / 4);
+  const todo = profileRows(db, bookId, names).flatMap((c) => {
+    const facts = readFacts(db, bookId, c.name, { live: true });
+    const names = [c.name, ...c.aliases];
+    const shown = uniqueFacts(facts, names);
+    if (shown.length <= over || shown.length < c.compactedAt + grown) return [];
+    const text = [`## ${c.name}`, "Facts:", ...labelled(shown)].join("\n");
+    return [{ c, facts, shown, copies: copiesOf(facts, names), text }];
+  });
+  if (!todo.length) return { marked: 0, failed: [] };
+  const a = asking(db, provider, bookId, profileId, signal, usage, gate);
+  let marked = 0;
+  const failed: string[] = [];
+
+  await each(a, asks(todo, a.most), async (batch) => {
+    const said = await request(a, "the next fact compaction", {
+      system: COMPACT_SYSTEM,
+      schema: COMPACT_SCHEMA,
+      user: batch.map((b) => b.text).join("\n\n"),
+      simulated: { speakers: batch.map(({ c }) => ({ speaker: c.name, repeats: [], known: [] })) },
+    });
+    const answers = answered(
+      said,
+      "speakers",
+      Compacted,
+      batch.map(({ c }) => c),
+    );
+    for (const { c, facts, shown, copies } of batch) {
+      const ans = answers.get(c.name);
+      if (!ans) {
+        failed.push(c.name);
+        continue;
+      }
+      const repeats = listed(ans.repeats).flatMap((r) => {
+        const { fact, of } = (r ?? {}) as { fact?: unknown; of?: unknown };
+        const f = factAt(fact, shown);
+        const o = factAt(of, shown);
+        return f && o && f !== o ? [{ f, o }] : [];
+      });
+      // what another repeats stays live, so nothing points at a hidden fact
+      const kept = new Set(repeats.map((r) => r.o));
+      const marks = new Map<number, number | undefined>();
+      const mark = (f: CastFact, repeatOf?: number) => {
+        if (kept.has(f) || marks.has(f.id)) return;
+        for (const id of copies(f)) marks.set(id, repeatOf);
+      };
+      for (const { f, o } of repeats) mark(f, o.id);
+      for (const label of listed(ans.known)) {
+        const f = factAt(label, shown);
+        if (f) mark(f);
+      }
+      const list = [...marks].map(([id, repeatOf]) => ({ id, repeatOf }));
+      const left = shown.filter((f) => !marks.has(f.id)).length;
+      if (markCompacted(db, bookId, c.name, facts, list, left)) marked += list.length;
+    }
+  });
+  return { marked, failed };
 }

@@ -30,7 +30,7 @@ import type { Runner } from "~/jobs/runner";
 import { enqueueScripting } from "~/jobs/scripting";
 import { fail } from "~/lib/errors";
 import { BookParam, ChapterIds, IdParam, uploadLimit } from "~/lib/http";
-import { AGES } from "@/lib/cast";
+import { AGES, COMPACT_AT } from "@/lib/cast";
 import { bookPromptProblems } from "@/lib/prompt";
 import { DEFAULT_PACING } from "@/lib/speech";
 import {
@@ -126,6 +126,12 @@ const Settings = v.pipe(
     autoTranscribe: v.optional(v.nullable(v.boolean())),
     pronounceOff: v.optional(v.nullable(v.boolean())),
     exactCounts: v.optional(v.nullable(v.boolean())),
+    compactOff: v.optional(v.nullable(v.boolean())),
+    compactAt: v.optional(
+      v.nullable(
+        v.pipe(v.number(), v.integer(), v.minValue(COMPACT_AT.min), v.maxValue(COMPACT_AT.max)),
+      ),
+    ),
     /** `null` forgets it */
     wiki: v.optional(v.nullable(v.pipe(v.string(), v.trim(), v.url(), v.maxLength(300)))),
     /** an effect's id or "none"; `null` follows the library's */

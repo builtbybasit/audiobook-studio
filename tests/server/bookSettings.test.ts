@@ -102,6 +102,16 @@ describe("a book's settings", () => {
     expect((await read(api, id)).book.exactCounts).toBeUndefined();
   });
 
+  test("compaction can be turned off and set to a count in range", async () => {
+    const { api, id } = await twoVolumes();
+    await patch(api, id, { compactOff: true, compactAt: 40 });
+    expect((await read(api, id)).book).toMatchObject({ compactOff: true, compactAt: 40 });
+    expect((await patch(api, id, { compactAt: 10 })).status).toBe(400);
+    await patch(api, id, { compactOff: null, compactAt: null });
+    const { book } = await read(api, id);
+    expect([book.compactOff, book.compactAt]).toEqual([undefined, undefined]);
+  });
+
   test("a budget with no cap is still a pause", async () => {
     const { api, id } = await twoVolumes();
     await patch(api, id, { budget: { cap: null, paused: true } });

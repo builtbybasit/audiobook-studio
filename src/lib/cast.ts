@@ -78,6 +78,9 @@ export const DIRECTIONS: string[] = [
 
 export const NARRATOR = "Narrator";
 
+/** a speaker's list is compacted past this many live facts (`Book.compactAt`) */
+export const COMPACT_AT = { default: 100, min: 30, max: 1000 } as const;
+
 /** A line count as a rough band, so a speaker's size gives little of the plot away. */
 export const lineBand = (lines: number): string =>
   lines === 0 ? "none" : lines < 10 ? "a few" : lines < 100 ? "some" : "many";

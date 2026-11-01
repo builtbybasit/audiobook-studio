@@ -6,7 +6,7 @@ import type { Job } from "@/types";
 import { chapterCast, castNameFor, FACT_KINDS, NARRATOR } from "@/lib/cast";
 import { chapterNumbers } from "@/lib/chapterNumber";
 import { tokenEstimate } from "@/lib/scripting";
-import { noUsage, rewriteProfiles, staleProfiles, tally } from "~/cast/profiles";
+import { compactFacts, noUsage, rewriteProfiles, staleProfiles, tally } from "~/cast/profiles";
 import { groundedFacts } from "~/cast/facts";
 import { numberedParagraphs, paragraphsIn, sourceParagraphs } from "@/lib/sourceParagraphs";
 import { plainText } from "~/epub/markdown";
@@ -70,17 +70,33 @@ export function profilesHandler(provider: ScriptingProvider, gate: SpeechGate): 
         run.usage,
         gate,
       );
-      queue.setCastRun(db, job.id, {
-        profilesRun: {
-          ...run,
-          rewritten: rewritten.length,
-          ...(failed.length ? { failed } : {}),
-        },
-      });
+      const settled = {
+        ...run,
+        rewritten: rewritten.length,
+        ...(failed.length ? { failed } : {}),
+      };
+      queue.setCastRun(db, job.id, { profilesRun: settled });
       ctx.note("Profiles rewritten", failed.length ? "warning" : "info", {
         rewritten: rewritten.length,
         ...(failed.length ? { failed: failed.join(", ") } : {}),
       });
+      // no progress of its own: only the few speakers with a long list are asked
+      const compacted = await compactFacts(
+        db,
+        provider,
+        job.bookId,
+        profile,
+        rewritten,
+        signal,
+        run.usage,
+        gate,
+      );
+      queue.setCastRun(db, job.id, { profilesRun: settled });
+      if (compacted.marked || compacted.failed.length)
+        ctx.note("Facts compacted", compacted.failed.length ? "warning" : "info", {
+          marked: compacted.marked,
+          ...(compacted.failed.length ? { failed: compacted.failed.join(", ") } : {}),
+        });
       if (failed.length)
         throw new Error(
           `${failed.length} profile${failed.length === 1 ? "" : "s"} could not be rewritten`,

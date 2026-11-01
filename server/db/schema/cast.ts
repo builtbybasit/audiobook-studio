@@ -36,6 +36,8 @@ export const characters = sqliteTable(
     profileUpTo: integer("profile_up_to").notNull().default(0),
     /** facts were removed or moved in: rewrite from all of them, not just the newer ones */
     profileRebuild: integer("profile_rebuild", { mode: "boolean" }).notNull().default(false),
+    /** live facts left after the last compaction; the next waits for the list to grow */
+    compactedAt: integer("compacted_at").notNull().default(0),
     /** fields the user set by hand, which a profile rewrite leaves alone */
     edited: text("edited", { mode: "json" }).$type<("age" | "voiceType")[]>().notNull().default([]),
     /** `<endpointId>/<voiceId>`; null = borrows the Narrator's voice */
@@ -78,6 +80,10 @@ export const characterFacts = sqliteTable(
     /** the cited paragraphs' text, kept with the fact; null for older facts */
     evidence: text("evidence"),
     sourceIds: text("source_ids", { mode: "json" }).$type<number[]>(),
+    /** judged to add nothing a profile needs (a repeat or a passing detail): hidden, never folded */
+    known: integer("known", { mode: "boolean" }).notNull().default(false),
+    /** the live fact this one says again, when it is a repeat */
+    repeatOf: integer("repeat_of"),
   },
   (t) => [
     foreignKey({

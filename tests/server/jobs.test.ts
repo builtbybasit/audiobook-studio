@@ -8,6 +8,7 @@ import type { Book, Chapter, Job, Profile, Segment } from "@/types";
 import { makeCredentials } from "~/demo/seed/fixtures/credentials";
 import { scriptParts } from "@/lib/scripting";
 import * as queue from "~/db/jobs";
+import { replaceEndpoints } from "~/db/endpoints";
 import { readHistory } from "~/db/history";
 import { readScript, writeScript } from "~/db/script";
 import { jobs } from "~/db/schema";
@@ -868,6 +869,48 @@ describe("what runs side by side", () => {
     finish(script4);
     // narration still running does not
     expect(claimAll()).toEqual([profiles]);
+  });
+
+  test("a book's fact reads run side by side up to their endpoint's concurrency, a chapter's in turn", () => {
+    const db = testDb();
+    db.run(
+      "insert into books (id, title, author, cover_from, cover_to, added_at) values ('b','B','A','#000','#111',0)",
+    );
+    for (const n of [1, 2, 3, 4])
+      db.run(
+        `insert into chapters (book_id, id, uid, volume_id, volume_index, title, words) values ('b',${n},'u${n}',1,${n},'C${n}',3)`,
+      );
+    db.transaction((tx) =>
+      replaceEndpoints(tx, {
+        endpoints: [],
+        profiles: [openaiProfile({ id: "two", concurrency: 2, credentialId: null })],
+        credentials: [],
+      }),
+    );
+    const add = (kind: Job["kind"], chapterId: number) =>
+      queue.enqueueJob(db, {
+        kind,
+        bookId: "b",
+        chapterId,
+        label: kind,
+        ...(kind === "facts" ? { run: { factsRun: { profile: "two", major: false } } } : {}),
+      }).job.id;
+    const script1 = add("scripting", 1);
+    const [facts1, facts2, facts3, facts4] = [1, 2, 3, 4].map((n) => add("facts", n));
+    const claimAll = () => {
+      const ids: number[] = [];
+      for (let j = queue.claimNext(db); j; j = queue.claimNext(db)) ids.push(j.id);
+      return ids;
+    };
+
+    // chapter 1's read waits for its script and holds back the reads behind it, as before
+    expect(claimAll()).toEqual([script1]);
+    queue.finishJob(db, script1, "done");
+    expect(claimAll()).toEqual([facts1, facts2]);
+    queue.finishJob(db, facts1, "done");
+    expect(claimAll()).toEqual([facts3]);
+    queue.finishJob(db, facts2, "done");
+    expect(claimAll()).toEqual([facts4]);
   });
 });
 

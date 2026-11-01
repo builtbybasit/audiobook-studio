@@ -141,7 +141,7 @@ export function openLibrary(options: LibraryOptions): Library {
       export: exportHandler(exports, files),
       transcribe: transcribeHandler(given.transcription, files, gate),
       effects: effectsHandler(options.effects, files),
-      facts: factsHandler(providers.scripting),
+      facts: factsHandler(providers.scripting, gate),
       profiles: profilesHandler(providers.scripting, gate),
     },
     { log },

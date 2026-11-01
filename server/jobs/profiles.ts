@@ -115,7 +115,7 @@ export function profilesHandler(provider: ScriptingProvider, gate: SpeechGate): 
 // the rules the scripting prompt gives its cast notes' facts, in the same words
 const SYSTEM = [
   "You read one chapter of a novel, its paragraphs labelled [P#], and note what it tells about some of its characters, speaking or not.",
-  'For each character named, "facts": lasting things the chapter states or clearly shows about them, one trait each: {"kind": "role", "background", "relationship", "personality" or "voice", "text": one short sentence, "sourceIds": the [P#] numbers of the 1–5 paragraphs that show it}.',
+  'For each character named, "facts": lasting things the chapter states or clearly shows about them, one trait each (two traits are two facts, never joined with "and", "but" or "yet"): {"kind": "role", "background", "relationship", "personality" or "voice", "text": one short sentence, "sourceIds": the [P#] numbers of the 1–5 paragraphs that show it}.',
   "How they act in one scene, such as whispering while hiding, is a direction, not a fact. A state of the moment, such as illness, drugs, fear, injury, a spell or an act, is not a trait: a trait is what holds when they are well and themselves. A fact someone tells about another belongs to that other. Never guess. [] when there are none.",
   "Previous prose is context only: cite the chapter's paragraphs.",
   "Answer only with the JSON object, one entry per character, named as given.",
@@ -269,7 +269,7 @@ function factRequests(
   };
 }
 
-export function factsHandler(provider: ScriptingProvider): JobHandler {
+export function factsHandler(provider: ScriptingProvider, gate: SpeechGate): JobHandler {
   return {
     async run(ctx: JobContext): Promise<void> {
       const { job, db, signal } = ctx;
@@ -305,6 +305,15 @@ export function factsHandler(provider: ScriptingProvider): JobHandler {
             what: "reading this chapter's facts",
             requests: [{ endpoint: p.id, cost: reserve }],
           });
+          // a book's fact reads run side by side, so each request waits for an endpoint slot
+          const leave = await gate.acquire(
+            p.id,
+            () => ({
+              concurrency: (readProfiles(db).find((x) => x.id === p.id) ?? p).concurrency,
+              enabled: true,
+            }),
+            { signal },
+          );
           const money = dispatch(db, {
             kind: "scripting",
             endpoint: p,
@@ -344,6 +353,7 @@ export function factsHandler(provider: ScriptingProvider): JobHandler {
             throw e;
           } finally {
             money.release();
+            leave();
             // kept when the request failed, too
             queue.setCastRun(db, job.id, {
               factsRun: { ...queued, speakers: speakers.length, usage },

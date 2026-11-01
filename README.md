@@ -10,30 +10,40 @@ Turn an EPUB into a full-cast audiobook, with a different voice for every charac
 
 - Reads real EPUBs. A book can be several files, each one a volume.
 - Flags notices, schedules and author notes so you can skip or keep them before anything is added.
-- Handles long web serials (900 chapters, 300 speakers).
+- Handles long web serials: thousands of chapters, 300+ speakers.
+- Near-empty and unusually short chapters are flagged for review.
 
 ### ✍️ AI scripting
 
 - A chat model splits each chapter into lines, each with a **speaker, type and delivery direction**, and checks the result word for word against the prose.
 - Works with any OpenAI-compatible API, or with **Claude Code / Codex** under your own login (run with no tools, in an empty folder).
 - Keeps a recap per chapter and running cast notes, so later chapters know who is who. Picks up personas and aliases.
+- An answer that doesn't match the prose is mended where it can be, then only the bad lines are asked again, and the whole chunk last.
+- Suggests pronunciation entries for names it meets (a per-book switch).
 - Marks site boilerplate and translator's notes (it never deletes them). Neither is read aloud unless you turn notes on.
 - A detector second-guesses the site-text and note marks: story marked as boilerplate, or boilerplate left as story. You can edit, split and join lines, fix speakers in bulk, and use checkpoints with diff and restore.
 - The prompt can be edited per library, per endpoint and per book. You can try it on one chunk first.
 
 ### 🎭 Cast and voices
 
-- Every speaker in the book in one place: merge duplicates, set aliases, assign voices.
+- Every speaker in the book in one place: merge duplicates, set aliases, assign voices. Line counts show as rough bands so they don't spoil the book, or exact once you turn that on.
+- **Speaker profiles** (who they are, personality, voice) are written from facts quoted from the prose, chapter by chapter. Repeats and passing details are hidden, long lists are tidied past a count you set per book, and personas get profiles of their own.
+- Fill age, gender and voice type from the book's fan wiki.
+- Voice suggestions read the profiles. **Sounds like** compares voice recordings, so two speakers don't end up sounding the same.
+- Speed per voice or per speaker, voices by gender and age for minor characters, and a speaker can be read aloud under another name.
 - Fetch voices from a provider, or **clone** one from an uploaded sample. The sample can be trimmed on a waveform and auto-transcribed.
 - Voice effects (Pedalboard presets) for thoughts, masks, phones, telepathy and so on, set per line or per character.
+- Endpoint settings back up to one zip, clone samples included. A cloned voice a server lost can be made again from its samples.
 - Pronunciation dictionary, pacing, expression tags (`[laughter]`) and inline `[[pause]]` markers.
 
 ### 🎙️ Narration and review
 
 - Renders one clip per line on the endpoint that owns the speaker's voice, with concurrency, retries and rate-limit handling.
 - Speech providers: **ElevenLabs, Fish Audio, OpenAI, Gemini, MiniMax, Cartesia, Qwen, Breeze**, plus any OpenAI-compatible server. Local servers can render many lines per request with the [batch speech API](docs/speech-batch-api.md).
-- Flag a clip, retake it and compare takes side by side. Nothing replaces the clip in the book until you choose.
-- **Check by ear**: a speech-to-text endpoint listens to every clip and flags lines whose audio says something else.
+- Flag a clip, retake it and compare takes side by side. Nothing replaces the clip in the book until you choose. **Retake flagged** does it for the whole book.
+- **Transcribe**: a speech-to-text endpoint listens to every clip and flags lines whose audio says something else.
+- Silence is trimmed from the ends of each clip as it lands (`bun run trim-silence` does older ones).
+- Books script, narrate and transcribe side by side, sharing each endpoint's concurrency.
 - Clips go stale when the script or dictionary changes, and **Re-narrate changed** renders only what moved.
 - A Listen page plays the book with word-by-word highlighting.
 
@@ -82,6 +92,7 @@ Everything lives in `data/`: `library.db`, clips, audiobooks and samples. The de
 - Undoing an endpoint's removal brings it back without its key.
 - An MP3 export, or an M4B with chapters under ¼ s apart, re-encodes every chapter; an M4B reuses the chapters an earlier build encoded unchanged.
 - Changes made in another tab show up on the next save or refresh.
+- A small model (Haiku) often gives a disguised character's lines to the person behind the disguise when the persona isn't in the cast yet. Add the persona on the Cast page before scripting those chapters, or script them with Codex.
 
 ## Develop
 

@@ -4,7 +4,7 @@
 import { useQueryCache } from "@pinia/colada";
 import { plural } from "@/lib/contents";
 import { usable } from "@/lib/exports";
-import { jobLabel } from "@/lib/queue";
+import { jobLabel, queueEta } from "@/lib/queue";
 import { segmentFailed } from "@/lib/runPlan";
 import { fetchScript } from "@/queries/chapterScript";
 import { invalidate } from "@/queries/invalidate";
@@ -21,15 +21,6 @@ import { useScriptingStore } from "@/stores/scripting";
 import { useScriptsStore } from "@/stores/scripts";
 import { toastFailure } from "@/stores/toastFailure";
 import { useUiStore } from "@/stores/ui";
-const AVG_JOB: Record<JobKind, number> = {
-  scripting: 25,
-  narration: 60,
-  export: 120,
-  transcribe: 15,
-  effects: 120,
-  facts: 20,
-  profiles: 60,
-};
 
 const NO_JOBS: readonly Job[] = [];
 
@@ -124,25 +115,7 @@ export const useJobsStore = defineStore("jobs", {
       return (bookId) => this.spendOf(bookId)?.spent;
     },
     eta(): Eta | null {
-      const hist: Partial<Record<JobKind, number[]>> = {};
-      for (const j of this.jobs)
-        if (j.status === "done" && j.startedAt && j.finishedAt)
-          (hist[j.kind] ??= []).push((j.finishedAt - j.startedAt) / 1000);
-      const avg = (k: JobKind): number => {
-        const h = hist[k];
-        return h?.length ? h.reduce((a, b) => a + b, 0) / h.length : (AVG_JOB[k] ?? 60);
-      };
-      const perBook: Record<string, number> = {};
-      for (const j of this.jobs) {
-        if (j.status !== "running" && j.status !== "queued") continue;
-        const secs =
-          j.status === "queued" ? avg(j.kind) : avg(j.kind) * (1 - (j.progress ?? 0) / 100);
-        perBook[j.bookId] = (perBook[j.bookId] ?? 0) + secs;
-      }
-      const seconds = Math.max(0, ...Object.values(perBook));
-      return Object.keys(perBook).length
-        ? { seconds, at: Date.now() + seconds * 1000, books: Object.keys(perBook).length }
-        : null;
+      return queueEta(this.jobs);
     },
   },
   actions: {

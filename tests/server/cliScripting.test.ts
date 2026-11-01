@@ -304,6 +304,15 @@ describe("a run that does not answer", () => {
     expect(sent[0]).toMatchObject({ status: "failed" });
   });
 
+  test("an answer is read once the tool exits, even while something it left holds its output", async () => {
+    const cli = fakeCli("claude", { heldPipe: true, stdout: claudeResult(SCRIPT) });
+    const { input: given } = input(target(`claude-code:${cli.path}`, { maxRetries: 0 }));
+    const started = Date.now();
+    expect((await provider.script(given)).lines).toHaveLength(3);
+    expect(Date.now() - started).toBeLessThan(5000);
+    process.kill(cli.childPid());
+  });
+
   test("a cancel kills the tool and what it started, and rejects with the job's reason", async () => {
     const cli = fakeCli("claude", { sleepMs: 10_000, child: true });
     const stop = new AbortController();

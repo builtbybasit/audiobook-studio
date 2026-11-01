@@ -252,10 +252,13 @@ interface Ran {
 
 /** SIGTERM to SIGKILL. */
 const GRACE_MS = 2000;
+/** after the tool exits, how long its output may take to drain */
+const DRAIN_MS = 1000;
 
 /**
- * A timeout or abort kills the tool's whole process group. Rejects with the spawn's error when it
- * could not be started.
+ * A timeout or abort kills the tool's whole process group. Settles once the tool has exited and its
+ * output drained, or shortly after, as something it left in another group may hold the pipes open
+ * for good. Rejects with the spawn's error when it could not be started.
  */
 function run(
   argv: string[],
@@ -291,9 +294,26 @@ function run(
       }
     };
     let hard: ReturnType<typeof setTimeout> | undefined;
+    let drain: ReturnType<typeof setTimeout> | undefined;
+    let settled = false;
+    const settle = (code: number | null): void => {
+      if (settled) return;
+      settled = true;
+      done();
+      clearTimeout(drain);
+      // what it started may outlive it
+      if (hard) group("SIGKILL");
+      clearTimeout(hard);
+      child.stdout.destroy();
+      child.stderr.destroy();
+      resolve({ code, stdout, stderr, timedOut });
+    };
     const kill = (): void => {
       group("SIGTERM");
-      hard ??= setTimeout(() => group("SIGKILL"), GRACE_MS);
+      hard ??= setTimeout(() => {
+        group("SIGKILL");
+        drain ??= setTimeout(() => settle(null), DRAIN_MS);
+      }, GRACE_MS);
     };
     const clock = setTimeout(() => {
       timedOut = true;
@@ -307,17 +327,17 @@ function run(
       signal.removeEventListener("abort", kill);
     };
     child.on("error", (e) => {
+      if (settled) return;
+      settled = true;
       done();
       clearTimeout(hard);
       reject(e);
     });
-    child.on("close", (code) => {
-      done();
-      // what it started may outlive it
-      if (hard) group("SIGKILL");
-      clearTimeout(hard);
-      resolve({ code, stdout, stderr, timedOut });
+    child.on("exit", (code) => {
+      clearTimeout(drain);
+      drain = setTimeout(() => settle(code), DRAIN_MS);
     });
+    child.on("close", settle);
   });
 }
 

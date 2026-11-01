@@ -15,6 +15,8 @@ export interface FakeReply {
   sleepMs?: number;
   /** start a `sleep 30` of its own first, to see it is killed with its parent */
   child?: boolean;
+  /** leave a `sleep 30` in a process group of its own holding its stdout, as it exits */
+  heldPipe?: boolean;
 }
 
 export interface FakeCall {
@@ -43,6 +45,11 @@ fs.appendFileSync(log, JSON.stringify({
   system: system ? fs.readFileSync(system, "utf8") : null,
 }) + "\\n");
 const reply = replies[Math.min(n, replies.length - 1)];
+if (reply.heldPipe) {
+  const c = require("node:child_process").spawn("sleep", ["30"], { detached: true, stdio: ["ignore", 1, 2] });
+  fs.writeFileSync(dir + "/child.pid", String(c.pid));
+  c.unref();
+}
 if (reply.child) {
   const c = require("node:child_process").spawn("sleep", ["30"], { stdio: "ignore" });
   fs.writeFileSync(dir + "/child.pid", String(c.pid));

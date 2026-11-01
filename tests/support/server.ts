@@ -192,7 +192,7 @@ export function testRunner(db: Db, log: Logger, options: TestApiOptions = {}): R
       export: exportHandler(testExports(options), files),
       transcribe: transcribeHandler(options.transcription ?? noTranscription, files, gate),
       effects: effectsHandler(options.effects, files),
-      facts: factsHandler(options.scripting ?? fakeScriptingProvider()),
+      facts: factsHandler(options.scripting ?? fakeScriptingProvider(), gate),
       profiles: profilesHandler(options.scripting ?? fakeScriptingProvider(), gate),
       ...options.handlers,
     },

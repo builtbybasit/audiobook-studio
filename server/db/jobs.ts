@@ -18,6 +18,7 @@ import type { Job, JobEvent, JobKind, JobStatus } from "@/types";
 import type { Db, Tx } from "~/db/client";
 import { jobEvents, jobs } from "~/db/schema";
 import { toJob } from "~/db/rows";
+import { readProfiles } from "~/db/endpoints";
 
 /** Events kept per job; the frontend keeps the same number. */
 export const MAX_JOB_EVENTS = 1000;
@@ -217,12 +218,15 @@ export function runNext(db: Db, ids: readonly number[]): number[] {
   });
 }
 
-type Lane = Pick<Job, "id" | "kind" | "bookId" | "chapterId">;
+type Lane = Pick<Job, "id" | "kind" | "bookId" | "chapterId"> & {
+  /** how many of its kind its book may run at once; absent = one */
+  side?: number;
+};
 
 /**
  * The first of `queued` (in claim order) that nothing running or ahead of it holds back. Per book:
- * one job of each kind, a chapter's jobs in turn, a whole-book job alone. A job held back holds
- * its own keys, so nothing behind it on the same key overtakes it.
+ * one job of each kind (fact reads up to their `side`), a chapter's jobs in turn, a whole-book job
+ * alone. A job held back holds its own keys, so nothing behind it on the same key overtakes it.
  */
 export function firstReady(running: readonly Lane[], queued: readonly Lane[]): Lane | undefined {
   // `some:` = a job of the book is out; `all:` = a whole-book one is; `reading:` = the book has
@@ -233,22 +237,32 @@ export function firstReady(running: readonly Lane[], queued: readonly Lane[]): L
       ? [`profiles:${j.bookId}`]
       : j.chapterId == null
         ? [`some:${j.bookId}`, `all:${j.bookId}`]
-        : [`some:${j.bookId}`, `${j.kind}:${j.bookId}`, `chapter:${j.bookId}:${j.chapterId}`];
+        : [`some:${j.bookId}`, `chapter:${j.bookId}:${j.chapterId}`];
   const needs = (j: Lane): string[] =>
     j.kind === "profiles"
       ? [`profiles:${j.bookId}`, `reading:${j.bookId}`]
       : j.chapterId == null
         ? [`some:${j.bookId}`]
-        : [`all:${j.bookId}`, `${j.kind}:${j.bookId}`, `chapter:${j.bookId}:${j.chapterId}`];
+        : [`all:${j.bookId}`, `chapter:${j.bookId}:${j.chapterId}`];
+  // a chapter job's kind in its book, counted: full at `side`
+  const kindOf = (j: Lane) =>
+    j.kind !== "profiles" && j.chapterId != null ? `${j.kind}:${j.bookId}` : null;
+  const out = new Map<string, number>();
   const held = new Set([
     ...running.flatMap(holds),
     ...[...running, ...queued]
       .filter((j) => j.kind === "scripting" || j.kind === "facts")
       .map((j) => `reading:${j.bookId}`),
   ]);
+  for (const j of running) {
+    const k = kindOf(j);
+    if (k) out.set(k, (out.get(k) ?? 0) + 1);
+  }
   for (const j of queued) {
-    if (!needs(j).some((k) => held.has(k))) return j;
-    for (const k of holds(j)) held.add(k);
+    const k = kindOf(j);
+    if (!needs(j).some((h) => held.has(h)) && (!k || (out.get(k) ?? 0) < (j.side ?? 1))) return j;
+    for (const h of holds(j)) held.add(h);
+    if (k) out.set(k, Infinity);
   }
   return undefined;
 }
@@ -268,14 +282,23 @@ export function claimNext(db: Db, at = Date.now()): Job | undefined {
           bookId: jobs.bookId,
           chapterId: jobs.chapterId,
           status: jobs.status,
+          run: jobs.run,
         })
         .from(jobs)
         .where(inArray(jobs.status, ["queued", "running"]))
         .orderBy(desc(jobs.priority), asc(jobs.id))
         .all();
+      // fact reads of one book are independent, so as many run as their endpoint takes at once
+      const concurrency = new Map(readProfiles(tx).map((p) => [p.id, p.concurrency]));
+      const lanes = live.map(({ run, ...j }) => {
+        const profile = run && "factsRun" in run ? run.factsRun?.profile : undefined;
+        return j.kind === "facts" && profile
+          ? { ...j, side: Math.max(1, concurrency.get(profile) ?? 1) }
+          : j;
+      });
       const ready = firstReady(
-        live.filter((j) => j.status === "running"),
-        live.filter((j) => j.status === "queued"),
+        lanes.filter((j) => j.status === "running"),
+        lanes.filter((j) => j.status === "queued"),
       );
       if (!ready) return undefined;
       const row = tx.select().from(jobs).where(eq(jobs.id, ready.id)).get()!;

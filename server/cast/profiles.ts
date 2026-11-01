@@ -516,7 +516,7 @@ export async function rewriteProfiles(
 const COMPACT_SYSTEM = [
   "You tidy the facts kept about speakers in a novel, used to cast their audiobook voices.",
   "Each speaker comes with their facts from the book in reading order, labelled F1, F2….",
-  '- "repeats": each fact that says again what another says, in other words or not, as {"fact": its label, "of": the label of the one it repeats}.',
+  '- "repeats": each fact that says again what another says, in other words or not, as {"fact": its label, "of": the label of the one it repeats}. A fact that adds anything the other doesn\'t is not a repeat.',
   '- "known": the labels of passing details that say nothing of who they are, how they behave or how they sound.',
   "Answer only with the JSON object, one entry per speaker, named as given.",
 ].join("\n");

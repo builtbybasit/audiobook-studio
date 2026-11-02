@@ -873,6 +873,24 @@ describe("a speaker the model names by another of their names", () => {
     );
   });
 
+  test("a capitalised description takes a name its note gives too", async () => {
+    const provider: ScriptingProvider = {
+      name: "Well (test)",
+      async script(input) {
+        return {
+          lines: [{ type: "dialogue", speaker: "The Well", text: input.text }],
+          cast: [{ name: "The Well", aliases: ["Kai"] }],
+        };
+      },
+    };
+    const api = testApi({ scripting: provider });
+    const id = await shelved(api);
+    await scriptChapters(api, id, [1]);
+    const { characters } = (await api.request<Cast>(`/api/books/${id}/cast`)).body;
+    expect(characters.map((c) => c.name)).toContain("Kai");
+    expect(characters.map((c) => c.name)).not.toContain("The Well");
+  });
+
   test("merged away while a run was out stays merged when it lands", async () => {
     const gate = gatedProvider([{ type: "dialogue", speaker: "Bob", text: "Rain fell." }]);
     const api = testApi({ scripting: gate.provider });

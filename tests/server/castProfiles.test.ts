@@ -438,18 +438,21 @@ describe("refreshing facts", () => {
 });
 
 describe("linking strangers", () => {
+  // the first [#] label of each side of the question: the named speaker's, then the stranger's
+  const labels = (user: string) =>
+    user.split("(unnamed)").map((side) => Number(/\[(\d+)\]/.exec(side)?.[1]));
   test.each([
-    [{ same: "Young man #1", sourceIds: [1] }, true],
-    [{ same: "Young man #1", sourceIds: [] }, false],
-    [{ same: null, sourceIds: [] }, false],
+    ["cites both", (n: number[]) => ({ same: true, sourceIds: n }), true],
+    ["cites only the named", (n: number[]) => ({ same: true, sourceIds: [n[0]] }), false],
+    ["says no", (n: number[]) => ({ same: false, sourceIds: n }), false],
   ])(
-    "a named speaker's first profile asks about earlier strangers (%j)",
-    async (answer, joined) => {
+    "a named speaker's first profile asks about an earlier stranger: %s",
+    async (_, answer, joined) => {
       const rec = asking((input) =>
         input.system.startsWith("You decide")
           ? input.user.startsWith("## Caster")
-            ? answer
-            : { same: null, sourceIds: [] }
+            ? answer(labels(input.user))
+            : { same: false, sourceIds: [] }
           : input.simulated,
       );
       const { api, id, ids } = await setup(testApi({ scripting: rec.provider }), ["One", "Two"]);

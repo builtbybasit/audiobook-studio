@@ -119,15 +119,44 @@ export function renameCharacter(db: Db, bookId: string, from: string, to: string
   if (cast.getCharacter(db, bookId, to))
     throw conflict(`“${to}” is already in the cast`, "Merge the two speakers instead.");
   return db.transaction((tx) => {
-    const settle = readings(tx, bookId);
-    cast.renameCharacterRow(tx, bookId, from, to);
-    const aliases = [...new Set([...was.aliases, from])].filter((a) => a !== to);
-    cast.upsertCharacter(tx, bookId, { ...requireCharacter(tx, bookId, to), aliases });
-    cast.relinkPersonas(tx, bookId, from, to);
-    cast.relinkTerms(tx, bookId, from, to);
-    const moved = reattribute(tx, bookId, from, to, settle());
+    const moved = renameIn(tx, bookId, was, to, [...was.aliases, from]);
     return { characters: cast.readCast(tx, bookId), moved };
   });
+}
+
+function renameIn(tx: Tx, bookId: string, was: Character, to: string, aliases: string[]) {
+  const settle = readings(tx, bookId);
+  cast.renameCharacterRow(tx, bookId, was.name, to);
+  cast.upsertCharacter(tx, bookId, {
+    ...requireCharacter(tx, bookId, to),
+    aliases: [...new Set(aliases)].filter((a) => a !== to),
+  });
+  cast.relinkPersonas(tx, bookId, was.name, to);
+  cast.relinkTerms(tx, bookId, was.name, to);
+  return reattribute(tx, bookId, was.name, to, settle());
+}
+
+/** What the text calls someone before it names them: "the young man", "a guard". */
+const DESCRIBED = /^(?:[Tt]he|[Aa]n?)\s+\p{Ll}/u;
+
+/**
+ * Each of `names` the cast knows by a description takes the first name its aliases give, as
+ * "the young man" becomes "Caster". The description is dropped, not kept as an alias: it would
+ * catch the next stranger the text describes the same way. Returns "from → to" for each.
+ */
+export function nameDescribed(tx: Tx, bookId: string, names: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const name of names) {
+    const c = cast.getCharacter(tx, bookId, name);
+    if (!c || c.personaOf || c.masked || !DESCRIBED.test(c.name)) continue;
+    const to = c.aliases.find(
+      (a) => /^\p{Lu}/u.test(a) && !/^(?:the|an?)\s/i.test(a) && !cast.getCharacter(tx, bookId, a),
+    );
+    if (!to) continue;
+    renameIn(tx, bookId, c, to, c.aliases);
+    out.push(`${c.name} → ${to}`);
+  }
+  return out;
 }
 
 /**

@@ -835,6 +835,35 @@ describe("a speaker the model names by another of their names", () => {
     expect(cast.find((c) => c.name === "Robert")?.aliases).toEqual(["Bob"]);
   });
 
+  test("a speaker known by a description takes the name the text gives, and the next stranger is new", async () => {
+    const notes = [[], [{ name: "the young man", aliases: ["the Legacy", "Caster"] }], []];
+    let run = 0;
+    const provider: ScriptingProvider = {
+      name: "Named (test)",
+      async script(input) {
+        return {
+          lines: [{ type: "dialogue", speaker: "the young man", text: input.text }],
+          cast: notes[run++],
+        };
+      },
+    };
+    const api = testApi({ scripting: provider });
+    const id = await shelved(api);
+    const cast = async () => (await api.request<Cast>(`/api/books/${id}/cast`)).body.characters;
+    await scriptChapters(api, id, [1]);
+    await scriptChapters(api, id, [1]);
+    const caster = (await cast()).find((c) => c.name === "Caster");
+    expect(caster?.aliases).toEqual(["the Legacy"]);
+    const { segments } = (
+      await api.request<{ segments: Segment[] }>(`/api/books/${id}/chapters/1/script`)
+    ).body;
+    expect(segments.map((s) => s.speaker)).toEqual(["Caster"]);
+    await scriptChapters(api, id, [1]);
+    expect((await cast()).map((c) => c.name)).toEqual(
+      expect.arrayContaining(["Caster", "the young man"]),
+    );
+  });
+
   test("merged away while a run was out stays merged when it lands", async () => {
     const gate = gatedProvider([{ type: "dialogue", speaker: "Bob", text: "Rain fell." }]);
     const api = testApi({ scripting: gate.provider });

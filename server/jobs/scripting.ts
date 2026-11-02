@@ -13,6 +13,7 @@ import type {
   VersionOrigin,
 } from "@/types";
 import { groundedFacts } from "~/cast/facts";
+import { nameDescribed } from "~/cast/ops";
 import { paragraphsIn } from "@/lib/sourceParagraphs";
 import { castNameFor } from "@/lib/cast";
 import { expressionNames, scriptedAnnotation } from "@/lib/expressions";
@@ -579,6 +580,10 @@ export function scriptingHandler(provider: ScriptingProvider, gate: SpeechGate):
             ctx.note("Facts without a paragraph of their part dropped", "warning", {
               dropped: claimed.length - supported.length,
             });
+          // after the facts, which follow the rename
+          const named = nameDescribed(tx, at.bookId, [
+            ...new Set([...lines.map((l) => l.speaker), ...learnt]),
+          ]);
           const suggested = book?.pronounceOff
             ? []
             : suggestTerms(
@@ -598,6 +603,7 @@ export function scriptingHandler(provider: ScriptingProvider, gate: SpeechGate):
             revision,
             ...(added.length ? { speakersAdded: added.join(", ") } : {}),
             ...(learnt.length ? { speakersFilledIn: learnt.join(", ") } : {}),
+            ...(named.length ? { speakersNamed: named.join(", ") } : {}),
             ...(facts ? { facts } : {}),
             ...(suggested.length ? { termsSuggested: suggested.join(", ") } : {}),
             ...(leftOff ? { recap: leftOff } : {}),

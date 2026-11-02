@@ -3,7 +3,8 @@
 import * as v from "valibot";
 
 import type { Job } from "@/types";
-import { chapterCast, castNameFor, FACT_KINDS, NARRATOR } from "@/lib/cast";
+import { castNameFor, FACT_KINDS, NARRATOR } from "@/lib/cast";
+import { speakerLine, type PromptCastMember } from "@/lib/prompt";
 import { chapterNumbers } from "@/lib/chapterNumber";
 import { tokenEstimate } from "@/lib/scripting";
 import { compactFacts, noUsage, rewriteProfiles, staleProfiles, tally } from "~/cast/profiles";
@@ -11,13 +12,12 @@ import { groundedFacts } from "~/cast/facts";
 import { numberedParagraphs, paragraphsIn, sourceParagraphs } from "@/lib/sourceParagraphs";
 import { plainText } from "~/epub/markdown";
 import { chunksOf, beforeOf } from "~/script/chunks";
-import { readCast } from "~/db/cast";
+import { readCast, readChapterCast } from "~/db/cast";
 import type { Db } from "~/db/client";
 import { readProfiles } from "~/db/endpoints";
 import { replaceChapterFacts, type NewFact } from "~/db/facts";
 import * as queue from "~/db/jobs";
 import * as library from "~/db/library";
-import { readScript } from "~/db/script";
 import type { JobContext, JobHandler, Runner } from "~/jobs/runner";
 import { notFound } from "~/lib/errors";
 import { FACT_MAX, factsOf } from "~/providers/chatScripting";
@@ -114,11 +114,11 @@ export function profilesHandler(provider: ScriptingProvider, gate: SpeechGate): 
 
 // the rules the scripting prompt gives its cast notes' facts, in the same words
 const SYSTEM = [
-  "You read one chapter of a novel, its paragraphs labelled [P#], and note what it tells about some of its characters, speaking or not.",
-  'For each character named, "facts": lasting things the chapter states or clearly shows about them, one trait each (two traits are two facts, never joined with "and", "but" or "yet"): {"kind": "role", "background", "relationship", "personality" or "voice", "text": one short sentence, "sourceIds": the [P#] numbers of the 1–5 paragraphs that show it}.',
-  "How they act in one scene, such as whispering while hiding, is a direction, not a fact. A state of the moment, such as illness, drugs, fear, injury, a spell or an act, is not a trait: a trait is what holds when they are well and themselves. A fact someone tells about another belongs to that other. Never guess. [] when there are none.",
-  "Previous prose is context only: cite the chapter's paragraphs.",
-  "Answer only with the JSON object, one entry per character, named as given.",
+  "You read one chapter of a novel, its paragraphs labelled [P#], and note what it tells about the known cast, speaking or not.",
+  'For each known character the chapter tells something lasting about, "facts": lasting things it states or clearly shows about them, one trait each (two traits are two facts, never joined with "and", "but" or "yet"): {"kind": "role", "background", "relationship", "personality" or "voice", "text": one short sentence, "sourceIds": the [P#] numbers of the 1–5 paragraphs that show it}.',
+  "How they act in one scene, such as whispering while hiding, is a direction, not a fact. A state of the moment, such as illness, drugs, fear, injury, a spell or an act, is not a trait: a trait is what holds when they are well and themselves. A fact someone tells about another belongs to that other. Never guess.",
+  "Leave out characters it tells nothing lasting about. Previous prose is context only: cite the chapter's paragraphs.",
+  "Answer only with the JSON object, each character named as the known cast names them.",
 ].join("\n");
 
 const SCHEMA = {
@@ -163,29 +163,25 @@ const Said = v.looseObject({ speaker: v.string(), facts: v.array(v.unknown()) })
 class InvalidFacts extends Error {}
 
 /**
- * The asked-about speakers' facts that cite paragraphs of this part, and how many were dropped for
- * not doing so. A reply without the list, a speaker or any cited fact throws: the facts stay.
+ * The listed speakers' facts that cite paragraphs of this part, and how many were dropped for not
+ * doing so. Other names are dropped. A reply without the list or with no cited fact throws.
  */
 function factsIn(
   said: unknown,
-  speakers: ReadonlySet<string>,
+  cast: readonly Pick<PromptCastMember, "name" | "aliases">[],
   source: string,
   allowedIds: ReadonlySet<number>,
 ): { facts: NewFact[]; dropped: number } {
   const list = (said as { speakers?: unknown } | null)?.speakers;
   if (!Array.isArray(list)) throw new InvalidFacts("The model did not return character facts");
-  const answered = new Set<string>();
+  const names = new Set(cast.map((c) => c.name));
   const facts: NewFact[] = [];
   let dropped = 0;
   for (const item of list) {
     const read = v.safeParse(Said, item);
     if (!read.success) continue;
-    const speaker = castNameFor(
-      read.output.speaker.trim(),
-      [...speakers].map((name) => ({ name })),
-    );
-    if (!speakers.has(speaker)) continue;
-    answered.add(speaker);
+    const speaker = castNameFor(read.output.speaker.trim(), cast);
+    if (!names.has(speaker)) continue;
     const all = factsOf(read.output.facts);
     const grounded = groundedFacts(
       all.filter((f) => f.sourceIds?.length),
@@ -195,8 +191,6 @@ function factsIn(
     dropped += all.length - grounded.length;
     facts.push(...grounded.map((f) => ({ speaker, ...f })));
   }
-  if ([...speakers].some((s) => !answered.has(s)))
-    throw new InvalidFacts("The model left out a requested character; existing facts were kept");
   if (dropped && !facts.length)
     throw new InvalidFacts(
       "No fact cited a paragraph of this chapter. Cite only the [P#] numbers under Original prose",
@@ -231,11 +225,11 @@ function sourceOf(db: Db, bookId: string, chapterId: number): string {
   return plainText(body);
 }
 
-/** Names/aliases mentioned in prose plus existing speakers for implicit references. */
+/** The cast the chapter's scripting prompt lists, as it lists them. */
 function speakersOf(db: Db, bookId: string, chapterId: number, source: string, major: boolean) {
-  const recent = new Set(readScript(db, bookId, chapterId).map((s) => s.speaker));
-  return chapterCast(readCast(db, bookId), source, recent).filter(
-    (c) => c.name !== NARRATOR && c.name !== "Unknown" && (!major || c.major),
+  const majors = major && new Set(readCast(db, bookId).flatMap((c) => (c.major ? [c.name] : [])));
+  return readChapterCast(db, bookId, chapterId, source).filter(
+    (c) => c.name !== NARRATOR && c.name !== "Unknown" && (!majors || majors.has(c.name)),
   );
 }
 
@@ -249,13 +243,13 @@ function factRequests(
   major: boolean,
 ) {
   const previous = plainText(library.previousChapterBody(db, bookId, chapterId)).slice(-6000);
-  const cast = speakersOf(db, bookId, chapterId, `${previous}\n${source}`, major);
+  const cast = speakersOf(db, bookId, chapterId, source, major);
   const speakers = cast.map((c) => c.name);
-  const names = cast
-    .map((c) => c.name + (c.aliases.length ? ` (also called ${c.aliases.join(", ")})` : ""))
-    .join(", ");
+  const recap = library.previousRecap(db, bookId, chapterId);
+  const known = `Known cast:\n${cast.map((c) => `- ${speakerLine(c)}`).join("\n")}${recap ? `\n\nWhere the previous chapter left off: ${recap}` : ""}`;
   const chunks = chunksOf(source, p);
   return {
+    cast,
     speakers,
     requests: (speakers.length ? chunks : []).map((chunk, index) => {
       const before = [previous, beforeOf(chunks, index)].filter(Boolean).join("\n\n");
@@ -263,7 +257,7 @@ function factRequests(
       return {
         chunk,
         allowedIds: new Set(paragraphsIn(source, offset, chunk.length).map((p) => p.id)),
-        user: `Characters: ${names}\n\n${before ? `Previous prose (context only):\n${before}\n\n` : ""}Original prose:\n${numberedParagraphs(source, offset, chunk.length)}`,
+        user: `${known}\n\n${before ? `Previous prose (context only):\n${before}\n\n` : ""}Original prose:\n${numberedParagraphs(source, offset, chunk.length)}`,
       };
     }),
   };
@@ -283,7 +277,7 @@ export function factsHandler(provider: ScriptingProvider, gate: SpeechGate): Job
       if (!provider.ask) throw new Error(`${provider.name} cannot read cast facts`);
 
       const source = sourceOf(db, job.bookId, job.chapterId);
-      const { speakers, requests } = factRequests(
+      const { cast, speakers, requests } = factRequests(
         db,
         job.bookId,
         job.chapterId,
@@ -335,7 +329,7 @@ export function factsHandler(provider: ScriptingProvider, gate: SpeechGate): Job
               sent: (report) => tally(usage, report, money.sent(report)),
               simulated: simulatedFacts(source, speakers, allowedIds),
             });
-            const read = factsIn(said, new Set(speakers), source, allowedIds);
+            const read = factsIn(said, cast, source, allowedIds);
             facts.push(...read.facts);
             if (read.dropped)
               ctx.note("Facts without a paragraph of this chapter dropped", "warning", {
@@ -345,7 +339,7 @@ export function factsHandler(provider: ScriptingProvider, gate: SpeechGate): Job
           } catch (e) {
             if (signal.aborted) throw signal.reason;
             if (e instanceof InvalidFacts && attempt === 0) {
-              correction = `\n\nYour last reply failed validation: ${e.message}. Return every speaker; facts: [] when none.`;
+              correction = `\n\nYour last reply failed validation: ${e.message}.`;
               ctx.note("Retrying invalid character facts", "warning", { reason: e.message });
               continue;
             }

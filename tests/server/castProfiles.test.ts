@@ -604,7 +604,6 @@ test.each([
       { speaker: "Tom", facts: [] },
     ],
   },
-  { speakers: [{ speaker: "Mara", facts: [] }] },
   { wrong: [] },
 ])("a bad extraction keeps the chapter's existing facts (%j)", async (answer) => {
   const rec = asking((input) =>
@@ -619,6 +618,33 @@ test.each([
   const { body } = await api.request<{ jobs: Job[] }>("/api/jobs");
   expect(body.jobs.find((j) => j.kind === "facts")?.status).toBe("failed");
   expect(rec.asked).toHaveLength(2);
+});
+
+test("a reply may leave the known cast out; a name outside it is dropped", async () => {
+  const quote = "Mara is a physician.";
+  const rec = asking((input) =>
+    input.system.startsWith("You read one chapter")
+      ? {
+          speakers: [
+            { speaker: "Mara", facts: [{ kind: "role", text: quote, sourceIds: [4] }] },
+            { speaker: "A stranger", facts: [{ kind: "role", text: "A thief.", sourceIds: [4] }] },
+          ],
+        }
+      : input.simulated,
+  );
+  const { api, id, ids, add } = await setup(
+    testApi({ scripting: rec.provider }),
+    ["One"],
+    [line("One"), line("Two", "Tom"), quote],
+  );
+  add(ids[0], "Tom", "role", "Old fact.");
+  await api.request(`/api/books/${id}/characters/refresh`, jsonBody({ profile: "sim" }));
+  await api.runner.idle();
+  // a fact saved for a name outside the cast would fail the job (no such character)
+  const { body } = await api.request<{ jobs: Job[] }>("/api/jobs");
+  expect(body.jobs.find((j) => j.kind === "facts")?.status).toBe("done");
+  expect(readFacts(api.db, id, "Mara").map((f) => f.text)).toEqual([quote]);
+  expect(readFacts(api.db, id, "Tom")).toEqual([]);
 });
 
 test("an invalid extraction is corrected once before replacing existing facts", async () => {

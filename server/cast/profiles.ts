@@ -22,7 +22,9 @@ import { chapterSpeakers, readCast } from "~/db/cast";
 import type { Db } from "~/db/client";
 import { readScript } from "~/db/script";
 import { readProfiles } from "~/db/endpoints";
-import { getBook } from "~/db/library";
+import { getBook, getChapterBody } from "~/db/library";
+import { plainText } from "~/epub/markdown";
+import { sourceParagraphs } from "@/lib/sourceParagraphs";
 import {
   factKey,
   markCompacted,
@@ -647,10 +649,10 @@ export async function compactFacts(
 // ---------- strangers ----------
 
 const LINK_SYSTEM = [
-  "You decide whether a character a novel has named is someone it showed earlier without a name.",
-  "Each candidate is one unnamed person: what they said and what the text told about them, its passages labelled [#]. The named character is shown the same way.",
-  'Answer {"same": the candidate\'s name or null, "sourceIds": the [#] numbers that show they are one person}.',
-  "Same only when the text shows it: the text says so, or what they say, do and are match. A shared description, such as “a young man”, is not enough. Never guess: null when unsure.",
+  "You decide whether a character a novel has named is the same person as one it showed earlier without a name.",
+  "Each is shown by what the text told about them, then the prose around their lines, labelled [#].",
+  'Answer {"same": true or false, "sourceIds": the [#] numbers that show it, at least one about each}.',
+  "Same when the text says so, or when the unnamed one has specifics of their own that the named one shares, such as a rank, a power, a family or a scar, and nothing contradicts it. What the people around them say or have does not count. A shared look, age or description, such as “a young man”, is not enough.",
 ].join("\n");
 
 const LINK_SCHEMA = {
@@ -658,7 +660,7 @@ const LINK_SCHEMA = {
   additionalProperties: false,
   required: ["same", "sourceIds"],
   properties: {
-    same: { type: ["string", "null"] },
+    same: { type: "boolean" },
     sourceIds: { type: "array", items: { type: "integer", minimum: 1 } },
   },
 };
@@ -717,39 +719,51 @@ export async function linkStrangers(
   const passages = (name: string, from: "first" | "last") => {
     const at = span.get(name)!;
     const chapter = chapters[from === "first" ? at.first : at.last];
-    const lines = readScript(db, bookId, chapter)
-      .filter((s) => s.speaker === name)
-      .map((s) => `“${s.text}”`);
-    const facts = readFacts(db, bookId, name, { live: true }).flatMap((f) =>
-      f.evidence ? [f.evidence] : [],
-    );
-    return [...lines.slice(0, SHOWN), ...facts.slice(0, SHOWN)];
+    const paragraphs = sourceParagraphs(plainText(getChapterBody(db, bookId, chapter) ?? ""));
+    // the paragraphs around a line say who they talk with, and about what
+    const shown = new Set<number>();
+    for (const s of readScript(db, bookId, chapter).filter((x) => x.speaker === name)) {
+      const i = paragraphs.findIndex((p) => p.text.includes(s.text.slice(0, 40)));
+      if (i < 0) continue;
+      for (let j = Math.max(0, i - 2); j <= Math.min(paragraphs.length - 1, i + 1); j++)
+        shown.add(j);
+      if (shown.size >= SHOWN * 3) break;
+    }
+    const lines = [...shown].sort((x, y) => x - y).map((j) => paragraphs[j].text);
+    const facts = readFacts(db, bookId, name, { live: true }).map((f) => f.text);
+    return [...facts.slice(0, SHOWN * 2), ...lines];
   };
   const a = asking(db, provider, bookId, profileId, signal, usage, gate);
-  const merges: { from: string; into: string }[] = [];
-  const taken = new Set<string>();
-  await each(a, todo, async ({ c, candidates }) => {
+  // one stranger per question: a small model picks the wrong one of several look-alikes
+  const pairs = todo.flatMap(({ c, candidates }) => candidates.map((s) => ({ c, s })));
+  const yes: { c: string; s: string }[] = [];
+  await each(a, pairs, async ({ c, s }) => {
     let id = 0;
     const shown = (name: string, from: "first" | "last") =>
       passages(name, from).map((t) => `[${++id}] ${t}`);
     const named = [`## ${c.name} (named)`, ...shown(c.name, "first")];
-    const asked = candidates.map((s) => [`## ${s.name}`, ...shown(s.name, "last")].join("\n"));
+    const split = id;
+    const unnamed = [`## ${s.name} (unnamed)`, ...shown(s.name, "last")];
     const said = await request(a, "linking an unnamed speaker", {
       system: LINK_SYSTEM,
       schema: LINK_SCHEMA,
-      user: [named.join("\n"), "Candidates:", ...asked].join("\n\n"),
-      simulated: { same: null, sourceIds: [] },
+      user: `${named.join("\n")}\n\n${unnamed.join("\n")}`,
+      simulated: { same: false, sourceIds: [] },
     });
     const { same, sourceIds } = (said ?? {}) as { same?: unknown; sourceIds?: unknown };
-    const s = candidates.find((x) => x.name === same);
-    const cited =
-      Array.isArray(sourceIds) &&
-      sourceIds.length > 0 &&
-      sourceIds.every((n) => Number.isSafeInteger(n) && n >= 1 && n <= id);
-    if (!s || !cited || taken.has(s.name)) return;
-    taken.add(s.name);
-    merges.push({ from: s.name, into: c.name });
+    const ids = Array.isArray(sourceIds) ? sourceIds.filter(Number.isSafeInteger) : [];
+    if (
+      same === true &&
+      ids.some((n) => n >= 1 && n <= split) &&
+      ids.some((n) => n > split && n <= id)
+    )
+      yes.push({ c: c.name, s: s.name });
   });
+  // a stranger two speakers claim, or a speaker claiming two, is left for a person to judge
+  const once = (key: "c" | "s", v: string) => yes.filter((y) => y[key] === v).length === 1;
+  const merges = yes
+    .filter((y) => once("c", y.c) && once("s", y.s))
+    .map((y) => ({ from: y.s, into: y.c }));
   if (merges.length) mergeCharacters(db, bookId, merges);
   return merges.length;
 }

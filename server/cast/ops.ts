@@ -13,7 +13,7 @@ import type {
   RevisedLines,
   SegmentAudio,
 } from "@/types";
-import { NARRATOR, personaRefusal, sameReading } from "@/lib/cast";
+import { DESCRIBED, isStranger, NARRATOR, personaRefusal, sameReading } from "@/lib/cast";
 import { pronunciationMoved } from "@/lib/reading";
 import { unspokenTypes } from "@/lib/siteText";
 import { lexMatcher } from "@/lib/speech";
@@ -136,19 +136,16 @@ function renameIn(tx: Tx, bookId: string, was: Character, to: string, aliases: s
   return reattribute(tx, bookId, was.name, to, settle());
 }
 
-/** What the text calls someone before it names them: "the young man", "a guard". */
-const DESCRIBED = /^(?:[Tt]he|[Aa]n?)\s+\p{Ll}/u;
-
 /**
- * Each of `names` the cast knows by a description takes the first name its aliases give, as
- * "the young man" becomes "Caster". The description is dropped, not kept as an alias: it would
+ * Each of `names` the cast knows by a description or as a stranger takes the first name its
+ * aliases give, as "Young man #1" becomes "Caster". The description is dropped, not kept as an alias: it would
  * catch the next stranger the text describes the same way. Returns "from → to" for each.
  */
 export function nameDescribed(tx: Tx, bookId: string, names: readonly string[]): string[] {
   const out: string[] = [];
   for (const name of names) {
     const c = cast.getCharacter(tx, bookId, name);
-    if (!c || c.personaOf || c.masked || !DESCRIBED.test(c.name)) continue;
+    if (!c || c.personaOf || c.masked || !(DESCRIBED.test(c.name) || isStranger(c.name))) continue;
     const to = c.aliases.find(
       (a) => /^\p{Lu}/u.test(a) && !/^(?:the|an?)\s/i.test(a) && !cast.getCharacter(tx, bookId, a),
     );

@@ -437,6 +437,48 @@ describe("refreshing facts", () => {
   });
 });
 
+describe("linking strangers", () => {
+  test.each([
+    [{ same: "Young man #1", sourceIds: [1] }, true],
+    [{ same: "Young man #1", sourceIds: [] }, false],
+    [{ same: null, sourceIds: [] }, false],
+  ])(
+    "a named speaker's first profile asks about earlier strangers (%j)",
+    async (answer, joined) => {
+      const rec = asking((input) =>
+        input.system.startsWith("You decide")
+          ? input.user.startsWith("## Caster")
+            ? answer
+            : { same: null, sourceIds: [] }
+          : input.simulated,
+      );
+      const { api, id, ids } = await setup(testApi({ scripting: rec.provider }), ["One", "Two"]);
+      for (const [i, name] of ["Young man #1", "Caster"].entries()) {
+        await api.request(`/api/books/${id}/characters/${encodeURIComponent(name)}`, {
+          ...jsonBody(newSpeaker(name, 3 + i)),
+          method: "PUT",
+        });
+        api.db.transaction((tx) =>
+          replaceScript(
+            tx,
+            id,
+            ids[i],
+            readScript(tx, id, ids[i]).map((s) =>
+              s.speaker === "Tom" ? { ...s, speaker: name } : s,
+            ),
+          ),
+        );
+      }
+      enqueueProfiles(api.db, id, "sim");
+      api.runner.kick();
+      await api.runner.idle();
+      const { body } = await api.request<{ characters: Character[] }>(`/api/books/${id}/cast`);
+      expect(body.characters.some((c) => c.name === "Young man #1")).toBe(!joined);
+      expect(readScript(api.db, id, ids[0]).some((s) => s.speaker === "Caster")).toBe(joined);
+    },
+  );
+});
+
 describe("the facts routes", () => {
   test("list a speaker's facts once each in reading order, marks shown; deleting one takes its repeats", async () => {
     const { api, id, ids, add } = await setup(testApi(), ["One", "Two", "Three", "Four"]);

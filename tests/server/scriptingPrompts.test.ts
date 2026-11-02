@@ -835,32 +835,41 @@ describe("a speaker the model names by another of their names", () => {
     expect(cast.find((c) => c.name === "Robert")?.aliases).toEqual(["Bob"]);
   });
 
-  test("a speaker known by a description takes the name the text gives, and the next stranger is new", async () => {
-    const notes = [[], [{ name: "the young man", aliases: ["the Legacy", "Caster"] }], []];
+  test("an unnamed speaker is a numbered stranger until the text names them; another is new", async () => {
+    const said = [
+      { speaker: "the young man", cast: [] },
+      {
+        speaker: "Young man #1",
+        cast: [{ name: "Young man #1", aliases: ["the Legacy", "Caster"] }],
+      },
+      { speaker: "the young man", cast: [] },
+      { speaker: "the young man", cast: [] },
+    ];
     let run = 0;
     const provider: ScriptingProvider = {
       name: "Named (test)",
       async script(input) {
-        return {
-          lines: [{ type: "dialogue", speaker: "the young man", text: input.text }],
-          cast: notes[run++],
-        };
+        const { speaker, cast } = said[run++];
+        return { lines: [{ type: "dialogue", speaker, text: input.text }], cast };
       },
     };
     const api = testApi({ scripting: provider });
-    const id = await shelved(api);
-    const cast = async () => (await api.request<Cast>(`/api/books/${id}/cast`)).body.characters;
+    const id = await shelved(api, ["One", "Two"]);
+    const names = async () =>
+      (await api.request<Cast>(`/api/books/${id}/cast`)).body.characters.map((c) => c.name);
     await scriptChapters(api, id, [1]);
+    expect(await names()).toContain("Young man #1");
     await scriptChapters(api, id, [1]);
-    const caster = (await cast()).find((c) => c.name === "Caster");
-    expect(caster?.aliases).toEqual(["the Legacy"]);
+    const { characters } = (await api.request<Cast>(`/api/books/${id}/cast`)).body;
+    expect(characters.find((c) => c.name === "Caster")?.aliases).toEqual(["the Legacy"]);
     const { segments } = (
       await api.request<{ segments: Segment[] }>(`/api/books/${id}/chapters/1/script`)
     ).body;
     expect(segments.map((s) => s.speaker)).toEqual(["Caster"]);
     await scriptChapters(api, id, [1]);
-    expect((await cast()).map((c) => c.name)).toEqual(
-      expect.arrayContaining(["Caster", "the young man"]),
+    await scriptChapters(api, id, [2]);
+    expect(await names()).toEqual(
+      expect.arrayContaining(["Caster", "Young man #1", "Young man #2"]),
     );
   });
 

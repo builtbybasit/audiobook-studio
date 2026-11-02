@@ -7,7 +7,14 @@ import { castNameFor, FACT_KINDS, NARRATOR } from "@/lib/cast";
 import { speakerLine, type PromptCastMember } from "@/lib/prompt";
 import { chapterNumbers } from "@/lib/chapterNumber";
 import { tokenEstimate } from "@/lib/scripting";
-import { compactFacts, noUsage, rewriteProfiles, staleProfiles, tally } from "~/cast/profiles";
+import {
+  compactFacts,
+  linkStrangers,
+  noUsage,
+  rewriteProfiles,
+  staleProfiles,
+  tally,
+} from "~/cast/profiles";
 import { groundedFacts } from "~/cast/facts";
 import { numberedParagraphs, paragraphsIn, sourceParagraphs } from "@/lib/sourceParagraphs";
 import { plainText } from "~/epub/markdown";
@@ -44,6 +51,10 @@ export function profilesHandler(provider: ScriptingProvider, gate: SpeechGate): 
     async run(ctx: JobContext): Promise<void> {
       const { job, db, signal } = ctx;
       const profile = job.profilesRun?.profile ?? "";
+      const usage = noUsage();
+      // before the rewrite, so a merged stranger's facts are in the profile
+      const linked = await linkStrangers(db, provider, job.bookId, profile, signal, usage, gate);
+      if (linked) ctx.note("Unnamed speakers joined to named ones", "info", { linked });
       const names = staleProfiles(db, job.bookId);
       if (!names.length) {
         ctx.note("No profile needs rewriting", "info");
@@ -53,7 +64,7 @@ export function profilesHandler(provider: ScriptingProvider, gate: SpeechGate): 
       const run: NonNullable<Job["profilesRun"]> = {
         profile,
         speakers: names.length,
-        usage: noUsage(),
+        usage,
       };
       queue.setCastRun(db, job.id, { profilesRun: run });
       const { rewritten, failed } = await rewriteProfiles(

@@ -263,9 +263,45 @@ export function castNameFor(
   return meant.length === 1 ? meant[0].name : speaker;
 }
 
+// ---------- strangers ----------
+
+/** What the text calls someone it has not named: "the young man", "a guard". */
+export const DESCRIBED = /^(?:[Tt]he|[Aa]n?)\s+\p{Ll}/u;
+
+/** "Young man #1": one person the text has not named, numbered apart from others like them. */
+export const isStranger = (name: string): boolean => /\s#\d+$/.test(name);
+
+/**
+ * `meant`, with each description no speaker goes by ("the young man") made a new numbered stranger
+ * ("Young man #1"). The same description in one answer is one stranger.
+ */
+export function numberStrangers(
+  cast: readonly { name: string }[],
+  meant: (name: string) => string,
+  said: readonly string[],
+): (name: string) => string {
+  const taken = new Set(cast.map((c) => c.name.toLowerCase()));
+  const strangers = new Map<string, string>();
+  for (const name of said.map(meant)) {
+    const key = name.toLowerCase();
+    if (!DESCRIBED.test(name) || taken.has(key) || strangers.has(key)) continue;
+    const words = name.replace(/^\S+\s+/, "");
+    const base = words[0].toUpperCase() + words.slice(1);
+    let n = 1;
+    while (taken.has(`${base} #${n}`.toLowerCase())) n++;
+    taken.add(`${base} #${n}`.toLowerCase());
+    strangers.set(key, `${base} #${n}`);
+  }
+  return (name) => {
+    const m = meant(name);
+    return strangers.get(m.toLowerCase()) ?? m;
+  };
+}
+
 /**
  * `{{cast}}` for a chapter, in cast order: who the text names, who spoke recently (`recent`), and
- * every disguise with its wearer (a reveal can come much later).
+ * every disguise with its wearer (a reveal can come much later). A stranger is never matched by
+ * words: "young man" in the text is anyone.
  */
 export function chapterCast<
   T extends Pick<PromptCastMember, "name" | "aliases" | "personaOf" | "masked">,
@@ -286,7 +322,7 @@ export function chapterCast<
           c.personaOf ||
           c.masked ||
           recent.has(c.name) ||
-          [c.name, ...(c.aliases ?? [])].some(named),
+          (!isStranger(c.name) && [c.name, ...(c.aliases ?? [])].some(named)),
       )
       .map((c) => c.name),
   );

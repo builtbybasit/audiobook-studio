@@ -14,10 +14,13 @@ import type {
   RequestRecord,
   VoiceType,
 } from "@/types";
-import { AGES, COMPACT_AT, NARRATOR, castNameFor } from "@/lib/cast";
+import { AGES, COMPACT_AT, DESCRIBED, NARRATOR, castNameFor, isStranger } from "@/lib/cast";
 import { tokenEstimate } from "@/lib/scripting";
 import { DELIVERIES, PITCHES, TEXTURES } from "@/lib/voiceProfile";
+import { mergeCharacters } from "~/cast/ops";
+import { chapterSpeakers, readCast } from "~/db/cast";
 import type { Db } from "~/db/client";
+import { readScript } from "~/db/script";
 import { readProfiles } from "~/db/endpoints";
 import { getBook } from "~/db/library";
 import {
@@ -639,4 +642,114 @@ export async function compactFacts(
     }
   });
   return { marked, failed };
+}
+
+// ---------- strangers ----------
+
+const LINK_SYSTEM = [
+  "You decide whether a character a novel has named is someone it showed earlier without a name.",
+  "Each candidate is one unnamed person: what they said and what the text told about them, its passages labelled [#]. The named character is shown the same way.",
+  'Answer {"same": the candidate\'s name or null, "sourceIds": the [#] numbers that show they are one person}.',
+  "Same only when the text shows it: the text says so, or what they say, do and are match. A shared description, such as “a young man”, is not enough. Never guess: null when unsure.",
+].join("\n");
+
+const LINK_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["same", "sourceIds"],
+  properties: {
+    same: { type: ["string", "null"] },
+    sourceIds: { type: "array", items: { type: "integer", minimum: 1 } },
+  },
+};
+
+/** candidates asked about per named speaker, latest first */
+const CANDIDATES = 5;
+/** lines and fact passages shown per speaker */
+const SHOWN = 6;
+
+/**
+ * Before first profiles: each named speaker who has none yet is asked about the unnamed strangers
+ * ("Young man #1") who fell silent before they spoke, of a matching gender and age. A cited yes
+ * merges the stranger into them. Returns how many were merged; names stay out of the job log.
+ */
+export async function linkStrangers(
+  db: Db,
+  provider: ScriptingProvider,
+  bookId: string,
+  profileId: string,
+  signal: AbortSignal,
+  usage?: CastUsage,
+  gate: SpeechGate = createSpeechGate(),
+): Promise<number> {
+  const cast = readCast(db, bookId);
+  const order = chapterSpeakers(db, bookId);
+  const chapters = [...order.keys()];
+  const span = new Map<string, { first: number; last: number }>();
+  [...order.values()].forEach((speakers, i) => {
+    for (const s of speakers) span.set(s, { first: span.get(s)?.first ?? i, last: i });
+  });
+  const strangers = cast.filter((c) => isStranger(c.name) && !c.personaOf && span.has(c.name));
+  const fits = (x?: string, y?: string) => !x || !y || x === "?" || y === "?" || x === y;
+  const todo = cast.flatMap((c) => {
+    const at = span.get(c.name);
+    if (
+      !at ||
+      c.profile ||
+      c.name === NARRATOR ||
+      c.name === "Unknown" ||
+      isStranger(c.name) ||
+      DESCRIBED.test(c.name) ||
+      c.personaOf ||
+      c.masked
+    )
+      return [];
+    const candidates = strangers
+      .filter(
+        (s) => span.get(s.name)!.last <= at.first && fits(s.gender, c.gender) && fits(s.age, c.age),
+      )
+      .sort((a, b) => span.get(b.name)!.last - span.get(a.name)!.last)
+      .slice(0, CANDIDATES);
+    return candidates.length ? [{ c, candidates }] : [];
+  });
+  if (!todo.length) return 0;
+
+  const passages = (name: string, from: "first" | "last") => {
+    const at = span.get(name)!;
+    const chapter = chapters[from === "first" ? at.first : at.last];
+    const lines = readScript(db, bookId, chapter)
+      .filter((s) => s.speaker === name)
+      .map((s) => `“${s.text}”`);
+    const facts = readFacts(db, bookId, name, { live: true }).flatMap((f) =>
+      f.evidence ? [f.evidence] : [],
+    );
+    return [...lines.slice(0, SHOWN), ...facts.slice(0, SHOWN)];
+  };
+  const a = asking(db, provider, bookId, profileId, signal, usage, gate);
+  const merges: { from: string; into: string }[] = [];
+  const taken = new Set<string>();
+  await each(a, todo, async ({ c, candidates }) => {
+    let id = 0;
+    const shown = (name: string, from: "first" | "last") =>
+      passages(name, from).map((t) => `[${++id}] ${t}`);
+    const named = [`## ${c.name} (named)`, ...shown(c.name, "first")];
+    const asked = candidates.map((s) => [`## ${s.name}`, ...shown(s.name, "last")].join("\n"));
+    const said = await request(a, "linking an unnamed speaker", {
+      system: LINK_SYSTEM,
+      schema: LINK_SCHEMA,
+      user: [named.join("\n"), "Candidates:", ...asked].join("\n\n"),
+      simulated: { same: null, sourceIds: [] },
+    });
+    const { same, sourceIds } = (said ?? {}) as { same?: unknown; sourceIds?: unknown };
+    const s = candidates.find((x) => x.name === same);
+    const cited =
+      Array.isArray(sourceIds) &&
+      sourceIds.length > 0 &&
+      sourceIds.every((n) => Number.isSafeInteger(n) && n >= 1 && n <= id);
+    if (!s || !cited || taken.has(s.name)) return;
+    taken.add(s.name);
+    merges.push({ from: s.name, into: c.name });
+  });
+  if (merges.length) mergeCharacters(db, bookId, merges);
+  return merges.length;
 }

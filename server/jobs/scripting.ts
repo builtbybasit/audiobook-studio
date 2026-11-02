@@ -15,7 +15,7 @@ import type {
 import { groundedFacts } from "~/cast/facts";
 import { nameDescribed } from "~/cast/ops";
 import { paragraphsIn } from "@/lib/sourceParagraphs";
-import { castNameFor } from "@/lib/cast";
+import { castNameFor, numberStrangers } from "@/lib/cast";
 import { expressionNames, scriptedAnnotation } from "@/lib/expressions";
 import {
   BUILT_IN_PROMPT,
@@ -510,7 +510,11 @@ export function scriptingHandler(provider: ScriptingProvider, gate: SpeechGate):
       });
       /** Speakers matched against the cast as it stands now, so a merge during the run holds. */
       const matched = (tx: Tx, bookId: string) => {
-        const meant = speakerOf(readSpeakers(tx, bookId), notes);
+        const cast = readSpeakers(tx, bookId);
+        const meant = numberStrangers(cast, speakerOf(cast, notes), [
+          ...scripted.map((l) => l.speaker),
+          ...notes.map((n) => n.name),
+        ]);
         return { meant, lines: scripted.map((l) => ({ ...l, speaker: meant(l.speaker) })) };
       };
 

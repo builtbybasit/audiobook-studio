@@ -106,6 +106,7 @@ describe("the cast a chapter's prompt lists", () => {
     { name: "the Black Mask", masked: true },
     { name: "Nephis" },
     { name: "Kai" },
+    { name: "Young man #1", aliases: ["the young man"] },
   ];
   const names = (text: string, recent: string[] = []) =>
     chapterCast(cast, text, new Set(recent)).map((c) => c.name);
@@ -121,6 +122,10 @@ describe("the cast a chapter's prompt lists", () => {
     expect(names("Kaiser and the castersoft, Jetty.")).not.toContain("Caster");
     expect(names("Kaiser and the castersoft, Jetty.")).not.toContain("Jet");
     expect(names("Kai's sword")).toContain("Kai");
+  });
+
+  test("never by the words of a stranger's name: “young man” is anyone", () => {
+    expect(names("The young man, Young man #1, nodded.")).not.toContain("Young man #1");
   });
 
   test("keeps who spoke just before, though the chapter only says “he”", () => {

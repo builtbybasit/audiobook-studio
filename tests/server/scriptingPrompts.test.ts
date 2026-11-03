@@ -421,7 +421,7 @@ describe("what a model says beside its lines", () => {
               gender: "m",
               age: "elderly",
               voiceType: { pitch: "low", delivery: ["weary"] },
-              aliases: ["the old man", "m"],
+              aliases: ["the old man", "Old Tob", "m"],
               facts: [{ kind: "role", text: "Keeps the inn.", sourceIds: [1] }],
             },
             {
@@ -429,7 +429,7 @@ describe("what a model says beside its lines", () => {
               gender: "m",
               age: "young adult",
               voiceType: { pitch: "high", texture: "clear", delivery: ["cold"] },
-              aliases: ["the clerk"],
+              aliases: ["Clerk Mara"],
               facts: [
                 {
                   kind: "relationship",
@@ -506,7 +506,7 @@ describe("what a model says beside its lines", () => {
     expect(two[0].prompt!.user).toContain(
       "Where the previous chapter left off: Tobiah spoke last, in One.",
     );
-    expect(two[0].prompt!.user).toContain("Tobiah (male, elderly; also called the old man)");
+    expect(two[0].prompt!.user).toContain("Tobiah (male, elderly; also called Old Tob)");
 
     const { characters: cast, lexicon } = (await api.request<Cast>(`/api/books/${id}/cast`)).body;
     // a term already in the dictionary, in any case, is left alone; a new one arrives switched off
@@ -525,8 +525,8 @@ describe("what a model says beside its lines", () => {
       gender: "m",
       age: "elderly",
       voiceType: { pitch: "low", delivery: ["weary"] },
-      // "m" is Mara's already, whatever its case
-      aliases: ["the old man"],
+      // "m" is Mara's already, whatever its case; a description is no name
+      aliases: ["Old Tob"],
       // facts go to the profile rewrite, never into the user's description
       description: "",
     });
@@ -535,7 +535,7 @@ describe("what a model says beside its lines", () => {
       age: "teen",
       // the pitch set by hand stays; only the blank fields fill
       voiceType: { pitch: "low", texture: "clear", delivery: ["cold"] },
-      aliases: ["M", "the clerk"],
+      aliases: ["M", "Clerk Mara"],
       description: "Keeps the ledger.",
     });
     expect(named("Ghost")).toBeUndefined();
@@ -873,13 +873,17 @@ describe("a speaker the model names by another of their names", () => {
     );
   });
 
-  test("a capitalised description takes a name its note gives too", async () => {
+  test.each([
+    ["The Well", "Kai", "Kai"],
+    // the same name without its article is no new name
+    ["The Spell", "Spell", "The Spell"],
+  ])("a capitalised description %s called %s is then %s", async (name, alias, after) => {
     const provider: ScriptingProvider = {
       name: "Well (test)",
       async script(input) {
         return {
-          lines: [{ type: "dialogue", speaker: "The Well", text: input.text }],
-          cast: [{ name: "The Well", aliases: ["Kai"] }],
+          lines: [{ type: "dialogue", speaker: name, text: input.text }],
+          cast: [{ name, aliases: [alias] }],
         };
       },
     };
@@ -887,8 +891,7 @@ describe("a speaker the model names by another of their names", () => {
     const id = await shelved(api);
     await scriptChapters(api, id, [1]);
     const { characters } = (await api.request<Cast>(`/api/books/${id}/cast`)).body;
-    expect(characters.map((c) => c.name)).toContain("Kai");
-    expect(characters.map((c) => c.name)).not.toContain("The Well");
+    expect(characters.map((c) => c.name)).toContain(after);
   });
 
   test("merged away while a run was out stays merged when it lands", async () => {

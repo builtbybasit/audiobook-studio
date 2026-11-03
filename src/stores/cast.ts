@@ -28,6 +28,7 @@ import {
   characterVoiceFor,
   lineBand,
   NARRATOR,
+  isStranger,
   newSpeaker,
   personaOwner,
   sameReading,
@@ -416,8 +417,9 @@ export const useCastStore = defineStore("cast", {
     mergeSuggestions(s): (bookId: string) => MergeSuggestion[] {
       return (bookId: string): MergeSuggestion[] => {
         // names normalized once, not per pair: a 350-speaker cast is 120k pairs
+        // a stranger's name ("Sleeper #1") says nothing of who they are
         const cast = (s.characters[bookId] ?? [])
-          .filter((c) => c.name !== "Narrator")
+          .filter((c) => c.name !== "Narrator" && !isStranger(c.name))
           .map(({ name, major, isNew, keep, aliases }) => {
             const n = norm(name);
             return {

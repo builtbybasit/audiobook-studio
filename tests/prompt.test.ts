@@ -106,9 +106,9 @@ describe("renderPrompt", () => {
 
   test("the built-in rule 5 gives a persona's lines to the persona", () => {
     const [rule5] = BUILT_IN_PROMPT.system.match(/^5\. [\s\S]*?(?=\n6\. )/m)!;
-    expect(rule5).toContain("A cast entry marked “persona of” is one");
-    expect(rule5).toContain("go to the persona's cast name");
-    expect(rule5).toContain("An entry marked “masked, identity unknown”");
+    expect(rule5).toContain("a cast entry marked “persona of” is one");
+    expect(rule5).toContain("goes to the persona's name");
+    expect(rule5).toContain("entry marked “masked, identity unknown”");
   });
 });
 
@@ -129,7 +129,7 @@ describe("line effects in the output format", () => {
   test("offered ones are listed by name, with when, just before the direction", () => {
     const { system } = renderPrompt(BUILT_IN_PROMPT, vars({ lineEffects: OFFERED }));
     expect(system).toContain(
-      '- "text": the words of the line, copied verbatim from the excerpt.\n- "effects" (optional): sound effects for how this line is heard, by name, only from this list — "Telephone": heard through a phone; "Inner echo": words sent mind to mind. Several may apply to one line.',
+      '- "text": the words, verbatim.\n- "effects" (optional): sound effects for how this line is heard, by name, only from this list — "Telephone": heard through a phone; "Inner echo": words sent mind to mind. Several may apply to one line.',
     );
     expect(system).toContain(
       'never add a mask effect to a persona\'s lines.\n- "direction" (optional):',

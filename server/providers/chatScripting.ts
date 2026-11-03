@@ -26,7 +26,7 @@ import {
   shiftTags,
   type PromptCastMember,
 } from "@/lib/prompt";
-import { FACT_KINDS, NARRATOR } from "@/lib/cast";
+import { FACT_KINDS, NARRATOR, isAliasName } from "@/lib/cast";
 import { wordsOf } from "@/lib/gaps";
 import { normalizeUsage } from "@/lib/pricing";
 import { DELIVERIES, PITCHES, TEXTURES } from "@/lib/voiceProfile";
@@ -653,7 +653,9 @@ function castOf(said: unknown): PromptCastMember[] {
     const name = oneLine(read.output.name);
     if (!name || name === NARRATOR || name === UNKNOWN_SPEAKER) continue;
     const aliases = [
-      ...new Set((read.output.aliases ?? []).map(oneLine).filter((a) => a && a !== name)),
+      ...new Set(
+        (read.output.aliases ?? []).map(oneLine).filter((a) => a && a !== name && isAliasName(a)),
+      ),
     ];
     // a disguise: whose it is, or that nobody knows yet
     const of = typeof read.output.personaOf === "string" ? oneLine(read.output.personaOf) : "";

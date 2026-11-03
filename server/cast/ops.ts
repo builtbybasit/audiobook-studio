@@ -13,7 +13,7 @@ import type {
   RevisedLines,
   SegmentAudio,
 } from "@/types";
-import { isStranger, NARRATOR, personaRefusal, sameReading } from "@/lib/cast";
+import { isAliasName, isStranger, NARRATOR, personaRefusal, sameReading } from "@/lib/cast";
 import { pronunciationMoved } from "@/lib/reading";
 import { unspokenTypes } from "@/lib/siteText";
 import { lexMatcher } from "@/lib/speech";
@@ -148,11 +148,17 @@ export function nameDescribed(tx: Tx, bookId: string, names: readonly string[]):
   for (const name of names) {
     const c = cast.getCharacter(tx, bookId, name);
     if (!c || c.personaOf || c.masked || !(ARTICLE.test(c.name) || isStranger(c.name))) continue;
+    // "The Spell" called "Spell" is the same name, not a new one
+    const bare = c.name.replace(ARTICLE, "").toLowerCase();
     const to = c.aliases.find(
-      (a) => /^\p{Lu}/u.test(a) && !ARTICLE.test(a) && !cast.getCharacter(tx, bookId, a),
+      (a) =>
+        /^\p{Lu}/u.test(a) &&
+        !ARTICLE.test(a) &&
+        a.toLowerCase() !== bare &&
+        !cast.getCharacter(tx, bookId, a),
     );
     if (!to) continue;
-    renameIn(tx, bookId, c, to, c.aliases);
+    renameIn(tx, bookId, c, to, c.aliases.filter(isAliasName));
     out.push(`${c.name} → ${to}`);
   }
   return out;

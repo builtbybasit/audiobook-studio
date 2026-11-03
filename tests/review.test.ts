@@ -290,6 +290,9 @@ test("a long cast still has its alias, short form and contained name suggested, 
       speaker("Ning"),
       speaker("Wuya", { isNew: true }),
       speaker("Wuyan", { keep: true }),
+      // strangers are linked by who they are, never by their numbered names
+      speaker("Sleeper #1", { isNew: true }),
+      speaker("Laughing Sleeper #1", { isNew: true }),
     ],
     lexicon: [],
   });

@@ -150,30 +150,27 @@ const pronounceLine = (known: readonly string[]): string =>
 const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
 
 const FORMAT_TEMPLATE = `Output format (always required):
-The script is a list of consecutive lines that together read out the excerpt from start to finish: every word of the excerpt exactly once, in the original order. Add nothing, drop nothing, summarise nothing, correct nothing, and keep the punctuation of the prose — an answer that leaves words out or adds any is refused.
+The lines read out the whole excerpt in order: every word exactly once, with its punctuation. Add, drop, summarise or correct nothing; an answer that does is refused.
 Each line has:
-- "type": "narration" for the narrator's prose, "dialogue" for words a character says aloud, "thought" for words a character thinks, "watermark" for text that is not the story but the website's (see below), "note" for a translator's or author's note.
-- "speaker": "${NARRATOR}" for narration, watermark and note lines; for dialogue and thought, the name of the character speaking or thinking.
-- "text": the words of the line, copied verbatim from the excerpt.
+- "type": "narration", "dialogue" (said aloud), "thought", "watermark" (the website's text, not the story) or "note" (a translator's or author's note).
+- "speaker": "${NARRATOR}" for narration, watermark and note lines; for dialogue and thought, who speaks or thinks.
+- "text": the words, verbatim.
 %LINE_EFFECTS%
-- "direction" (optional): how the line is delivered, in a few words for the voice (see the rules).
+- "direction" (optional): how the line sounds (rule 6).
 %EXPRESSION_TAGS%
 
-Text that is not the story still goes in the script, word for word, on lines of its own — it is marked, never left out:
-- "watermark": a website's boilerplate or anti-scraping text, such as "Read the latest chapters at example.com", "This chapter was stolen from …", a web address, or a request to support or vote. Such text is often dropped between paragraphs or into the middle of a sentence; give it its own line even there, so the sentence becomes a narration line, a watermark line and a narration line.
-- "note": a translator's or author's note, such as "(TL note: …)" or "A/N: …", including its label and brackets.
-When unsure whether something is the story, it is the story.
+Watermarks, such as "Read the latest chapters at example.com", "This chapter was stolen from …", a web address or a request to vote, and notes, such as "(TL note: …)" or "A/N: …", stay in the script word for word on lines of their own, even mid-sentence: narration, watermark, narration. When unsure, it is the story.
 
-Besides the lines, the answer has:
-- "cast": notes on characters who speak, think, or are described or discussed in the excerpt — what the known cast is missing, and every fact the excerpt gives; [] when there is nothing new. Each note has:
-  - "name": the known cast name, or the name used in "speaker" for a new character.
+Besides the lines:
+- "cast": notes on characters the excerpt shows or tells about: what the known cast is missing, and every fact it gives; [] when nothing is new. Each note has:
+  - "name": as the known cast writes it, or as "speaker" does for someone new.
   - "gender": "male", "female", "non-binary" or "unknown".
   - "age": "child", "teen", "young adult", "middle-aged", "elderly" or "unknown".
-  - "aliases": other names they are called by, such as "Mar" or "the Captain". A description is not a name: never "the old man" or "the beautiful woman". [] when they have none.
+  - "aliases": other names they go by, such as "Mar" or "the Captain", and for a numbered stranger the name once the text gives it. Never a description such as "the old man". [] when none.
   - "facts": lasting things the excerpt states or clearly shows about them, one trait each (two traits are two facts, never joined with "and", "but" or "yet"): {"kind": "role", "background", "relationship", "personality" or "voice", "text": one short sentence, "sourceIds": the [P#] numbers of the 1–5 paragraphs that show it}. How they act in one scene, such as whispering while hiding, is a direction, not a fact. A state of the moment, such as illness, drugs, fear, injury, a spell or an act, is not a trait: a trait is what holds when they are well and themselves. Never guess. [] when there are none. The [P#] labels are not part of the text: never put them in a line.
   - "voiceType": how they sound, from what the text says or clearly implies: "pitch" ("low", "mid" or "high" for their gender), "texture" ("husky" or "clear") and "delivery" (up to three of ${DELIVERIES.join(", ")}); null for what it does not tell.
-  - "personaOf": only for a disguise (rule 5): who wears it, or "unknown". For an entry marked "masked, identity unknown", the wearer once the text reveals them. Otherwise null.
-- "recap": one to three sentences on where the excerpt leaves off, for whoever scripts the text that follows it: who is present, including anyone who has not spoken; where they are; who spoke last and to whom; any question left unanswered; and what the text is calling each of them. Use the names from "speaker".
+  - "personaOf": only for a disguise (rule 5): its wearer, or "unknown"; otherwise null.
+- "recap": one to three sentences on where the excerpt leaves off, for whoever scripts what follows: who is present, the silent too; where; who spoke last and to whom; any open question; and what the text calls each. Use the "speaker" names.
 %PRONOUNCE%
 
 Answer with JSON only, in this shape:
@@ -187,15 +184,15 @@ export const BUILT_IN_PROMPT: PromptTemplate = {
   system: `You turn an excerpt from a chapter of an English novel into an audiobook script.
 
 Rules:
-1. Split by voice. Start a new line at every paragraph break and every change of speaker or type; sentences of narration in one paragraph may share a line. Whenever a paragraph mixes narration, dialogue and thought, split it into separate lines. A quote with a speech tag in or after it is always several lines: “No,” she said quietly. “Nobody followed me.” is dialogue “No,”, narration “she said quietly.”, dialogue “Nobody followed me.” Speech tags such as “said Mara” or “he asked, frowning” are narration, read by the ${NARRATOR}.
-2. Words in quotation marks are dialogue; the line's text leaves the quotation marks out. Name who speaks from the tags, the back-and-forth of the conversation, and the text before the excerpt, which is there only to tell who is speaking or thinking at the start.
-3. Thoughts are “thought” lines: italics, “she thought”, “she told herself”, and the point-of-view character's unspoken reflections. Their speaker is the character thinking — usually the one whose point of view the scene follows.
-4. A character goes by one name all through the book. Resolve pronouns, titles and nicknames to the known cast's names, and write a known speaker's name exactly as the cast does; a new speaker goes by what the text calls them. A cast name with a number, such as “Young man #1”, is one person the text has not named: use it only for that person, never for another described the same way. When the text names them, give that name in their note's "aliases". Use “Unknown” only when nothing says who speaks. Never write a speaker into the text.
-5. A persona is an identity a character hides behind — a mask, a false name — that the people around them do not know is theirs. A cast entry marked “persona of” is one: while the scene has them in that identity, the words they say aloud — and those words replayed or quoted later — go to the persona's cast name, even when the narration keeps calling them by their real name; their thoughts, and what they say once the disguise is off, go to their own name. A disguise the cast does not have yet is the same: a new speaker under the name it goes by, even when the narration says who wears it (“Hand it over,” Kel said behind the crow mask, as the Crow → speaker “Crow”, “personaOf” “Kel”). A masked or disguised figure the text has not identified is a new speaker too, whose “personaOf” is “unknown”. An entry marked “masked, identity unknown” is such a figure: when the text reveals who wears it, give that name as its “personaOf”, and from then on treat it like any persona.
-6. A direction is all the voice engine is told besides the words, and it knows nothing of the story: describe the sound — tone, pace, volume, breath — in a few words (“flat, tired refusal”, not “refusing his plan”). Keep the same wording while a mood holds; leave it out for plain delivery.
-7. Put a pause inside a line only for a real beat — trailing off, a hesitation, a breath before a reveal — never at an ordinary comma or the end of a sentence.
+1. Split by voice: a new line at every paragraph break and every change of speaker or type. A quote with a speech tag is several lines: “No,” she said quietly. “Nobody followed me.” is dialogue “No,”, narration “she said quietly.”, dialogue “Nobody followed me.” Speech tags are narration.
+2. Words in quotation marks are dialogue, without the marks. Tell who speaks from the tags, the back-and-forth, and the text before the excerpt, which is there only for that.
+3. Thoughts are “thought” lines: italics, “she thought”, and the point-of-view character's unspoken reflections. The speaker is whoever thinks them.
+4. A character keeps one name all book: resolve pronouns, titles and nicknames to the known cast, written exactly as it writes them. Someone the text has not named is “the” and what they are, in a word or two: “the young man”, “the guard”. A cast name with a number, such as “Young man #1”, is one such person: never use it for another described the same way. “Unknown” only when nothing says who speaks.
+5. A persona is an identity a character hides behind, such as a mask or a false name; a cast entry marked “persona of” is one. While they are in it, what they say aloud goes to the persona's name, even when the narration names them; their thoughts go to their own. A disguise the cast does not have is a new speaker under the name it goes by (“Hand it over,” Kel said behind the crow mask → speaker “Crow”, personaOf “Kel”), or personaOf “unknown” when the text does not say who. When the text reveals who wears an entry marked “masked, identity unknown”, give that name as its personaOf.
+6. A direction tells the voice engine, which knows nothing of the story, how the line sounds: tone, pace, volume, breath, in a few words (“flat, tired refusal”, not “refusing his plan”). Keep it while a mood holds; leave it out for plain delivery.
+7. A pause inside a line only for a real beat: trailing off, a hesitation, a breath before a reveal.
 
-Before you answer, check that every sentence of the excerpt is in a line, once.
+Check that every sentence of the excerpt is in a line, once.
 
 Notes on this book: {{book.notes}}
 Notes for this model: {{endpoint.notes}}`,

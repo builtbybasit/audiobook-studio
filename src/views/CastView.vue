@@ -22,6 +22,7 @@ import ReadFailure from "@/components/ReadFailure.vue";
 import {
   BookOpenText as WikiIcon,
   Cloud as ThoughtIcon,
+  ChevronRight as GroupIcon,
   IdCard as ProfilesIcon,
   Plus as AddIcon,
   VenetianMask as MaskIcon,
@@ -37,7 +38,7 @@ import EffectsSheet from "@/views/cast/effects/EffectsSheet.vue";
 import ReapplyBar from "@/views/cast/effects/ReapplyBar.vue";
 import type { EffectSubject } from "@/views/cast/effects/subject";
 import { nestPersonas } from "@/views/cast/persona/rows";
-import { lineBand, linesText, personaOwner, voiced as isVoiced } from "@/lib/cast";
+import { isStranger, lineBand, linesText, personaOwner, voiced as isVoiced } from "@/lib/cast";
 import { speedSplit } from "@/lib/providers";
 import type { Character, Gender } from "@/types";
 
@@ -101,8 +102,15 @@ const rows = computed(() => {
           ? a.st.first - b.st.first
           : a.c.name.localeCompare(b.c.name),
     );
-  return nestPersonas(sorted, byName);
+  // strangers ("Young man #1") after everyone named, in one group shut by default
+  const named = sorted.filter((r) => !isStranger(r.c.name));
+  return nestPersonas([...named, ...sorted.filter((r) => isStranger(r.c.name))], byName);
 });
+const strangersOpen = ref(false);
+const strangers = computed(() => rows.value.filter((r) => isStranger(r.c.name)).length);
+const firstStranger = computed(() => rows.value.find((r) => isStranger(r.c.name))?.c.name);
+/** A row shows unless it is a stranger in the shut group; a search opens it. */
+const shows = (name: string) => strangersOpen.value || !!q.value || !isStranger(name);
 /** A row's speed tooltip: who makes it, so whether a change costs a re-narration. No endpoint
  *  name: a masked persona's would point at their wearer. */
 const speedTitle = (name: string, speed: number): string =>
@@ -115,7 +123,7 @@ const linesOf = (name: string) =>
 
 // the Narrator has no box, so no run includes them
 const range = useRangeSelect(() =>
-  rows.value.map((r) => r.c.name).filter((name) => name !== "Narrator"),
+  rows.value.map((r) => r.c.name).filter((name) => name !== "Narrator" && shows(name)),
 );
 /** Tick or untick a row, or with shift the run from the last one. */
 function tick(name: string, e?: MouseEvent) {
@@ -440,32 +448,184 @@ const duplicate = computed(
             :key="c.name"
           >
             <tr
-              data-row
-              :data-speaker="c.name"
-              tabindex="0"
-              class="border-t border-zinc-100 outline-none focus-visible:bg-zinc-100 dark:border-zinc-800/70 dark:focus-visible:bg-zinc-800"
-              :class="nested && 'bg-zinc-50/50 dark:bg-zinc-900/30'"
-              @keydown="onRowKey($event, c)"
+              v-if="c.name === firstStranger"
+              class="border-t border-zinc-100 dark:border-zinc-800/70"
             >
-              <td class="px-3">
-                <UiCheckbox
-                  v-if="c.name !== 'Narrator'"
-                  :model-value="sel.has(c.name)"
-                  :aria-label="`Select ${c.name}`"
-                  @click="tick(c.name, $event)"
-                />
+              <td></td>
+              <td colspan="7" class="py-2">
+                <button
+                  class="flex items-center gap-1.5 text-xs font-medium text-zinc-500 hover:text-violet-500"
+                  :aria-expanded="strangersOpen || !!q"
+                  @click="strangersOpen = !strangersOpen"
+                >
+                  <GroupIcon
+                    :class="['icon-sm', (strangersOpen || q) && 'rotate-90']"
+                    aria-hidden="true"
+                  />
+                  Unnamed speakers ({{ strangers }})
+                </button>
               </td>
-              <td class="py-2">
-                <div class="flex items-center gap-2" :class="nested && 'pl-5'">
-                  <button
-                    class="-ml-1 shrink-0 rounded p-0.5 text-zinc-400 hover:text-violet-500"
-                    :aria-expanded="open === c.name"
-                    :aria-label="`${open === c.name ? 'Close' : 'Open'} the full record for ${c.name}`"
-                    @click="toggleOpen(c.name)"
+            </tr>
+            <template v-if="shows(c.name)">
+              <tr
+                data-row
+                :data-speaker="c.name"
+                tabindex="0"
+                class="border-t border-zinc-100 outline-none focus-visible:bg-zinc-100 dark:border-zinc-800/70 dark:focus-visible:bg-zinc-800"
+                :class="nested && 'bg-zinc-50/50 dark:bg-zinc-900/30'"
+                @keydown="onRowKey($event, c)"
+              >
+                <td class="px-3">
+                  <UiCheckbox
+                    v-if="c.name !== 'Narrator'"
+                    :model-value="sel.has(c.name)"
+                    :aria-label="`Select ${c.name}`"
+                    @click="tick(c.name, $event)"
+                  />
+                </td>
+                <td class="py-2">
+                  <div class="flex items-center gap-2" :class="nested && 'pl-5'">
+                    <button
+                      class="-ml-1 shrink-0 rounded p-0.5 text-zinc-400 hover:text-violet-500"
+                      :aria-expanded="open === c.name"
+                      :aria-label="`${open === c.name ? 'Close' : 'Open'} the full record for ${c.name}`"
+                      @click="toggleOpen(c.name)"
+                    >
+                      <!-- plain markup: an icon component is two instances, three per row -->
+                      <svg
+                        :class="['icon-sm', open === c.name && 'rotate-90']"
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="24"
+                        height="24"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="m9 18 6-6-6-6" />
+                      </svg>
+                    </button>
+                    <span
+                      v-if="nested"
+                      class="-ml-1 text-zinc-300 dark:text-zinc-600"
+                      aria-hidden="true"
+                      >↳</span
+                    >
+                    <span
+                      class="h-2.5 w-2.5 shrink-0 rounded-full"
+                      :style="{ background: c.color }"
+                    ></span>
+                    <input
+                      v-if="editing === c.name"
+                      v-model="draft"
+                      class="input py-0"
+                      autofocus
+                      @keydown.enter="commit"
+                      @keydown.esc="editing = null"
+                      @blur="commit"
+                    />
+                    <b v-else class="cursor-text" @dblclick="startRename(c)">{{ c.name }}</b>
+                    <!-- a link the scripting model made says whose only when asked: a spoiler -->
+                    <span
+                      v-if="of || c.masked"
+                      class="inline-flex items-center gap-0.5 rounded bg-violet-500/10 px-1 text-[10px] text-violet-600 dark:text-violet-300"
+                      ><MaskIcon class="h-3 w-3" aria-hidden="true" /><template v-if="!of"
+                        >masked · identity unknown</template
+                      ><template v-else
+                        >persona of
+                        <SpoilerText :text="of" :hidden="!!c.masked" label="hidden · show" small
+                      /></template>
+                    </span>
+                    <span
+                      v-if="c.isNew"
+                      class="rounded bg-amber-400/20 px-1 text-[10px] font-semibold text-amber-600"
+                      >new</span
+                    >
+                    <span
+                      v-if="waiting(c.name).length"
+                      class="rounded bg-violet-500/15 px-1 text-[10px] font-semibold text-violet-600 dark:text-violet-300"
+                      data-tip="Voice samples from an imported script are waiting — open the speaker to clone or discard them"
+                      >samples</span
+                    >
+                    <span
+                      v-if="!c.major && !c.isNew"
+                      class="rounded bg-zinc-100 px-1 text-[10px] text-zinc-500 dark:bg-zinc-800"
+                      >minor</span
+                    >
+                  </div>
+                  <!-- no description here: it is written from the whole book, and would spoil it -->
+                  <div
+                    v-if="c.aliases.length"
+                    class="text-[11px] text-zinc-500"
+                    :class="nested ? 'pl-10' : 'pl-4.5'"
                   >
-                    <!-- plain markup: an icon component is two instances, three per row -->
+                    a.k.a. {{ c.aliases.join(", ") }}
+                  </div>
+                </td>
+                <td class="text-xs">
+                  <!-- a native select: a reka one per row is heavy at three hundred speakers -->
+                  <select
+                    :value="c.gender"
+                    :aria-label="`${c.name}’s gender`"
+                    class="-ml-1 cursor-pointer appearance-none rounded bg-transparent px-1 py-0.5 scheme-light hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:scheme-dark dark:hover:bg-zinc-800"
+                    :class="
+                      c.gender === '?'
+                        ? 'text-zinc-400 dark:text-zinc-500'
+                        : 'text-zinc-600 dark:text-zinc-300'
+                    "
+                    @change="setGender(c.name, $event)"
+                  >
+                    <option v-for="g in GENDERS" :key="g.value" :value="g.value">
+                      {{ g.label }}
+                    </option>
+                  </select>
+                </td>
+                <!-- how many chapters, never which: where a speaker turns up is a spoiler -->
+                <td class="pr-4 text-right text-xs" :class="exact && 'font-mono'">
+                  {{ !counted ? "…" : exact ? st.lines : lineBand(st.lines) }}
+                  <div v-if="counted && exact" class="text-[10px] text-zinc-400">
+                    {{ st.chapters }} ch
+                  </div>
+                </td>
+                <td class="py-1 pr-2">
+                  <!-- VoicePicker's trigger, drawn as a plain button that opens the shared picker -->
+                  <button
+                    type="button"
+                    data-voice-anchor
+                    aria-haspopup="dialog"
+                    :aria-expanded="voiceOpen && voiceFor?.name === c.name"
+                    :data-state="voiceOpen && voiceFor?.name === c.name ? 'open' : 'closed'"
+                    class="ui-select-trigger w-full py-0.5 text-xs"
+                    :class="[
+                      !c.voice && 'italic text-zinc-400',
+                      c.voice && !voice && 'ring-1 ring-amber-400',
+                    ]"
+                    @click="voiceClick(c.name, $event)"
+                  >
+                    <span class="min-w-0 flex-1 truncate text-left">
+                      <!-- the voice a masked link borrows would name its wearer as surely -->
+                      <template v-if="!c.voice"
+                        >{{ castStore.fallbackLabel(bookId, c.name)
+                        }}<span
+                          v-if="borrowed?.label && !(c.masked && of)"
+                          class="text-zinc-300 dark:text-zinc-600"
+                        >
+                          · {{ borrowed?.label }}</span
+                        ></template
+                      >
+                      <template v-else-if="voice"
+                        >{{ voice.voice.label }}
+                        <span class="text-zinc-400">· {{ voice.endpoint.name }}</span></template
+                      >
+                      <span v-else class="not-italic text-amber-600"
+                        >{{ c.voice.split("/")[1] }} — missing</span
+                      >
+                    </span>
                     <svg
-                      :class="['icon-sm', open === c.name && 'rotate-90']"
+                      class="ml-1 icon-sm text-zinc-400"
                       xmlns="http://www.w3.org/2000/svg"
                       width="24"
                       height="24"
@@ -477,212 +637,81 @@ const duplicate = computed(
                       stroke-linejoin="round"
                       aria-hidden="true"
                     >
-                      <path d="m9 18 6-6-6-6" />
+                      <path d="m6 9 6 6 6-6" />
                     </svg>
                   </button>
-                  <span
-                    v-if="nested"
-                    class="-ml-1 text-zinc-300 dark:text-zinc-600"
-                    aria-hidden="true"
-                    >↳</span
-                  >
-                  <span
-                    class="h-2.5 w-2.5 shrink-0 rounded-full"
-                    :style="{ background: c.color }"
-                  ></span>
-                  <input
-                    v-if="editing === c.name"
-                    v-model="draft"
-                    class="input py-0"
-                    autofocus
-                    @keydown.enter="commit"
-                    @keydown.esc="editing = null"
-                    @blur="commit"
-                  />
-                  <b v-else class="cursor-text" @dblclick="startRename(c)">{{ c.name }}</b>
-                  <!-- a link the scripting model made says whose only when asked: a spoiler -->
-                  <span
-                    v-if="of || c.masked"
-                    class="inline-flex items-center gap-0.5 rounded bg-violet-500/10 px-1 text-[10px] text-violet-600 dark:text-violet-300"
-                    ><MaskIcon class="h-3 w-3" aria-hidden="true" /><template v-if="!of"
-                      >masked · identity unknown</template
-                    ><template v-else
-                      >persona of
-                      <SpoilerText :text="of" :hidden="!!c.masked" label="hidden · show" small
-                    /></template>
-                  </span>
-                  <span
-                    v-if="c.isNew"
-                    class="rounded bg-amber-400/20 px-1 text-[10px] font-semibold text-amber-600"
-                    >new</span
-                  >
-                  <span
-                    v-if="waiting(c.name).length"
-                    class="rounded bg-violet-500/15 px-1 text-[10px] font-semibold text-violet-600 dark:text-violet-300"
-                    data-tip="Voice samples from an imported script are waiting — open the speaker to clone or discard them"
-                    >samples</span
-                  >
-                  <span
-                    v-if="!c.major && !c.isNew"
-                    class="rounded bg-zinc-100 px-1 text-[10px] text-zinc-500 dark:bg-zinc-800"
-                    >minor</span
-                  >
-                </div>
-                <!-- no description here: it is written from the whole book, and would spoil it -->
-                <div
-                  v-if="c.aliases.length"
-                  class="text-[11px] text-zinc-500"
-                  :class="nested ? 'pl-10' : 'pl-4.5'"
-                >
-                  a.k.a. {{ c.aliases.join(", ") }}
-                </div>
-              </td>
-              <td class="text-xs">
-                <!-- a native select: a reka one per row is heavy at three hundred speakers -->
-                <select
-                  :value="c.gender"
-                  :aria-label="`${c.name}’s gender`"
-                  class="-ml-1 cursor-pointer appearance-none rounded bg-transparent px-1 py-0.5 scheme-light hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 dark:scheme-dark dark:hover:bg-zinc-800"
-                  :class="
-                    c.gender === '?'
-                      ? 'text-zinc-400 dark:text-zinc-500'
-                      : 'text-zinc-600 dark:text-zinc-300'
-                  "
-                  @change="setGender(c.name, $event)"
-                >
-                  <option v-for="g in GENDERS" :key="g.value" :value="g.value">
-                    {{ g.label }}
-                  </option>
-                </select>
-              </td>
-              <!-- how many chapters, never which: where a speaker turns up is a spoiler -->
-              <td class="pr-4 text-right text-xs" :class="exact && 'font-mono'">
-                {{ !counted ? "…" : exact ? st.lines : lineBand(st.lines) }}
-                <div v-if="counted && exact" class="text-[10px] text-zinc-400">
-                  {{ st.chapters }} ch
-                </div>
-              </td>
-              <td class="py-1 pr-2">
-                <!-- VoicePicker's trigger, drawn as a plain button that opens the shared picker -->
-                <button
-                  type="button"
-                  data-voice-anchor
-                  aria-haspopup="dialog"
-                  :aria-expanded="voiceOpen && voiceFor?.name === c.name"
-                  :data-state="voiceOpen && voiceFor?.name === c.name ? 'open' : 'closed'"
-                  class="ui-select-trigger w-full py-0.5 text-xs"
-                  :class="[
-                    !c.voice && 'italic text-zinc-400',
-                    c.voice && !voice && 'ring-1 ring-amber-400',
-                  ]"
-                  @click="voiceClick(c.name, $event)"
-                >
-                  <span class="min-w-0 flex-1 truncate text-left">
-                    <!-- the voice a masked link borrows would name its wearer as surely -->
-                    <template v-if="!c.voice"
-                      >{{ castStore.fallbackLabel(bookId, c.name)
-                      }}<span
-                        v-if="borrowed?.label && !(c.masked && of)"
-                        class="text-zinc-300 dark:text-zinc-600"
+                </td>
+                <td class="py-1 pl-2">
+                  <!-- thought effect only when their own: the book's default would mark every row -->
+                  <div class="flex items-center gap-1">
+                    <button
+                      type="button"
+                      class="chip min-w-0 max-w-[7.5rem]"
+                      :class="effectOf(c.effect) ? 'chip-on' : 'chip-off'"
+                      :aria-label="`${c.name}’s effect`"
+                      :data-tip="of && !c.masked ? `Worn after ${of}’s effect` : undefined"
+                      @click="editEffect({ kind: 'speaker', name: c.name, slot: 'effect' })"
+                    >
+                      <span class="truncate">{{ effectOf(c.effect)?.name ?? "None" }}</span>
+                    </button>
+                    <button
+                      v-if="c.thoughts != null"
+                      type="button"
+                      class="chip chip-on min-w-0 max-w-[6.5rem]"
+                      :aria-label="`${c.name}’s own thought effect`"
+                      data-tip="Their own thought effect"
+                      @click="editEffect({ kind: 'speaker', name: c.name, slot: 'thoughts' })"
+                    >
+                      <ThoughtIcon class="icon-sm shrink-0" aria-hidden="true" /><span
+                        class="truncate"
+                        >{{ effectOf(c.thoughts)?.name ?? "None" }}</span
                       >
-                        · {{ borrowed?.label }}</span
-                      ></template
-                    >
-                    <template v-else-if="voice"
-                      >{{ voice.voice.label }}
-                      <span class="text-zinc-400">· {{ voice.endpoint.name }}</span></template
-                    >
-                    <span v-else class="not-italic text-amber-600"
-                      >{{ c.voice.split("/")[1] }} — missing</span
-                    >
-                  </span>
-                  <svg
-                    class="ml-1 icon-sm text-zinc-400"
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="24"
-                    height="24"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="m6 9 6 6 6-6" />
-                  </svg>
-                </button>
-              </td>
-              <td class="py-1 pl-2">
-                <!-- thought effect only when their own: the book's default would mark every row -->
-                <div class="flex items-center gap-1">
+                    </button>
+                  </div>
+                </td>
+                <td class="py-1" :data-tip="speedMade">
+                  <SpeedPicker
+                    :model-value="c.speed ?? null"
+                    :fallback="speed"
+                    reset-label="Follow the voice"
+                    :label="`Speed for ${c.name}`"
+                    @update:model-value="(v) => castStore.setSpeed(bookId, c.name, v)"
+                  />
+                </td>
+                <td class="pr-3 text-right">
                   <button
-                    type="button"
-                    class="chip min-w-0 max-w-[7.5rem]"
-                    :class="effectOf(c.effect) ? 'chip-on' : 'chip-off'"
-                    :aria-label="`${c.name}’s effect`"
-                    :data-tip="of && !c.masked ? `Worn after ${of}’s effect` : undefined"
-                    @click="editEffect({ kind: 'speaker', name: c.name, slot: 'effect' })"
+                    v-if="c.name !== 'Narrator'"
+                    class="text-xs text-zinc-400 hover:text-red-500"
+                    @click="castStore.deleteCharacter(bookId, c.name)"
+                    data-tip="Remove — their lines go to the Narrator"
+                    :aria-label="`Remove ${c.name}`"
                   >
-                    <span class="truncate">{{ effectOf(c.effect)?.name ?? "None" }}</span>
-                  </button>
-                  <button
-                    v-if="c.thoughts != null"
-                    type="button"
-                    class="chip chip-on min-w-0 max-w-[6.5rem]"
-                    :aria-label="`${c.name}’s own thought effect`"
-                    data-tip="Their own thought effect"
-                    @click="editEffect({ kind: 'speaker', name: c.name, slot: 'thoughts' })"
-                  >
-                    <ThoughtIcon class="icon-sm shrink-0" aria-hidden="true" /><span
-                      class="truncate"
-                      >{{ effectOf(c.thoughts)?.name ?? "None" }}</span
+                    <svg
+                      class="icon-sm"
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="24"
+                      height="24"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
                     >
+                      <path d="M18 6 6 18" />
+                      <path d="m6 6 12 12" />
+                    </svg>
                   </button>
-                </div>
-              </td>
-              <td class="py-1" :data-tip="speedMade">
-                <SpeedPicker
-                  :model-value="c.speed ?? null"
-                  :fallback="speed"
-                  reset-label="Follow the voice"
-                  :label="`Speed for ${c.name}`"
-                  @update:model-value="(v) => castStore.setSpeed(bookId, c.name, v)"
-                />
-              </td>
-              <td class="pr-3 text-right">
-                <button
-                  v-if="c.name !== 'Narrator'"
-                  class="text-xs text-zinc-400 hover:text-red-500"
-                  @click="castStore.deleteCharacter(bookId, c.name)"
-                  data-tip="Remove — their lines go to the Narrator"
-                  :aria-label="`Remove ${c.name}`"
-                >
-                  <svg
-                    class="icon-sm"
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="24"
-                    height="24"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M18 6 6 18" />
-                    <path d="m6 6 12 12" />
-                  </svg>
-                </button>
-              </td>
-            </tr>
-            <tr v-if="open === c.name" class="bg-zinc-50/70 dark:bg-zinc-900/60">
-              <td></td>
-              <td colspan="7" class="px-1 py-3 pr-4">
-                <CastRecord :book-id="bookId" :c="c" :lines="linesOf" />
-              </td>
-            </tr>
+                </td>
+              </tr>
+              <tr v-if="open === c.name" class="bg-zinc-50/70 dark:bg-zinc-900/60">
+                <td></td>
+                <td colspan="7" class="px-1 py-3 pr-4">
+                  <CastRecord :book-id="bookId" :c="c" :lines="linesOf" />
+                </td>
+              </tr>
+            </template>
           </template>
         </tbody>
       </table>

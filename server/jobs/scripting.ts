@@ -511,10 +511,13 @@ export function scriptingHandler(provider: ScriptingProvider, gate: SpeechGate):
       /** Speakers matched against the cast as it stands now, so a merge during the run holds. */
       const matched = (tx: Tx, bookId: string) => {
         const cast = readSpeakers(tx, bookId);
-        const meant = numberStrangers(cast, speakerOf(cast, notes), [
-          ...scripted.map((l) => l.speaker),
-          ...notes.map((n) => n.name),
-        ]);
+        // a disguise keeps the name it goes by ("the crow"), for learnCast to make a persona
+        const meant = numberStrangers(
+          cast,
+          speakerOf(cast, notes),
+          [...scripted.map((l) => l.speaker), ...notes.map((n) => n.name)],
+          new Set(notes.filter((n) => n.personaOf || n.masked).map((n) => n.name)),
+        );
         return { meant, lines: scripted.map((l) => ({ ...l, speaker: meant(l.speaker) })) };
       };
 

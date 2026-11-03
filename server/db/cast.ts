@@ -28,6 +28,7 @@ import type {
 import {
   NARRATOR,
   chapterCast,
+  isAliasName,
   narrator,
   newSpeaker,
   personaOwner,
@@ -258,7 +259,8 @@ export function withVoiceType(
 
 /**
  * Fills blanks from the model's cast notes and returns whose entries changed. Never overwrites;
- * aliases are only added, and one another speaker already uses stays theirs. Notes on speakers not
+ * aliases are only added, and one another speaker already uses stays theirs. A noted speaker's
+ * descriptions ("the young man") are dropped from their aliases: they would match anyone. Notes on speakers not
  * in the cast, or on the Narrator, are dropped. A disguise is taken only for a `fresh` speaker or
  * one the model masked before, never one a person linked: "unknown" masks it, a wearer's name sets
  * `personaOf` (adding the wearer if missing) unless `personaRefusal` refuses.
@@ -289,8 +291,13 @@ export function learnCast(
       c.voiceType = withVoiceType(c.voiceType, note.voiceType);
       touched = true;
     }
+    const named = c.aliases.filter(isAliasName);
+    if (named.length < c.aliases.length) {
+      c.aliases = named;
+      touched = true;
+    }
     for (const alias of note.aliases ?? []) {
-      if (taken.has(alias.toLowerCase())) continue;
+      if (!isAliasName(alias) || taken.has(alias.toLowerCase())) continue;
       c.aliases.push(alias);
       taken.add(alias.toLowerCase());
       touched = true;

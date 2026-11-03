@@ -411,7 +411,7 @@ describe("a request", () => {
               name: " Mara ",
               gender: "Female",
               age: "Young adult",
-              aliases: ["the lamplighter", "Mara", "the lamplighter"],
+              aliases: ["the lamplighter", "Mar", "Mara", "Mar"],
               facts: [
                 {
                   kind: "Role",
@@ -459,7 +459,7 @@ describe("a request", () => {
         name: "Mara",
         gender: "f",
         age: "young adult",
-        aliases: ["the lamplighter"],
+        aliases: ["Mar"],
         // a known kind and some text, once each, capped in length and number
         facts: [
           {

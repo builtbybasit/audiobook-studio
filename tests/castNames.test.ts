@@ -1,7 +1,15 @@
 // Which of a cast's names a line is written with: what a clip is sent as hints when it is checked
 // by ear. Pure over the text, so every way a name is written in a book is one row here.
 import { describe, expect, test } from "bun:test";
-import { castNameFor, chapterCast, nameWords, namesIn, NARRATOR } from "@/lib/cast";
+import {
+  castNameFor,
+  chapterCast,
+  isAliasName,
+  nameWords,
+  namesIn,
+  NARRATOR,
+  numberStrangers,
+} from "@/lib/cast";
 
 const words = nameWords([
   { name: NARRATOR, aliases: ["Storyteller"] },
@@ -122,6 +130,32 @@ describe("the cast a chapter's prompt lists", () => {
     expect(names("Kaiser and the castersoft, Jetty.")).not.toContain("Caster");
     expect(names("Kaiser and the castersoft, Jetty.")).not.toContain("Jet");
     expect(names("Kai's sword")).toContain("Kai");
+  });
+
+  test.each([
+    ["Mar", true],
+    ["Master Jet", true],
+    ["the Captain", true],
+    ["the young man", false],
+    ["young soldier", false],
+    ["Sir", false],
+  ])("an alias %s is a name: %s", (alias, name) => {
+    expect(isAliasName(alias)).toBe(name);
+  });
+
+  test.each([
+    ["the young man", "Young man #2"],
+    ["the Sleeper", "Sleeper #1"],
+    // a disguise keeps the name it goes by
+    ["the crow", "the crow"],
+  ])("a new %s is %s", (said, name) => {
+    const meant = numberStrangers(
+      [{ name: "Young man #1" }],
+      (n) => n,
+      [said],
+      new Set(["the crow"]),
+    );
+    expect(meant(said)).toBe(name);
   });
 
   test("never by the words of a stranger's name: “young man” is anyone", () => {

@@ -265,8 +265,12 @@ export function castNameFor(
 
 // ---------- strangers ----------
 
-/** What the text calls someone it has not named: "the young man", "a guard". */
-export const DESCRIBED = /^(?:[Tt]he|[Aa]n?)\s+\p{Ll}/u;
+/** What the text calls someone it has not named: "the young man", "a guard", "the Sleeper". */
+export const DESCRIBED = /^(?:the|an?)\s+\S/u;
+
+/** "Mar", "Master Jet", "the Captain"; never a description such as "the young man". */
+export const isAliasName = (alias: string): boolean =>
+  alias.split(/\s+/).some((w) => /^\p{Lu}/u.test(w) && !NOT_NAMES.has(w.toLowerCase()));
 
 /** "Young man #1": one person the text has not named, numbered apart from others like them. */
 export const isStranger = (name: string): boolean => /\s#\d+$/.test(name);
@@ -279,8 +283,9 @@ export function numberStrangers(
   cast: readonly { name: string }[],
   meant: (name: string) => string,
   said: readonly string[],
+  disguises: ReadonlySet<string> = new Set(),
 ): (name: string) => string {
-  const taken = new Set(cast.map((c) => c.name.toLowerCase()));
+  const taken = new Set([...cast.map((c) => c.name), ...disguises].map((n) => n.toLowerCase()));
   const strangers = new Map<string, string>();
   for (const name of said.map(meant)) {
     const key = name.toLowerCase();

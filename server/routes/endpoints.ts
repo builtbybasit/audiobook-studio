@@ -81,6 +81,7 @@ const VoiceParam = v.object({
   voice: v.pipe(v.string(), v.nonEmpty(), v.maxLength(200)),
 });
 const SampleParam = v.object({ ...VoiceParam.entries, file: v.string() });
+const SamplesQuery = v.object({ add: v.optional(v.picklist(["1"])) });
 
 /** absent `profile` = no AI step; an empty `url` is none */
 const ProfileFill = v.object({
@@ -328,18 +329,28 @@ export function endpointRoutes(
     });
   });
 
-  /** Replace a voice's kept samples; the same form as a clone, and nothing goes to the provider. */
-  app.post("/:id/voices/:voice/samples", validate("param", VoiceParam), samplesLimit, async (c) => {
-    const { id, voice } = c.req.valid("param");
-    const form = await formOf(c.req);
-    const kept = await clone.keepForVoice(db, voiceFiles, {
-      endpointId: id,
-      voiceId: voice,
-      ...samplesOf(form),
-    });
-    c.var.logger.info({ id, voice, samples: kept.samples.length }, "voice samples kept");
-    return c.json(kept satisfies KeptVoiceSamples);
-  });
+  /**
+   * Replace a voice's kept samples, or with `?add=1` add the new ones; the same form as a clone,
+   * and nothing goes to the provider.
+   */
+  app.post(
+    "/:id/voices/:voice/samples",
+    validate("param", VoiceParam),
+    validate("query", SamplesQuery),
+    samplesLimit,
+    async (c) => {
+      const { id, voice } = c.req.valid("param");
+      const form = await formOf(c.req);
+      const kept = await clone.keepForVoice(db, voiceFiles, {
+        endpointId: id,
+        voiceId: voice,
+        add: c.req.valid("query").add === "1",
+        ...samplesOf(form),
+      });
+      c.var.logger.info({ id, voice, samples: kept.samples.length }, "voice samples kept");
+      return c.json(kept satisfies KeptVoiceSamples);
+    },
+  );
 
   /** Made again from its kept samples; speakers move to the new voice, which the page swaps in. */
   app.post("/:id/voices/:voice/remake", validate("param", VoiceParam), async (c) => {

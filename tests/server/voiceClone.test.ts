@@ -567,9 +567,9 @@ describe("the recordings a voice was made from", () => {
     const api = testApi();
     const old: Voice = { id: "old-voice", label: "Old Tomas", gender: "m" };
     await saved(api, cloneEndpoint({ voices: [old] }));
-    const keep = (samples: File[], voice = "old-voice") =>
+    const keep = (samples: File[], voice = "old-voice", add = false) =>
       api.request<KeptVoiceSamples & { error?: { message: string } }>(
-        `/api/endpoints/fish/voices/${voice}/samples`,
+        `/api/endpoints/fish/voices/${voice}/samples${add ? "?add=1" : ""}`,
         { method: "POST", body: cloneForm({}, samples) },
       );
 
@@ -593,6 +593,23 @@ describe("the recordings a voice was made from", () => {
         404,
       );
 
+    // adding keeps what is kept and joins only bytes not kept yet, within the same limit in all
+    const added = await keep(
+      [
+        sampleFile("b again.mp3", HEADS.mp3Frame, "audio/mpeg"),
+        sampleFile("c.wav", HEADS.wav, "audio/wav", 2048),
+      ],
+      "old-voice",
+      true,
+    );
+    expect(added.body.samples.map((s) => s.name)).toEqual(["b.mp3", "c.wav"]);
+    const more = Array.from({ length: 19 }, (_, i) =>
+      sampleFile(`m${i}.wav`, HEADS.wav, "audio/wav", 3000 + i),
+    );
+    const over = await keep(more, "old-voice", true);
+    expect([over.status, over.body.error?.message]).toEqual([400, expect.stringContaining("20")]);
+    expect((await samplesOf(api, "old-voice")).body.samples).toEqual(added.body.samples);
+
     const forget = () =>
       api.request("/api/endpoints/fish/voices/old-voice/samples", { method: "DELETE" });
     const restore = () =>
@@ -603,7 +620,7 @@ describe("the recordings a voice was made from", () => {
     expect((await samplesOf(api, "old-voice")).status).toBe(404);
     // forgetting is hidden, not gone: its Undo brings the recordings back as they were
     const back = await restore();
-    expect([back.status, back.body.samples]).toEqual([200, replaced.body.samples]);
+    expect([back.status, back.body.samples]).toEqual([200, added.body.samples]);
     expect((await restore()).status).toBe(404);
     // and a save after the grace period makes a forget final
     await forget();
@@ -618,7 +635,7 @@ describe("the recordings a voice was made from", () => {
     // and the voice itself stays
     expect(
       (await api.request<{ endpoints: Endpoint[] }>("/api/endpoints")).body.endpoints[0].voices,
-    ).toEqual([old]);
+    ).toEqual([{ ...old, updatedAt: expect.any(Number) }]);
   });
 });
 

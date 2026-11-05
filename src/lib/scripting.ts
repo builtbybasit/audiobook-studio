@@ -85,6 +85,7 @@ export function newProfile(p: Partial<Profile> = {}): Profile {
           "quotaGroup",
           "reasoning",
           "prompt",
+          "updatedAt",
         ].includes(key),
       ),
     ),

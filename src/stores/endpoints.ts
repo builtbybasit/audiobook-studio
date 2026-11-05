@@ -20,6 +20,7 @@ import { newProfile, profileErrors } from "@/lib/scripting";
 import { BUILT_IN_PROMPT, profilePromptProblems, promptProblems } from "@/lib/prompt";
 import { GENDER } from "@/lib/scriptReview";
 import { clone } from "@/lib/utils";
+import { plural } from "@/lib/contents";
 import { ENDPOINT_TELEMETRY, type StoredEndpoint } from "@/lib/endpointTelemetry";
 import {
   endpointSettingsService,
@@ -165,6 +166,18 @@ function portable<T extends { apiKey?: string; hasKey?: boolean }>(e: T): T {
   const { apiKey: _apiKey, hasKey: _hasKey, ...rest } = e;
   return rest as T;
 }
+
+/** “Kept 3 voices and 1 endpoint that are newer on this computer.”, or "" for none. */
+function keptNewer(voices: number, entries: number): string {
+  const kept = [voices && plural(voices, "voice"), entries && plural(entries, "endpoint")];
+  const said = kept.filter(Boolean);
+  if (!said.length) return "";
+  return `Kept ${said.join(" and ")} that ${voices + entries === 1 ? "is" : "are"} newer on this computer.`;
+}
+
+/** On import, the file's copy applies unless this one is newer; a missing stamp is 0. */
+const fileWins = (file: { updatedAt?: number }, here: { updatedAt?: number }): boolean =>
+  (file.updatedAt ?? 0) >= (here.updatedAt ?? 0);
 
 /**
  * Takes on the server's fields while keeping the object, since the page holds references to it.
@@ -650,7 +663,12 @@ export const useEndpointsStore = defineStore("endpoints", {
       const profiles = (obj.profiles ?? []).map((imported) => {
         const existing = this.profiles.find((p) => p.id === imported?.id);
         // the file's `hasKey` belongs to another server, and a key would ride every write
-        const profile = newProfile({ ...existing, ...portable(imported ?? {}) });
+        // judged by the file's own stamp, not one taken from `existing`
+        const profile = newProfile({
+          ...existing,
+          ...portable(imported ?? {}),
+          updatedAt: imported?.updatedAt,
+        });
         if (profileErrors(profile).length)
           throw new Error("Invalid scripting endpoint: " + profile.name);
         return profile;
@@ -658,14 +676,22 @@ export const useEndpointsStore = defineStore("endpoints", {
       const transcribers = (obj.transcribers ?? []).map((imported) => {
         const existing = this.transcribers.find((t) => t.id === imported?.id);
         const transcriber = filled(
-          { ...blankTranscriber(), ...existing, ...portable(imported ?? {}) },
+          {
+            ...blankTranscriber(),
+            ...existing,
+            ...portable(imported ?? {}),
+            updatedAt: imported?.updatedAt,
+          },
           "transcription",
         );
         if (transcriberErrors(transcriber).length)
           throw new Error("Invalid speech-to-text endpoint: " + transcriber.name);
         return transcriber;
       });
+      // what is newer here stays: the file may be older than an edit made since
       let n = 0;
+      let keptEntries = 0;
+      let keptVoices = 0;
       for (const e of obj.endpoints) {
         const cur = this.endpoints.find((x) => x.id === e.id);
         const fresh = {
@@ -676,22 +702,31 @@ export const useEndpointsStore = defineStore("endpoints", {
           ...portable(e),
         } as Endpoint;
         if (cur) {
-          // voices made since the file was written stay; dropping one would let its samples go
-          const had = cur.voices;
-          filled(Object.assign(cur, fresh), "tts");
-          this.mergeVoices(cur, had);
+          // voice by voice, whichever side's endpoint wins; one only here stays, with its samples
+          const voices = fresh.voices.map((v) => {
+            const here = cur.voices.find((x) => x.id === v.id);
+            if (!here || fileWins(v, here)) return { ...v };
+            keptVoices++;
+            return here;
+          });
+          voices.push(...cur.voices.filter((x) => !fresh.voices.some((v) => v.id === x.id)));
+          if (fileWins(fresh, cur)) filled(Object.assign(cur, fresh), "tts");
+          else keptEntries++;
+          cur.voices = voices;
         } else this.endpoints.push(filled(fresh, "tts"));
         n++;
       }
       for (const p of profiles) {
         const cur = this.profiles.find((x) => x.id === p.id);
-        if (cur) filled(Object.assign(cur, p), "scripting");
-        else this.profiles.push(filled(p, "scripting"));
+        if (!cur) this.profiles.push(filled(p, "scripting"));
+        else if (fileWins(p, cur)) filled(Object.assign(cur, p), "scripting");
+        else keptEntries++;
       }
       for (const t of transcribers) {
         const cur = this.transcribers.find((x) => x.id === t.id);
-        if (cur) Object.assign(cur, t);
-        else this.transcribers.push(t);
+        if (!cur) this.transcribers.push(t);
+        else if (fileWins(t, cur)) Object.assign(cur, t);
+        else keptEntries++;
       }
       if (obj.prompt !== undefined) this.prompt = keptPrompt(obj.prompt);
       if (obj.scriptSettings) {
@@ -705,7 +740,12 @@ export const useEndpointsStore = defineStore("endpoints", {
         transcribers.length ? `${said}, and ${transcribers.length} speech to text` : said,
         {
           kind: "success",
-          description: "API keys are never in the file — add them again on each endpoint.",
+          description: [
+            keptNewer(keptVoices, keptEntries),
+            "API keys are never in the file — add them again on each endpoint.",
+          ]
+            .filter(Boolean)
+            .join(" "),
           timeout: 7000,
         },
       );
@@ -1230,7 +1270,8 @@ export const useEndpointsStore = defineStore("endpoints", {
       return packBackup(this.exportSettings(), voices);
     },
     /**
-     * `importSettings`, then each listed voice without kept samples here keeps the file's again.
+     * `importSettings`, then each listed voice keeps the file's samples: all of them where none
+     * are kept here, else the ones whose bytes are new, beside those kept. Nothing kept goes.
      * Throws when the file is not a backup; a voice whose samples are refused is said.
      */
     async importBackup(file: Blob): Promise<void> {
@@ -1238,19 +1279,24 @@ export const useEndpointsStore = defineStore("endpoints", {
       this.importSettings(settings);
       if (!samples.length) return;
       await this.flushWrites();
-      const keptHere = new Map<string, Set<string>>();
+      const keptHere = new Map<string, Map<string, number>>();
       const refused: string[] = [];
+      const gained: string[] = [];
       let kept = 0;
       for (const s of samples) {
         const ep = this.endpoints.find((e) => e.id === s.endpointId);
         const voice = ep?.voices.find((v) => v.id === s.voiceId);
         if (!ep || !voice) continue;
         if (!keptHere.has(ep.id))
-          keptHere.set(ep.id, new Set((await this.keptSamples(ep)).map((k) => k.voiceId)));
-        if (keptHere.get(ep.id)!.has(voice.id)) continue;
+          keptHere.set(
+            ep.id,
+            new Map((await this.keptSamples(ep)).map((k) => [k.voiceId, k.samples.length])),
+          );
+        const had = keptHere.get(ep.id)!.get(voice.id) ?? 0;
         try {
-          await this._service().keepSamples(ep.id, voice.id, s);
-          kept++;
+          const now = (await this._service().keepSamples(ep.id, voice.id, s, true)).samples.length;
+          if (!had) kept++;
+          else if (now > had) gained.push(`${voice.label} gained ${plural(now - had, "sample")}`);
         } catch (cause) {
           refused.push(`${voice.label}: ${cause instanceof Error ? cause.message : String(cause)}`);
         }
@@ -1260,6 +1306,15 @@ export const useEndpointsStore = defineStore("endpoints", {
           kind: "success",
           description: "Make again on a voice's row clones it anew if its server lost it.",
         });
+      // the voice on its server was made without them
+      if (gained.length)
+        useUiStore().toast(
+          gained.length === 1 ? gained[0] : `${gained.length} voices gained samples`,
+          {
+            kind: "success",
+            description: `${gained.length === 1 ? "" : gained.join("; ") + ". "}Make again on the voice's row to clone it with them.`,
+          },
+        );
       if (refused.length)
         useUiStore().toast("Some voices' samples were not kept", {
           kind: "warn",

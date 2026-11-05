@@ -27,10 +27,14 @@ export function toCharacter(row: CharacterRow): Character {
   if (row.masked) c.masked = true;
   if (row.wiki != null) c.wiki = row.wiki;
   if (row.profile != null) c.profile = row.profile;
+  if (row.updatedAt) c.updatedAt = row.updatedAt;
   return c;
 }
 
-/** Leaves out the profile and `edited`: only their own writers set them, never a client PUT. */
+/**
+ * Leaves out the profile, `edited` and `updatedAt`: only their own writers (and the trigger) set
+ * them, never a client PUT.
+ */
 export function characterValues(
   bookId: string,
   c: Character,

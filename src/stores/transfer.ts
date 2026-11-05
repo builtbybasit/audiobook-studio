@@ -1,8 +1,8 @@
 // A book's script as a file: reading one in, and applying it. The server answers with a plan and
 // writes nothing; this store writes through the restore paths (`planRestore`, history, one Undo).
-// Nothing the book has is overwritten by default: missing speakers and terms are added, and each
-// difference is offered as "Use the file's". Voices, new library effects and the book's settings
-// are each taken only when ticked.
+// Missing speakers and terms are added; a speaker both have takes the file's details only when
+// chosen (the page starts on the newer side), and each term difference is offered as "Use the
+// file's". Voices, new library effects and the book's settings are each taken only when ticked.
 import { key } from "@/lib/scriptReview";
 import { NEW_EFFECT } from "@/lib/scriptFile";
 import { planRestore, type RestoreOptions } from "@/lib/scriptHistory";
@@ -23,7 +23,8 @@ import type {
   RestorePlan,
   ScriptImportPlan,
   Segment,
-  SpeakerDiff,
+  SpeakerDetails,
+  SpeakerFields,
   TermDiff,
   VersionOrigin,
   Voice,
@@ -49,10 +50,14 @@ export interface VoicePick {
   add?: { endpointId: string; voice: Voice };
 }
 
-/** What else the person ticked: new library effects by name, and the file's book settings. */
+/**
+ * What else the person chose: new library effects by name, the file's book settings, and the
+ * speakers both have who take the file's details (`cast.differ` names).
+ */
 export interface ImportCarry {
   effects?: string[];
   book?: boolean;
+  speakers?: string[];
 }
 
 export type SkipReason = "identical" | "busy" | "missing";
@@ -70,6 +75,8 @@ export interface ImportReport {
   skipped: { chapterId: number; title: string; why: SkipReason }[];
   /** speakers added to the cast (from the file or the lines) that the server took */
   speakers: string[];
+  /** speakers both have who took the file's details */
+  replaced: string[];
   /** speakers the file named that no applied line uses, so not added */
   unused: string[];
   terms: number;
@@ -119,9 +126,6 @@ export function carryEffects(
 }
 
 type CarriedSlots = Partial<Pick<Character, "effect" | "thoughts">>;
-/** The speaker fields a replace sets; a slot present as `undefined` is cleared. */
-type SpeakerPatch = Partial<Pick<Character, "gender" | "description" | "style" | "speed">> &
-  CarriedSlots;
 /**
  * A speaker's effect names as ids: a name with no id here leaves that slot out (the book's
  * stands), while a slot the file leaves empty is `undefined`, which clears it.
@@ -138,6 +142,30 @@ function slotsOf(
   }
   return out;
 }
+
+/** The file's details as a Replace writes them, effects by id as `slotsOf` keeps them. */
+function fieldsOf(d: SpeakerDetails, idOf: (name: string) => string | undefined): SpeakerFields {
+  const out: SpeakerFields = {
+    gender: d.gender,
+    description: d.description,
+    style: d.style,
+    speed: d.speed ?? null,
+  };
+  const slots = slotsOf(d, idOf);
+  for (const slot of ["effect", "thoughts"] as const)
+    if (slot in slots) out[slot] = slots[slot] ?? null;
+  return out;
+}
+
+/** A speaker's details as they stand, to write back on Undo. */
+const fieldsNow = (c: Character): SpeakerFields => ({
+  gender: c.gender,
+  description: c.description,
+  style: c.style,
+  speed: c.speed ?? null,
+  effect: c.effect ?? null,
+  thoughts: c.thoughts ?? null,
+});
 
 /** The file's settings the book lacks, as the settings write takes them; empty = the default. */
 function bookSettings(
@@ -228,32 +256,6 @@ export const useTransferStore = defineStore("transfer", {
      */
     effectIdOf(s): (bookId: string) => (name: string) => string | undefined {
       return (bookId) => (name) => (name === "none" ? name : s.effectIds[bookId]?.[name]);
-    },
-    /**
-     * What "Use the file's" would set on a speaker, and what it would put back; null when nothing
-     * would change. An effect this library lacks leaves the book's in place.
-     */
-    speakerChangeOf(): (
-      bookId: string,
-      d: SpeakerDiff,
-    ) => { to: SpeakerPatch; was: SpeakerPatch } | null {
-      const castStore = useCastStore();
-
-      return (bookId, d) => {
-        const c = castStore.charactersOf(bookId).find((x) => x.name === d.name);
-        if (!c) return null;
-        const { gender, description, style, speed } = d.file;
-        const to: SpeakerPatch = {
-          gender,
-          description,
-          style,
-          speed,
-          ...slotsOf(d.file, this.effectIdOf(bookId)),
-        };
-        const keys = Object.keys(to) as (keyof SpeakerPatch)[];
-        if (keys.every((k) => c[k] === to[k])) return null;
-        return { to, was: Object.fromEntries(keys.map((k) => [k, c[k]])) };
-      };
     },
     /**
      * What applying one chapter would do, touching nothing. `take` names the new library effects
@@ -376,6 +378,7 @@ export const useTransferStore = defineStore("transfer", {
         refused: [],
         skipped: [],
         speakers: [],
+        replaced: [],
         unused: [],
         terms: 0,
         voices: 0,
@@ -582,48 +585,64 @@ export const useTransferStore = defineStore("transfer", {
       report.voices = voicedNow.length;
 
       // ---- what a cast PUT never writes, once the speakers and scripts are in: a profile where
-      // there is none, the file's hand-set marks on the fields it filled, and the chapters' facts
-      const filledBy = (f: (typeof plan.cast.fill)[number]): HandSet =>
-        patchedNow.includes(f.name)
+      // there is none, the file's hand-set marks on the fields it filled, the chosen replaces, the
+      // file's stamps, and the chapters' facts. One entry per speaker, as each is one update
+      const entries = new Map<string, ImportCastCarry["speakers"][number]>();
+      const entry = (name: string) =>
+        entries.get(name) ?? entries.set(name, { name, edited: [], fields: [] }).get(name)!;
+      for (const s of plan.cast.add)
+        if (added.includes(s.name) && onServer.has(s.name))
+          Object.assign(entry(s.name), {
+            edited: s.edited ?? [],
+            fields: ["age", "voiceType"] satisfies HandSet,
+            ...(s.profile ? { profile: s.profile } : {}),
+            ...(s.updatedAt ? { updatedAt: s.updatedAt } : {}),
+          });
+      for (const f of plan.cast.fill) {
+        const fields = patchedNow.includes(f.name)
           ? (["age", "voiceType"] as const).filter((k) => f[k] !== undefined)
           : [];
+        const stamp = f.updatedAt && (f.profile || patchedNow.includes(f.name));
+        if (!f.profile && !fields.length && !stamp) continue;
+        Object.assign(entry(f.name), {
+          edited: f.edited ?? [],
+          fields,
+          ...(f.profile ? { profile: f.profile } : {}),
+          ...(stamp ? { updatedAt: f.updatedAt } : {}),
+        });
+      }
+      const replace = new Set(carry.speakers ?? []);
+      const replacing = plan.cast.differ.filter(
+        (d) => replace.has(d.name) && cast().some((c) => c.name === d.name),
+      );
+      for (const d of replacing)
+        Object.assign(entry(d.name), {
+          details: fieldsOf(d.file, idOf),
+          ...(d.file.profile ? { profile: d.file.profile } : {}),
+          ...(d.updatedAt ? { updatedAt: d.updatedAt } : {}),
+        });
       const carried: ImportCastCarry = {
-        speakers: [
-          ...plan.cast.add
-            .filter((s) => added.includes(s.name) && onServer.has(s.name))
-            .map((s) => ({
-              name: s.name,
-              profile: s.profile,
-              edited: s.edited ?? [],
-              fields: ["age", "voiceType"] satisfies HandSet,
-            })),
-          ...plan.cast.fill
-            .filter((f) => f.profile || filledBy(f).length)
-            .map((f) => ({
-              name: f.name,
-              profile: f.profile,
-              edited: f.edited ?? [],
-              fields: filledBy(f),
-            })),
-        ],
+        speakers: [...entries.values()],
         chapters: landed.flatMap(({ chapter: { chapterId, facts } }) =>
           facts ? [{ chapterId, facts }] : [],
         ),
       };
+      // in the cast's write queue, so no speaker write sent before it lands over it
+      const carryWrite = (body: ImportCastCarry, failure: string) =>
+        castStore
+          ._write(bookId, "characters", failure, async () => {
+            const answer = await libraryService().carryImport(bookId, body);
+            castStore._answered(bookId, { characters: answer.characters });
+            return true;
+          })
+          .then((ok) => ok ?? false);
       let carryLanded: boolean | null = null;
       if (carried.speakers.length || carried.chapters.length) {
-        carryLanded = await libraryService()
-          .carryImport(bookId, carried)
-          .then(
-            () => true,
-            (cause) => {
-              toastFailure("keep the file's profiles and facts", cause);
-              return false;
-            },
-          );
+        carryLanded = await carryWrite(carried, "keep the file's profiles and facts");
         // the profiles filled and the facts are the server's to show
         if (carryLanded) void invalidate({ key: keys.cast(bookId) }, "all");
       }
+      if (carryLanded) report.replaced = replacing.map((d) => d.name);
 
       // ---- the book's settings, once the scripts are in: a pacing change moves their revisions
       const settings = carry.book && plan.book ? bookSettings(plan.book, idOf) : {};
@@ -653,6 +672,7 @@ export const useTransferStore = defineStore("transfer", {
       if (
         !report.applied.length &&
         !report.speakers.length &&
+        !report.replaced.length &&
         !report.terms &&
         !report.voices &&
         !patchedNow.length &&
@@ -679,6 +699,7 @@ export const useTransferStore = defineStore("transfer", {
         n(report.applied.length, "chapter"),
         report.refused.length && n(report.refused.length, "chapter") + " refused",
         report.speakers.length && n(report.speakers.length, "speaker") + " added",
+        report.replaced.length && n(report.replaced.length, "speaker") + " replaced",
         report.terms && n(report.terms, "dictionary term") + " added",
         report.voices && n(report.voices, "voice") + " set",
         report.samples.length && "voice samples kept for " + n(report.samples.length, "speaker"),
@@ -708,6 +729,34 @@ export const useTransferStore = defineStore("transfer", {
                 masked: b.masked,
               });
           }
+          // queued after those, so the replaced details and every touched stamp end as they were
+          const touched = new Set([
+            ...patchedNow,
+            ...voicedNow.map((v) => v.name),
+            ...report.replaced,
+          ]);
+          const back = castBefore.flatMap((b) =>
+            touched.has(b.name)
+              ? [
+                  {
+                    name: b.name,
+                    edited: [],
+                    fields: [],
+                    updatedAt: b.updatedAt ?? 0,
+                    ...(report.replaced.includes(b.name)
+                      ? { details: fieldsNow(b), ...(b.profile ? { profile: b.profile } : {}) }
+                      : {}),
+                  },
+                ]
+              : [],
+          );
+          if (back.length)
+            void carryWrite(
+              { speakers: back, chapters: [] },
+              "put the speakers' details back",
+            ).then((ok) => {
+              if (ok) void invalidate({ key: keys.cast(bookId) }, "all");
+            });
           delete this.reports[bookId];
           // before any speaker goes, or the row cascades away under it
           const samplesBack = storing.then((done) => samplesStore._unstore(bookId, done));
@@ -747,32 +796,6 @@ export const useTransferStore = defineStore("transfer", {
     },
 
     // ---------- differences the book kept ----------
-    /** Give these speakers the file's details and effects, with one Undo. */
-    useFileSpeakers(bookId: string, diffs: SpeakerDiff[]): number {
-      const castStore = useCastStore();
-      const uiStore = useUiStore();
-
-      const changed: { name: string; was: SpeakerPatch }[] = [];
-      for (const d of diffs) {
-        const change = this.speakerChangeOf(bookId, d);
-        if (!change) continue;
-        void castStore._patchSpeaker(bookId, d.name, change.to);
-        changed.push({ name: d.name, was: change.was });
-      }
-      if (!changed.length) return 0;
-      uiStore.toast(
-        changed.length === 1
-          ? `${changed[0].name} now reads as the file describes them`
-          : `${n(changed.length, "speaker")} now read as the file describes them`,
-        {
-          description: "Details, speed and effects. Voices and aliases are unchanged.",
-          undo: () => {
-            for (const { name, was } of changed) void castStore._patchSpeaker(bookId, name, was);
-          },
-        },
-      );
-      return changed.length;
-    },
     /** Give these terms the file's pronunciation, with one Undo. */
     useFileTerms(bookId: string, diffs: TermDiff[]): number {
       const castStore = useCastStore();

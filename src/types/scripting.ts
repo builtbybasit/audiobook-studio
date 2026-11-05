@@ -83,6 +83,8 @@ export interface RenderedPrompt {
 
 /** An LLM endpoint used for scripting (splitting prose into attributed segments). */
 export interface Profile {
+  /** epoch ms of the last change made on this install, or carried in by an import; 0 = unknown */
+  updatedAt?: number;
   id: string;
   name: string;
   model: string;

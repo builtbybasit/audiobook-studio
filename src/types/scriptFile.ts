@@ -86,6 +86,8 @@ export interface VoiceHint {
 
 /** One entry of `cast.json`. */
 export interface ScriptFileSpeaker {
+  /** `Character.updatedAt`; absent = unknown */
+  updatedAt?: number;
   name: string;
   aliases: string[];
   gender: Gender;

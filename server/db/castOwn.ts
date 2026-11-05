@@ -1,8 +1,8 @@
 // What a speaker has beyond `Character`, which a client writes back whole: the fields set by hand,
-// and the profile. Only the cast operations and a script file's import write them.
+// the profile and the change stamp. Only the cast operations and a script file's import write them.
 import { and, asc, eq } from "drizzle-orm";
 
-import type { CharacterProfile, HandSet, ScriptFileFact } from "@/types";
+import type { CharacterProfile, HandSet, ScriptFileFact, SpeakerFields } from "@/types";
 import type { Db, Tx } from "~/db/client";
 import { characterFacts, characters } from "~/db/schema";
 
@@ -25,16 +25,29 @@ export const editedOne = (db: Db | Tx, bookId: string, name: string): HandSet =>
   db.select({ edited: characters.edited }).from(characters).where(speakerRow(bookId, name)).get()
     ?.edited ?? [];
 
-/** `edited` is written in `EDITABLE`'s order, each field once. */
+/**
+ * `edited` is written in `EDITABLE`'s order, each field once. `details` and `updatedAt` go in the
+ * same update, so the `characters_touch` trigger keeps the stamp given.
+ */
 export function setOwn(
   db: Db | Tx,
   bookId: string,
   name: string,
-  own: { edited?: readonly string[]; profile?: CharacterProfile },
+  own: {
+    edited?: readonly string[];
+    profile?: CharacterProfile;
+    details?: SpeakerFields;
+    updatedAt?: number;
+  },
 ): void {
   const edited = own.edited && EDITABLE.filter((f) => own.edited!.includes(f));
   db.update(characters)
-    .set({ ...(edited ? { edited } : {}), ...(own.profile ? { profile: own.profile } : {}) })
+    .set({
+      ...own.details,
+      ...(edited ? { edited } : {}),
+      ...(own.profile ? { profile: own.profile } : {}),
+      ...(own.updatedAt != null ? { updatedAt: own.updatedAt } : {}),
+    })
     .where(speakerRow(bookId, name))
     .run();
 }

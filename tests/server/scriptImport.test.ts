@@ -20,6 +20,7 @@ import type {
   VoiceRef,
 } from "@/types";
 import { readCast, readLexicon, replaceLexicon, upsertCharacter } from "~/db/cast";
+import { setOwn } from "~/db/castOwn";
 import { getChapterBody } from "~/db/library";
 import { readScript } from "~/db/script";
 import { plainText } from "~/epub/markdown";
@@ -406,6 +407,34 @@ describe("the cast and the dictionary", () => {
 
   const wiki = { url: "https://w.test/wiki/Mara", at: 1 };
   const profile = { who: "A clerk.", personality: "Counts twice.", voice: "Dry." };
+
+  test.each([
+    ["the file", 1, 2, "file"],
+    ["this book", 2, 1, "book"],
+    ["unknown without the book's stamp", 0, 2, undefined],
+    ["unknown without the file's", 2, undefined, undefined],
+  ] as const)(
+    "a rebuilt profile is a difference, and the newer side is %s",
+    async (_, mine, theirs, newer) => {
+      have({});
+      setOwn(api.db, id, "Mara", { profile });
+      setOwn(api.db, id, "Mara", { updatedAt: mine });
+      const rebuilt = { ...profile, personality: "Counts three times." };
+      const got = await plan(
+        await zipOf({ cast: [speaker({ profile: rebuilt, updatedAt: theirs })] }),
+      );
+      expect(got.cast.differ).toEqual([
+        {
+          name: "Mara",
+          book: { gender: "f", description: "", style: "", profile },
+          file: { gender: "f", description: "", style: "", profile: rebuilt },
+          ...(newer ? { newer } : {}),
+          ...(theirs ? { updatedAt: theirs } : {}),
+        },
+      ]);
+      expect(got.cast.fill).toEqual([]);
+    },
+  );
   // the file's hand-set mark comes with the age it fills
   const filled: Omit<ScriptImportPlan["cast"]["fill"][number], "name"> = {
     age: "teen",
@@ -628,7 +657,7 @@ describe("voices", () => {
     },
   );
 
-  test("only a new speaker or one on the Narrator's voice starts ticked, and never a private clone", async () => {
+  test("a new speaker, one on the Narrator's voice or one the file changed later starts ticked, never a private clone", async () => {
     await save([endpoint({ voices: [{ id: "v1", label: "Sera", gender: "f" }] })]);
     const base = {
       aliases: [],
@@ -640,6 +669,10 @@ describe("voices", () => {
     };
     upsertCharacter(api.db, id, { ...base, name: "Mara", voice: "fish/other" });
     upsertCharacter(api.db, id, { ...base, name: "Ines", voice: null });
+    // older here than in the file: one on another voice, one already on the file's
+    upsertCharacter(api.db, id, { ...base, name: "Juno", voice: "fish/other" });
+    upsertCharacter(api.db, id, { ...base, name: "Kit", voice: "fish/v1" });
+    for (const name of ["Juno", "Kit"]) setOwn(api.db, id, name, { updatedAt: 1 });
     const got = await plan(
       await zipOf({
         cast: [
@@ -647,6 +680,8 @@ describe("voices", () => {
           withVoice("Ines", "v1"),
           withVoice("Tobin", "v1"),
           withVoice("Vex", "clone", "Vex"),
+          { ...withVoice("Juno", "v1"), updatedAt: 2 },
+          { ...withVoice("Kit", "v1"), updatedAt: 2 },
         ],
       }),
     );
@@ -655,6 +690,8 @@ describe("voices", () => {
       ["Ines", false, null, true],
       ["Tobin", true, null, true],
       ["Vex", true, null, false],
+      ["Juno", false, "fish/other", true],
+      ["Kit", false, "fish/v1", false],
     ]);
   });
 });

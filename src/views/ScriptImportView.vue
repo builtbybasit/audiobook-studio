@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // Importing a script file into this book. The server matches the file's chapters to this book's by
 // their source words (or, failing that, their text) and answers with a plan; nothing is written
-// until Apply. Once applied, the page becomes the report, where kept cast and dictionary
-// differences can still be taken.
+// until Apply. Once applied, the page becomes the report, where kept dictionary differences can
+// still be taken.
 import { computed, reactive, ref, watch } from "vue";
 import { useBookId } from "@/composables/useBookId";
 import { useCast } from "@/queries";
@@ -18,7 +18,7 @@ import { useSpeakerSamplesStore } from "@/stores/speakerSamples";
 import { plural } from "@/lib/contents";
 import VoicePicker from "@/components/VoicePicker.vue";
 import { useRangeSelect } from "@/composables/useRangeSelect";
-import { UiCheckbox, UiHint, UiSelect, UiSwitch } from "@/ui";
+import { UiCheckbox, UiHint, UiSelect, UiSwitch, UiToggleGroup } from "@/ui";
 import { FileUp as FileIcon, X as ClearIcon } from "@lucide/vue";
 import type {
   ImportChapter,
@@ -26,6 +26,7 @@ import type {
   RestorePlan,
   ScriptFileBook,
   SpeakerDetails,
+  SpeakerDiff,
   VoiceRef,
   VoiceRow,
   VoiceRowSamples,
@@ -73,12 +74,17 @@ const ticked = ref(new Set<number>());
 /** the file's effects to add to the library; the lines and speakers drop the rest */
 const takeEffects = ref(new Set<string>());
 const useBook = ref(false);
+/** speakers both have who take the file's details; the newer side starts chosen */
+const replace = ref(new Set<string>());
 watch(
   plan,
   (p) => {
     ticked.value = new Set((p?.chapters ?? []).filter((c) => !busy(c)).map((c) => c.chapterId));
     takeEffects.value = new Set((p?.effects.add ?? []).map((e) => e.name));
     useBook.value = false;
+    replace.value = new Set(
+      (p?.cast.differ ?? []).filter((d) => d.newer === "file").map((d) => d.name),
+    );
     resetVoices();
   },
   { immediate: true },
@@ -230,6 +236,7 @@ async function apply() {
     await transferStore.apply(bookId, toApply.value, picks.value, {
       effects: [...takeEffects.value],
       book: useBook.value,
+      speakers: [...replace.value],
     });
   } finally {
     applying.value = false;
@@ -248,12 +255,18 @@ const keptSamples = computed(() =>
     return { speaker, waiting, link: waiting ? samplesStore.cloneLink(bookId, waiting) : null };
   }),
 );
-const castNow = computed(() => castStore.charactersOf(bookId));
 const lexNow = computed(() => castStore.lexiconOf(bookId));
-/** one taken from the file drops off the list */
-const speakerDiffs = computed(() =>
-  (plan.value?.cast.differ ?? []).filter((d) => transferStore.speakerChangeOf(bookId, d)),
-);
+function choose(d: SpeakerDiff, take: boolean) {
+  const next = new Set(replace.value);
+  if (take) next.add(d.name);
+  else next.delete(d.name);
+  replace.value = next;
+}
+const NEWER = { file: "newer in the file", book: "newer here" } as const;
+const profileDiffers = (d: SpeakerDiff) =>
+  !!d.book.profile &&
+  !!d.file.profile &&
+  JSON.stringify(d.book.profile) !== JSON.stringify(d.file.profile);
 /** The speaker's effects in a few words; empty when they wear none. */
 function effectsLine(d: SpeakerDetails): string {
   return [d.effect && `effect: ${d.effect}`, d.thoughts && `thoughts: ${d.thoughts}`]
@@ -365,6 +378,9 @@ const SKIPPED = {
             <p v-if="report.speakers.length" class="mt-2 text-xs">
               Added to the cast: {{ report.speakers.join(", ") }}
             </p>
+            <p v-if="report.replaced.length" class="mt-1 text-xs">
+              Took the file's details for: {{ report.replaced.join(", ") }}
+            </p>
             <p v-if="report.unused.length" class="mt-1 text-xs text-zinc-500">
               Not added, since no imported line uses them: {{ report.unused.join(", ") }}
             </p>
@@ -422,49 +438,6 @@ const SKIPPED = {
                 <span class="font-mono">{{ f }}</span> — not part of a script file, ignored
               </li>
             </ul>
-          </section>
-
-          <section v-if="speakerDiffs.length" class="card p-4">
-            <div class="flex items-center justify-between gap-2">
-              <h2 class="text-sm font-semibold">Speakers the book described differently</h2>
-              <button
-                v-if="speakerDiffs.length > 1"
-                class="btn-ghost btn-xs"
-                @click="transferStore.useFileSpeakers(bookId, speakerDiffs)"
-              >
-                Replace all {{ speakerDiffs.length }}
-              </button>
-            </div>
-            <p class="mt-1 text-xs text-zinc-500">The book's own descriptions were kept.</p>
-            <div
-              v-for="d in speakerDiffs"
-              :key="d.name"
-              class="mt-2 grid gap-2 border-t border-zinc-100 pt-2 text-xs sm:grid-cols-[8rem_1fr_1fr_auto] dark:border-zinc-800"
-            >
-              <div class="font-medium">{{ d.name }}</div>
-              <div>
-                <div class="text-[10px] uppercase text-zinc-400">This book</div>
-                {{ d.book.gender }} · {{ d.book.description || "—" }}
-                <div v-if="d.book.style" class="text-zinc-500">{{ d.book.style }}</div>
-                <div v-if="effectsLine(d.book) !== effectsLine(d.file)" class="text-zinc-500">
-                  {{ effectsLine(d.book) || "no effects" }}
-                </div>
-              </div>
-              <div>
-                <div class="text-[10px] uppercase text-zinc-400">The file</div>
-                {{ d.file.gender }} · {{ d.file.description || "—" }}
-                <div v-if="d.file.style" class="text-zinc-500">{{ d.file.style }}</div>
-                <div v-if="effectsLine(d.book) !== effectsLine(d.file)" class="text-zinc-500">
-                  {{ effectsLine(d.file) || "no effects" }}
-                </div>
-              </div>
-              <button
-                class="btn-ghost btn-xs self-start"
-                @click="transferStore.useFileSpeakers(bookId, [d])"
-              >
-                Use the file's
-              </button>
-            </div>
           </section>
 
           <section v-if="termDiffs.length" class="card p-4">
@@ -580,6 +553,57 @@ const SKIPPED = {
             </ul>
           </section>
 
+          <section v-if="plan.cast.differ.length" class="card">
+            <div
+              class="flex flex-wrap items-center gap-2 border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-800"
+            >
+              <h2 class="text-sm font-semibold">Speakers described differently</h2>
+              <span class="text-xs text-zinc-500">the newer side starts chosen</span>
+              <UiHint
+                label="which side is newer"
+                text="Each install notes when it last changed what a script file carries of a speaker: details, profile, voice, effects. Where either side has no note, the book's are kept unless you choose the file's."
+              />
+            </div>
+            <div
+              v-for="d in plan.cast.differ"
+              :key="d.name"
+              class="grid gap-2 border-t border-zinc-100 px-4 py-2 text-xs first:border-t-0 sm:grid-cols-[8rem_1fr_1fr_auto] dark:border-zinc-800"
+            >
+              <div class="font-medium">
+                {{ d.name }}
+                <div v-if="d.newer" class="text-[11px] font-normal text-zinc-500">
+                  {{ NEWER[d.newer] }}
+                </div>
+              </div>
+              <div v-for="side in ['book', 'file'] as const" :key="side">
+                <div class="text-[10px] uppercase text-zinc-400">
+                  {{ side === "book" ? "This book" : "The file" }}
+                </div>
+                {{ d[side].gender }} · {{ d[side].description || "—" }}
+                <div v-if="d[side].style" class="text-zinc-500">{{ d[side].style }}</div>
+                <div v-if="effectsLine(d.book) !== effectsLine(d.file)" class="text-zinc-500">
+                  {{ effectsLine(d[side]) || "no effects" }}
+                </div>
+                <div v-if="d.book.speed !== d.file.speed" class="text-zinc-500">
+                  speed {{ d[side].speed ?? "of the voice" }}
+                </div>
+                <div v-if="side === 'file' && profileDiffers(d)" class="text-zinc-500">
+                  another profile
+                </div>
+              </div>
+              <UiToggleGroup
+                class="self-start"
+                :model-value="replace.has(d.name) ? 'replace' : 'keep'"
+                :options="[
+                  { value: 'keep', label: 'Keep' },
+                  { value: 'replace', label: 'Replace' },
+                ]"
+                :aria-label="`Keep ${d.name}'s details or take the file's`"
+                @update:model-value="(v) => choose(d, v === 'replace')"
+              />
+            </div>
+          </section>
+
           <section v-if="voiceRows.length" class="card">
             <div
               class="flex flex-wrap items-center gap-2 border-b border-zinc-200 px-4 py-2.5 dark:border-zinc-800"
@@ -591,7 +615,8 @@ const SKIPPED = {
               />
               <h2 class="text-sm font-semibold">Voices</h2>
               <span class="text-xs text-zinc-500"
-                >ticked only where the speaker has no voice of their own yet</span
+                >ticked where the speaker has no voice of their own yet, or the file's is
+                newer</span
               >
             </div>
             <div
@@ -737,12 +762,17 @@ const SKIPPED = {
             <span v-if="picks.length" class="text-xs text-zinc-500">
               and {{ plural(picks.length, "voice") }}
             </span>
+            <span v-if="replace.size" class="text-xs text-zinc-500">
+              and {{ plural(replace.size, "speaker") }} replaced
+            </span>
             <span v-if="useBook && bookDiffer.length" class="text-xs text-zinc-500">
               and the book's settings
             </span>
             <button
               class="btn-primary"
-              :disabled="(!toApply.length && !(useBook && bookDiffer.length)) || applying"
+              :disabled="
+                (!toApply.length && !(useBook && bookDiffer.length) && !replace.size) || applying
+              "
               @click="apply"
             >
               Apply {{ plural(toApply.length, "chapter") }}

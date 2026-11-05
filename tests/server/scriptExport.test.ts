@@ -456,6 +456,11 @@ test("a round trip carries line effects, speakers' effects and profiles, recaps,
     }),
     method: "PATCH",
   });
+  // the profile written last stamped her
+  const stamped = (
+    await api.request<{ characters: Character[] }>(`/api/books/${id}/cast`)
+  ).body.characters.find((c) => c.name === mara.name)!.updatedAt;
+  expect(stamped).toBeGreaterThan(0);
   const bytes = new Uint8Array(
     await (await api.fetch(`/api/books/${id}/script-export`)).arrayBuffer(),
   );
@@ -486,6 +491,7 @@ test("a round trip carries line effects, speakers' effects and profiles, recaps,
     thoughts: "none",
     profile,
     edited: ["age"],
+    updatedAt: stamped,
   });
   // facts ride with their chapter, to whichever one it pairs with
   expect(plan.chapters[0].facts).toEqual([...facts]);

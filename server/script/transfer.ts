@@ -44,6 +44,7 @@ import { readCarried } from "~/db/voiceSamples";
 import { chapterIds, chapterRecap, getBook, getChapterBody, listChapters } from "~/db/library";
 import { readScript } from "~/db/script";
 import { plainText } from "~/epub/markdown";
+import { requireEffect } from "~/effects/ops";
 import { notFound } from "~/lib/errors";
 import { SAMPLES_MANIFEST, VOICE_SAMPLES_FORMAT } from "~/speakerSamples/folder";
 import { readSpeakerSamplesForExport } from "~/speakerSamples/store";
@@ -194,6 +195,7 @@ function speakerOf(
   effectName: EffectNames,
 ): ScriptFileSpeaker {
   const out: ScriptFileSpeaker = {
+    ...(c.updatedAt ? { updatedAt: c.updatedAt } : {}),
     name: c.name,
     aliases: c.aliases,
     gender: c.gender,
@@ -364,10 +366,15 @@ export async function buildScriptExport(
 
 /**
  * What an import writes once its speakers and chapters landed, past what a cast PUT may: a profile
- * where the speaker has none, the file's hand-set marks on the fields it filled, and each chapter's
- * facts. Profiles are left stale for the next profiles job. Returns the facts saved.
+ * where the speaker has none (or with a Replace's details), the file's hand-set marks on the fields
+ * it filled, the file's stamp, and each chapter's facts. Profiles are left stale for the next
+ * profiles job. Returns the facts saved and the cast as it now stands.
  */
-export function carryImport(db: Db, bookId: string, carry: ImportCastCarry): { facts: number } {
+export function carryImport(
+  db: Db,
+  bookId: string,
+  carry: ImportCastCarry,
+): { facts: number; characters: Character[] } {
   if (!getBook(db, bookId)) throw notFound("There is no book by that id");
   return db.transaction((tx) => {
     const cast = new Map(readCast(tx, bookId).map((c) => [c.name, c]));
@@ -375,17 +382,23 @@ export function carryImport(db: Db, bookId: string, carry: ImportCastCarry): { f
     for (const s of carry.speakers) {
       const c = cast.get(s.name);
       if (!c) continue;
+      if (s.details) {
+        requireEffect(tx, s.details.effect, `${s.name}’s effect`);
+        requireEffect(tx, s.details.thoughts, `${s.name}’s thought effect`);
+      }
       const kept = (marks.get(s.name) ?? []).filter((f) => !s.fields.includes(f));
       const taken = s.edited.filter((f) => s.fields.includes(f));
       setOwn(tx, bookId, s.name, {
         edited: [...kept, ...taken],
-        profile: c.profile ? undefined : s.profile,
+        profile: s.details || !c.profile ? s.profile : undefined,
+        details: s.details,
+        updatedAt: s.updatedAt,
       });
     }
     const ids = new Set(chapterIds(tx, bookId));
     let facts = 0;
     for (const ch of carry.chapters)
       if (ids.has(ch.chapterId)) facts += replaceChapterFacts(tx, bookId, ch.chapterId, ch.facts);
-    return { facts };
+    return { facts, characters: readCast(tx, bookId) };
   });
 }

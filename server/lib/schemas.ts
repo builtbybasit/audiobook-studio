@@ -377,8 +377,11 @@ export const ScriptChapterSchema = v.looseObject({
   facts: v.optional(v.array(FactSchema)),
 }) satisfies v.GenericSchema<unknown, ScriptFileChapter>;
 
+const Stamp = v.pipe(v.number(), v.safeInteger(), v.minValue(0));
+
 export const CastFileSchema = v.array(
   v.looseObject({
+    updatedAt: v.optional(Stamp),
     name: v.pipe(v.string(), v.trim(), v.nonEmpty("must not be empty")),
     aliases: v.optional(v.array(v.pipe(v.string(), v.trim(), v.nonEmpty())), []),
     gender: v.optional(Gender, "?"),
@@ -407,6 +410,17 @@ export const ImportCastCarrySchema = v.object({
       profile: v.optional(CharacterProfileSchema),
       edited: HandSetSchema,
       fields: HandSetSchema,
+      details: v.optional(
+        v.object({
+          gender: Gender,
+          description: v.string(),
+          style: v.string(),
+          speed: v.nullable(SpeakerSpeed),
+          effect: v.optional(v.nullable(EffectIdSchema)),
+          thoughts: v.optional(v.nullable(EffectIdSchema)),
+        }),
+      ),
+      updatedAt: v.optional(Stamp),
     }),
   ),
   chapters: v.array(

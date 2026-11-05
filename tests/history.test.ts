@@ -650,7 +650,7 @@ describe("importing a script file", () => {
     });
   });
 
-  test("the book keeps its own speakers and terms until one is taken from the file", async () => {
+  test("only the chosen speakers take the file's details, Undo puts them back, and terms wait", async () => {
     await open(1);
     const described = () => [speaker("Elder Mo")!.description, speaker("Xiao Lan")!.description];
     const differ = ["Elder Mo", "Xiao Lan"].map((name) => {
@@ -676,21 +676,16 @@ describe("importing a script file", () => {
       },
     });
     const before = described();
-    await transferStore.apply("cliche", [1]);
-    expect(described()).toEqual(before);
-    expect(castStore.lexiconOf("cliche")[0].say).not.toBe("Jih Ning");
-
-    expect(transferStore.useFileSpeakers("cliche", [differ[0]])).toBe(1);
+    await transferStore.apply("cliche", [1], [], { speakers: ["Elder Mo"] });
+    await castStore._castSettled("cliche");
     expect(speaker("Elder Mo")).toMatchObject({
       description: "Elder Mo, as the file has it",
       style: "brisk",
     });
+    expect(speaker("Xiao Lan")!.description).toBe(before[1]);
+    expect(castStore.lexiconOf("cliche")[0].say).not.toBe("Jih Ning");
     await undoLast();
-    expect(described()).toEqual(before);
-
-    expect(transferStore.useFileSpeakers("cliche", differ)).toBe(2);
-    expect(speaker("Xiao Lan")!.description).toBe("Xiao Lan, as the file has it");
-    await undoLast();
+    await castStore._castSettled("cliche");
     expect(described()).toEqual(before);
 
     const was = term.say;

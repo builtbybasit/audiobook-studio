@@ -63,6 +63,8 @@ export const characters = sqliteTable(
     /** the wiki page last filled from */
     wiki: text("wiki", { mode: "json" }).$type<{ url: string; at: number }>(),
     position: integer("position").notNull().default(0),
+    /** epoch ms, `Character.updatedAt`: stamped by the `characters_touch` trigger; 0 = unknown */
+    updatedAt: integer("updated_at").notNull().default(0),
   },
   (t) => [primaryKey({ columns: [t.bookId, t.name] })],
 );

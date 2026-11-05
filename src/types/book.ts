@@ -238,6 +238,8 @@ export interface AgeVoice {
 }
 
 export interface Character {
+  /** epoch ms of the last change to what a script file carries of them (the `characters_touch` trigger); 0 = unknown */
+  updatedAt?: number;
   name: string;
   aliases: string[];
   gender: Gender;

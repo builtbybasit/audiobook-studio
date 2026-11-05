@@ -266,6 +266,67 @@ function keyAfterSave(sent: { apiKey?: string; baseUrl: string }, kept: Kept | u
   return kept?.baseUrl === sent.baseUrl ? kept.apiKey : null;
 }
 
+type Stamped = { updatedAt?: number };
+
+/**
+ * What a row's stamp becomes on a save. Unchanged keeps the stored stamp; a change carrying a
+ * newer stamp is an import and keeps it; any other change happened here, now. A stale page
+ * sends an older stamp, which must not age its edit.
+ */
+function restamp<T extends Stamped>(
+  sent: T,
+  had: T | undefined,
+  content: (x: T) => unknown,
+  now: number,
+): T {
+  const at = sent.updatedAt ?? 0;
+  if (!had) return { ...sent, updatedAt: at || now };
+  const was = had.updatedAt ?? 0;
+  if (Bun.deepEquals(content(sent), content(had))) return { ...sent, updatedAt: was };
+  // past a stamp carried from a machine whose clock runs ahead
+  return { ...sent, updatedAt: at > was ? at : Math.max(now, was + 1) };
+}
+
+// Compared as written, so a field the read fills in reads the same either way. Order, keys and
+// the server's speed range are not content; a voice is its own row.
+const card = (p: { pricing?: Endpoint["pricing"] }) => [
+  p.pricing?.windows ?? [],
+  p.pricing?.promotions ?? [],
+];
+const endpointContent = (e: StoredEndpoint) => [
+  { ...rows.endpointValues({ ...e, voices: [] }, 0), updatedAt: 0 },
+  card(e),
+  e.expressions?.tags ?? [],
+];
+const profileContent = (p: Profile) => [{ ...rows.profileValues(p, 0), updatedAt: 0 }, card(p)];
+const transcriberContent = (t: Transcriber) => [
+  { ...rows.transcriberValues(t, 0), updatedAt: 0 },
+  card(t),
+];
+const voiceContent = (v: Voice) => ({ ...rows.voiceValues("", v, 0), updatedAt: 0 });
+
+function restamped(tx: Tx, config: EndpointConfig, transcribers: Transcriber[]) {
+  const now = Date.now();
+  const byId = <T extends { id: string }>(list: T[]) => new Map(list.map((x) => [x.id, x]));
+  const endpointsHad = byId(readEndpoints(tx));
+  const profilesHad = byId(readProfiles(tx));
+  const transcribersHad = byId(readTranscribers(tx));
+  return {
+    endpoints: config.endpoints.map((e) => {
+      const had = endpointsHad.get(e.id);
+      const voicesHad = byId(had?.voices ?? []);
+      return {
+        ...restamp(e, had, endpointContent, now),
+        voices: e.voices.map((v) => restamp(v, voicesHad.get(v.id), voiceContent, now)),
+      };
+    }),
+    profiles: config.profiles.map((p) => restamp(p, profilesHad.get(p.id), profileContent, now)),
+    transcribers: transcribers.map((t) =>
+      restamp(t, transcribersHad.get(t.id), transcriberContent, now),
+    ),
+  };
+}
+
 /** Call inside a transaction. */
 export function replaceEndpoints(tx: Tx, config: EndpointConfig): void {
   // read before the rows go, so a save that did not mention a key keeps it
@@ -282,21 +343,21 @@ export function replaceEndpoints(tx: Tx, config: EndpointConfig): void {
       .all()
       .map(({ id, ...k }) => [id, k]),
   );
-  const transcribers = config.transcribers ?? readTranscribers(tx);
+  const stamped = restamped(tx, config, config.transcribers ?? readTranscribers(tx));
   // children cascade
   tx.delete(endpoints).run();
   tx.delete(credentials).run();
   writeCredentials(tx, config.credentials);
-  config.endpoints.forEach((e, i) => {
+  stamped.endpoints.forEach((e, i) => {
     const k = kept.get(e.id);
     // what the server declared holds only for the server and model it was read from
     const range = k?.baseUrl === e.baseUrl && k.model === e.model ? k.speedRange : null;
     writeEndpoint(tx, e, i, keyAfterSave(e, k), range);
   });
-  config.profiles.forEach((p, i) =>
+  stamped.profiles.forEach((p, i) =>
     writeProfile(tx, p, i, keyAfterSave(p, kept.get(rows.profileKey(p.id)))),
   );
-  transcribers.forEach((t, i) =>
+  stamped.transcribers.forEach((t, i) =>
     writeTranscriber(tx, t, i, keyAfterSave(t, kept.get(rows.transcriberKey(t.id)))),
   );
   if (config.prompt !== undefined) writeLibraryPrompt(tx, config.prompt);

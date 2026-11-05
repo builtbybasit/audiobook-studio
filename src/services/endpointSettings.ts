@@ -98,11 +98,15 @@ export interface EndpointSettingsService {
   deleteVoice(id: string, voice: string): Promise<void>;
   /** Every voice of the *saved* endpoint whose samples are kept. */
   keptSamples(id: string): Promise<KeptVoiceSamples[]>;
-  /** Keep samples for a voice cloned before samples were kept. Nothing is sent to the provider. */
+  /**
+   * Keep samples for a voice cloned before samples were kept, replacing any; `add` keeps those
+   * and adds the new ones. Nothing is sent to the provider.
+   */
   keepSamples(
     id: string,
     voice: string,
     request: Omit<VoiceCloneRequest, "title">,
+    add?: boolean,
   ): Promise<KeptVoiceSamples>;
   /** Every cloned voice with kept samples against the rest; the first call can take minutes. */
   voiceLikeness(): Promise<VoiceLikenessReport>;
@@ -230,8 +234,12 @@ export class HttpEndpointSettingsService implements EndpointSettingsService {
     id: string,
     voice: string,
     request: Omit<VoiceCloneRequest, "title">,
+    add = false,
   ): Promise<KeptVoiceSamples> {
-    return this.http.postFormData<KeptVoiceSamples>(samplesPath(id, voice), samplesForm(request));
+    return this.http.postFormData<KeptVoiceSamples>(
+      samplesPath(id, voice) + (add ? "?add=1" : ""),
+      samplesForm(request),
+    );
   }
 
   voiceLikeness(): Promise<VoiceLikenessReport> {

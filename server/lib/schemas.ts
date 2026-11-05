@@ -563,6 +563,9 @@ const LocalServerSchema = v.object({
   readySec: v.optional(v.pipe(v.number(), v.integer(), v.minValue(1))),
 });
 
+/** epoch ms; the save decides what is kept (`replaceEndpoints`) */
+const UpdatedAt = v.optional(v.pipe(v.number(), v.integer(), v.minValue(0)));
+
 const Common = {
   id: Id,
   name: v.string(),
@@ -579,6 +582,7 @@ const Common = {
   splitAt: SplitMode,
   pricing: v.optional(PricingSchema),
   launch: v.optional(v.nullable(LocalServerSchema)),
+  updatedAt: UpdatedAt,
   ...Ops,
 };
 
@@ -594,6 +598,7 @@ export const EndpointSchema = v.object({
       label: v.string(),
       speed: unset(SpeakerSpeed),
       profile: unset(VoiceProfileSchema),
+      updatedAt: UpdatedAt,
     }),
   ),
   billing: v.optional(
@@ -734,6 +739,7 @@ export const TranscriberSchema = v.object({
   resample16k: v.optional(v.boolean()),
   pricing: v.optional(PricingSchema),
   launch: Common.launch,
+  updatedAt: UpdatedAt,
   ...Ops,
 }) satisfies v.GenericSchema<unknown, Transcriber>;
 

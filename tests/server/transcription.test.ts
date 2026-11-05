@@ -317,6 +317,7 @@ describe("transcription endpoints over HTTP", () => {
         perMinute: 0.006,
         hotwordLambda: 5,
         resample16k: false,
+        updatedAt: expect.any(Number),
       }),
     ]);
     expect(JSON.stringify(read.body)).not.toContain("sk-secret");

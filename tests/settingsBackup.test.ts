@@ -1,10 +1,10 @@
 // The Endpoints page's backup: settings and each cloned voice's kept samples out of one server and
 // into a fresh one, through the endpoints store and the real routes.
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, setSystemTime, test } from "bun:test";
 
 import JSZip from "jszip";
 
-import type { KeptSample, KeptVoiceSamples, SettingsFile } from "@/types";
+import type { Endpoint, KeptSample, KeptVoiceSamples, SettingsFile } from "@/types";
 import { packBackup, type PackVoice } from "@/lib/settingsBackup";
 import { useEndpointsStore } from "@/stores/endpoints";
 import { useUiStore } from "@/stores/ui";
@@ -16,7 +16,9 @@ import { testPinia } from "./support/pinia";
 
 afterEach(() => pointServicesAt(null));
 
+/** A fresh tab on `api`, which may be either of two servers (two laptops). */
 async function storeOn(api: ReturnType<typeof backendServer>) {
+  pointServicesAt(api.fetch);
   testPinia();
   // the ui store reaches for `matchMedia` as it is built, and Bun has no window
   Object.assign(globalThis, { window: { matchMedia: () => ({ matches: false }) } });
@@ -51,6 +53,68 @@ test("carries each cloned voice's samples and transcripts to a fresh server, onc
   // a voice whose samples are already here keeps them as they are
   await restored.importBackup(zip);
   expect((await kept()).body.madeAt).toBe(body.madeAt);
+
+  // a sample added on the first laptop joins those kept here, which stay
+  const { store: again } = await storeOn(first);
+  await again.keepVoiceSamples(again.endpoints[0], "new-voice-id", {
+    samples: [
+      sampleFile("b.wav", HEADS.wav, "audio/wav", 2048),
+      sampleFile("c.wav", HEADS.wav, "audio/wav", 4096),
+    ],
+    transcripts: ["", "Sit down."],
+  });
+  const later = await again.exportBackup();
+  const { store: back } = await storeOn(api);
+  await back.importBackup(later);
+  expect((await kept()).body.samples.map((s) => [s.name, s.transcript])).toEqual([
+    ["a.wav", "Come in."],
+    ["b.wav", undefined],
+    ["c.wav", "Sit down."],
+  ]);
+});
+
+test("an import takes each endpoint and voice from whichever side changed it last", async () => {
+  const T0 = Date.UTC(2026, 0, 1);
+  const at = (minutes: number) => setSystemTime(T0 + minutes * 60_000);
+  const voice = (id: string) => ({ id, label: id, gender: "f" as const });
+  try {
+    at(0);
+    const a = backendServer();
+    await saved(a, cloneEndpoint({ voices: [voice("ash"), voice("bea")] }));
+    const b = backendServer();
+    const first = (await storeOn(a)).store.exportSettings();
+    const onB = (await storeOn(b)).store;
+    onB.importSettings(first);
+    await onB.flushWrites();
+
+    // B renames its endpoint and Ash; then A, later, changes its endpoint and Bea, and adds Cara
+    at(1);
+    onB.endpoints[0].name = "Renamed on B";
+    onB.endpoints[0].voices[0].label = "Ash on B";
+    await onB.flushWrites();
+    const fromB = onB.exportSettings();
+    at(2);
+    const onA = (await storeOn(a)).store;
+    const ep = onA.endpoints[0];
+    ep.concurrency = 3;
+    ep.voices[1].label = "Bea on A";
+    onA.addVoice(ep, voice("cara"));
+    await onA.flushWrites();
+
+    onA.importSettings(fromB);
+    await onA.flushWrites();
+    const { body } = await a.request<{ endpoints: Endpoint[] }>("/api/endpoints");
+    expect([body.endpoints[0].name, body.endpoints[0].concurrency]).toEqual(["Fish Audio", 3]);
+    expect(Object.fromEntries(body.endpoints[0].voices.map((v) => [v.id, v.label]))).toEqual({
+      ash: "Ash on B",
+      bea: "Bea on A",
+      cara: "cara",
+    });
+    // the voice taken from the file keeps the time it was changed on B
+    expect(body.endpoints[0].voices.find((v) => v.id === "ash")?.updatedAt).toBe(T0 + 60_000);
+  } finally {
+    setSystemTime();
+  }
 });
 
 test("names each sample after its voice, in its endpoint's folder, never two alike", async () => {

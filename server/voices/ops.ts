@@ -24,6 +24,8 @@ export interface KeepRequest {
   samples: SampleUpload[];
   /** the voice is already in a saved configuration */
   attached: boolean;
+  /** Joins the samples already kept, which keep their place, instead of replacing them. */
+  add?: { madeAt: number };
 }
 
 /**
@@ -50,9 +52,10 @@ export async function keepSampleFiles(db: Db, files: VoiceFiles, keep: KeepReque
         endpointId: keep.endpointId,
         voiceId: keep.voiceId,
         title: keep.title,
-        at: Date.now(),
+        at: keep.add?.madeAt ?? Date.now(),
         attached: keep.attached,
-        samples,
+        // the same bytes again are one row, the one kept first
+        samples: keep.add ? [...samplesOf(tx, keep.endpointId, keep.voiceId), ...samples] : samples,
       }),
     );
   } catch (cause) {

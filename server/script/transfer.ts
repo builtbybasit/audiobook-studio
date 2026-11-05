@@ -225,6 +225,7 @@ function bookOf(book: Book, endpoints: readonly Endpoint[], effectName: EffectNa
   if (book.pacing) out.pacing = book.pacing;
   if (book.prompt) out.prompt = book.prompt;
   if (book.readNotes != null) out.readNotes = book.readNotes;
+  if (book.povVoice) out.povVoice = true;
   const thoughts = book.thoughts && effectName(book.thoughts);
   if (thoughts) out.thoughts = thoughts;
   const cv = book.characterVoice;

@@ -187,6 +187,7 @@ function bookPlan(
   if (file.pacing) out.pacing = file.pacing;
   if (file.prompt) out.prompt = file.prompt;
   if (file.readNotes != null) out.readNotes = file.readNotes;
+  if (file.povVoice != null) out.povVoice = file.povVoice;
   if (file.thoughts) out.thoughts = file.thoughts;
   if (file.characterVoice) {
     const enabled = endpoints.filter((e) => e.enabled);
@@ -219,17 +220,18 @@ function bookPlan(
     out.characterVoice = voice;
     if (unmatched.length) out.unmatchedVoices = unmatched;
   }
-  // an absent readNotes is off; any other absent setting follows the library, so differs
+  // an absent readNotes or povVoice is off; any other absent setting follows the library, so differs
   const mine = {
     pacing: book.pacing,
     prompt: book.prompt,
     readNotes: book.readNotes ?? false,
+    povVoice: book.povVoice ?? false,
     thoughts: effectName(book.thoughts),
     characterVoice: book.characterVoice,
   };
-  const differ = (["pacing", "prompt", "readNotes", "thoughts", "characterVoice"] as const).filter(
-    (k) => out[k] !== undefined && !sameJson(out[k], mine[k]),
-  );
+  const differ = (
+    ["pacing", "prompt", "readNotes", "povVoice", "thoughts", "characterVoice"] as const
+  ).filter((k) => out[k] !== undefined && !sameJson(out[k], mine[k]));
   return { file: out, differ };
 }
 

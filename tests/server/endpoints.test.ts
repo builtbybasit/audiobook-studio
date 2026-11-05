@@ -1,7 +1,7 @@
 // The endpoints on the server: the configuration saved, read back and refused whole; and the
 // narration job reading it: tags spelled per endpoint, lines it cannot say held back, the sample
 // rate asked for, and a line over `maxChars` sent in parts and returned as one clip.
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setSystemTime, test } from "bun:test";
 
 import type {
   Book,
@@ -122,7 +122,9 @@ describe("the endpoints' configuration", () => {
     expect(await read(api)).toEqual(body);
 
     expect(body.credentials).toEqual(credentials);
-    expect(body.profiles).toEqual(profiles);
+    // a save stamps every row new to it
+    const stamped = expect.any(Number);
+    expect(body.profiles).toEqual(profiles.map((p) => ({ ...p, updatedAt: stamped })));
     expect(body.endpoints.map((e) => e.id)).toEqual(endpoints.map((e) => e.id));
     for (const [i, e] of endpoints.entries()) {
       const got = body.endpoints[i];
@@ -133,9 +135,117 @@ describe("the endpoints' configuration", () => {
       if (configured.timeoutSec == null)
         for (const k of ["spendLimit", "credentialId", "quotaGroup"] as const)
           if (configured[k] === null) delete configured[k];
-      expect(got).toEqual({ ...configured, ...TELEMETRY });
+      expect(got).toEqual({
+        ...configured,
+        ...TELEMETRY,
+        updatedAt: stamped,
+        voices: configured.voices.map((v) => ({ ...v, updatedAt: stamped })),
+      });
       // what the session observed stays with the session
       expect(got).not.toHaveProperty("lastError");
+    }
+    // sent back as read, later, it is the same to the last stamp
+    setSystemTime(Date.now() + 60_000);
+    try {
+      expect((await save(api, body)).body).toEqual(body);
+    } finally {
+      setSystemTime();
+    }
+  });
+
+  // Two saves: the first at T1 stamps every row, the second at T2 sends the read-back with one change.
+  const T1 = Date.UTC(2026, 0, 1);
+  const T2 = T1 + 60_000;
+  const CARRIED = T2 + 60_000;
+  const ashOf = (c: Settings) => c.endpoints[0].voices.find((v) => v.id === "ash")!;
+  test.each<[string, (c: Settings) => void, (c: Settings) => number | undefined, number]>([
+    [
+      "an unchanged row keeps its stamp, whatever stamp it is sent with, in any order",
+      (c) => {
+        c.endpoints[0].voices.reverse();
+        ashOf(c).updatedAt = CARRIED;
+      },
+      (c) => ashOf(c).updatedAt,
+      T1,
+    ],
+    [
+      "a change made here is stamped now",
+      (c) => void (ashOf(c).label = "Ashen"),
+      (c) => ashOf(c).updatedAt,
+      T2,
+    ],
+    [
+      "a change carrying a newer stamp, as an import does, keeps it",
+      (c) => Object.assign(ashOf(c), { label: "Ashen", updatedAt: CARRIED }),
+      (c) => ashOf(c).updatedAt,
+      CARRIED,
+    ],
+    [
+      "a change from a page holding an older stamp is still now",
+      (c) => Object.assign(ashOf(c), { label: "Ashen", updatedAt: 1 }),
+      (c) => ashOf(c).updatedAt,
+      T2,
+    ],
+    [
+      "a new row keeps the stamp it carries",
+      (c) => c.endpoints[0].voices.push({ id: "new", gender: "f", label: "New", updatedAt: 7 }),
+      (c) => c.endpoints[0].voices.find((v) => v.id === "new")?.updatedAt,
+      7,
+    ],
+    [
+      "a new row without one is stamped now",
+      (c) => c.endpoints[0].voices.push({ id: "new", gender: "f", label: "New" }),
+      (c) => c.endpoints[0].voices.find((v) => v.id === "new")?.updatedAt,
+      T2,
+    ],
+    [
+      "an endpoint's own change stamps it, not its voices",
+      (c) => void (c.endpoints[0].concurrency = 3),
+      (c) => c.endpoints[0].updatedAt,
+      T2,
+    ],
+  ])("%s", async (_, change, stampOf, expected) => {
+    const api = testApi();
+    const config = {
+      endpoints: [
+        speech({
+          voices: [
+            { id: "ash", gender: "m", label: "Ash" },
+            { id: "other", gender: "f", label: "Other" },
+          ],
+        }),
+      ],
+      profiles: [openaiProfile({ credentialId: null, quotaGroup: null })],
+      transcribers: [
+        {
+          id: "stt",
+          name: "Whisper",
+          baseUrl: "https://api.openai.com/v1",
+          model: "whisper-1",
+          enabled: true,
+          concurrency: 1,
+          needsKey: true,
+          perMinute: 0.006,
+        },
+      ],
+    };
+    setSystemTime(T1);
+    try {
+      await save(api, config);
+      const next = await read(api);
+      setSystemTime(T2);
+      change(next);
+      const { body } = await save(api, next);
+      expect(stampOf(body)).toBe(expected);
+      // the rest read back exactly as saved: nothing else changed
+      const others = (c: Settings) => [
+        c.endpoints[0].voices.filter((v) => v.id === "other").map((v) => v.updatedAt),
+        c.profiles.map((p) => p.updatedAt),
+        c.transcribers.map((t) => t.updatedAt),
+      ];
+      expect(others(body)).toEqual([[T1], [T1], [T1]]);
+    } finally {
+      setSystemTime();
     }
   });
 

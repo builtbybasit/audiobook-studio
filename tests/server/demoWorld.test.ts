@@ -212,9 +212,12 @@ describe("the demo's library is the browser's world", () => {
       hasKey: _hk,
       expressions,
       credentialId,
+      updatedAt: _t,
+      voices,
       ...rest
     }: Endpoint & { hasKey?: boolean }) => ({
       ...rest,
+      voices: voices.map(({ updatedAt: _vt, ...v }) => v),
       ...(credentialId != null ? { credentialId } : {}),
       ...(expressions ? { expressions: { ...expressions, baseUrl: "" } } : {}),
     });
@@ -222,6 +225,7 @@ describe("the demo's library is the browser's world", () => {
       baseUrl: _u,
       needsKey: _k,
       hasKey: _hk,
+      updatedAt: _t,
       ...rest
     }: Profile & { hasKey?: boolean }) => rest;
 

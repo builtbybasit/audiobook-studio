@@ -31,7 +31,8 @@ import { ProviderError } from "~/providers/http";
 import { speechTarget, type Providers } from "~/providers/target";
 import { assertWithinBudget } from "~/usage/budget";
 import { settleCancelledClone, settleClone } from "~/usage/ledger";
-import type { VoiceFiles } from "~/voices/files";
+import { readKept } from "~/db/voiceSamples";
+import { sampleFileName, type VoiceFiles } from "~/voices/files";
 import { keepSampleFiles, keptOf } from "~/voices/ops";
 
 function clonableEndpoint(db: Db, id: string) {
@@ -212,23 +213,48 @@ export async function deleteVoice(
   }
 }
 
-/** Replaces an existing voice's kept samples, held to the same limits; nothing is sent. */
+/**
+ * Replaces an existing voice's kept samples, held to the same limits; nothing is sent. `add`
+ * keeps those already kept and adds only the ones whose bytes are new, refusing more than the
+ * provider takes in all.
+ */
 export async function keepForVoice(
   db: Db,
   voiceFiles: VoiceFiles,
-  request: Omit<CloneForm, "title"> & { voiceId: string },
+  request: Omit<CloneForm, "title"> & { voiceId: string; add?: boolean },
 ): Promise<KeptVoiceSamples> {
   const ep = clonableEndpoint(db, request.endpointId);
   const voice = ep.voices.find((v) => v.id === request.voiceId);
   if (!voice)
     throw notFound(`${ep.name} has no saved voice by that id`, `voice: ${request.voiceId}`);
-  const samples = await readSamples(request.files, request.transcripts, ep.cloning);
+  let samples = await readSamples(request.files, request.transcripts, ep.cloning);
+  const kept = request.add ? readKept(db, ep.id, voice.id) : undefined;
+  if (kept) {
+    const have = new Set(kept.samples.map((s) => s.file));
+    const named = await Promise.all(
+      samples.map(async (s) =>
+        sampleFileName(new Uint8Array(await s.blob.arrayBuffer()), s.format),
+      ),
+    );
+    samples = samples.filter((_, i) => {
+      if (have.has(named[i])) return false;
+      have.add(named[i]);
+      return true;
+    });
+    if (!samples.length) return kept;
+    if (kept.samples.length + samples.length > maxSamplesOf(ep.cloning))
+      fail(
+        400,
+        `${tooManySaid(ep.cloning)}: ${kept.samples.length} are kept here and ${samples.length} more came`,
+      );
+  }
   await keepSampleFiles(db, voiceFiles, {
     endpointId: ep.id,
     voiceId: voice.id,
     title: voice.label,
     samples,
     attached: true,
+    ...(kept ? { add: { madeAt: kept.madeAt } } : {}),
   });
   return keptOf(db, ep.id, voice.id);
 }

@@ -38,12 +38,17 @@ export interface EndpointParts {
 const byPosition = <T extends { position: number }>(rows: readonly T[]): T[] =>
   [...rows].sort((a, b) => a.position - b.position);
 
+/** 0 is unknown, and left out. */
+const stamp = (row: { updatedAt: number }): { updatedAt?: number } =>
+  row.updatedAt ? { updatedAt: row.updatedAt } : {};
+
 export const toVoice = (row: VoiceRow): Voice => ({
   id: row.id,
   gender: row.gender,
   label: row.label,
   ...(row.speed != null ? { speed: row.speed } : {}),
   ...(row.profile != null ? { profile: row.profile } : {}),
+  ...stamp(row),
 });
 
 export function toRateWindow(row: WindowRow): RateWindow {
@@ -156,6 +161,7 @@ export function toEndpoint(row: EndpointRow, parts: EndpointParts): Endpoint {
     rateLimits: 0,
     backoffUntil: 0,
     ...ops(row),
+    ...stamp(row),
   };
   const pricing = toPricingConfig(row, parts);
   if (pricing) e.pricing = pricing;
@@ -239,6 +245,7 @@ export function toProfile(row: EndpointRow, parts: EndpointParts): Profile {
       : {}),
     ...(prompt ? { prompt } : {}),
     ...(row.launch ? { launch: row.launch } : {}),
+    ...stamp(row),
   };
 }
 
@@ -260,10 +267,13 @@ export function toTranscriber(row: EndpointRow, parts: EndpointParts): Transcrib
     ...(row.apiKey ? { hasKey: true } : {}),
     ...ops(row),
     ...(row.launch ? { launch: row.launch } : {}),
+    ...stamp(row),
   };
 }
 
-const opsValues = (e: Partial<EndpointOps> & { launch?: LocalServer | null }) => ({
+const opsValues = (
+  e: Partial<EndpointOps> & { launch?: LocalServer | null; updatedAt?: number },
+) => ({
   timeoutSec: e.timeoutSec ?? null,
   maxRetries: e.maxRetries ?? null,
   cooldownSec: e.cooldownSec ?? null,
@@ -271,6 +281,7 @@ const opsValues = (e: Partial<EndpointOps> & { launch?: LocalServer | null }) =>
   credentialId: e.credentialId ?? null,
   quotaGroup: e.quotaGroup ?? null,
   launch: e.launch ?? null,
+  updatedAt: e.updatedAt ?? 0,
 });
 
 /** `speedRange` is the server's to write (`writeSpeedRange`), never the page's. */
@@ -367,6 +378,7 @@ export const voiceValues = (
   speed: v.speed ?? null,
   profile: v.profile ?? null,
   position,
+  updatedAt: v.updatedAt ?? 0,
 });
 
 export const rateWindowValues = (

@@ -383,7 +383,7 @@ describe("a request", () => {
     expect(sent[0].body.max_tokens).toBeUndefined();
   });
 
-  test("tidies a loosely-shaped answer: quotes, odd types, empty lines, the Narrator's thoughts", async () => {
+  test("tidies a loosely-shaped answer: quotes, odd types, empty lines, the Narrator's thoughts, tellers", async () => {
     const { provider } = gateway(() =>
       completion(
         fenced([
@@ -392,14 +392,22 @@ describe("a request", () => {
           { type: "narration", speaker: "Narrator", text: "  " },
           { type: "whatever", speaker: "Narrator", text: "said Mara softly." },
           { type: "thought", speaker: "Narrator", text: "Late again." },
+          { type: "narration", speaker: "Mara", text: "I sat." },
+          { type: "narration", speaker: "Unknown", text: "It rained." },
+          { type: "watermark", speaker: "Mara", text: "example.com" },
         ]),
       ),
     );
-    expect((await provider.script(input({ text: `${TEXT} Late again.` }))).lines).toEqual([
+    const text = `${TEXT} Late again. I sat. It rained. example.com`;
+    expect((await provider.script(input({ text }))).lines).toEqual([
       { type: "narration", speaker: "Narrator", text: "The door opened." },
       { type: "dialogue", speaker: "Mara", text: "Come in," },
       { type: "narration", speaker: "Narrator", text: "said Mara softly." },
       { type: "narration", speaker: "Narrator", text: "Late again." },
+      // a teller (POV) is kept; a site's text is still the Narrator's
+      { type: "narration", speaker: "Mara", text: "I sat." },
+      { type: "narration", speaker: "Narrator", text: "It rained." },
+      { type: "watermark", speaker: "Narrator", text: "example.com" },
     ]);
   });
 

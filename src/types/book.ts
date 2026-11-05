@@ -198,6 +198,11 @@ export interface Book {
   exactCounts?: boolean;
   /** long fact lists are not compacted; absent = they are */
   compactOff?: boolean;
+  /**
+   * Scripting gives first-person narration to the character telling it, and their speech the
+   * Said aloud effect; absent = all narration is the Narrator's. Scripts made already keep theirs.
+   */
+  povVoice?: boolean;
   /** live facts per speaker past which their list is compacted; absent = `COMPACT_AT.default` */
   compactAt?: number;
   /** the book's fan wiki, where speakers' pages are looked up (`fillFromWiki`); absent = none */

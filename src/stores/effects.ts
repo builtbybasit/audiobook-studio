@@ -88,6 +88,8 @@ export const useEffectsStore = defineStore("effects", {
       const libraryStore = useLibraryStore();
       const castStore = useCastStore();
       const effects = new Map(s.effects.map((e) => [e.id, e]));
+      // ponytail: no `tellers` here, so an audition of a teller's dialogue leaves Said aloud out;
+      // send narrating speakers with the cast if that preview matters
       return (bookId) => ({
         effects,
         library: s.libraryThoughts,

@@ -759,6 +759,12 @@ function typeOf(said: string, speaker: string): SegmentType {
 
 const voiced = (type: SegmentType): boolean => type === "dialogue" || type === "thought";
 
+/** Site text and notes are the page's, whoever the model said; narration may have a teller (POV). */
+function speakerOf(type: SegmentType, speaker: string): string {
+  if (voiced(type)) return speaker || UNKNOWN_SPEAKER;
+  return type === "narration" && speaker && speaker !== UNKNOWN_SPEAKER ? speaker : NARRATOR;
+}
+
 /** Quotation marks a model left around a spoken line. */
 const WRAPPING_QUOTES = /^["“”]+|["“”]+$/gu;
 const OPENING_QUOTES = /^["“”]+\s*/u;
@@ -819,8 +825,7 @@ export function answerOf(content: string, who: string, excerpt?: string): Script
     const effects = effectsOf(l.effects);
     out.push({
       type,
-      // site text and notes are the page's, whoever the model said
-      speaker: voiced(type) ? speaker || UNKNOWN_SPEAKER : NARRATOR,
+      speaker: speakerOf(type, speaker),
       text,
       ...(direction ? { direction } : {}),
       ...(tags.length ? { tags } : {}),

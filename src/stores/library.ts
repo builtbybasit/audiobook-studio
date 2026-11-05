@@ -580,6 +580,20 @@ export const useLibraryStore = defineStore("library", {
         on ? "transcribe this book after narration" : "stop transcribing this book after narration",
       );
     },
+    /** Whether scripting gives first-person narration to the character telling it. */
+    async setPovVoice(bookId: string, on: boolean): Promise<void> {
+      const b = this.bookById(bookId);
+      if (!b || !!b.povVoice === on) return;
+      if (on) b.povVoice = true;
+      else delete b.povVoice;
+      await this._writeSettings(
+        bookId,
+        { povVoice: on ? true : null },
+        on
+          ? "read first-person narration in its teller's voice"
+          : "give all narration to the Narrator",
+      );
+    },
     /** Whether the scripting model suggests dictionary terms for this book. */
     async setPronounce(bookId: string, on: boolean): Promise<void> {
       const b = this.bookById(bookId);

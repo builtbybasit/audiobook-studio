@@ -73,10 +73,13 @@ const maraIn = async (api: TestApi, id: string) =>
   (await api.request<Cast>(`/api/books/${id}/cast`)).body.characters.find((c) => c.name === "Mara");
 
 describe("the effects", () => {
-  test("a library starts with the Inner voice, as its thought effect", async () => {
+  test("a library starts with the Inner voice, as its thought effect, and Said aloud", async () => {
     const api = testApi();
     const effects = await list(api);
-    expect(effects.map((e) => [e.id, e.name])).toEqual([["inner-voice", "Inner voice"]]);
+    expect(effects.map((e) => [e.id, e.name])).toEqual([
+      ["inner-voice", "Inner voice"],
+      ["said-aloud", "Said aloud"],
+    ]);
     expect(effects[0].chain.map((s) => ("plugin" in s ? s.plugin : "mix"))).toEqual(["Reverb"]);
     expect(await thoughts(api)).toBe("inner-voice");
   });
@@ -91,6 +94,7 @@ describe("the effects", () => {
     expect((await create(api, "None")).body.effect.id).toBe("none-2");
     expect((await list(api)).map((e) => e.id)).toEqual([
       "inner-voice",
+      "said-aloud",
       "tin-can",
       "tin-can-2",
       "none-2",
@@ -133,7 +137,7 @@ describe("the effects", () => {
     ];
     for (const chain of refused) expect((await create(api, "Bad", chain)).status).toBe(400);
     expect((await create(api, "", [])).status).toBe(400);
-    expect(await list(api)).toHaveLength(1);
+    expect(await list(api)).toHaveLength(2);
   });
 });
 
@@ -146,7 +150,7 @@ describe("an effect's use-when and the lines that have it", () => {
       jsonBody({ name: "Telepathy", chain: echo, useWhen: `  ${useWhen} ` }),
     );
     expect(made.body.effect).toEqual({ id: "telepathy", name: "Telepathy", chain: echo, useWhen });
-    expect((await list(api))[1]).toEqual(made.body.effect);
+    expect((await list(api)).at(-1)).toEqual(made.body.effect);
 
     const kept = await api.request<{ effect: Effect }>(
       "/api/effects/telepathy",
@@ -283,12 +287,12 @@ describe("a book's and a speaker's choices", () => {
 
     const removed = await api.request("/api/effects/echo", { method: "DELETE" });
     expect(removed).toEqual({ status: 200, body: { removed: "echo", lines: [] } });
-    expect((await list(api)).map((e) => e.id)).toEqual(["inner-voice", "phone"]);
+    expect((await list(api)).map((e) => e.id)).toEqual(["inner-voice", "said-aloud", "phone"]);
     // the book and the speaker follow again, the speaker wears nothing, and the library has none
     // rather than an effect nobody picked
     const ctx = effectContext(api.db, id);
     expect(ctx).toMatchObject({ library: "none", book: null, cast: new Map() });
-    expect([...ctx.effects.keys()]).toEqual(["inner-voice", "phone"]);
+    expect([...ctx.effects.keys()]).toEqual(["inner-voice", "said-aloud", "phone"]);
     expect((await api.request<{ book: Book }>(`/api/books/${id}`)).body.book).not.toHaveProperty(
       "thoughts",
     );
@@ -335,11 +339,18 @@ describe("where an effect goes", () => {
     expect(made.status).toBe(201);
     expect(made.body.effect.id).toBe("radio");
     // a fresh list from the database, not the order the page was told
-    expect((await list(api)).map((e) => e.id)).toEqual(["inner-voice", "radio", "echo", "phone"]);
+    expect((await list(api)).map((e) => e.id)).toEqual([
+      "inner-voice",
+      "radio",
+      "said-aloud",
+      "echo",
+      "phone",
+    ]);
     await api.request("/api/effects", jsonBody({ name: "Last", chain: echo, after: "phone" }));
     expect((await list(api)).map((e) => e.id)).toEqual([
       "inner-voice",
       "radio",
+      "said-aloud",
       "echo",
       "phone",
       "last",
@@ -353,7 +364,7 @@ describe("where an effect goes", () => {
       jsonBody({ name: "Echo", chain: echo, after: "gone" }),
     );
     expect(made.status).toBe(400);
-    expect((await list(api)).map((e) => e.id)).toEqual(["inner-voice"]);
+    expect((await list(api)).map((e) => e.id)).toEqual(["inner-voice", "said-aloud"]);
   });
 });
 

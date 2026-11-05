@@ -670,6 +670,38 @@ describe("personas and line effects", () => {
   });
 });
 
+test.each([
+  [false, "Narrator"],
+  [true, "Mara"],
+])(
+  "with povVoice %p, the model's teller of first-person narration is kept as %p",
+  async (on, kept) => {
+    const inputs: ScriptInput[] = [];
+    const provider: ScriptingProvider = {
+      name: "Teller (test)",
+      async script(input) {
+        inputs.push(input);
+        return { lines: [{ type: "narration", speaker: "Mara", text: input.text }] };
+      },
+    };
+    const api = testApi({ scripting: provider });
+    const id = await shelved(api);
+    await put(api, { profiles: [openaiProfile({ maxChars: 0 })] });
+    if (on)
+      await api.request(`/api/books/${id}`, { ...jsonBody({ povVoice: true }), method: "PATCH" });
+    await api.request(
+      `/api/books/${id}/chapters/script`,
+      jsonBody({ ids: [1], profile: "openai" }),
+    );
+    await api.runner.idle();
+    expect(inputs[0].prompt!.system.includes("the character telling it")).toBe(on);
+    const { segments } = (
+      await api.request<{ segments: Segment[] }>(`/api/books/${id}/chapters/1/script`)
+    ).body;
+    expect(segments.map((s) => s.speaker)).toEqual([kept]);
+  },
+);
+
 describe("a disguise the model finds", () => {
   /** What the model says of the cast, chapter by chapter, with every line given to `speaker`. */
   function revealing(said: Record<string, { speaker: string; cast: PromptCastMember[] }>) {

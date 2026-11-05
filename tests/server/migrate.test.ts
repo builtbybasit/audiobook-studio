@@ -294,3 +294,23 @@ describe("scripting cut at a paragraph end", () => {
     ]);
   });
 });
+
+describe("a speaker's updated_at", () => {
+  test("is stamped by a real change, kept by a write that sets it, untouched by a same-value write", () => {
+    const db = openDb(":memory:");
+    migrate(db);
+    const raw = db.$client;
+    raw.run(
+      "INSERT INTO books (id, title, author, cover_from, cover_to, added_at) VALUES ('b', 'B', '', '', '', 0)",
+    );
+    raw.run("INSERT INTO characters (book_id, name, color) VALUES ('b', 'Mara', '#000')");
+    const at = () => (raw.query("SELECT updated_at AS t FROM characters").get() as { t: number }).t;
+    expect(at()).toBe(0);
+    raw.run("UPDATE characters SET gender = '?', position = 3");
+    expect(at()).toBe(0);
+    raw.run("UPDATE characters SET gender = 'f'");
+    expect(at()).toBeGreaterThan(Date.now() - 60_000);
+    raw.run("UPDATE characters SET gender = 'm', updated_at = 42");
+    expect(at()).toBe(42);
+  });
+});

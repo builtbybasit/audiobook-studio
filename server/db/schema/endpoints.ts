@@ -44,6 +44,8 @@ export const endpoints = sqliteTable(
     baseUrl: text("base_url").notNull(),
     model: text("model").notNull(),
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    /** epoch ms, `Endpoint.updatedAt` (also profiles' and transcribers'); 0 = unknown */
+    updatedAt: integer("updated_at").notNull().default(0),
     concurrency: integer("concurrency").notNull().default(1),
     needsKey: integer("needs_key", { mode: "boolean" }).notNull().default(false),
     /** never sent back over HTTP */
@@ -157,6 +159,8 @@ export const voices = sqliteTable(
     speed: real("speed"),
     profile: text("profile", { mode: "json" }).$type<VoiceProfile>(),
     position: integer("position").notNull().default(0),
+    /** epoch ms, `Voice.updatedAt`; 0 = unknown */
+    updatedAt: integer("updated_at").notNull().default(0),
   },
   (t) => [primaryKey({ columns: [t.endpointId, t.id] })],
 );

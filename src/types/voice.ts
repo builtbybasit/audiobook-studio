@@ -16,6 +16,8 @@ export interface Voice {
   /** pace for every speaker on it who sets none (`speakerSpeed`); absent = 1 */
   speed?: number;
   profile?: VoiceProfile;
+  /** epoch ms of the last change made on this install, or carried in by an import; 0 = unknown */
+  updatedAt?: number;
 }
 
 /** Measured from the kept samples (`server/voices/measure.py`); bands come from `voiceBands`. */

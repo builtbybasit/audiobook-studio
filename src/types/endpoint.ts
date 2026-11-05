@@ -33,6 +33,8 @@ export interface ReqError {
 }
 
 export interface Endpoint {
+  /** epoch ms of the last change made on this install, or carried in by an import; 0 = unknown */
+  updatedAt?: number;
   id: string;
   name: string;
   baseUrl: string;
@@ -151,6 +153,8 @@ export type EndpointKind = "scripting" | "tts" | "transcription";
  * Priced by the minute of audio sent.
  */
 export interface Transcriber extends Partial<EndpointOps> {
+  /** epoch ms of the last change made on this install, or carried in by an import; 0 = unknown */
+  updatedAt?: number;
   id: string;
   name: string;
   baseUrl: string;

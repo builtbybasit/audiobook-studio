@@ -279,8 +279,11 @@ export interface LibraryService {
   // ---------- the script as a file ----------
   /** What importing a script file would do. Nothing is written; the store applies the plan. */
   planScriptImport(bookId: string, file: File): Promise<ScriptImportPlan>;
-  /** An applied import's profiles, hand-set marks and facts; answers the facts saved. */
-  carryImport(bookId: string, carry: ImportCastCarry): Promise<{ facts: number }>;
+  /** What an applied import writes past the cast PUTs; answers the facts saved and the cast. */
+  carryImport(
+    bookId: string,
+    carry: ImportCastCarry,
+  ): Promise<{ facts: number; characters: Character[] }>;
   /** What ticking "Include voice samples" would add to this book's export: one entry per speaker. */
   scriptExportSamples(bookId: string): Promise<ScriptExportSamples>;
 
@@ -647,8 +650,11 @@ export class HttpLibraryService implements LibraryService {
     return this.http.postForm<ScriptImportPlan>(`/books/${seg(bookId)}/script-import`, file, {});
   }
 
-  carryImport(bookId: string, carry: ImportCastCarry): Promise<{ facts: number }> {
-    return this.http.post<{ facts: number }>(`/books/${seg(bookId)}/script-import/cast`, carry);
+  carryImport(
+    bookId: string,
+    carry: ImportCastCarry,
+  ): Promise<{ facts: number; characters: Character[] }> {
+    return this.http.post(`/books/${seg(bookId)}/script-import/cast`, carry);
   }
 
   scriptExportSamples(bookId: string): Promise<ScriptExportSamples> {

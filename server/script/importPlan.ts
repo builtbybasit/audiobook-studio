@@ -22,6 +22,7 @@ import type {
   ScriptImportPlan,
   Segment,
   SpeakerDetails,
+  SpeakerDiff,
   TermDetails,
   Voice,
   VoiceHint,
@@ -359,7 +360,7 @@ function matchChapters(
 
 /** Effects by name, as the file writes them. */
 function detailsOf(
-  c: Pick<SpeakerDetails, "gender" | "description" | "style" | "speed">,
+  c: Pick<SpeakerDetails, "gender" | "description" | "style" | "speed" | "profile">,
   effect: string | undefined,
   thoughts: string | undefined,
 ): SpeakerDetails {
@@ -367,6 +368,7 @@ function detailsOf(
   if (c.speed != null) d.speed = c.speed;
   if (effect) d.effect = effect;
   if (thoughts) d.thoughts = thoughts;
+  if (c.profile) d.profile = c.profile;
   return d;
 }
 
@@ -376,7 +378,12 @@ const sameDetails = (a: SpeakerDetails, b: SpeakerDetails): boolean =>
   a.style === b.style &&
   a.speed === b.speed &&
   a.effect === b.effect &&
-  a.thoughts === b.thoughts;
+  a.thoughts === b.thoughts &&
+  (!a.profile || !b.profile || sameJson(a.profile, b.profile));
+
+/** Whose stamp is later; unknown when either has none. */
+const newerOf = (book: number | undefined, file: number | undefined): SpeakerDiff["newer"] =>
+  book && file && book !== file ? (file > book ? "file" : "book") : undefined;
 
 /** Add what the book lacks, keep what it has, and fill what it left blank (`fill`). */
 function castDiff(
@@ -391,9 +398,17 @@ function castDiff(
       out.add.push(speaker);
       continue;
     }
+    const newer = newerOf(have.updatedAt, speaker.updatedAt);
     const book = detailsOf(have, effectName(have.effect), effectName(have.thoughts));
     const theirs = detailsOf(speaker, speaker.effect, speaker.thoughts);
-    if (!sameDetails(book, theirs)) out.differ.push({ name: speaker.name, book, file: theirs });
+    if (!sameDetails(book, theirs))
+      out.differ.push({
+        name: speaker.name,
+        book,
+        file: theirs,
+        ...(newer ? { newer } : {}),
+        ...(speaker.updatedAt ? { updatedAt: speaker.updatedAt } : {}),
+      });
     const fill: ScriptImportPlan["cast"]["fill"][number] = { name: speaker.name };
     const known = new Set([have.name, ...have.aliases]);
     const aliases = [...new Set(speaker.aliases)].filter((a) => !known.has(a));
@@ -408,8 +423,10 @@ function castDiff(
     if (!have.profile && speaker.profile) fill.profile = speaker.profile;
     const edited = (speaker.edited ?? []).filter((f) => fill[f]);
     if (edited.length) fill.edited = edited;
-    if (fill.aliases || fill.age || fill.voiceType || fill.wiki || fill.masked || fill.profile)
+    if (fill.aliases || fill.age || fill.voiceType || fill.wiki || fill.masked || fill.profile) {
+      if (newer === "file") fill.updatedAt = speaker.updatedAt;
       out.fill.push(fill);
+    }
   }
   return out;
 }
@@ -461,8 +478,9 @@ type Lookup = { voices: FoundVoice[] } | { failed: string };
 
 /**
  * One row per speaker whose voice the file names. A match needs the same host, id and label.
- * Pre-ticked only for a new speaker or one on the Narrator's voice. All lookups share one deadline;
- * a failed or timed-out lookup is `unchecked`, never `private`.
+ * Pre-ticked for a new speaker, one on the Narrator's voice, or one the file changed later to
+ * another voice. All lookups share one deadline; a failed or timed-out lookup is `unchecked`,
+ * never `private`.
  */
 async function voiceRows(
   db: Db,
@@ -496,13 +514,16 @@ async function voiceRows(
       const isNew = !have;
       const match = await matchVoice(hint, enabled, ask);
       const usable = match.kind === "here" || match.kind === "public";
+      const moved =
+        newerOf(have?.updatedAt, speaker.updatedAt) === "file" &&
+        !(match.kind === "here" && match.options.some((o) => o.ref === current));
       const row: VoiceRow = {
         speaker: speaker.name,
         isNew,
         current,
         hint,
         match,
-        ticked: (isNew || current === null) && usable,
+        ticked: (isNew || current === null || moved) && usable,
       };
       // The file's recordings for this voice, to clone it again from.
       const folder = folderOf(speaker.samples);

@@ -227,12 +227,18 @@ export interface SpeakerDetails {
   /** effect names, as the file writes them; absent = none of their own */
   effect?: string;
   thoughts?: string;
+  /** compared only when both sides have one; a missing one is `fill`'s */
+  profile?: CharacterProfile;
 }
 
 export interface SpeakerDiff {
   name: string;
   book: SpeakerDetails;
   file: SpeakerDetails;
+  /** whose `updatedAt` is later; absent when either is unknown or they match */
+  newer?: "file" | "book";
+  /** the file's `updatedAt`, which a Replace keeps */
+  updatedAt?: number;
 }
 
 /** The fields a term replace changes. */
@@ -275,7 +281,10 @@ export interface VoiceRow {
   current: VoiceRef | null;
   hint: VoiceHint;
   match: VoiceMatch;
-  /** ticked on arrival only when `isNew` or `current` is null, and `match` is not private */
+  /**
+   * ticked on arrival when `isNew`, `current` is null, or the file's speaker is newer with another
+   * voice, and `match` is usable
+   */
   ticked: boolean;
   samples?: VoiceRowSamples;
 }
@@ -319,6 +328,8 @@ export interface ScriptImportPlan {
       profile?: CharacterProfile;
       /** the file's hand-set marks on the fields this fills */
       edited?: HandSet;
+      /** the file's `updatedAt` when it is the newer side, which the filled speaker takes */
+      updatedAt?: number;
     }[];
   };
   lexicon: {
@@ -358,12 +369,32 @@ export interface ImportBookSettings {
   unmatchedVoices?: { slot: "one" | GenderSlot; age?: Age }[];
 }
 
+/** A speaker's details as a Replace writes them: effects by id here, null for none. */
+export interface SpeakerFields {
+  gender: Gender;
+  description: string;
+  style: string;
+  speed: number | null;
+  /** absent = the book's stands (the file's effect is not in this library) */
+  effect?: string | null;
+  thoughts?: string | null;
+}
+
 /**
- * `POST …/script-import/cast`, once an import's speakers and chapters landed: what `Character`
- * does not carry. Each `fields` entry takes the file's hand-set mark; facts replace a chapter's.
+ * `POST …/script-import/cast`, once an import's speakers and chapters landed: what a cast PUT may
+ * not write. Each `fields` entry takes the file's hand-set mark; facts replace a chapter's. A
+ * speaker's `details` replace theirs, and `profile` with them; without, it only fills a blank.
+ * `updatedAt` is written in the same update, so the stamp is the file's, not the write's.
  */
 export interface ImportCastCarry {
-  speakers: { name: string; profile?: CharacterProfile; edited: HandSet; fields: HandSet }[];
+  speakers: {
+    name: string;
+    profile?: CharacterProfile;
+    edited: HandSet;
+    fields: HandSet;
+    details?: SpeakerFields;
+    updatedAt?: number;
+  }[];
   chapters: { chapterId: number; facts: ScriptFileFact[] }[];
 }
 

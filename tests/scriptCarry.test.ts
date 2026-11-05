@@ -14,7 +14,7 @@ import { useScriptsStore } from "@/stores/scripts";
 import { useTransferStore } from "@/stores/transfer";
 import { useUiStore } from "@/stores/ui";
 import type { ScriptImportPlan, Segment } from "@/types";
-import { editedOf } from "~/db/castOwn";
+import { editedOf, setOwn } from "~/db/castOwn";
 import { readFacts } from "~/db/facts";
 import { previousRecap } from "~/db/library";
 import { readScript } from "~/db/script";
@@ -134,6 +134,61 @@ describe("what a script file carries", () => {
       "Runs the exchange.",
     ]);
   });
+
+  test.each([true, false])(
+    "the file's stamps come with what it adds and fills, and a Replace (%p) writes its details and profile",
+    async (chosen) => {
+      const { api, id, undos } = await opened();
+      const clerk = {
+        name: "Clerk",
+        aliases: [],
+        gender: "m" as const,
+        description: "",
+        style: "",
+      };
+      await api.fetch(`/api/books/${id}/characters/Clerk`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...clerk, voice: null, color: "#000", major: false }),
+      });
+      const profile = { who: "Works the switchboard.", personality: "", voice: "Nasal." };
+      setOwn(api.db, id, "Clerk", { profile });
+      setOwn(api.db, id, "Clerk", { updatedAt: 1 });
+      await fetchCast(id);
+      const rebuilt = { ...profile, personality: "Patient." };
+      const file = { ...clerk, description: "Rings the bell.", style: "brisk", profile: rebuilt };
+      useTransferStore().plans[id] = planOf(id, (s) => (s.speaker = "Operator"), {
+        cast: {
+          add: [{ ...clerk, name: "Operator", updatedAt: 7 }],
+          differ: [
+            {
+              name: "Clerk",
+              book: { ...clerk, profile },
+              file,
+              newer: "file",
+              updatedAt: 9,
+            },
+          ],
+          fill: [{ name: "Clerk", aliases: ["Bellman"], updatedAt: 9 }],
+        },
+      });
+      await useTransferStore().apply(id, [1], [], { speakers: chosen ? ["Clerk"] : [] });
+      const read = async (name: string) =>
+        (await libraryService().cast(id)).characters.find((c) => c.name === name)!;
+
+      expect((await read("Operator")).updatedAt).toBe(7);
+      expect(await read("Clerk")).toMatchObject({
+        aliases: ["Bellman"],
+        updatedAt: 9,
+        ...(chosen
+          ? { description: file.description, style: "brisk", profile: rebuilt }
+          : { profile }),
+      });
+      await undos.at(-1)!();
+      await useCastStore()._castSettled(id);
+      expect(await read("Clerk")).toMatchObject({ ...clerk, profile, updatedAt: 1 });
+    },
+  );
 
   test("a ticked new effect is made and worn; an unticked one is left off everywhere", async () => {
     const { api, id } = await opened();

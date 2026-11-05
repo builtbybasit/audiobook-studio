@@ -663,6 +663,7 @@ export const BookFileSchema = v.looseObject({
   ),
   prompt: v.optional(BookPromptSchema),
   readNotes: v.optional(v.boolean()),
+  povVoice: v.optional(v.boolean()),
   thoughts: v.optional(EffectName),
   characterVoice: v.optional(
     v.object({

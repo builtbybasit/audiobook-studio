@@ -130,6 +130,8 @@ export interface ScriptFileBook {
   pacing?: Pacing;
   prompt?: BookPrompt;
   readNotes?: boolean;
+  /** `Book.povVoice` */
+  povVoice?: boolean;
   /** an effect name or `"none"` */
   thoughts?: string;
   characterVoice?: {
@@ -344,6 +346,8 @@ export interface ImportBookSettings {
   pacing?: Pacing;
   prompt?: BookPrompt;
   readNotes?: boolean;
+  /** `Book.povVoice` */
+  povVoice?: boolean;
   /** an effect name or `"none"` */
   thoughts?: string;
   /** only slots whose hint matched a voice here (`VoiceMatch` "here"); the rest are null */

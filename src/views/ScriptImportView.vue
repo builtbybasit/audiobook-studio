@@ -166,6 +166,7 @@ const BOOK_KEYS: Record<keyof ScriptFileBook, string> = {
   pacing: "pauses between lines",
   prompt: "scripting notes and prompt",
   readNotes: "reading notes aloud",
+  povVoice: "first-person narration in the teller's voice",
   thoughts: "thought effect",
   characterVoice: "Character voice",
 };

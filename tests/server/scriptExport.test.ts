@@ -450,6 +450,7 @@ test("a round trip carries line effects, speakers' effects and profiles, recaps,
     ...jsonBody({
       pacing,
       readNotes: true,
+      povVoice: true,
       thoughts: "inner-voice",
       characterVoice: { ...characterVoice, ages: [girl, oldMan] },
     }),
@@ -491,12 +492,13 @@ test("a round trip carries line effects, speakers' effects and profiles, recaps,
   expect(plan.book?.file).toEqual({
     pacing,
     readNotes: true,
+    povVoice: true,
     thoughts: "Inner voice",
     characterVoice: { ...characterVoice, ages: [girl] },
     unmatchedVoices: [{ slot: "male", age: "elderly" }],
   });
   expect(new Set(plan.book?.differ)).toEqual(
-    new Set(["pacing", "readNotes", "thoughts", "characterVoice"]),
+    new Set(["pacing", "readNotes", "povVoice", "thoughts", "characterVoice"]),
   );
 
   // the recap lands with the script, where the next chapter's run reads it

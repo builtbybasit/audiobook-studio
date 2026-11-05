@@ -150,6 +150,7 @@ function bookSettings(
     if (k === "pacing") out.pacing = f.pacing ?? null;
     else if (k === "prompt") out.prompt = f.prompt ? storedBookPrompt(f.prompt) : null;
     else if (k === "readNotes") out.readNotes = !!f.readNotes;
+    else if (k === "povVoice") out.povVoice = f.povVoice ? true : null;
     else if (k === "characterVoice") out.characterVoice = f.characterVoice ?? null;
     else if (k === "thoughts") {
       const id = f.thoughts ? idOf(f.thoughts) : null;
@@ -165,6 +166,7 @@ function settingsNow(b: Book | undefined, settings: BookSettings): BookSettings 
     pacing: b?.pacing ?? null,
     prompt: b?.prompt ?? null,
     readNotes: !!b?.readNotes,
+    povVoice: b?.povVoice ? true : null,
     thoughts: b?.thoughts ?? null,
     characterVoice: b?.characterVoice ?? null,
   };

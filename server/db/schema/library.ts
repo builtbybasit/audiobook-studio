@@ -49,6 +49,8 @@ export const books = sqliteTable("books", {
   /** null = the Cast page shows rough line counts, not exact ones */
   exactCounts: integer("exact_counts", { mode: "boolean" }),
   compactOff: integer("compact_off", { mode: "boolean" }),
+  /** null = all narration is the Narrator's; else first-person narration goes to its teller */
+  povVoice: integer("pov_voice", { mode: "boolean" }),
   compactAt: integer("compact_at"),
   /** the book's fan wiki (e.g. https://x.fandom.com); null = none */
   wiki: text("wiki"),

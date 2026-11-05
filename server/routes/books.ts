@@ -127,6 +127,7 @@ const Settings = v.pipe(
     pronounceOff: v.optional(v.nullable(v.boolean())),
     exactCounts: v.optional(v.nullable(v.boolean())),
     compactOff: v.optional(v.nullable(v.boolean())),
+    povVoice: v.optional(v.nullable(v.boolean())),
     compactAt: v.optional(
       v.nullable(
         v.pipe(v.number(), v.integer(), v.minValue(COMPACT_AT.min), v.maxValue(COMPACT_AT.max)),

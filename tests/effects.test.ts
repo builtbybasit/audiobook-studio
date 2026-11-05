@@ -2,7 +2,7 @@
 // chosen speaker → book → library), and the fingerprint that tells an old-sound clip from a current.
 import { describe, expect, test } from "bun:test";
 
-import { chainsFor, soundOf, type EffectContext } from "@/lib/effects";
+import { SAID_ALOUD, chainsFor, soundOf, type EffectContext } from "@/lib/effects";
 import type { Effect } from "@/types";
 
 const fx = (id: string, gain = -1): Effect => ({
@@ -11,14 +11,16 @@ const fx = (id: string, gain = -1): Effect => ({
   chain: [{ plugin: "Gain", params: { gain_db: gain }, on: true }],
 });
 const ctx = (over: Partial<EffectContext> = {}): EffectContext => ({
-  effects: new Map(["inner", "mask", "echo", "phone", "radio"].map((id) => [id, fx(id)])),
+  effects: new Map(
+    ["inner", "mask", "echo", "phone", "radio", SAID_ALOUD].map((id) => [id, fx(id)]),
+  ),
   library: "inner",
   book: null,
   cast: new Map(),
   ...over,
 });
 const ids = (
-  line: { type: "thought" | "dialogue"; speaker: string; effects?: string[] },
+  line: { type: "thought" | "dialogue" | "narration"; speaker: string; effects?: string[] },
   c: EffectContext,
 ) => chainsFor(line, c).map((e) => e.id);
 
@@ -40,6 +42,13 @@ describe("chainsFor", () => {
     const cast = new Map([["Ann", { effect: "mask" }]]);
     expect(ids({ type: "thought", speaker: "Ann" }, ctx({ cast }))).toEqual(["mask", "inner"]);
     expect(ids({ type: "dialogue", speaker: "Ann" }, ctx({ cast }))).toEqual(["mask"]);
+  });
+  test("Said aloud goes on a teller's dialogue only: not their narration or thoughts, not others", () => {
+    const c = ctx({ tellers: new Set(["Ann"]) });
+    expect(ids({ type: "dialogue", speaker: "Ann" }, c)).toEqual([SAID_ALOUD]);
+    expect(ids({ type: "narration", speaker: "Ann" }, c)).toEqual([]);
+    expect(ids({ type: "thought", speaker: "Ann" }, c)).toEqual(["inner"]);
+    expect(ids({ type: "dialogue", speaker: "Bo" }, c)).toEqual([]);
   });
   test("an effect that is gone is nothing", () => {
     const cast = new Map([["Ann", { effect: "gone" }]]);

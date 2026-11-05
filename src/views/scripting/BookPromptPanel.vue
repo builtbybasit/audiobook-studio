@@ -23,7 +23,7 @@ import { scriptParts } from "@/lib/scripting";
 import { personaOwner, whoOf } from "@/lib/cast";
 import PromptEditor from "@/components/PromptEditor.vue";
 import PromptTrial from "@/components/PromptTrial.vue";
-import { UiSwitch } from "@/ui";
+import { UiHint, UiSwitch } from "@/ui";
 import { TriangleAlert as WarnIcon } from "@lucide/vue";
 import type { BookPrompt, RenderedPrompt } from "@/types";
 
@@ -216,6 +216,18 @@ const previewOf = computed(
         </button></span
       >
     </p>
+
+    <div v-if="book" class="flex items-center gap-1.5">
+      <UiSwitch
+        :model-value="!!book.povVoice"
+        label="First-person narration in the teller's voice"
+        @update:model-value="(on: boolean) => libraryStore.setPovVoice(bookId, on)"
+      />
+      <UiHint
+        label="first-person narration"
+        text="For books told in “I”: scripting gives those passages to the character telling them, so they are read in that character's voice, and their spoken lines get the Said aloud effect. Third-person passages stay with the Narrator. Applies to chapters scripted from now on."
+      />
+    </div>
 
     <div class="rounded-lg bg-zinc-50 p-2.5 dark:bg-zinc-800/60">
       <UiSwitch v-model="replace" label="Use this book's own prompt" />

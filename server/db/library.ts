@@ -717,6 +717,8 @@ export interface BookSettings {
   exactCounts?: boolean | null;
   /** stop compacting long fact lists; `null` compacts them again */
   compactOff?: boolean | null;
+  /** first-person narration in its teller's voice; `null` goes back to the Narrator's */
+  povVoice?: boolean | null;
   /** live facts per speaker before compaction; `null` goes back to the default */
   compactAt?: number | null;
   /** the book's fan wiki; `null` forgets it */
@@ -750,6 +752,7 @@ export function setBookSettings(db: Db | Tx, bookId: string, s: BookSettings): v
   if (s.pronounceOff !== undefined) set.pronounceOff = s.pronounceOff;
   if (s.exactCounts !== undefined) set.exactCounts = s.exactCounts;
   if (s.compactOff !== undefined) set.compactOff = s.compactOff;
+  if (s.povVoice !== undefined) set.povVoice = s.povVoice;
   if (s.compactAt !== undefined) set.compactAt = s.compactAt;
   if (s.wiki !== undefined) set.wiki = s.wiki;
   if (s.thoughts !== undefined) set.thoughts = s.thoughts;

@@ -118,9 +118,11 @@ export const outputFormat = (
   marker: ScriptMarker | null,
   lineEffects: readonly { name: string; useWhen: string }[] = [],
   pronounce?: { known: readonly string[] },
+  pov = false,
 ): string =>
   // a function: a term is read for no `$` pattern
-  FORMAT_TEMPLATE.replace(PRONOUNCE_SLOT, () => (pronounce ? pronounceLine(pronounce.known) : ""))
+  FORMAT_TEMPLATE.replace(SPEAKER_SLOT, speakerRule(pov))
+    .replace(PRONOUNCE_SLOT, () => (pronounce ? pronounceLine(pronounce.known) : ""))
     // without it in the sample, a model given no dictionary terms often leaves the field out
     .replace(PRONOUNCE_SAMPLE_SLOT, pronounce ? PRONOUNCE_SAMPLE : "")
     .replace(
@@ -143,6 +145,11 @@ const TAGS_SLOT = "%EXPRESSION_TAGS%\n";
 const EFFECTS_SLOT = "%LINE_EFFECTS%\n";
 const PRONOUNCE_SLOT = "%PRONOUNCE%\n";
 const PRONOUNCE_SAMPLE_SLOT = "%PRONOUNCE_SAMPLE%";
+const SPEAKER_SLOT = "%SPEAKER%";
+const speakerRule = (pov: boolean): string =>
+  pov
+    ? `- "speaker": for dialogue and thought, who speaks or thinks; for narration in a first-person passage, the character telling it (the “I”); "${NARRATOR}" for other narration, watermark and note lines.`
+    : `- "speaker": "${NARRATOR}" for narration, watermark and note lines; for dialogue and thought, who speaks or thinks.`;
 const PRONOUNCE_SAMPLE = `,"pronounce":[{"term":"Mara","say":"MAR-uh"}]`;
 const pronounceLine = (known: readonly string[]): string =>
   `- "pronounce": names and made-up words in the excerpt that a voice engine may say wrong, each as {"term": as written, "say": respelled the way it sounds, such as "Lahn-ur"}. [] when there are none.${known.length ? ` Leave out those already in the dictionary: ${known.map((t) => `"${oneLine(t)}"`).join(", ")}.` : ""}\n`;
@@ -153,7 +160,7 @@ const FORMAT_TEMPLATE = `Output format (always required):
 The lines read out the whole excerpt in order: every word exactly once, with its punctuation. Add, drop, summarise or correct nothing; an answer that does is refused.
 Each line has:
 - "type": "narration", "dialogue" (said aloud), "thought", "watermark" (the website's text, not the story) or "note" (a translator's or author's note).
-- "speaker": "${NARRATOR}" for narration, watermark and note lines; for dialogue and thought, who speaks or thinks.
+%SPEAKER%
 - "text": the words, verbatim.
 %LINE_EFFECTS%
 - "direction" (optional): how the line sounds (rule 6).
@@ -322,6 +329,8 @@ export interface PromptVars {
   lineEffects?: readonly { name: string; useWhen: string }[];
   /** ask for dictionary terms (`Book.pronounceOff` unset), less those the excerpt has already */
   pronounce?: { known: readonly string[] };
+  /** `Book.povVoice`: first-person narration goes to the character telling it */
+  pov?: true;
 }
 
 const GENDER: Record<Gender, string> = { m: "male", f: "female", n: "non-binary", "?": "" };
@@ -418,7 +427,10 @@ export function fill(text: string, vars: PromptVars): string {
 export function renderPrompt(template: PromptTemplate, vars: PromptVars): RenderedPrompt {
   const system = fill(template.system, vars);
   return {
-    system: [system, outputFormat(scriptMarkerFor(vars.excerpt), vars.lineEffects, vars.pronounce)]
+    system: [
+      system,
+      outputFormat(scriptMarkerFor(vars.excerpt), vars.lineEffects, vars.pronounce, vars.pov),
+    ]
       .filter(Boolean)
       .join("\n\n"),
     user: fill(

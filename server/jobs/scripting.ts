@@ -15,7 +15,7 @@ import type {
 import { groundedFacts } from "~/cast/facts";
 import { nameDescribed } from "~/cast/ops";
 import { paragraphsIn } from "@/lib/sourceParagraphs";
-import { castNameFor, numberStrangers } from "@/lib/cast";
+import { NARRATOR, castNameFor, numberStrangers } from "@/lib/cast";
 import { expressionNames, scriptedAnnotation } from "@/lib/expressions";
 import {
   BUILT_IN_PROMPT,
@@ -237,6 +237,7 @@ export function scriptingHandler(provider: ScriptingProvider, gate: SpeechGate):
         expressions,
         lineEffects,
         ...(book?.pronounceOff ? {} : { pronounce: { known: knownIn(chunks[i]) } }),
+        ...(book?.povVoice ? { pov: true as const } : {}),
       });
       library.setChapterScripting(db, job.bookId, job.chapterId, "running", 0);
       ctx.note("Scripting started", "info", {
@@ -476,7 +477,8 @@ export function scriptingHandler(provider: ScriptingProvider, gate: SpeechGate):
           return {
             id: i + 1,
             type: l.type,
-            speaker: l.speaker,
+            // a teller only where the book asked for one (`povVoice`)
+            speaker: l.type === "narration" && !book?.povVoice ? NARRATOR : l.speaker,
             text: l.text,
             direction: l.direction ?? "",
             ...(l.tags?.length

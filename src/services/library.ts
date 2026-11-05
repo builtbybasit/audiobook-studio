@@ -87,6 +87,8 @@ export interface BookSettings {
   exactCounts?: true | null;
   /** `Book.compactOff`; `null` = compaction on */
   compactOff?: true | null;
+  /** `Book.povVoice`; `null` = all narration is the Narrator's */
+  povVoice?: true | null;
   /** `Book.compactAt`; `null` = the default */
   compactAt?: number | null;
   /** `Book.wiki`; `null` forgets it */

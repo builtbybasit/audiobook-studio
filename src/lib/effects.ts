@@ -15,7 +15,12 @@ export interface EffectContext {
     string,
     Pick<Character, "effect" | "thoughts" | "personaOf"> & { stretched?: number }
   >;
+  /** speakers who narrate (`Book.povVoice`), whose dialogue is `SAID_ALOUD`'s */
+  tellers?: ReadonlySet<string>;
 }
+
+/** The library effect that sets a teller's speech apart from their narration. */
+export const SAID_ALOUD = "said-aloud";
 
 /** Not a Pedalboard plugin: effects.py runs it before the board, as it changes the length. */
 export const STRETCH = "TimeStretch";
@@ -35,7 +40,8 @@ export function thoughtEffectOf(speaker: string, ctx: EffectContext): Effect | n
 
 /**
  * In order: the speaker's stretched speed, a persona's character's effect, the speaker's, the
- * line's own in library order, then for thoughts the thought effect. Unknown ids are skipped.
+ * line's own in library order, then a teller's Said aloud or a thought's thought effect. Unknown
+ * ids are skipped.
  */
 export function chainsFor(
   line: { type: SegmentType; speaker: string; effects?: readonly string[] },
@@ -51,6 +57,10 @@ export function chainsFor(
   if (line.effects?.length) {
     const on = new Set(line.effects);
     for (const e of ctx.effects.values()) if (on.has(e.id)) out.push(e);
+  }
+  if (line.type === "dialogue" && ctx.tellers?.has(line.speaker)) {
+    const aloud = ctx.effects.get(SAID_ALOUD);
+    if (aloud) out.push(aloud);
   }
   if (line.type === "thought") {
     const thought = thoughtEffectOf(line.speaker, ctx);

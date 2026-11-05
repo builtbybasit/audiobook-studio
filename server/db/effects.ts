@@ -12,7 +12,8 @@ import type {
   RevisedLines,
   StaleSound,
 } from "@/types";
-import { chainsFor, soundOf, type EffectContext } from "@/lib/effects";
+import { SAID_ALOUD, chainsFor, soundOf, type EffectContext } from "@/lib/effects";
+import { NARRATOR } from "@/lib/cast";
 import { speedSplit } from "@/lib/providers";
 import type { Db, Tx } from "~/db/client";
 import { readEndpoint } from "~/db/endpoints";
@@ -34,9 +35,26 @@ export const INNER_VOICE: Effect = {
   ],
 };
 
+/** A teller's speech (`Book.povVoice`), as migration 0056 lays it down: a little presence and room. */
+export const SAID_ALOUD_EFFECT: Effect = {
+  id: SAID_ALOUD,
+  name: "Said aloud",
+  chain: [
+    { plugin: "PeakFilter", params: { cutoff_frequency_hz: 3000, gain_db: 2, q: 0.8 }, on: true },
+    {
+      plugin: "Reverb",
+      params: { room_size: 0.2, damping: 0.5, wet_level: 0.12, dry_level: 0.95, width: 0.6 },
+      on: true,
+    },
+  ],
+};
+
 export function seedEffects(db: Db | Tx): void {
   db.insert(effects)
-    .values({ ...INNER_VOICE, position: 0 })
+    .values([
+      { ...INNER_VOICE, position: 0 },
+      { ...SAID_ALOUD_EFFECT, position: 1 },
+    ])
     .onConflictDoNothing()
     .run();
   writeThoughts(db, INNER_VOICE.id);
@@ -244,6 +262,17 @@ function readContext(
     .where(eq(characters.bookId, bookId))
     .all();
   const split = speedsOf(db, bookId);
+  const tellers = db
+    .selectDistinct({ name: segments.speaker })
+    .from(segments)
+    .where(
+      and(
+        eq(segments.bookId, bookId),
+        eq(segments.type, "narration"),
+        sql`${segments.speaker} <> ${NARRATOR}`,
+      ),
+    )
+    .all();
   const ctx: EffectContext = {
     effects: new Map(listEffects(db).map((e) => [e.id, e])),
     library: readThoughts(db),
@@ -262,6 +291,7 @@ function readContext(
           },
         ]),
     ),
+    ...(tellers.length ? { tellers: new Set(tellers.map((t) => t.name)) } : {}),
   };
   return { ctx, sentOf: (speaker) => split(speaker).sent };
 }

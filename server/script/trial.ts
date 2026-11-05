@@ -16,6 +16,7 @@ import {
   resolvePrompt,
   type PromptVars,
 } from "@/lib/prompt";
+import { NARRATOR } from "@/lib/cast";
 import { expressionNames } from "@/lib/expressions";
 import { tokenEstimate } from "@/lib/scripting";
 import { readChapterCast, readSpeakers } from "~/db/cast";
@@ -103,6 +104,7 @@ export async function tryPrompt(
     endpoint: { name: profile.name, model: profile.model, notes: layers.profile?.notes ?? "" },
     expressions: expressionNames(readEndpoints(db)),
     lineEffects: lineEffectsOf(listEffects(db)),
+    ...(book.povVoice ? { pov: true as const } : {}),
   };
   const prompt = renderPrompt(template, vars);
 
@@ -165,7 +167,8 @@ export async function tryPrompt(
     excerpt,
     lines: lines.map((l) => ({
       type: l.type,
-      speaker: l.speaker,
+      // as the scripting job keeps it
+      speaker: l.type === "narration" && !book.povVoice ? NARRATOR : l.speaker,
       text: l.text,
       ...(l.direction ? { direction: l.direction } : {}),
       ...(l.tags?.length ? { tags: l.tags } : {}),
